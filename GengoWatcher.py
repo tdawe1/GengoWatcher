@@ -13,6 +13,22 @@ from pathlib import Path
 import configparser
 import datetime
 import msvcrt
+import colorama
+from colorama import Fore, Style
+
+class ColoredFormatter(logging.Formatter):
+    COLORS = {
+        'DEBUG': Style.DIM + Fore.CYAN,
+        'INFO': Fore.CYAN,
+        'WARNING': Fore.YELLOW,
+        'ERROR': Fore.RED,
+        'CRITICAL': Style.BRIGHT + Fore.RED
+    }
+    RESET = Style.RESET_ALL
+
+    def format(self, record):
+        log_message = super().format(record)
+        return self.COLORS.get(record.levelname, self.RESET) + log_message + self.RESET
 
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
@@ -39,9 +55,9 @@ class GengoWatcher:
             "max_backoff": "300",
             "user_agent_email": "your_email@example.com" # Required if use_custom_user_agent is True
         },
-        "State": { 
+        "State": { # New section for persistent state
             "last_seen_link": "", # Persisted across runs
-            "total_new_entries_found": "0" 
+            "total_new_entries_found": "0" # Persisted across runs
         }
     }
 
@@ -137,7 +153,7 @@ class GengoWatcher:
                 "user_agent_email": parser.get("Network", "user_agent_email", fallback=self.DEFAULT_CONFIG["Network"]["user_agent_email"])
             }
             
-            self.config["State"] = {
+            self.config["State"] = { # New section for persistent state
                 "last_seen_link": parser.get("State", "last_seen_link", fallback=""),
                 "total_new_entries_found": parser.getint("State", "total_new_entries_found", fallback=0)
             }
@@ -183,8 +199,8 @@ class GengoWatcher:
             self.logger.addHandler(file_handler)
 
             console_handler = logging.StreamHandler(sys.stdout)
-            console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(console_formatter)
+            colored_formatter = ColoredFormatter('%(asctime)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(colored_formatter)
             self.logger.addHandler(console_handler)
 
     def _setup_signal_handlers(self):
@@ -267,24 +283,24 @@ class GengoWatcher:
         self.logger.info("Test notification sent.")
 
     def display_help(self):
-        help_message = """
-Available Commands:
-  help        - Display this help message.
-  test        - Send a test desktop notification.
-  status      - Show current watcher status (last checked, next check, total entries found, etc.).
-  check_now   - Immediately trigger an RSS feed check.
-  exit / quit - Stop the watcher and exit the script.
+        help_message = f"""
+{Style.BRIGHT + Fore.GREEN}Available Commands:{Style.RESET_ALL}
+  {Fore.YELLOW}help{Style.RESET_ALL}        - Display this help message.
+  {Fore.YELLOW}test{Style.RESET_ALL}        - Send a test desktop notification.
+  {Fore.YELLOW}status{Style.RESET_ALL}      - Show current watcher status (last checked, next check, total entries found, etc.).
+  {Fore.YELLOW}check_now{Style.RESET_ALL}   - Immediately trigger an RSS feed check.
+  {Fore.YELLOW}exit / quit{Style.RESET_ALL} - Stop the watcher and exit the script.
 """
         self.logger.info(help_message)
 
     def display_status(self):
         status_message = f"""
-Watcher Status:
-  Last seen link: {self.last_seen_link if self.last_seen_link else 'None (first run or not yet seen)'}
-  Last checked: {self.last_check_time.strftime('%Y-%m-%d %H:%M:%S') if self.last_check_time else 'Not yet checked'}
-  Next check in: {self.config["Watcher"]['check_interval']} seconds (or press 'check_now')
-  Network failures: {self.failure_count}
-  Total new entries found (this run/overall): {self.total_new_entries_found}
+{Style.BRIGHT + Fore.GREEN}Watcher Status:{Style.RESET_ALL}
+  {Fore.CYAN}Last seen link:{Style.RESET_ALL} {self.last_seen_link if self.last_seen_link else 'None (first run or not yet seen)'}
+  {Fore.CYAN}Last checked:{Style.RESET_ALL} {self.last_check_time.strftime('%Y-%m-%d %H:%M:%S') if self.last_check_time else 'Not yet checked'}
+  {Fore.CYAN}Next check in:{Style.RESET_ALL} {self.config["Watcher"]['check_interval']} seconds (or press 'check_now')
+  {Fore.CYAN}Network failures:{Style.RESET_ALL} {self.failure_count}
+  {Fore.CYAN}Total new entries found (this run/overall):{Style.RESET_ALL} {self.total_new_entries_found}
 """
         self.logger.info(status_message)
 
@@ -292,7 +308,8 @@ Watcher Status:
     def command_listener(self):
         """Listens for user commands in a non-blocking way using msvcrt."""
         current_command_line = ""
-        self.logger.info("Command listener ready. Type commands and press 'Enter'.")
+        sys.stdout.write(f"{Fore.MAGENTA}Command > {Style.RESET_ALL}")
+        sys.stdout.flush()
         
         while not self.shutdown_event.is_set():
             if msvcrt.kbhit():
@@ -320,6 +337,10 @@ Watcher Status:
                         self.handle_exit()
                     else:
                         self.logger.info(f"Unknown command: '{cmd}'. Type 'help' for commands.")
+                    
+                    if not self.shutdown_event.is_set():
+                        sys.stdout.write(f"{Fore.MAGENTA}Command > {Style.RESET_ALL}")
+                        sys.stdout.flush()
                 elif decoded_char == '\x08':
                     if current_command_line:
                         current_command_line = current_command_line[:-1]
@@ -371,12 +392,12 @@ Watcher Status:
 
                 if latest_entry.link != self.last_seen_link:
                     self.total_new_entries_found += 1
-                    self.logger.info("--- New Entry Discovered ---")
-                    self.logger.info(f"Title: {latest_entry.title}")
-                    self.logger.info(f"Link: {latest_entry.link}")
+                    self.logger.info(f"{Fore.GREEN}{Style.BRIGHT}--- New Entry Discovered ---{Style.RESET_ALL}")
+                    self.logger.info(f"{Fore.GREEN}Title: {latest_entry.title}{Style.RESET_ALL}")
+                    self.logger.info(f"{Fore.GREEN}Link: {latest_entry.link}{Style.RESET_ALL}")
                     published_date = getattr(latest_entry, 'published', getattr(latest_entry, 'updated', 'N/A'))
-                    self.logger.info(f"Date: {published_date}")
-                    self.logger.info("----------------------------")
+                    self.logger.info(f"{Fore.GREEN}Date: {published_date}{Style.RESET_ALL}")
+                    self.logger.info(f"{Fore.GREEN}{Style.BRIGHT}----------------------------{Style.RESET_ALL}")
 
                     self.last_seen_link = latest_entry.link
                     self.notify(latest_entry.title, latest_entry.link)
@@ -408,6 +429,7 @@ Watcher Status:
 
 
 if __name__ == "__main__":
+    colorama.init()
     watcher = GengoWatcher()
     try:
         watcher.run()
