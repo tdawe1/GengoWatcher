@@ -12,7 +12,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import configparser
 import datetime 
-#t
+
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
     
@@ -21,7 +21,8 @@ class GengoWatcher:
         "Watcher": {
             "feed_url": "https://www.theguardian.com/uk/rss", #the feed you want to watch
             "check_interval": "31", #seconds
-            "enable_notifications": "True"
+            "enable_notifications": "True",
+            "use_custom_user_agent": "False"  #use if RSS feed rejects feedparser
         },
         "Paths": {
             "sound_file": r"C:\path\to\your\sound.wav",
@@ -94,15 +95,16 @@ class GengoWatcher:
             self.config["Watcher"] = {
                 "feed_url": parser.get("Watcher", "feed_url"),
                 "check_interval": parser.getint("Watcher", "check_interval"),
-                "enable_notifications": parser.getboolean("Watcher", "enable_notifications")
+                "enable_notifications": parser.getboolean("Watcher", "enable_notifications"),
+                "use_custom_user_agent": parser.getboolean("Watcher", "use_custom_user_agent", fallback=True)
             }
 
             notification_icon_path_str = parser.get("Paths", "notification_icon_path").strip()
             self.config["Paths"] = {
                 "sound_file": Path(parser.get("Paths", "sound_file")),
                 "vivaldi_path": Path(parser.get("Paths", "vivaldi_path")),
-                "log_file": Path(parser.get("Paths", "log_file")), # Use Path for log_file too
-                "notification_icon_path": Path(notification_icon_path_str) if notification_icon_path_str else None # Handle empty string for no custom icon
+                "log_file": Path(parser.get("Paths", "log_file")),
+                "notification_icon_path": Path(notification_icon_path_str) if notification_icon_path_str else None
             }
 
             self.config["Logging"] = {
@@ -210,7 +212,7 @@ class GengoWatcher:
 
     def test_notify(self):
         test_title = "Test Notification"
-        test_url = "https://test.com"
+        test_url = "https://gengo.com/t/jobs/status/available"
         self.notify(test_title, test_url)
         self.logger.info("Test notification sent.")
 
@@ -269,7 +271,10 @@ Watcher Status:
         while not self.shutdown_event.is_set():
             self.last_check_time = datetime.datetime.now()
             try:
-                feed = feedparser.parse(self.config["Watcher"]["feed_url"])
+                headers = None
+                if self.config["Watcher"]["use_custom_user_agent"]:
+                    headers = {'User-Agent': 'GengoWatcher/1.0 (+your_email@example.com)'}
+                feed = feedparser.parse(self.config["Watcher"]["feed_url"], request_headers=headers)
 
                 if feed.bozo:
                     self.logger.warning(f"Feed parsing error: {feed.bozo_exception}. This indicates a malformed RSS feed.")
