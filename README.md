@@ -1,6 +1,6 @@
 # GengoWatcher v1.1.0
 
-GengoWatcher is a lightweight Windows application that monitors RSS feeds and delivers desktop notifications. It integrates with the Vivaldi browser and supports sound alerts and logging.
+GengoWatcher is a lightweight Windows application that monitors RSS feeds and delivers desktop notifications. It will automatically open new feed items for you so that you can quickly respond.  It integrates with browsers and supports sound alerts and logging. 
 
 ## Features
 
