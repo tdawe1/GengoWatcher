@@ -12,6 +12,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import configparser
 import datetime
+import msvcrt
 
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
@@ -36,11 +37,11 @@ class GengoWatcher:
         },
         "Network": {
             "max_backoff": "300",
-            "user_agent_email": "your_email@example.com"
+            "user_agent_email": "your_email@example.com" # Required if use_custom_user_agent is True
         },
-        "State": {
-            "last_seen_link": "",
-            "total_new_entries_found": "0"
+        "State": { 
+            "last_seen_link": "", # Persisted across runs
+            "total_new_entries_found": "0" 
         }
     }
 
@@ -52,7 +53,7 @@ class GengoWatcher:
         self.last_check_time = None
         self.notifier = ToastNotifier()
         self.total_new_entries_found = 0
-        self.failure_count = 0 # Initialize here for display_status
+        self.failure_count = 0
 
         self._load_config()
         self.last_seen_link = self.config["State"]["last_seen_link"] if self.config["State"]["last_seen_link"] else None
@@ -61,7 +62,7 @@ class GengoWatcher:
         self._setup_logging()
         self._setup_signal_handlers()
 
-        self.command_thread = threading.Thread(target=self.command_listener, daemon=True)
+        self.command_thread = threading.Thread(target=self.command_listener, name="CommandListener")
         self.command_thread.start()
 
         self.logger.info("-" * 40)
@@ -97,13 +98,12 @@ class GengoWatcher:
 
         print(f"\nCreated default '{self.CONFIG_FILE}'.")
         print("Please edit this file with your specific paths and preferences, then restart the script.")
-        print("Ensure 'feed_url' has your correct Gengo RSS key.")
-        print("For 'notification_icon_path', provide a path to a .ico file, or leave empty for no custom icon.")
-        print("Remember to change 'user_agent_email' to your actual email if 'use_custom_user_agent' is enabled.")
+        print("Ensure 'feed_url' has your correct RSS key.")
+        print("Remember to change 'user_agent_email' if 'use_custom_user_agent' is enabled.")
         sys.exit(0)
 
     def _load_config(self):
-        """Loads configuration from config.ini."""
+        """Loads settings from config.ini."""
         parser = configparser.ConfigParser()
 
         if not Path(self.CONFIG_FILE).is_file():
@@ -148,7 +148,7 @@ class GengoWatcher:
             sys.exit(1)
 
     def _save_runtime_state(self):
-        """Saves current runtime state (last_seen_link, total_new_entries_found) to config.ini."""
+        """Saves to config.ini."""
         parser = configparser.ConfigParser()
         parser.read(self.CONFIG_FILE, encoding='utf-8')
 
@@ -167,7 +167,7 @@ class GengoWatcher:
 
 
     def _setup_logging(self):
-        """Sets up the logging configuration."""
+        """logging configuration set up"""
         self.logger = logging.getLogger("GengoWatcher")
         self.logger.setLevel(logging.INFO)
 
@@ -188,19 +188,16 @@ class GengoWatcher:
             self.logger.addHandler(console_handler)
 
     def _setup_signal_handlers(self):
-        """Sets up signal handlers for graceful exit."""
+        """ for graceful exit"""
         signal.signal(signal.SIGINT, self.handle_exit)
 
     def handle_exit(self, signum=None, frame=None):
-        """Handles graceful exit, saving state before shutdown."""
-        self.logger.info("Exiting script gracefully...")
-        self._save_runtime_state() 
+        self.logger.info("Exiting script...")
+        self._save_runtime_state()
         self.shutdown_event.set()
-        time.sleep(0.1)
-        sys.exit(0)
 
     def play_sound(self):
-        """Plays a sound using winsound (Windows-specific)."""
+        """Alert sound via winsound."""
         try:
             if self.config["Paths"]["sound_file"].is_file():
                 winsound.PlaySound(str(self.config["Paths"]["sound_file"]), winsound.SND_FILENAME)
@@ -211,7 +208,6 @@ class GengoWatcher:
             self.logger.error(f"Sound error: {e}")
 
     def play_sound_async(self):
-        """Plays a sound in a separate thread."""
         threading.Thread(target=self.play_sound, daemon=True).start()
 
     def open_in_vivaldi(self, url):
@@ -231,18 +227,15 @@ class GengoWatcher:
             self.logger.error(f"Vivaldi open error: {e}")
 
     def bring_vivaldi_to_foreground(self):
-        """Brings Vivaldi window to the foreground (Windows-specific)."""
         try:
             os.system('powershell -command "$wshell = New-Object -ComObject WScript.Shell; $wshell.AppActivate(\'Vivaldi\')"')
         except Exception as e:
             self.logger.error(f"Failed to bring Vivaldi to foreground: {e}")
 
     def bring_vivaldi_to_foreground_async(self):
-        """Brings Vivaldi window to foreground in a separate thread."""
         threading.Thread(target=self.bring_vivaldi_to_foreground, daemon=True).start()
 
     def notify(self, title, url):
-        """Sends a desktop notification and opens the link."""
         if not self.config["Watcher"]["enable_notifications"]:
             self.logger.info(f"New entry found: '{title}' but notifications are disabled in config.")
             return
@@ -267,14 +260,13 @@ class GengoWatcher:
         self.bring_vivaldi_to_foreground_async()
 
     def test_notify(self):
-        """Sends a test notification for debugging purposes."""
+        """Sends a test notification."""
         test_title = "Test Notification"
-        test_url = "https://gengo.com/t/jobs/status/available" # Using Gengo URL as placeholder
+        test_url = "https://gengo.com/t/jobs/status/available" # placeholder
         self.notify(test_title, test_url)
         self.logger.info("Test notification sent.")
 
     def display_help(self):
-        """Displays available commands."""
         help_message = """
 Available Commands:
   help        - Display this help message.
@@ -286,7 +278,6 @@ Available Commands:
         self.logger.info(help_message)
 
     def display_status(self):
-        """Displays current watcher status."""
         status_message = f"""
 Watcher Status:
   Last seen link: {self.last_seen_link if self.last_seen_link else 'None (first run or not yet seen)'}
@@ -299,33 +290,52 @@ Watcher Status:
 
 
     def command_listener(self):
-        """Listens for user commands in the console."""
+        """Listens for user commands in a non-blocking way using msvcrt."""
+        current_command_line = ""
+        self.logger.info("Command listener ready. Type commands and press 'Enter'.")
+        
         while not self.shutdown_event.is_set():
-            try:
-                cmd = input().strip().lower()
-                if cmd == "help":
-                    self.display_help()
-                elif cmd == "test":
-                    self.test_notify()
-                elif cmd == "status":
-                    self.display_status()
-                elif cmd == "check_now":
-                    self.logger.info("Triggering immediate feed check...")
-                    self.check_now_event.set()
-                elif cmd in ("exit", "quit"):
-                    self.handle_exit()
+            if msvcrt.kbhit():
+                char = msvcrt.getch()
+                try:
+                    decoded_char = char.decode('utf-8')
+                except UnicodeDecodeError:
+                    continue 
+
+                if decoded_char == '\r' or decoded_char == '\n':
+                    print()
+                    cmd = current_command_line.strip().lower()
+                    current_command_line = ""
+                    
+                    if cmd == "help":
+                        self.display_help()
+                    elif cmd == "test":
+                        self.test_notify()
+                    elif cmd == "status":
+                        self.display_status()
+                    elif cmd == "check_now":
+                        self.logger.info("Triggering immediate feed check...")
+                        self.check_now_event.set()
+                    elif cmd in ("exit", "quit"):
+                        self.handle_exit()
+                    else:
+                        self.logger.info(f"Unknown command: '{cmd}'. Type 'help' for commands.")
+                elif decoded_char == '\x08':
+                    if current_command_line:
+                        current_command_line = current_command_line[:-1]
+                        sys.stdout.write('\b \b')
+                        sys.stdout.flush()
                 else:
-                    self.logger.info(f"Unknown command: '{cmd}'. Type 'help' for commands.")
-            except EOFError:
-                self.logger.info("EOF received in command listener. Exiting.")
-                self.handle_exit()
-                break
-            except Exception as e:
-                self.logger.error(f"Command listener error: {e}")
-                time.sleep(1)
+                    current_command_line += decoded_char
+                    sys.stdout.write(decoded_char)
+                    sys.stdout.flush()
+            else:
+                self.shutdown_event.wait(0.1)
+        
+        self.logger.info("Command listener thread exiting.")
 
     def run(self):
-        """Main loop for checking the RSS feed."""
+        """Main loop"""
         self.logger.info("RSS watcher started.")
         self.failure_count = 0
 
@@ -341,7 +351,7 @@ Watcher Status:
                 feed = feedparser.parse(self.config["Watcher"]["feed_url"], request_headers=headers)
 
                 if feed.bozo:
-                    self.logger.warning(f"Feed parsing error: {feed.bozo_exception}. This indicates a malformed RSS feed or network issue.")
+                    self.logger.warning(f"Feed parsing error: {feed.bozo_exception}. This indicates a malformed RSS feed or network issue. Gengo only allows 1 request every 30s.")
                     self.logger.warning("Please check your internet connection or try validating the RSS feed URL in your browser.")
                     self.failure_count += 1
                     wait_time = min(self.config["Watcher"]["check_interval"] * (2 ** self.failure_count), self.config["Network"]["max_backoff"])
@@ -387,12 +397,25 @@ Watcher Status:
                 self.check_now_event.wait(wait_time)
                 self.check_now_event.clear()
 
+        self.logger.info("Main watcher loop finished. Attempting to join command listener thread...")
+        self.command_thread.join(timeout=5)
+        if self.command_thread.is_alive():
+            self.logger.warning("Command listener thread did not terminate gracefully within timeout.")
+        else:
+            self.logger.info("Command listener thread stopped.")
+
+        self.logger.info("Watcher has completed its shutdown sequence.")
+
 
 if __name__ == "__main__":
     watcher = GengoWatcher()
     try:
         watcher.run()
+    except SystemExit:
+        pass
     except KeyboardInterrupt:
-        watcher.handle_exit()
+        watcher.logger.info("KeyboardInterrupt caught in main, graceful shutdown process completed.")
     except Exception as e:
         watcher.logger.critical(f"Unhandled exception in main execution: {e}", exc_info=True)
+    finally:
+        sys.exit(0)
