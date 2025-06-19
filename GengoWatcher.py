@@ -11,31 +11,36 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import configparser
-import datetime 
+import datetime
 
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
-    
+
     # template ini settings
     DEFAULT_CONFIG = {
         "Watcher": {
             "feed_url": "https://www.theguardian.com/uk/rss", #the feed you want to watch
             "check_interval": "31", #seconds
             "enable_notifications": "True",
-            "use_custom_user_agent": "False"  #use if RSS feed rejects feedparser
+            "use_custom_user_agent": "False" #use if RSS feed rejects feedparser
         },
         "Paths": {
             "sound_file": r"C:\path\to\your\sound.wav",
             "vivaldi_path": r"C:\path\to\your\vivaldi.exe", #will open default browser if no vivaldi
             "log_file": "rss_check_log.txt",
-            "notification_icon_path": "" 
+            "notification_icon_path": ""
         },
         "Logging": {
             "log_max_bytes": "1000000",
             "log_backup_count": "3"
         },
         "Network": {
-            "max_backoff": "300"
+            "max_backoff": "300",
+            "user_agent_email": "your_email@example.com"
+        },
+        "State": {
+            "last_seen_link": "",
+            "total_new_entries_found": "0"
         }
     }
 
@@ -47,11 +52,15 @@ class GengoWatcher:
         self.last_check_time = None
         self.notifier = ToastNotifier()
         self.total_new_entries_found = 0
+        self.failure_count = 0 # Initialize here for display_status
 
         self._load_config()
+        self.last_seen_link = self.config["State"]["last_seen_link"] if self.config["State"]["last_seen_link"] else None
+        self.total_new_entries_found = self.config["State"]["total_new_entries_found"]
+
         self._setup_logging()
         self._setup_signal_handlers()
-        
+
         self.command_thread = threading.Thread(target=self.command_listener, daemon=True)
         self.command_thread.start()
 
@@ -60,32 +69,43 @@ class GengoWatcher:
         for section_name, section_dict in self.config.items():
             if isinstance(section_dict, dict):
                 for key, value in section_dict.items():
-                    self.logger.info(f"  {section_name}.{key}: {value}")
+                    if key in ["sound_file", "vivaldi_path", "log_file", "notification_icon_path"]:
+                        self.logger.info(f"  {section_name}.{key}: [PATH_HIDDEN]")
+                    elif key == "user_agent_email":
+                        if "@" in value:
+                            parts = value.split("@")
+                            self.logger.info(f"  {section_name}.{key}: {parts[0][:2]}...@{parts[1]}")
+                        else:
+                            self.logger.info(f"  {section_name}.{key}: [EMAIL_HIDDEN]")
+                    else:
+                        self.logger.info(f"  {section_name}.{key}: {value}")
             else:
                 self.logger.info(f"  {section_name}: {self.config[section_name]}")
         self.logger.info("-" * 40)
         self.logger.info("Command listener active. Type 'help' for commands.")
 
     def _create_default_config(self):
-        #Creates a default ini if none found
+        """Creates a default ini if none found."""
         parser = configparser.ConfigParser()
         for section, settings in self.DEFAULT_CONFIG.items():
             parser.add_section(section)
             for key, value in settings.items():
                 parser.set(section, key, value)
-        
+
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
             parser.write(f)
-        
+
         print(f"\nCreated default '{self.CONFIG_FILE}'.")
         print("Please edit this file with your specific paths and preferences, then restart the script.")
         print("Ensure 'feed_url' has your correct Gengo RSS key.")
         print("For 'notification_icon_path', provide a path to a .ico file, or leave empty for no custom icon.")
+        print("Remember to change 'user_agent_email' to your actual email if 'use_custom_user_agent' is enabled.")
         sys.exit(0)
 
     def _load_config(self):
+        """Loads configuration from config.ini."""
         parser = configparser.ConfigParser()
-        
+
         if not Path(self.CONFIG_FILE).is_file():
             self._create_default_config()
 
@@ -96,7 +116,7 @@ class GengoWatcher:
                 "feed_url": parser.get("Watcher", "feed_url"),
                 "check_interval": parser.getint("Watcher", "check_interval"),
                 "enable_notifications": parser.getboolean("Watcher", "enable_notifications"),
-                "use_custom_user_agent": parser.getboolean("Watcher", "use_custom_user_agent", fallback=True)
+                "use_custom_user_agent": parser.getboolean("Watcher", "use_custom_user_agent", fallback=False)
             }
 
             notification_icon_path_str = parser.get("Paths", "notification_icon_path").strip()
@@ -113,18 +133,44 @@ class GengoWatcher:
             }
 
             self.config["Network"] = {
-                "max_backoff": parser.getint("Network", "max_backoff")
+                "max_backoff": parser.getint("Network", "max_backoff"),
+                "user_agent_email": parser.get("Network", "user_agent_email", fallback=self.DEFAULT_CONFIG["Network"]["user_agent_email"])
             }
+            
+            self.config["State"] = {
+                "last_seen_link": parser.get("State", "last_seen_link", fallback=""),
+                "total_new_entries_found": parser.getint("State", "total_new_entries_found", fallback=0)
+            }
+            
         except configparser.Error as e:
             print(f"Error reading configuration file '{self.CONFIG_FILE}': {e}")
             print("Please check the file's format and content. If unsure, delete it to regenerate a default.")
             sys.exit(1)
 
+    def _save_runtime_state(self):
+        """Saves current runtime state (last_seen_link, total_new_entries_found) to config.ini."""
+        parser = configparser.ConfigParser()
+        parser.read(self.CONFIG_FILE, encoding='utf-8')
+
+        if not parser.has_section("State"):
+            parser.add_section("State")
+        
+        parser.set("State", "last_seen_link", self.last_seen_link if self.last_seen_link else "")
+        parser.set("State", "total_new_entries_found", str(self.total_new_entries_found))
+
+        try:
+            with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
+                parser.write(f)
+            self.logger.debug("Runtime state saved.")
+        except IOError as e:
+            self.logger.error(f"Failed to save runtime state to {self.CONFIG_FILE}: {e}")
+
 
     def _setup_logging(self):
+        """Sets up the logging configuration."""
         self.logger = logging.getLogger("GengoWatcher")
         self.logger.setLevel(logging.INFO)
-        
+
         if not self.logger.handlers:
             file_handler = RotatingFileHandler(
                 self.config["Paths"]["log_file"],
@@ -142,14 +188,19 @@ class GengoWatcher:
             self.logger.addHandler(console_handler)
 
     def _setup_signal_handlers(self):
+        """Sets up signal handlers for graceful exit."""
         signal.signal(signal.SIGINT, self.handle_exit)
 
     def handle_exit(self, signum=None, frame=None):
-        self.logger.info("Exiting script...")
+        """Handles graceful exit, saving state before shutdown."""
+        self.logger.info("Exiting script gracefully...")
+        self._save_runtime_state() 
         self.shutdown_event.set()
-        os._exit(0) 
+        time.sleep(0.1)
+        sys.exit(0)
 
     def play_sound(self):
+        """Plays a sound using winsound (Windows-specific)."""
         try:
             if self.config["Paths"]["sound_file"].is_file():
                 winsound.PlaySound(str(self.config["Paths"]["sound_file"]), winsound.SND_FILENAME)
@@ -160,9 +211,11 @@ class GengoWatcher:
             self.logger.error(f"Sound error: {e}")
 
     def play_sound_async(self):
+        """Plays a sound in a separate thread."""
         threading.Thread(target=self.play_sound, daemon=True).start()
 
     def open_in_vivaldi(self, url):
+        """Opens a URL in Vivaldi or the default browser if Vivaldi path is not set."""
         if not self.config["Paths"]["vivaldi_path"] or not self.config["Paths"]["vivaldi_path"].is_file():
             self.logger.warning("Vivaldi path not set or invalid. Opening with default browser.")
             try:
@@ -170,7 +223,7 @@ class GengoWatcher:
             except Exception as e:
                 self.logger.error(f"Default browser open error: {e}")
             return
-        
+
         try:
             webbrowser.register('vivaldi', None, webbrowser.BackgroundBrowser(str(self.config["Paths"]["vivaldi_path"])))
             webbrowser.get('vivaldi').open_new_tab(url)
@@ -178,15 +231,18 @@ class GengoWatcher:
             self.logger.error(f"Vivaldi open error: {e}")
 
     def bring_vivaldi_to_foreground(self):
+        """Brings Vivaldi window to the foreground (Windows-specific)."""
         try:
             os.system('powershell -command "$wshell = New-Object -ComObject WScript.Shell; $wshell.AppActivate(\'Vivaldi\')"')
         except Exception as e:
             self.logger.error(f"Failed to bring Vivaldi to foreground: {e}")
 
     def bring_vivaldi_to_foreground_async(self):
+        """Brings Vivaldi window to foreground in a separate thread."""
         threading.Thread(target=self.bring_vivaldi_to_foreground, daemon=True).start()
 
     def notify(self, title, url):
+        """Sends a desktop notification and opens the link."""
         if not self.config["Watcher"]["enable_notifications"]:
             self.logger.info(f"New entry found: '{title}' but notifications are disabled in config.")
             return
@@ -196,7 +252,7 @@ class GengoWatcher:
 
         try:
             icon_path_for_toast = str(self.config["Paths"]["notification_icon_path"]) if self.config["Paths"]["notification_icon_path"] else None
-            
+
             self.notifier.show_toast(
                 "New Entry Found",
                 title,
@@ -211,35 +267,39 @@ class GengoWatcher:
         self.bring_vivaldi_to_foreground_async()
 
     def test_notify(self):
+        """Sends a test notification for debugging purposes."""
         test_title = "Test Notification"
-        test_url = "https://gengo.com/t/jobs/status/available"
+        test_url = "https://gengo.com/t/jobs/status/available" # Using Gengo URL as placeholder
         self.notify(test_title, test_url)
         self.logger.info("Test notification sent.")
 
     def display_help(self):
+        """Displays available commands."""
         help_message = """
 Available Commands:
   help        - Display this help message.
   test        - Send a test desktop notification.
-  status      - Show current watcher status (last checked, next check, total entries found).
+  status      - Show current watcher status (last checked, next check, total entries found, etc.).
   check_now   - Immediately trigger an RSS feed check.
   exit / quit - Stop the watcher and exit the script.
 """
         self.logger.info(help_message)
 
     def display_status(self):
+        """Displays current watcher status."""
         status_message = f"""
 Watcher Status:
-  Last seen link: {self.last_seen_link if self.last_seen_link else 'None (first run)'}
+  Last seen link: {self.last_seen_link if self.last_seen_link else 'None (first run or not yet seen)'}
   Last checked: {self.last_check_time.strftime('%Y-%m-%d %H:%M:%S') if self.last_check_time else 'Not yet checked'}
   Next check in: {self.config["Watcher"]['check_interval']} seconds (or press 'check_now')
   Network failures: {self.failure_count}
-  Total new entries found: {self.total_new_entries_found}
+  Total new entries found (this run/overall): {self.total_new_entries_found}
 """
         self.logger.info(status_message)
 
 
     def command_listener(self):
+        """Listens for user commands in the console."""
         while not self.shutdown_event.is_set():
             try:
                 cmd = input().strip().lower()
@@ -265,6 +325,7 @@ Watcher Status:
                 time.sleep(1)
 
     def run(self):
+        """Main loop for checking the RSS feed."""
         self.logger.info("RSS watcher started.")
         self.failure_count = 0
 
@@ -273,16 +334,19 @@ Watcher Status:
             try:
                 headers = None
                 if self.config["Watcher"]["use_custom_user_agent"]:
-                    headers = {'User-Agent': 'GengoWatcher/1.0 (+your_email@example.com)'}
+                    user_agent_string = f"GengoWatcher/1.0 (+{self.config['Network']['user_agent_email']})"
+                    headers = {'User-Agent': user_agent_string}
+                
+                self.logger.info(f"Checking RSS feed: {self.config['Watcher']['feed_url']}...")
                 feed = feedparser.parse(self.config["Watcher"]["feed_url"], request_headers=headers)
 
                 if feed.bozo:
-                    self.logger.warning(f"Feed parsing error: {feed.bozo_exception}. This indicates a malformed RSS feed.")
+                    self.logger.warning(f"Feed parsing error: {feed.bozo_exception}. This indicates a malformed RSS feed or network issue.")
                     self.logger.warning("Please check your internet connection or try validating the RSS feed URL in your browser.")
                     self.failure_count += 1
                     wait_time = min(self.config["Watcher"]["check_interval"] * (2 ** self.failure_count), self.config["Network"]["max_backoff"])
                     self.logger.info(f"Retrying in {wait_time} seconds due to parsing error...")
-                    self.check_now_event.wait(wait_time) 
+                    self.check_now_event.wait(wait_time)
                     self.check_now_event.clear()
                     continue
 
@@ -306,6 +370,7 @@ Watcher Status:
 
                     self.last_seen_link = latest_entry.link
                     self.notify(latest_entry.title, latest_entry.link)
+                    self._save_runtime_state()
                 else:
                     self.logger.info(f"No new entries. Last checked: {self.last_check_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
