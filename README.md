@@ -97,7 +97,7 @@ total_new_entries_found = 0
 ## Notifications
 
 * New items in your feeds trigger desktop notifications.
-* Notifications will attempt to open the item link in the Vivaldi browser when clicked (if Vivaldi path is configured).
+* Notifications will attempt to open the item link in the Vivaldi browser when clicked (if Vivaldi path is configured). Otherwise, it will open the default browser.
 * Sound alerts accompany notifications if enabled.
 
 ## Logs
