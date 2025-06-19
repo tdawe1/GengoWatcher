@@ -12,9 +12,10 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import configparser
 import datetime
-import msvcrt
+import subprocess
 import colorama
 from colorama import Fore, Style
+colorama.init()
 
 class ColoredFormatter(logging.Formatter):
     COLORS = {
@@ -73,13 +74,11 @@ class GengoWatcher:
 
         self._load_config()
         self.last_seen_link = self.config["State"]["last_seen_link"] if self.config["State"]["last_seen_link"] else None
-        self.total_new_entries_found = self.config["State"]["total_new_entries_found"]
+        self.total_new_entries_found = int(self.config["State"]["total_new_entries_found"])
 
         self._setup_logging()
         self._setup_signal_handlers()
-
-        self.command_thread = threading.Thread(target=self.command_listener, name="CommandListener")
-        self.command_thread.start()
+        self.last_error_message = "None"
 
         self.logger.info("-" * 40)
         self.logger.info("GengoWatcher Initialized with Settings:")
@@ -100,6 +99,8 @@ class GengoWatcher:
                 self.logger.info(f"   {section_name}: {self.config[section_name]}")
         self.logger.info("-" * 40)
         self.logger.info("Command listener active. Type 'help' for commands.")
+        self.start_time = time.time()
+
 
     def _create_default_config(self):
         parser = configparser.ConfigParser()
@@ -118,7 +119,6 @@ class GengoWatcher:
         sys.exit(0)
 
     def _load_config(self):
-        
         if not Path(self.CONFIG_FILE).is_file():
             self._create_default_config()
 
@@ -149,12 +149,12 @@ class GengoWatcher:
                 "max_backoff": self._config_parser.getint("Network", "max_backoff"),
                 "user_agent_email": self._config_parser.get("Network", "user_agent_email", fallback=self.DEFAULT_CONFIG["Network"]["user_agent_email"])
             }
-            
+
             self.config["State"] = {
                 "last_seen_link": self._config_parser.get("State", "last_seen_link", fallback=""),
                 "total_new_entries_found": self._config_parser.getint("State", "total_new_entries_found", fallback=0)
             }
-            
+
         except configparser.Error as e:
             print(f"Error reading configuration file '{self.CONFIG_FILE}': {e}")
             print("Please check the file's format and content. If unsure, delete it to regenerate a default.")
@@ -163,17 +163,16 @@ class GengoWatcher:
     def _save_runtime_state(self):
         if not self._config_parser.has_section("State"):
             self._config_parser.add_section("State")
-        
+
         self._config_parser.set("State", "last_seen_link", self.last_seen_link if self.last_seen_link else "")
         self._config_parser.set("State", "total_new_entries_found", str(self.total_new_entries_found))
 
         try:
             with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-                self._config_parser.write(f) 
+                self._config_parser.write(f)
             self.logger.debug("Runtime state saved.")
         except IOError as e:
             self.logger.error(f"Failed to save runtime state to {self.CONFIG_FILE}: {e}")
-
 
     def _setup_logging(self):
         self.logger = logging.getLogger("GengoWatcher")
@@ -198,10 +197,18 @@ class GengoWatcher:
     def _setup_signal_handlers(self):
         signal.signal(signal.SIGINT, self.handle_exit)
 
+    def _smart_wait(self, total_seconds: float) -> bool:
+        """Waits up to total_seconds for shutdown or manual check."""
+        return self.check_now_event.wait(timeout=total_seconds) or self.shutdown_event.is_set()
+
     def handle_exit(self, signum=None, frame=None):
-        self.logger.info("Exiting script...")
-        self._save_runtime_state()
-        self.shutdown_event.set()
+        if not self.shutdown_event.is_set():
+            self.logger.info("Shutdown signal received.")
+            self.shutdown_event.set()
+            self.logger.debug("Saving runtime state...")
+            self._save_runtime_state()
+            self.logger.debug("Shutdown complete.")
+        sys.exit(0)
 
     def play_sound(self):
         try:
@@ -217,218 +224,220 @@ class GengoWatcher:
         threading.Thread(target=self.play_sound, daemon=True).start()
 
     def open_in_vivaldi(self, url):
-        if not self.config["Paths"]["vivaldi_path"] or not self.config["Paths"]["vivaldi_path"].is_file():
-            self.logger.warning("Vivaldi path not set or invalid. Opening with default browser.")
-            try:
-                webbrowser.open_new_tab(url)
-            except Exception as e:
-                self.logger.error(f"Default browser open error: {e}")
+        vivaldi_path = self.config["Paths"]["vivaldi_path"]
+
+        if not vivaldi_path or not vivaldi_path.is_file():
+            self.logger.warning(f"Vivaldi path invalid or not set: {vivaldi_path}")
             return
 
         try:
-            webbrowser.register('vivaldi', None, webbrowser.BackgroundBrowser(str(self.config["Paths"]["vivaldi_path"])))
-            webbrowser.get('vivaldi').open_new_tab(url)
+            # Pass executable and args as a list to avoid shell quoting issues
+            subprocess.Popen([str(vivaldi_path), f'--app={url}'])
+            self.logger.debug(f"Opened URL in Vivaldi: {url}")
         except Exception as e:
-            self.logger.error(f"Vivaldi open error: {e}")
+            self.logger.error(f"Failed to open URL in Vivaldi: {e}")
 
-    def bring_vivaldi_to_foreground(self):
-        try:
-            os.system('powershell -command "$wshell = New-Object -ComObject WScript.Shell; $wshell.AppActivate(\'Vivaldi\')"')
-        except Exception as e:
-            self.logger.error(f"Failed to bring Vivaldi to foreground: {e}")
-
-    def bring_vivaldi_to_foreground_async(self):
-        threading.Thread(target=self.bring_vivaldi_to_foreground, daemon=True).start()
-
-    def notify(self, title, url):
+    def notify(self, title, message):
         if not self.config["Watcher"]["enable_notifications"]:
-            self.logger.info(f"New entry found: '{title}' but notifications are disabled in config.")
+            self.logger.debug("Notifications are disabled in config.")
             return
 
-        self.logger.info(f"New entry: {title}")
-        self.play_sound_async()
+        icon = None
+        if self.config["Paths"]["notification_icon_path"] and self.config["Paths"]["notification_icon_path"].is_file():
+            icon = str(self.config["Paths"]["notification_icon_path"])
 
         try:
-            icon_path_for_toast = str(self.config["Paths"]["notification_icon_path"]) if self.config["Paths"]["notification_icon_path"] else None
-
-            self.notifier.show_toast(
-                "New Entry Found",
-                title,
-                icon_path=icon_path_for_toast,
-                duration=5,
-                threaded=True
-            )
+            self.notifier.show_toast(title, message, icon_path=icon, duration=8, threaded=True)
+            self.logger.debug(f"Notification shown: {title} - {message}")
         except Exception as e:
             self.logger.error(f"Notification error: {e}")
+            
+    def print_status(self):
+        status = "Running" if not self.shutdown_event.is_set() else "Stopped"
+        new_posts_count = self.total_new_entries_found
+        last_check = self.last_check_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_check_time else "Never"
+        polling_interval = self.config["Watcher"]["check_interval"]
+        notif_enabled = self.config["Watcher"]["enable_notifications"]
+        # Simplified check for sound and vivaldi, relying on the config parsing setting Path objects
+        sound_enabled = bool(self.config["Paths"]["sound_file"] and self.config["Paths"]["sound_file"].is_file())
+        vivaldi_configured = bool(self.config["Paths"]["vivaldi_path"] and self.config["Paths"]["vivaldi_path"].is_file())
+        # url_opening_enabled = True # This line can be removed as it's always true currently
+        last_error = getattr(self, 'last_error_message', "None") # You're not setting this, see suggestion below
+        uptime_seconds = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
+        uptime_str = str(datetime.timedelta(seconds=uptime_seconds))
 
-        threading.Thread(target=self.open_in_vivaldi, args=(url,), daemon=True).start()
-        self.bring_vivaldi_to_foreground_async()
-
-    def test_notify(self):
-        test_title = "Test Notification"
-        test_url = "https://gengo.com/t/jobs/status/available"
-        self.notify(test_title, test_url)
-        self.logger.info("Test notification sent.")
-
-    def display_help(self):
-        help_message = f"""
-{Style.BRIGHT + Fore.GREEN}Available Commands:{Style.RESET_ALL}
-  {Fore.YELLOW}help{Style.RESET_ALL}        - Display this help message.
-  {Fore.YELLOW}test{Style.RESET_ALL}        - Send a test desktop notification.
-  {Fore.YELLOW}status{Style.RESET_ALL}      - Show current watcher status (last checked, next check, total entries found, etc.).
-  {Fore.YELLOW}check_now{Style.RESET_ALL}   - Immediately trigger an RSS feed check.
-  {Fore.YELLOW}exit / quit{Style.RESET_ALL} - Stop the watcher and exit the script.
-"""
-        self.logger.info(help_message)
-
-    def display_status(self):
-        status_message = f"""
-{Style.BRIGHT + Fore.GREEN}Watcher Status:{Style.RESET_ALL}
-  {Fore.CYAN}Last seen link:{Style.RESET_ALL} {self.last_seen_link if self.last_seen_link else 'None (first run or not yet seen)'}
-  {Fore.CYAN}Last checked:{Style.RESET_ALL} {self.last_check_time.strftime('%Y-%m-%d %H:%M:%S') if self.last_check_time else 'Not yet checked'}
-  {Fore.CYAN}Next check in:{Style.RESET_ALL} {self.config["Watcher"]['check_interval']} seconds (or press 'check_now')
-  {Fore.CYAN}Network failures:{Style.RESET_ALL} {self.failure_count}
-  {Fore.CYAN}Total new entries found (this run/overall):{Style.RESET_ALL} {self.total_new_entries_found}
-"""
-        self.logger.info(status_message)
+        print("\n=== GengoWatcher Status ===")
+        print(f"Status:               {status}")
+        print(f"New posts detected:   {new_posts_count}")
+        print(f"Last check time:      {last_check}")
+        print(f"Polling interval (s): {polling_interval}")
+        print(f"Notifications:        {'Enabled' if notif_enabled else 'Disabled'}")
+        print(f"Sound:                {'Enabled' if sound_enabled else 'Disabled'}")
+        print(f"Vivaldi path set:     {'Yes' if vivaldi_configured else 'No'}")
+        # print(f"URL opening enabled:  {'Yes' if url_opening_enabled else 'No'}") # Remove this line
+        print(f"Last error logged:    {last_error}")
+        print(f"Uptime:               {uptime_str}")
+        print("===========================\n")
 
 
-    def command_listener(self):
-        current_command_line = ""
-        sys.stdout.write(f"{Fore.MAGENTA}Command > {Style.RESET_ALL}")
-        sys.stdout.flush()
-        
-        while not self.shutdown_event.is_set():
-            if self.shutdown_event.is_set():
-                break 
+    def fetch_rss(self):
+        headers = {}
+        if self.config["Watcher"]["use_custom_user_agent"]:
+            user_agent = f"GengoWatcher/1.0 (mailto:{self.config['Network']['user_agent_email']})"
+            headers['User-Agent'] = user_agent
 
-            if msvcrt.kbhit():
-                char = msvcrt.getch()
-                if self.shutdown_event.is_set():
-                    break
-                try:
-                    decoded_char = char.decode('utf-8')
-                except UnicodeDecodeError:
-                    continue 
+        url = self.config["Watcher"]["feed_url"]
 
-                if decoded_char == '\r' or decoded_char == '\n':
-                    print()
-                    cmd = current_command_line.strip().lower()
-                    current_command_line = ""
-                    
-                    if cmd == "help":
-                        self.display_help()
-                    elif cmd == "test":
-                        self.test_notify()
-                    elif cmd == "status":
-                        self.display_status()
-                    elif cmd == "check_now":
-                        self.logger.info("Triggering immediate feed check...")
-                        self.check_now_event.set()
-                    elif cmd in ("exit", "quit"):
-                        self.handle_exit()
-                    else:
-                        self.logger.info(f"Unknown command: '{cmd}'. Type 'help' for commands.")
-                    
-                    if not self.shutdown_event.is_set():
-                        sys.stdout.write(f"{Fore.MAGENTA}Command > {Style.RESET_ALL}")
-                        sys.stdout.flush()
-                elif decoded_char == '\x08':
-                    if current_command_line:
-                        current_command_line = current_command_line[:-1]
-                        sys.stdout.write('\b \b')
-                        sys.stdout.flush()
-                else:
-                    current_command_line += decoded_char
-                    sys.stdout.write(decoded_char)
-                    sys.stdout.flush()
-            else:
-                self.shutdown_event.wait(0.05) 
-        
-        self.logger.info("Command listener thread exiting.")
+        try:
+            feed = feedparser.parse(url, request_headers=headers)
+            if feed.bozo:
+                self.logger.warning(f"Malformed feed or parsing error: {feed.bozo_exception}")
+                if not hasattr(feed, 'entries') or not feed.entries:
+                    return None  # Treat as failure only if entries are truly missing
+            return feed
+        except Exception as e:
+            self.logger.error(f"RSS fetch error: {e}")
+            self.last_error_message = str(e) # Store the error
+            return None
+
+    def process_entries(self, entries):
+        if not entries:
+            self.logger.info("No entries found.")
+            return
+
+        new_found = 0
+        for entry in reversed(entries):
+            link = entry.get("link", None)
+            title = entry.get("title", "(No Title)")
+            if not link:
+                continue
+
+            if self.last_seen_link == link:
+                break  # Stop at the first known entry (newest first)
+
+            new_found += 1
+            self.total_new_entries_found += 1
+            self.logger.info(f"New entry: {title} - {link}")
+
+            self.show_notification(title, "New RSS Entry", play_sound=True, open_link=False)
+
+            # Open URL
+            self.open_in_vivaldi(link)
+
+        if new_found > 0:
+            self.last_seen_link = entries[0].get("link", self.last_seen_link)
+            self._save_runtime_state()
+            self.logger.info(f"Total new entries found so far: {self.total_new_entries_found}")
+        else:
+            self.logger.info("No new entries detected this check.")
+
+    def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
+        self.notify(title, message)
+        if play_sound:
+            self.play_sound_async()
+        if open_link and url:
+            self.open_in_vivaldi(url)
 
     def run(self):
-        self.logger.info("RSS watcher started.")
-        self.failure_count = 0
+        self.logger.info("Starting main RSS check loop...")
+
+        backoff = 31
+        max_backoff = self.config["Network"]["max_backoff"]
 
         while not self.shutdown_event.is_set():
-            self.last_check_time = datetime.datetime.now()
             try:
-                headers = None
-                if self.config["Watcher"]["use_custom_user_agent"]:
-                    user_agent_string = f"GengoWatcher/1.0 (+{self.config['Network']['user_agent_email']})"
-                    headers = {'User-Agent': user_agent_string}
-                
-                self.logger.info(f"Checking RSS feed: {self.config['Watcher']['feed_url']}...")
-                feed = feedparser.parse(self.config["Watcher"]["feed_url"], request_headers=headers)
+                self.logger.info("Fetching RSS feed...")
+                feed = self.fetch_rss()
 
-                if feed.bozo:
-                    self.logger.warning(f"Feed parsing error: {feed.bozo_exception}. This indicates a malformed RSS feed or network issue. Gengo only allows 1 request every 30s.")
-                    self.logger.warning("Please check your internet connection or try validating the RSS feed URL in your browser.")
+                if feed is None:
+                    # Fetch failed
+                    self.logger.warning(f"RSS fetch failed or no entries. Failure count: {self.failure_count + 1}")
                     self.failure_count += 1
-                    wait_time = min(self.config["Watcher"]["check_interval"] * (2 ** self.failure_count), self.config["Network"]["max_backoff"])
-                    self.logger.info(f"Retrying in {wait_time} seconds due to parsing error...")
-                    self.check_now_event.wait(wait_time)
-                    self.check_now_event.clear()
+                    wait_time = min(backoff, max_backoff)
+                    self.logger.info(f"Backing off for {wait_time} seconds.")
+                    if self._smart_wait(wait_time):
+                        break
+                    backoff *= 2
                     continue
+                self.last_check_time = datetime.datetime.now()
+                # Fetch succeeded, reset failure count and backoff
+                self.failure_count = 0
+                backoff = 31
 
                 if not feed.entries:
-                    self.logger.info(f"No entries found in the feed. Last checked: {self.last_check_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                    self.failure_count = 0
-                    self.check_now_event.wait(self.config["Watcher"]["check_interval"])
+                    # No entries, no backoff, just wait normal interval
+                    self.logger.info("RSS feed fetched successfully but no new entries found.")
+                    wait_seconds = self.config["Watcher"]["check_interval"]
+                    self.logger.info(f"Waiting {wait_seconds} seconds before next check.")
                     self.check_now_event.clear()
+                    if self._smart_wait(wait_seconds):
+                        break
                     continue
 
-                latest_entry = feed.entries[0]
+                # Process new entries
+                self.process_entries(feed.entries)
 
-                if latest_entry.link != self.last_seen_link:
-                    self.total_new_entries_found += 1
-                    self.logger.info(f"{Fore.GREEN}{Style.BRIGHT}--- New Entry Discovered ---{Style.RESET_ALL}")
-                    self.logger.info(f"{Fore.GREEN}Title: {latest_entry.title}{Style.RESET_ALL}")
-                    self.logger.info(f"{Fore.GREEN}Link: {latest_entry.link}{Style.RESET_ALL}")
-                    published_date = getattr(latest_entry, 'published', getattr(latest_entry, 'updated', 'N/A'))
-                    self.logger.info(f"{Fore.GREEN}Date: {published_date}{Style.RESET_ALL}")
-                    self.logger.info(f"{Fore.GREEN}{Style.BRIGHT}----------------------------{Style.RESET_ALL}")
-
-                    self.last_seen_link = latest_entry.link
-                    self.notify(latest_entry.title, latest_entry.link)
-                    self._save_runtime_state()
-                else:
-                    self.logger.info(f"No new entries. Last checked: {self.last_check_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-                self.failure_count = 0
-                self.check_now_event.wait(self.config["Watcher"]["check_interval"])
+                # Wait normal interval
+                wait_seconds = self.config["Watcher"]["check_interval"]
+                self.logger.info(f"Next check in {wait_seconds} seconds.")
                 self.check_now_event.clear()
+                if self._smart_wait(wait_seconds):
+                    break
 
             except Exception as e:
-                self.logger.error(f"An unexpected error occurred in main loop: {e}", exc_info=True)
-                self.logger.warning("Please check your internet connection or the RSS feed URL.")
-                self.failure_count += 1
-                wait_time = min(self.config["Watcher"]["check_interval"] * (2 ** self.failure_count), self.config["Network"]["max_backoff"])
-                self.logger.info(f"Retrying in {wait_time} seconds due to error...")
-                self.check_now_event.wait(wait_time)
-                self.check_now_event.clear()
+                self.logger.error(f"Unexpected error: {e}")
+                self.last_error_message = str(e) 
+                time.sleep(10)
 
-        self.logger.info("Main watcher loop finished. Attempting to join command listener thread...")
-        self.command_thread.join(timeout=5)
-        if self.command_thread.is_alive():
-            self.logger.warning("Command listener thread did not terminate gracefully within timeout.")
-        else:
-            self.logger.info("Command listener thread stopped.")
-
-        self.logger.info("Watcher has completed its shutdown sequence.")
-
+        self.logger.info("Exiting main loop.")
 
 if __name__ == "__main__":
-    colorama.init()
     watcher = GengoWatcher()
+
+    # Start the main watcher loop in a daemon thread so it doesn't block
+    watcher_thread = threading.Thread(target=watcher.run, daemon=True, name="WatcherThread")
+    watcher_thread.start()
+
+    print("Type 'help' for commands. Type 'exit' to quit.")
+
     try:
-        watcher.run()
-    except SystemExit:
-        pass
+        while not watcher.shutdown_event.is_set():
+            cmd = input(">>> ").strip().lower()
+
+            if cmd in ("exit", "quit", "stop", "end", "ex", "qu"):
+                print("Exiting...")
+                watcher.shutdown_event.set()
+                break
+
+            elif cmd == "check":
+                watcher.logger.info("Manual check requested via command.")
+                watcher.check_now_event.set()
+
+            elif cmd == "status":
+                watcher.print_status()
+
+            elif cmd == "help":
+                print("Commands:\n  check  - Check RSS immediately\n  status - Show status\n  exit   - Quit\n  help   - Show this message\n  notifytest - Test the notification functionality")
+
+            elif cmd == "notifytest":
+                watcher.logger.info("Notification test command triggered.")
+                test_url = "https://gengo.com/t/jobs/status/available" # Example URL
+                watcher.show_notification(
+                    "This is a notification test!",
+                    title="GengoWatcher Test",
+                    play_sound=True,
+                    open_link=True,
+                    url=test_url
+                )
+
+            else:
+                print(f"Unknown command: {cmd}")
+
     except KeyboardInterrupt:
-        watcher.logger.info("KeyboardInterrupt caught in main, graceful shutdown process completed.")
-    except Exception as e:
-        watcher.logger.critical(f"Unhandled exception in main execution: {e}", exc_info=True)
-    finally:
-        sys.exit(0)
+        watcher.logger.info("Keyboard interrupt received in main thread.")
+        watcher.handle_exit() # Ensure graceful shutdown on Ctrl+C
+
+    # Wait for the watcher thread to finish if it's not already
+    watcher_thread.join()
+    watcher.logger.info("Program exited cleanly.")
+
