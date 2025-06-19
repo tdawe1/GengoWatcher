@@ -33,17 +33,16 @@ class ColoredFormatter(logging.Formatter):
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
 
-    # template ini settings
     DEFAULT_CONFIG = {
         "Watcher": {
-            "feed_url": "https://www.theguardian.com/uk/rss", #the feed you want to watch
-            "check_interval": "31", #seconds
+            "feed_url": "https://www.theguardian.com/uk/rss",
+            "check_interval": "31",
             "enable_notifications": "True",
-            "use_custom_user_agent": "False" #use if RSS feed rejects feedparser
+            "use_custom_user_agent": "False"
         },
         "Paths": {
             "sound_file": r"C:\path\to\your\sound.wav",
-            "vivaldi_path": r"C:\path\to\your\vivaldi.exe", #will open default browser if no vivaldi
+            "vivaldi_path": r"C:\path\to\your\vivaldi.exe",
             "log_file": "rss_check_log.txt",
             "notification_icon_path": ""
         },
@@ -53,17 +52,16 @@ class GengoWatcher:
         },
         "Network": {
             "max_backoff": "300",
-            "user_agent_email": "your_email@example.com" # Required if use_custom_user_agent is True
+            "user_agent_email": "your_email@example.com"
         },
-        "State": { # New section for persistent state
-            "last_seen_link": "", # Persisted across runs
-            "total_new_entries_found": "0" # Persisted across runs
+        "State": {
+            "last_seen_link": "",
+            "total_new_entries_found": "0"
         }
     }
 
     def __init__(self):
         self.config = {}
-        # Changed: Store the ConfigParser instance as an attribute
         self._config_parser = configparser.ConfigParser()
         self.last_seen_link = None
         self.shutdown_event = threading.Event()
@@ -104,15 +102,14 @@ class GengoWatcher:
         self.logger.info("Command listener active. Type 'help' for commands.")
 
     def _create_default_config(self):
-        """Creates a default ini if none found."""
-        # Changed: Use the instance's parser
+        parser = configparser.ConfigParser()
         for section, settings in self.DEFAULT_CONFIG.items():
-            self._config_parser.add_section(section)
+            parser.add_section(section)
             for key, value in settings.items():
-                self._config_parser.set(section, key, value)
+                parser.set(section, key, value)
 
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-            self._config_parser.write(f)
+            parser.write(f)
 
         print(f"\nCreated default '{self.CONFIG_FILE}'.")
         print("Please edit this file with your specific paths and preferences, then restart the script.")
@@ -121,8 +118,6 @@ class GengoWatcher:
         sys.exit(0)
 
     def _load_config(self):
-        """Loads settings from config.ini."""
-        # Changed: Use the instance's parser instead of a local variable
         
         if not Path(self.CONFIG_FILE).is_file():
             self._create_default_config()
@@ -130,7 +125,6 @@ class GengoWatcher:
         self._config_parser.read(self.CONFIG_FILE, encoding='utf-8')
 
         try:
-            # Changed: Access values using self._config_parser
             self.config["Watcher"] = {
                 "feed_url": self._config_parser.get("Watcher", "feed_url"),
                 "check_interval": self._config_parser.getint("Watcher", "check_interval"),
@@ -156,7 +150,7 @@ class GengoWatcher:
                 "user_agent_email": self._config_parser.get("Network", "user_agent_email", fallback=self.DEFAULT_CONFIG["Network"]["user_agent_email"])
             }
             
-            self.config["State"] = { # New section for persistent state
+            self.config["State"] = {
                 "last_seen_link": self._config_parser.get("State", "last_seen_link", fallback=""),
                 "total_new_entries_found": self._config_parser.getint("State", "total_new_entries_found", fallback=0)
             }
@@ -167,8 +161,6 @@ class GengoWatcher:
             sys.exit(1)
 
     def _save_runtime_state(self):
-        """Saves to config.ini."""
-
         if not self._config_parser.has_section("State"):
             self._config_parser.add_section("State")
         
@@ -184,7 +176,6 @@ class GengoWatcher:
 
 
     def _setup_logging(self):
-        """logging configuration set up"""
         self.logger = logging.getLogger("GengoWatcher")
         self.logger.setLevel(logging.INFO)
 
@@ -205,7 +196,6 @@ class GengoWatcher:
             self.logger.addHandler(console_handler)
 
     def _setup_signal_handlers(self):
-        """ for graceful exit"""
         signal.signal(signal.SIGINT, self.handle_exit)
 
     def handle_exit(self, signum=None, frame=None):
@@ -214,7 +204,6 @@ class GengoWatcher:
         self.shutdown_event.set()
 
     def play_sound(self):
-        """Alert sound via winsound."""
         try:
             if self.config["Paths"]["sound_file"].is_file():
                 winsound.PlaySound(str(self.config["Paths"]["sound_file"]), winsound.SND_FILENAME)
@@ -228,7 +217,6 @@ class GengoWatcher:
         threading.Thread(target=self.play_sound, daemon=True).start()
 
     def open_in_vivaldi(self, url):
-        """Opens a URL in Vivaldi or the default browser if Vivaldi path is not set."""
         if not self.config["Paths"]["vivaldi_path"] or not self.config["Paths"]["vivaldi_path"].is_file():
             self.logger.warning("Vivaldi path not set or invalid. Opening with default browser.")
             try:
@@ -277,9 +265,8 @@ class GengoWatcher:
         self.bring_vivaldi_to_foreground_async()
 
     def test_notify(self):
-        """Sends a test notification."""
         test_title = "Test Notification"
-        test_url = "https://gengo.com/t/jobs/status/available" # placeholder
+        test_url = "https://gengo.com/t/jobs/status/available"
         self.notify(test_title, test_url)
         self.logger.info("Test notification sent.")
 
@@ -312,8 +299,13 @@ class GengoWatcher:
         sys.stdout.flush()
         
         while not self.shutdown_event.is_set():
+            if self.shutdown_event.is_set():
+                break 
+
             if msvcrt.kbhit():
                 char = msvcrt.getch()
+                if self.shutdown_event.is_set():
+                    break
                 try:
                     decoded_char = char.decode('utf-8')
                 except UnicodeDecodeError:
@@ -351,12 +343,11 @@ class GengoWatcher:
                     sys.stdout.write(decoded_char)
                     sys.stdout.flush()
             else:
-                self.shutdown_event.wait(0.1)
+                self.shutdown_event.wait(0.05) 
         
         self.logger.info("Command listener thread exiting.")
 
     def run(self):
-        """Main loop"""
         self.logger.info("RSS watcher started.")
         self.failure_count = 0
 
