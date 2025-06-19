@@ -63,6 +63,8 @@ class GengoWatcher:
 
     def __init__(self):
         self.config = {}
+        # Changed: Store the ConfigParser instance as an attribute
+        self._config_parser = configparser.ConfigParser()
         self.last_seen_link = None
         self.shutdown_event = threading.Event()
         self.check_now_event = threading.Event()
@@ -87,30 +89,30 @@ class GengoWatcher:
             if isinstance(section_dict, dict):
                 for key, value in section_dict.items():
                     if key in ["sound_file", "vivaldi_path", "log_file", "notification_icon_path"]:
-                        self.logger.info(f"  {section_name}.{key}: [PATH_HIDDEN]")
+                        self.logger.info(f"   {section_name}.{key}: [PATH_HIDDEN]")
                     elif key == "user_agent_email":
                         if "@" in value:
                             parts = value.split("@")
-                            self.logger.info(f"  {section_name}.{key}: {parts[0][:2]}...@{parts[1]}")
+                            self.logger.info(f"   {section_name}.{key}: {parts[0][:2]}...@{parts[1]}")
                         else:
-                            self.logger.info(f"  {section_name}.{key}: [EMAIL_HIDDEN]")
+                            self.logger.info(f"   {section_name}.{key}: [EMAIL_HIDDEN]")
                     else:
-                        self.logger.info(f"  {section_name}.{key}: {value}")
+                        self.logger.info(f"   {section_name}.{key}: {value}")
             else:
-                self.logger.info(f"  {section_name}: {self.config[section_name]}")
+                self.logger.info(f"   {section_name}: {self.config[section_name]}")
         self.logger.info("-" * 40)
         self.logger.info("Command listener active. Type 'help' for commands.")
 
     def _create_default_config(self):
         """Creates a default ini if none found."""
-        parser = configparser.ConfigParser()
+        # Changed: Use the instance's parser
         for section, settings in self.DEFAULT_CONFIG.items():
-            parser.add_section(section)
+            self._config_parser.add_section(section)
             for key, value in settings.items():
-                parser.set(section, key, value)
+                self._config_parser.set(section, key, value)
 
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-            parser.write(f)
+            self._config_parser.write(f)
 
         print(f"\nCreated default '{self.CONFIG_FILE}'.")
         print("Please edit this file with your specific paths and preferences, then restart the script.")
@@ -120,42 +122,43 @@ class GengoWatcher:
 
     def _load_config(self):
         """Loads settings from config.ini."""
-        parser = configparser.ConfigParser()
-
+        # Changed: Use the instance's parser instead of a local variable
+        
         if not Path(self.CONFIG_FILE).is_file():
             self._create_default_config()
 
-        parser.read(self.CONFIG_FILE, encoding='utf-8')
+        self._config_parser.read(self.CONFIG_FILE, encoding='utf-8')
 
         try:
+            # Changed: Access values using self._config_parser
             self.config["Watcher"] = {
-                "feed_url": parser.get("Watcher", "feed_url"),
-                "check_interval": parser.getint("Watcher", "check_interval"),
-                "enable_notifications": parser.getboolean("Watcher", "enable_notifications"),
-                "use_custom_user_agent": parser.getboolean("Watcher", "use_custom_user_agent", fallback=False)
+                "feed_url": self._config_parser.get("Watcher", "feed_url"),
+                "check_interval": self._config_parser.getint("Watcher", "check_interval"),
+                "enable_notifications": self._config_parser.getboolean("Watcher", "enable_notifications"),
+                "use_custom_user_agent": self._config_parser.getboolean("Watcher", "use_custom_user_agent", fallback=False)
             }
 
-            notification_icon_path_str = parser.get("Paths", "notification_icon_path").strip()
+            notification_icon_path_str = self._config_parser.get("Paths", "notification_icon_path").strip()
             self.config["Paths"] = {
-                "sound_file": Path(parser.get("Paths", "sound_file")),
-                "vivaldi_path": Path(parser.get("Paths", "vivaldi_path")),
-                "log_file": Path(parser.get("Paths", "log_file")),
+                "sound_file": Path(self._config_parser.get("Paths", "sound_file")),
+                "vivaldi_path": Path(self._config_parser.get("Paths", "vivaldi_path")),
+                "log_file": Path(self._config_parser.get("Paths", "log_file")),
                 "notification_icon_path": Path(notification_icon_path_str) if notification_icon_path_str else None
             }
 
             self.config["Logging"] = {
-                "log_max_bytes": parser.getint("Logging", "log_max_bytes"),
-                "log_backup_count": parser.getint("Logging", "log_backup_count")
+                "log_max_bytes": self._config_parser.getint("Logging", "log_max_bytes"),
+                "log_backup_count": self._config_parser.getint("Logging", "log_backup_count")
             }
 
             self.config["Network"] = {
-                "max_backoff": parser.getint("Network", "max_backoff"),
-                "user_agent_email": parser.get("Network", "user_agent_email", fallback=self.DEFAULT_CONFIG["Network"]["user_agent_email"])
+                "max_backoff": self._config_parser.getint("Network", "max_backoff"),
+                "user_agent_email": self._config_parser.get("Network", "user_agent_email", fallback=self.DEFAULT_CONFIG["Network"]["user_agent_email"])
             }
             
             self.config["State"] = { # New section for persistent state
-                "last_seen_link": parser.get("State", "last_seen_link", fallback=""),
-                "total_new_entries_found": parser.getint("State", "total_new_entries_found", fallback=0)
+                "last_seen_link": self._config_parser.get("State", "last_seen_link", fallback=""),
+                "total_new_entries_found": self._config_parser.getint("State", "total_new_entries_found", fallback=0)
             }
             
         except configparser.Error as e:
@@ -165,18 +168,16 @@ class GengoWatcher:
 
     def _save_runtime_state(self):
         """Saves to config.ini."""
-        parser = configparser.ConfigParser()
-        parser.read(self.CONFIG_FILE, encoding='utf-8')
 
-        if not parser.has_section("State"):
-            parser.add_section("State")
+        if not self._config_parser.has_section("State"):
+            self._config_parser.add_section("State")
         
-        parser.set("State", "last_seen_link", self.last_seen_link if self.last_seen_link else "")
-        parser.set("State", "total_new_entries_found", str(self.total_new_entries_found))
+        self._config_parser.set("State", "last_seen_link", self.last_seen_link if self.last_seen_link else "")
+        self._config_parser.set("State", "total_new_entries_found", str(self.total_new_entries_found))
 
         try:
             with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-                parser.write(f)
+                self._config_parser.write(f) 
             self.logger.debug("Runtime state saved.")
         except IOError as e:
             self.logger.error(f"Failed to save runtime state to {self.CONFIG_FILE}: {e}")
@@ -306,7 +307,6 @@ class GengoWatcher:
 
 
     def command_listener(self):
-        """Listens for user commands in a non-blocking way using msvcrt."""
         current_command_line = ""
         sys.stdout.write(f"{Fore.MAGENTA}Command > {Style.RESET_ALL}")
         sys.stdout.flush()
