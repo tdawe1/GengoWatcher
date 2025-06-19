@@ -16,7 +16,7 @@ import datetime
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
     
-    # template ini
+    # template ini settings
     DEFAULT_CONFIG = {
         "Watcher": {
             "feed_url": "https://www.theguardian.com/uk/rss", #the feed you want to watch
