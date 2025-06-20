@@ -199,7 +199,9 @@ class GengoWatcher:
 
     def _smart_wait(self, total_seconds: float) -> bool:
         """Waits up to total_seconds for shutdown or manual check."""
-        return self.check_now_event.wait(timeout=total_seconds) or self.shutdown_event.is_set()
+        # Wait for either shutdown or manual check, but only break loop if shutdown_event is set
+        self.check_now_event.wait(timeout=total_seconds)
+        return self.shutdown_event.is_set()
 
     def handle_exit(self, signum=None, frame=None):
         if not self.shutdown_event.is_set():
@@ -388,6 +390,7 @@ class GengoWatcher:
                     self.logger.info(f"Backing off for {wait_time} seconds.")
                     if self._smart_wait(wait_time):
                         break
+                    self.check_now_event.clear()  # Always clear after wait, even on failure
                     backoff *= 2
                     continue
                 self.last_check_time = datetime.datetime.now()
@@ -469,6 +472,7 @@ if __name__ == "__main__":
         watcher.handle_exit() # Ensure graceful shutdown on Ctrl+C
 
     # Wait for the watcher thread to finish if it's not already
-    watcher_thread.join()
+    watcher_thread.join(timeout=5)
     watcher.logger.info("Program exited cleanly.")
+    sys.exit(0)
 

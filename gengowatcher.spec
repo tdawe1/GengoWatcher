@@ -5,8 +5,11 @@ a = Analysis(
     ['gengowatcher.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        ('C:/Users/Thomas/Documents/Work/Python/Lib/site-packages/win10toast-0.9.dist-info', 'win10toast-0.9.dist-info'),
+        ('C:/Users/Thomas/Documents/Work/Python/Lib/site-packages/win10toast/data', 'win10toast/data')
+    ],
+    hiddenimports=['win10toast', 'pkg_resources'],    
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
