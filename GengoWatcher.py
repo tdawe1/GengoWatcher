@@ -827,4 +827,3 @@ if __name__ == "__main__":
     watcher_thread.join(timeout=5)
     watcher.logger.info("Program exited cleanly.")
     sys.exit(0)
-
