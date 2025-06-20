@@ -1,3 +1,6 @@
+__version__ = "1.1.2"
+__release_date__ = "2025-06-21"
+
 import feedparser
 import time
 import webbrowser
@@ -33,13 +36,15 @@ class ColoredFormatter(logging.Formatter):
 
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
+    PAUSE_FILE = "gengowatcher.pause"
 
     DEFAULT_CONFIG = {
         "Watcher": {
             "feed_url": "https://www.theguardian.com/uk/rss",
             "check_interval": "31",
             "enable_notifications": "True",
-            "use_custom_user_agent": "False"
+            "use_custom_user_agent": "False",
+            "enable_sound": "True"  
         },
         "Paths": {
             "sound_file": r"C:\path\to\your\sound.wav",
@@ -71,6 +76,7 @@ class GengoWatcher:
         self.notifier = ToastNotifier()
         self.total_new_entries_found = 0
         self.failure_count = 0
+        self.current_action = "Initializing"
 
         self._load_config()
         self.last_seen_link = self.config["State"]["last_seen_link"] if self.config["State"]["last_seen_link"] else None
@@ -129,7 +135,8 @@ class GengoWatcher:
                 "feed_url": self._config_parser.get("Watcher", "feed_url"),
                 "check_interval": self._config_parser.getint("Watcher", "check_interval"),
                 "enable_notifications": self._config_parser.getboolean("Watcher", "enable_notifications"),
-                "use_custom_user_agent": self._config_parser.getboolean("Watcher", "use_custom_user_agent", fallback=False)
+                "use_custom_user_agent": self._config_parser.getboolean("Watcher", "use_custom_user_agent", fallback=False),
+                "enable_sound": self._config_parser.getboolean("Watcher", "enable_sound", fallback=True)  # Load enable_sound
             }
 
             notification_icon_path_str = self._config_parser.get("Paths", "notification_icon_path").strip()
@@ -166,6 +173,11 @@ class GengoWatcher:
 
         self._config_parser.set("State", "last_seen_link", self.last_seen_link if self.last_seen_link else "")
         self._config_parser.set("State", "total_new_entries_found", str(self.total_new_entries_found))
+
+        if not self._config_parser.has_section("Watcher"):
+            self._config_parser.add_section("Watcher")
+        self._config_parser.set("Watcher", "enable_sound", str(self.config["Watcher"].get("enable_sound", True)))
+        self._config_parser.set("Watcher", "enable_notifications", str(self.config["Watcher"].get("enable_notifications", True)))
 
         try:
             with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -214,6 +226,9 @@ class GengoWatcher:
 
     def play_sound(self):
         try:
+            if not self.config["Watcher"].get("enable_sound", True):
+                self.logger.debug("Sound is disabled in config.")
+                return
             if self.config["Paths"]["sound_file"].is_file():
                 winsound.PlaySound(str(self.config["Paths"]["sound_file"]), winsound.SND_FILENAME)
             else:
@@ -260,23 +275,26 @@ class GengoWatcher:
         last_check = self.last_check_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_check_time else "Never"
         polling_interval = self.config["Watcher"]["check_interval"]
         notif_enabled = self.config["Watcher"]["enable_notifications"]
-        # Simplified check for sound and vivaldi, relying on the config parsing setting Path objects
-        sound_enabled = bool(self.config["Paths"]["sound_file"] and self.config["Paths"]["sound_file"].is_file())
+        sound_enabled = self.config["Watcher"].get("enable_sound", True)
         vivaldi_configured = bool(self.config["Paths"]["vivaldi_path"] and self.config["Paths"]["vivaldi_path"].is_file())
-        # url_opening_enabled = True # This line can be removed as it's always true currently
-        last_error = getattr(self, 'last_error_message', "None") # You're not setting this, see suggestion below
+        last_error = getattr(self, 'last_error_message', "None")
         uptime_seconds = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
         uptime_str = str(datetime.timedelta(seconds=uptime_seconds))
+        version = globals().get("__version__", "?")
+        release_date = globals().get("__release_date__", "?")
+        current_action = getattr(self, 'current_action', "Idle")
 
         print("\n=== GengoWatcher Status ===")
+        print(f"Version:              {version}")
+        print(f"Release date:         {release_date}")
         print(f"Status:               {status}")
+        print(f"Current action:       {current_action}")
         print(f"New posts detected:   {new_posts_count}")
         print(f"Last check time:      {last_check}")
         print(f"Polling interval (s): {polling_interval}")
         print(f"Notifications:        {'Enabled' if notif_enabled else 'Disabled'}")
         print(f"Sound:                {'Enabled' if sound_enabled else 'Disabled'}")
         print(f"Vivaldi path set:     {'Yes' if vivaldi_configured else 'No'}")
-        # print(f"URL opening enabled:  {'Yes' if url_opening_enabled else 'No'}") # Remove this line
         print(f"Last error logged:    {last_error}")
         print(f"Uptime:               {uptime_str}")
         print("===========================\n")
@@ -373,57 +391,73 @@ class GengoWatcher:
 
     def run(self):
         self.logger.info("Starting main RSS check loop...")
-
+        self.current_action = "Starting main loop"
         backoff = 31
         max_backoff = self.config["Network"]["max_backoff"]
+        is_paused = False
 
         while not self.shutdown_event.is_set():
             try:
+                # --- Pause/Resume Logic ---
+                if os.path.exists(self.PAUSE_FILE):
+                    if not is_paused:
+                        msg = f"Pause file '{self.PAUSE_FILE}' detected. Pausing RSS checks."
+                        self.logger.info(msg)
+                        print(f"[PAUSED] {msg}")
+                        is_paused = True
+                    self.current_action = "Paused (waiting for resume)"
+                    while os.path.exists(self.PAUSE_FILE) and not self.shutdown_event.is_set():
+                        time.sleep(1)
+                    if self.shutdown_event.is_set():
+                        break
+                    msg = f"Pause file '{self.PAUSE_FILE}' removed. Resuming RSS checks."
+                    self.logger.info(msg)
+                    print(f"[RESUMED] {msg}")
+                    is_paused = False
+                    self.current_action = "Resumed (preparing to fetch RSS)"
+                    continue
+                # --- End Pause/Resume Logic ---
+                self.current_action = "Fetching RSS feed"
                 self.logger.info("Fetching RSS feed...")
                 feed = self.fetch_rss()
-
                 if feed is None:
-                    # Fetch failed
                     self.logger.warning(f"RSS fetch failed or no entries. Failure count: {self.failure_count + 1}")
                     self.failure_count += 1
                     wait_time = min(backoff, max_backoff)
                     self.logger.info(f"Backing off for {wait_time} seconds.")
+                    self.current_action = f"Waiting {wait_time}s (backoff after failure)"
                     if self._smart_wait(wait_time):
                         break
-                    self.check_now_event.clear()  # Always clear after wait, even on failure
+                    self.check_now_event.clear()
                     backoff *= 2
                     continue
                 self.last_check_time = datetime.datetime.now()
-                # Fetch succeeded, reset failure count and backoff
                 self.failure_count = 0
                 backoff = 31
-
                 if not feed.entries:
-                    # No entries, no backoff, just wait normal interval
                     self.logger.info("RSS feed fetched successfully but no new entries found.")
                     wait_seconds = self.config["Watcher"]["check_interval"]
                     self.logger.info(f"Waiting {wait_seconds} seconds before next check.")
+                    self.current_action = f"Waiting {wait_seconds}s (no new entries)"
                     self.check_now_event.clear()
                     if self._smart_wait(wait_seconds):
                         break
                     continue
-
-                # Process new entries
+                self.current_action = f"Processing {len(feed.entries)} new entries"
                 self.process_entries(feed.entries)
-
-                # Wait normal interval
                 wait_seconds = self.config["Watcher"]["check_interval"]
                 self.logger.info(f"Next check in {wait_seconds} seconds.")
+                self.current_action = f"Waiting {wait_seconds}s (after processing entries)"
                 self.check_now_event.clear()
                 if self._smart_wait(wait_seconds):
                     break
-
             except Exception as e:
                 self.logger.error(f"Unexpected error: {e}")
-                self.last_error_message = str(e) 
+                self.last_error_message = str(e)
+                self.current_action = f"Error: {e}"
                 time.sleep(10)
-
         self.logger.info("Exiting main loop.")
+        self.current_action = "Stopped"
 
 if __name__ == "__main__":
     watcher = GengoWatcher()
@@ -450,8 +484,47 @@ if __name__ == "__main__":
             elif cmd == "status":
                 watcher.print_status()
 
+            elif cmd == "pause":
+                if not os.path.exists(watcher.PAUSE_FILE):
+                    with open(watcher.PAUSE_FILE, "w") as f:
+                        f.write("Paused by user command.\n")
+                    print(f"Watcher paused. Enter 'resume' to continue.")
+                    watcher.logger.info(f"Pause file '{watcher.PAUSE_FILE}' created by user command.")
+                else:
+                    print(f"Watcher is already paused (pause file exists).")
+
+            elif cmd == "resume":
+                if os.path.exists(watcher.PAUSE_FILE):
+                    try:
+                        os.remove(watcher.PAUSE_FILE)
+                        print(f"Watcher resumed.")
+                        watcher.logger.info(f"Pause file '{watcher.PAUSE_FILE}' removed by user command.")
+                    except Exception as e:
+                        print(f"Failed to remove pause file: {e}")
+                        watcher.logger.error(f"Failed to remove pause file: {e}")
+                else:
+                    print(f"Watcher is not paused (pause file does not exist).")
+
+            elif cmd == "togglesound":
+                current = watcher.config["Watcher"].get("enable_sound", True)
+                new_val = not current
+                watcher.config["Watcher"]["enable_sound"] = new_val
+                watcher._config_parser.set("Watcher", "enable_sound", str(new_val))
+                watcher._save_runtime_state()
+                print(f"Sound {'enabled' if new_val else 'disabled'}.")
+                watcher.logger.info(f"Sound {'enabled' if new_val else 'disabled'} by user command.")
+
+            elif cmd == "togglenotifications":
+                current = watcher.config["Watcher"].get("enable_notifications", True)
+                new_val = not current
+                watcher.config["Watcher"]["enable_notifications"] = new_val
+                watcher._config_parser.set("Watcher", "enable_notifications", str(new_val))
+                watcher._save_runtime_state()
+                print(f"Notifications {'enabled' if new_val else 'disabled'}.")
+                watcher.logger.info(f"Notifications {'enabled' if new_val else 'disabled'} by user command.")
+
             elif cmd == "help":
-                print("Commands:\n  check  - Check RSS immediately\n  status - Show status\n  exit   - Quit\n  help   - Show this message\n  notifytest - Test the notification functionality")
+                print("Commands:\n  check   - Check RSS immediately\n  status  - Show status\n  pause   - Pause RSS checks\n  resume  - Resume RSS checks\n  togglesound - Toggle sound on/off\n  togglenotifications - Toggle notifications on/off\n  restart - Restart the script\n  reloadconfig - Reload the configuration file\n  exit    - Quit\n  help    - Show this message\n  notifytest - Test the notification functionality")
 
             elif cmd == "notifytest":
                 watcher.logger.info("Notification test command triggered.")
@@ -463,6 +536,25 @@ if __name__ == "__main__":
                     open_link=True,
                     url=test_url
                 )
+
+            elif cmd == "restart":
+                print("Restarting GengoWatcher...")
+                watcher.logger.info("Restart command received. Restarting script.")
+                watcher.shutdown_event.set()
+                watcher._save_runtime_state()
+                watcher_thread.join(timeout=5)
+                python = sys.executable
+                os.execv(python, [python] + sys.argv)
+
+            elif cmd == "reloadconfig":
+                try:
+                    watcher._load_config()
+                    watcher._setup_logging()
+                    print("Configuration reloaded.")
+                    watcher.logger.info("Configuration reloaded by user command.")
+                except Exception as e:
+                    print(f"Failed to reload configuration: {e}")
+                    watcher.logger.error(f"Failed to reload configuration: {e}")
 
             else:
                 print(f"Unknown command: {cmd}")
