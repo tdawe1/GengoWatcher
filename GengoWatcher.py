@@ -503,8 +503,11 @@ class GengoWatcher:
         self.current_action = "Stopped"
 
     def _print_initialization_summary_rich(self):
-        """Prints a clean, formatted summary using the rich library."""
+        """Prints a visually prominent summary using rich, with a border, title, and subtitle."""
         version = globals().get("__version__", "?")
+        banner_text = Text("GengoWatcher", style="bold magenta")
+        subtitle = Text("Your real-time Gengo RSS job monitor", style="italic cyan")
+        # Build the config table
         config_table = Table(box=None, show_header=False, pad_edge=False)
         config_table.add_column("Key", style="cyan")
         config_table.add_column("Value")
@@ -522,11 +525,19 @@ class GengoWatcher:
                     display_value = f"{parts[0][:2]}...@{parts[1]}"
                 config_table.add_row(key, Text(display_value, style=style))
             config_table.add_row()
+        # Compose the panel content
+        panel_content = Text.assemble(
+            banner_text, "\n", subtitle, "\n\n"
+        )
+        # Use a Group to stack text and table vertically
+        from rich.console import Group
+        group = Group(panel_content, config_table)
         panel = Panel(
-            config_table,
-            title="[bold magenta]GengoWatcher Initialized[/]",
+            group,
+            title="[bold bright_blue]🚀 GengoWatcher Initialized[/]",
             subtitle=f"[cyan]v{version}[/]",
-            border_style="magenta"
+            border_style="bright_blue",
+            padding=(1, 4)
         )
         self.console.print(panel)
 
@@ -579,6 +590,18 @@ class GengoWatcher:
     def is_min_reward_enabled(self):
         # Treat 0.0 as disabled, any other value as enabled
         return self.config["Watcher"].get("min_reward", 0.0) > 0.0
+
+def print_welcome_banner():
+    console = Console()
+    banner_text = Text("GengoWatcher", style="bold magenta")
+    subtitle = Text("Your real-time Gengo RSS job monitor", style="italic cyan")
+    panel = Panel.fit(
+        Text.assemble(banner_text, "\n", subtitle),
+        border_style="bright_blue",
+        title="🚀 Welcome",
+        padding=(1, 4),
+    )
+    console.print(panel)
 
 class CommandLineInterface:
     def __init__(self, watcher: GengoWatcher):
