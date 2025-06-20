@@ -34,7 +34,6 @@ class GengoWatcher:
             "feed_url": "https://www.theguardian.com/uk/rss",
             "check_interval": "31",
             "min_reward": "0.0",  
-            "min_reward_filter_enabled": "True",  # Add toggle to config
             "enable_notifications": "True",
             "use_custom_user_agent": "False",
             "enable_sound": "True"  
@@ -77,7 +76,6 @@ class GengoWatcher:
         self.failure_count = 0
         self.current_action = "Initializing"
         self.config_lock = threading.Lock()  # Thread-safety for config
-        self.min_reward_filter_enabled = True  # Default: filter is enabled
 
         self._load_config()
         self.last_seen_link = self.config["State"]["last_seen_link"] if self.config["State"]["last_seen_link"] else None
@@ -119,10 +117,9 @@ class GengoWatcher:
                 "feed_url": self._config_parser.get("Watcher", "feed_url"),
                 "check_interval": self._config_parser.getint("Watcher", "check_interval"),
                 "min_reward": self._config_parser.getfloat("Watcher", "min_reward", fallback=0.0),
-                "min_reward_filter_enabled": self._config_parser.getboolean("Watcher", "min_reward_filter_enabled", fallback=True),
                 "enable_notifications": self._config_parser.getboolean("Watcher", "enable_notifications"),
                 "use_custom_user_agent": self._config_parser.getboolean("Watcher", "use_custom_user_agent", fallback=False),
-                "enable_sound": self._config_parser.getboolean("Watcher", "enable_sound", fallback=True)  # Load enable_sound
+                "enable_sound": self._config_parser.getboolean("Watcher", "enable_sound", fallback=True)
             }
 
             notification_icon_path_str = self._config_parser.get("Paths", "notification_icon_path").strip()
@@ -170,7 +167,6 @@ class GengoWatcher:
         self._config_parser.set("Watcher", "enable_sound", str(self.config["Watcher"].get("enable_sound", True)))
         self._config_parser.set("Watcher", "enable_notifications", str(self.config["Watcher"].get("enable_notifications", True)))
         self._config_parser.set("Watcher", "min_reward", str(self.config["Watcher"].get("min_reward", 0.0)))
-        self._config_parser.set("Watcher", "min_reward_filter_enabled", str(getattr(self, 'min_reward_filter_enabled', True)))
         try:
             with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
                 self._config_parser.write(f)
@@ -317,8 +313,10 @@ class GengoWatcher:
         version = globals().get("__version__", "?")
         release_date = globals().get("__release_date__", "?")
         min_reward = self.config["Watcher"].get("min_reward", 0.0)
-        min_reward_filter = getattr(self, 'min_reward_filter_enabled', True)
-        min_reward_status = f"[green]Enabled[/] (US${min_reward:.2f})" if min_reward_filter else "[yellow]Disabled[/]"
+        if min_reward > 0.0:
+            min_reward_status = f"[green]Enabled[/] (US${min_reward:.2f})"
+        else:
+            min_reward_status = "[yellow]Disabled[/]"
         table = Table(box=None, show_header=False, expand=False)
         table.add_row("[bold white]Version:[/]", f"v{version} ({release_date})")
         table.add_row("[bold white]Status:[/]", f"[{status_color}]{status}[/]")
@@ -358,7 +356,7 @@ class GengoWatcher:
         if not entries:
             self.logger.info("Feed was fetched, but it contains no entries to process.")
             return
-        min_reward_threshold = self.config["Watcher"]["min_reward"] if getattr(self, 'min_reward_filter_enabled', True) else 0.0
+        min_reward_threshold = self.config["Watcher"].get("min_reward", 0.0)
         new_entries_to_process = []
         for entry in entries:
             link = entry.get("link")
@@ -379,7 +377,7 @@ class GengoWatcher:
             title = entry.get("title", "(No Title)")
             link = entry.get("link")
             reward = self._extract_reward(entry)
-            if reward < min_reward_threshold:
+            if min_reward_threshold > 0.0 and reward < min_reward_threshold:
                 self.logger.info(
                     f"  -> Skipping job: '{title}' (Reward US${reward:.2f} is below minimum of US${min_reward_threshold:.2f})"
                 )
@@ -540,7 +538,6 @@ class GengoWatcher:
                 "togglemainlog": "Toggle the main log file on/off.",
                 "toggleallentrieslog": "Toggle the all-entries log on/off.",
                 "setminreward": "Set the minimum reward threshold for jobs (e.g. setminreward 2.50).",
-                "togglerewardfilter": "Enable or disable the minimum reward filter."
             }
         }
         help_table = Table(box=None, show_header=False, pad_edge=False)
@@ -569,7 +566,7 @@ class GengoWatcher:
 
     def is_min_reward_enabled(self):
         # Treat 0.0 as disabled, any other value as enabled
-        return self.config["Watcher"].get("min_reward", 0.0) > 0.0 or self.min_reward_filter_enabled
+        return self.config["Watcher"].get("min_reward", 0.0) > 0.0
 
 class CommandLineInterface:
     def __init__(self, watcher: GengoWatcher):
@@ -649,11 +646,6 @@ class CommandLineInterface:
             self.watcher.config["Logging"]["log_all_entries_enabled"] = self.watcher.log_all_entries_enabled
             self.watcher._save_runtime_state()
             self.console.print(f" {self.OK} All-entries log {'enabled' if self.watcher.log_all_entries_enabled else 'disabled'}.")
-        elif cmd_lower == "togglerewardfilter":
-            self.watcher.min_reward_filter_enabled = not getattr(self.watcher, 'min_reward_filter_enabled', True)
-            state = 'enabled' if self.watcher.min_reward_filter_enabled else 'disabled'
-            self.console.print(f" {self.OK} Minimum reward filter {state}.")
-            self.watcher.logger.info(f"Minimum reward filter {state} by user command.")
         elif cmd_lower.startswith("setminreward"):
             parts = cmd.split()
             if len(parts) == 2:
