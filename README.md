@@ -1,9 +1,4 @@
-Of course. Here is a comprehensive README.md file for your GitHub repository. It includes a description, key features, installation instructions, usage guide, and configuration details.
-
-Just copy and paste the entire block of text into a new `README.md` file in your project's root directory.
-
-```markdown
-# GengoWatcher v1.2.1
+# GengoWatcher v2.0
 
 GengoWatcher is a sophisticated terminal application designed to monitor RSS feeds, specifically for platforms like Gengo, to find and alert you to new freelance jobs the instant they become available. It features a rich, interactive text-based user interface (TUI) that runs directly in your terminal, providing real-time status updates and command controls.
 
