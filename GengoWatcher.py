@@ -307,8 +307,8 @@ class GengoWatcher:
         if open_link and url:
             self.open_in_browser(url)
 
-    def print_status(self):
-        # Use rich Table and Panel for dashboard
+    def get_status_panel(self):
+        """Return a rich Panel representing the current status dashboard."""
         status = "Running"
         status_color = "green"
         if self.shutdown_event.is_set():
@@ -343,7 +343,30 @@ class GengoWatcher:
         table.add_row("[bold white]New Posts Found:[/]", str(self.total_new_entries_found))
         table.add_row("[bold white]Last Check Time:[/]", last_check)
         table.add_row("[bold white]Last Error:[/]", str(getattr(self, 'last_error_message', 'None')))
-        self.console.print(Panel(table, title="GengoWatcher Status", border_style="magenta"))
+        return Panel(table, title="GengoWatcher Status", border_style="magenta")
+
+    def print_status(self):
+        self.console.print(self.get_status_panel())
+
+    def show_live_status_dashboard(self):
+        from rich.live import Live
+        import threading
+        import sys
+        self.console.print("[bold cyan]Press [b][q][/b] or [b][Enter][/b] to exit the dashboard.[/bold cyan]")
+        stop_event = threading.Event()
+        def wait_for_exit():
+            while True:
+                key = sys.stdin.read(1)
+                if key.lower() == 'q' or key == '\n' or key == '\r':
+                    stop_event.set()
+                    break
+        input_thread = threading.Thread(target=wait_for_exit, daemon=True)
+        input_thread.start()
+        from rich.live import Live
+        with Live(self.get_status_panel, console=self.console, refresh_per_second=2, screen=False) as live:
+            while not stop_event.is_set():
+                live.update(self.get_status_panel())
+                time.sleep(0.5)
 
     def _extract_reward(self, entry) -> float:
         """
@@ -610,7 +633,7 @@ class CommandLineInterface:
         # --- Central Command Definition ---
         self.commands = {
             "status": {
-                "handler": self.watcher.print_status,
+                "handler": self._handle_status,
                 "aliases": ["s", "st"],
                 "help": "Show the real-time status dashboard."
             },
