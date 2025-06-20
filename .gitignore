@@ -5,3 +5,5 @@ gengowatcher.pause
 config.ini.new
 venv/
 assets/ecg-monitor.png
+build/
+dist/
