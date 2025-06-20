@@ -1,110 +1,107 @@
-# GengoWatcher v1.1.0
+# GengoWatcher
 
-GengoWatcher is a lightweight Windows application that monitors RSS feeds and delivers desktop notifications. It will automatically open new feed items for you so that you can quickly respond.  It integrates with browsers and supports sound alerts and logging. 
+A terminal-based utility for monitoring RSS feeds. It provides desktop notifications and filters new entries based on user-defined criteria. The application is primarily designed for use with Gengo's RSS feed but can be configured for other feeds.
 
-## Features
+---
 
-* Monitor RSS feeds
-* Desktop notifications for new feed items
-* Sound alerts for notifications
-* Integration with Vivaldi browser for opening links
-* Logging of feed checks and notifications
-* Interactive console commands for control
+## 💾 Standalone Executable
 
-## Installation
+For users who do not wish to install Python or manage dependencies, a pre-compiled executable is available.
 
-1.  Download `gengowatcher.exe` and place it in a folder of your choice.
-2.  Ensure `config.ini` is in the same directory as `gengowatcher.exe`. If it's not present, a default one will be created on the first run.
-3.  Run `gengowatcher.exe` by double-clicking or via the command line.
+1.  Navigate to the **[Releases](https://github.com/tdawe1/GengoWatcher/releases)** page.
+2.  Download the `GengoWatcher-vX.X.X.exe` file from the most recent release.
+3.  Place the executable in its own folder.
+4.  Run the executable. A `config.ini` file will be generated in the same directory for configuration.
 
-## Usage
+---
 
-### Starting the application
+## ✨ Features
 
-Double-click `gengowatcher.exe` to start monitoring your RSS feeds automatically.
+*   **Terminal User Interface:** Provides a text-based user interface using the `rich` library for formatted output, including a status dashboard and tables.
+*   **Reward-Based Filtering:** Allows users to set a minimum monetary value to filter which feed entries trigger an alert.
+*   **Desktop Notifications:** Delivers desktop notifications via `plyer` and can play a `.wav` sound file upon finding a qualifying entry.
+*   **Interactive Console:** An interactive console accepts commands and aliases for real-time application control.
+*   **State Persistence:** The application saves the last-seen feed entry to `config.ini` on exit, allowing it to resume without reprocessing old entries.
+*   **Configuration File:** Most application behavior is controlled through a `config.ini` file.
+*   **Error Handling:** Implements an exponential backoff strategy to handle temporary network or feed availability issues.
+*   **Logging:** Can maintain a main application log and a secondary log that records all entries found in the feed.
 
-### Interactive Console Commands
+---
 
-Once the application is running, you can interact with it by typing commands in the console window:
+## 🐍 Installation from Source
 
-* **`help`**: Display a list of available commands and their descriptions.
-* **`check`**: Immediately trigger an RSS feed check, regardless of the configured interval.
-* **`status`**: Show the current watcher status, including last check time, total new entries found, and configuration details.
-* **`notifytest`**: Send a test desktop notification to verify functionality.
-* **`exit` / `quit`**: Gracefully stop the watcher and exit the application.
+This method is for users who prefer to run the script directly from its source code.
 
-## Configuration
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/tdawe1/GengoWatcher.git
+    cd GengoWatcher
+    ```
+2.  **Create and activate a virtual environment:**
+    ```bash
+    # On Windows
+    python -m venv .venv
+    .\.venv\Scripts\activate
+    ```
+3.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+4.  **Configure and Run:**
+    The `config.ini` file will be generated on the first run. Edit this file with the required settings and then start the application:
+    ```bash
+    python gengowatcher.py
+    ```
 
-The application uses `config.ini` for its settings. If `config.ini` is not found, a default one will be created.
+---
 
-Modify `config.ini` to adjust settings like the RSS `feed_url`, `check_interval`, notification preferences, and file paths.
+## ⚙️ Configuration (`config.ini`)
 
-**Example configuration (`config.ini`):**
+The `config.ini` file contains all user-configurable settings.
 
-```ini
-[Watcher]
-# RSS feed URL to monitor
-feed_url = https://www.theguardian.com/uk/rss
+*   **`[Watcher]`**
+    *   `feed_url`: The URL of the RSS feed to monitor.
+    *   `check_interval`: Time in seconds between feed checks.
+    *   `min_reward`: The minimum value to trigger an alert. A value of `0.0` disables the filter.
+    *   `enable_notifications`: Toggles desktop notifications (`True`/`False`).
+    *   `enable_sound`: Toggles sound alerts (`True`/`False`).
+*   **`[Paths]`**
+    *   `sound_file`: Filesystem path to a `.wav` file for sound alerts.
+    *   `browser_path`: Path to a browser executable. If empty, the system default is used.
+    *   `browser_args`: Command-line arguments for the custom browser (e.g., `--new-window {url}`).
+*   **`[Logging]`**
+    *   `log_main_enabled`: Toggles the main application log (`rss_check_log.txt`).
+    *   `log_all_entries_enabled`: Toggles the log that records all found feed entries (`all_entries_log.txt`).
 
-# Interval in seconds between RSS feed checks
-check_interval = 31
+---
 
-# Enable or disable desktop notifications (True/False)
-enable_notifications = True
+## ⌨️ Command Reference
 
-# Whether to use a custom User-Agent header for HTTP requests
-use_custom_user_agent = False
+Type a command or its alias and press Enter. Commands are not case-sensitive.
 
+| Command              | Aliases          | Arguments  | Description                                        |
+| -------------------- | ---------------- | ---------- | -------------------------------------------------- |
+| **`status`**         | `s`, `st`        | -          | Show the application status dashboard.             |
+| **`check`**          | `c`, `now`       | -          | Trigger an immediate RSS feed check.               |
+| **`help`**           | `h`              | -          | Display the list of available commands.            |
+| **`exit`**           | `q`, `quit`      | -          | Save state and exit the application.               |
+| **`pause`**          | `p`              | -          | Pause RSS feed checks.                             |
+| **`resume`**         | `r`              | -          | Resume RSS feed checks.                            |
+| **`togglesound`**    | `ts`             | -          | Enable or disable sound alerts.                    |
+| **`togglenotifications`** | `tn`        | -          | Enable or disable desktop notifications.           |
+| **`setminreward`**   | `smr`            | `<amount>` | Set the minimum reward value for filtering.        |
+| **`reloadconfig`**   | `rl`             | -          | Reload settings from the `config.ini` file.        |
+| **`restart`**        | -                | -          | Restart the application.                           |
+| **`notifytest`**     | `nt`             | -          | Send a test notification to verify settings.       |
 
-[Paths]
-# Full path to the WAV sound file to play on new entries
-sound_file = C:\path\to\your\sound.wav
+---
 
-# Full path to Vivaldi browser executable
-vivaldi_path = C:\path\to\your\vivaldi.exe
+## 📄 License
 
-# Log file path (relative or absolute)
-log_file = rss_check_log.txt
+This project is distributed under the MIT License. See the `LICENSE` file for details.
 
-# Optional icon path for notifications (leave blank for default)
-notification_icon_path =
-
-
-[Logging]
-# Maximum size in bytes for a single log file before rotation
-log_max_bytes = 1000000
-
-# Number of backup log files to keep
-log_backup_count = 3
-
-
-[Network]
-# Maximum backoff time (seconds) for retrying failed RSS fetches
-max_backoff = 300
-
-# Email to use in User-Agent when use_custom_user_agent is True
-user_agent_email = your_email@example.com
-
-
-[State]
-# Last seen RSS entry link (do not edit manually unless you want to reset)
-last_seen_link =
-
-# Total number of new entries found since starting (do not edit manually)
-total_new_entries_found = 0
-```
-
-## Notifications
-
-* New items in your feeds trigger desktop notifications.
-* Notifications will attempt to open the item link in the Vivaldi browser when clicked (if Vivaldi path is configured). Otherwise, it will open the default browser.
-* Sound alerts accompany notifications if enabled.
-
-## Logs
-
-The app logs feed checks and notification events to a log file (default: `rss_check_log.txt` as specified in `config.ini`).
-
-## Updating
-
-Download the latest version `gengowatcher.exe` and replace the old executable.
-Your `config.ini` and log files will remain intact.# lazysearch
+---
+## Acknowledgements
+*   [Rich](https://github.com/Textualize/rich) - For terminal UI formatting.
+*   [feedparser](https://github.com/kurtmckee/feedparser) - For RSS feed parsing.
+*   [plyer](https://github.com/kivy/plyer) - For cross-platform desktop notifications.
