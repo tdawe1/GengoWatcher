@@ -24,6 +24,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 import re
+import csv
 
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
@@ -204,14 +205,24 @@ class GengoWatcher:
         )
         self.logger = logging.getLogger("rich")
 
-    def _log_all_entry(self, entry):
+    def _log_all_entry(self, entry, reward):
         if not getattr(self, 'log_all_entries_enabled', False):
             return
+        log_path = self.all_entries_log_path
+        file_exists = log_path.is_file()
         try:
-            with open(self.all_entries_log_path, 'a', encoding='utf-8') as f:
-                f.write(f"{datetime.datetime.now().isoformat()} | {entry.get('title', '(No Title)')} | {entry.get('link', '')}\n")
+            with open(log_path, 'a', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["timestamp", "title", "reward_usd", "link"])
+                writer.writerow([
+                    datetime.datetime.now().isoformat(),
+                    entry.get('title', '(No Title)'),
+                    f"{reward:.2f}",
+                    entry.get('link', '')
+                ])
         except Exception as e:
-            self.error(f"Failed to write to all-entries log: {e}")
+            self.error(f"Failed to write to all-entries CSV log: {e}")
 
     def _setup_signal_handlers(self):
         signal.signal(signal.SIGINT, self.handle_exit)
@@ -377,6 +388,7 @@ class GengoWatcher:
             title = entry.get("title", "(No Title)")
             link = entry.get("link")
             reward = self._extract_reward(entry)
+            self._log_all_entry(entry, reward)
             if min_reward_threshold > 0.0 and reward < min_reward_threshold:
                 self.logger.info(
                     f"  -> Skipping job: '{title}' (Reward US${reward:.2f} is below minimum of US${min_reward_threshold:.2f})"
