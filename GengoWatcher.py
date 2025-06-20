@@ -4,6 +4,7 @@ __release_date__ = "2025-06-21"
 import feedparser
 import time
 import webbrowser
+from plyer import notification # pip install plyer
 import os
 import winsound
 from win10toast import ToastNotifier
@@ -47,10 +48,13 @@ class GengoWatcher:
             "enable_sound": "True"  
         },
         "Paths": {
-            "sound_file": r"C:\path\to\your\sound.wav",
-            "vivaldi_path": r"C:\path\to\your\vivaldi.exe",
+            "sound_file": r"C:\\path\\to\\your\\sound.wav",
+            "vivaldi_path": r"C:\\path\\to\\your\\vivaldi.exe",
             "log_file": "rss_check_log.txt",
-            "notification_icon_path": ""
+            "notification_icon_path": "",
+            # New cross-platform browser settings:
+            "browser_path": "",  # Leave empty to use system default browser
+            "browser_args": "--new-window {url}"  # {url} will be replaced with the actual URL
         },
         "Logging": {
             "log_max_bytes": "1000000",
@@ -77,6 +81,7 @@ class GengoWatcher:
         self.total_new_entries_found = 0
         self.failure_count = 0
         self.current_action = "Initializing"
+        self.config_lock = threading.Lock()  # Thread-safety for config
 
         self._load_config()
         self.last_seen_link = self.config["State"]["last_seen_link"] if self.config["State"]["last_seen_link"] else None
@@ -144,7 +149,9 @@ class GengoWatcher:
                 "sound_file": Path(self._config_parser.get("Paths", "sound_file")),
                 "vivaldi_path": Path(self._config_parser.get("Paths", "vivaldi_path")),
                 "log_file": Path(self._config_parser.get("Paths", "log_file")),
-                "notification_icon_path": Path(notification_icon_path_str) if notification_icon_path_str else None
+                "notification_icon_path": Path(notification_icon_path_str) if notification_icon_path_str else None,
+                "browser_path": self._config_parser.get("Paths", "browser_path", fallback=""),
+                "browser_args": self._config_parser.get("Paths", "browser_args", fallback="--new-window {url}")
             }
 
             self.config["Logging"] = {
@@ -240,87 +247,57 @@ class GengoWatcher:
     def play_sound_async(self):
         threading.Thread(target=self.play_sound, daemon=True).start()
 
-    def open_in_vivaldi(self, url):
-        vivaldi_path = self.config["Paths"]["vivaldi_path"]
-
-        if not vivaldi_path or not vivaldi_path.is_file():
-            self.logger.warning(f"Vivaldi path invalid or not set: {vivaldi_path}")
+    def open_in_browser(self, url):
+        browser_path_str = self.config["Paths"].get("browser_path", "")
+        if not browser_path_str:
+            try:
+                webbrowser.open(url)
+                self.logger.info(f"Opened URL in default browser: {url}")
+            except Exception as e:
+                self.logger.error(f"Failed to open URL in default browser: {e}")
             return
-
+        browser_path = Path(browser_path_str)
+        if not browser_path.is_file():
+            self.logger.warning(f"Browser path invalid or not set: {browser_path}")
+            return
         try:
-            # Pass executable and args as a list to avoid shell quoting issues
-            subprocess.Popen([str(vivaldi_path), f'--app={url}'])
-            self.logger.debug(f"Opened URL in Vivaldi: {url}")
+            browser_args_template = self.config["Paths"].get("browser_args", "{url}")
+            final_args = [arg.format(url=url) for arg in browser_args_template.split()]
+            subprocess.Popen([str(browser_path)] + final_args)
+            self.logger.debug(f"Opened URL using custom browser: {browser_path}")
         except Exception as e:
-            self.logger.error(f"Failed to open URL in Vivaldi: {e}")
+            self.logger.error(f"Failed to open URL in custom browser: {e}")
 
     def notify(self, title, message):
         if not self.config["Watcher"]["enable_notifications"]:
             self.logger.debug("Notifications are disabled in config.")
             return
-
         icon = None
         if self.config["Paths"]["notification_icon_path"] and self.config["Paths"]["notification_icon_path"].is_file():
             icon = str(self.config["Paths"]["notification_icon_path"])
-
         try:
-            self.notifier.show_toast(title, message, icon_path=icon, duration=8, threaded=True)
+            notification.notify(
+                title=title,
+                message=message,
+                app_name='GengoWatcher',
+                app_icon=icon,
+                timeout=8
+            )
             self.logger.debug(f"Notification shown: {title} - {message}")
         except Exception as e:
             self.logger.error(f"Notification error: {e}")
-            
-    def print_status(self):
-        status = "Running" if not self.shutdown_event.is_set() else "Stopped"
-        new_posts_count = self.total_new_entries_found
-        last_check = self.last_check_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_check_time else "Never"
-        polling_interval = self.config["Watcher"]["check_interval"]
-        notif_enabled = self.config["Watcher"]["enable_notifications"]
-        sound_enabled = self.config["Watcher"].get("enable_sound", True)
-        vivaldi_configured = bool(self.config["Paths"]["vivaldi_path"] and self.config["Paths"]["vivaldi_path"].is_file())
-        last_error = getattr(self, 'last_error_message', "None")
-        uptime_seconds = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
-        uptime_str = str(datetime.timedelta(seconds=uptime_seconds))
-        version = globals().get("__version__", "?")
-        release_date = globals().get("__release_date__", "?")
-        current_action = getattr(self, 'current_action', "Idle")
 
-        print("\n=== GengoWatcher Status ===")
-        print(f"Version:              {version}")
-        print(f"Release date:         {release_date}")
-        print(f"Status:               {status}")
-        print(f"Current action:       {current_action}")
-        print(f"New posts detected:   {new_posts_count}")
-        print(f"Last check time:      {last_check}")
-        print(f"Polling interval (s): {polling_interval}")
-        print(f"Notifications:        {'Enabled' if notif_enabled else 'Disabled'}")
-        print(f"Sound:                {'Enabled' if sound_enabled else 'Disabled'}")
-        print(f"Vivaldi path set:     {'Yes' if vivaldi_configured else 'No'}")
-        print(f"Last error logged:    {last_error}")
-        print(f"Uptime:               {uptime_str}")
-        print("===========================\n")
+    def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
+        self.notify(title, message)
+        play_sound_enabled = True
+        with self.config_lock:
+            play_sound_enabled = self.config["Watcher"].get("enable_sound", True)
+        if play_sound and play_sound_enabled:
+            self.play_sound_async()
+        if open_link and url:
+            self.open_in_browser(url)
 
-
-    def fetch_rss(self):
-        headers = {}
-        if self.config["Watcher"]["use_custom_user_agent"]:
-            user_agent = f"GengoWatcher/1.0 (mailto:{self.config['Network']['user_agent_email']})"
-            headers['User-Agent'] = user_agent
-
-        url = self.config["Watcher"]["feed_url"]
-
-        try:
-            feed = feedparser.parse(url, request_headers=headers)
-            if feed.bozo:
-                self.logger.warning(f"Malformed feed or parsing error: {feed.bozo_exception}")
-                if not hasattr(feed, 'entries') or not feed.entries:
-                    return None  # Treat as failure only if entries are truly missing
-            return feed
-        except Exception as e:
-            self.logger.error(f"RSS fetch error: {e}")
-            self.last_error_message = str(e) # Store the error
-            return None
-
-    def process_entries(self, entries):
+    def _process_feed_entries(self, entries):
         """
         Processes entries from the RSS feed to find and handle new items.
 
@@ -382,17 +359,31 @@ class GengoWatcher:
         # Persist the new state to the config file for the next run
         self._save_runtime_state()
 
-    def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
-        self.notify(title, message)
-        if play_sound:
-            self.play_sound_async()
-        if open_link and url:
-            self.open_in_vivaldi(url)
+    def fetch_rss(self):
+        headers = {}
+        if self.config["Watcher"]["use_custom_user_agent"]:
+            user_agent = f"GengoWatcher/1.0 (mailto:{self.config['Network']['user_agent_email']})"
+            headers['User-Agent'] = user_agent
+
+        url = self.config["Watcher"]["feed_url"]
+
+        try:
+            feed = feedparser.parse(url, request_headers=headers)
+            if feed.bozo:
+                self.logger.warning(f"Malformed feed or parsing error: {feed.bozo_exception}")
+                if not hasattr(feed, 'entries') or not feed.entries:
+                    return None  # Treat as failure only if entries are truly missing
+            return feed
+        except Exception as e:
+            self.logger.error(f"RSS fetch error: {e}")
+            self.last_error_message = str(e) # Store the error
+            return None
 
     def run(self):
         self.logger.info("Starting main RSS check loop...")
         self.current_action = "Starting main loop"
-        backoff = 31
+        base_interval = self.config["Watcher"]["check_interval"]
+        backoff = base_interval
         max_backoff = self.config["Network"]["max_backoff"]
         is_paused = False
 
@@ -433,7 +424,7 @@ class GengoWatcher:
                     continue
                 self.last_check_time = datetime.datetime.now()
                 self.failure_count = 0
-                backoff = 31
+                backoff = base_interval
                 if not feed.entries:
                     self.logger.info("RSS feed fetched successfully but no new entries found.")
                     wait_seconds = self.config["Watcher"]["check_interval"]
@@ -444,7 +435,7 @@ class GengoWatcher:
                         break
                     continue
                 self.current_action = f"Processing {len(feed.entries)} new entries"
-                self.process_entries(feed.entries)
+                self._process_feed_entries(feed.entries)
                 wait_seconds = self.config["Watcher"]["check_interval"]
                 self.logger.info(f"Next check in {wait_seconds} seconds.")
                 self.current_action = f"Waiting {wait_seconds}s (after processing entries)"
@@ -506,20 +497,20 @@ if __name__ == "__main__":
                     print(f"Watcher is not paused (pause file does not exist).")
 
             elif cmd == "togglesound":
-                current = watcher.config["Watcher"].get("enable_sound", True)
-                new_val = not current
-                watcher.config["Watcher"]["enable_sound"] = new_val
-                watcher._config_parser.set("Watcher", "enable_sound", str(new_val))
-                watcher._save_runtime_state()
+                with watcher.config_lock:
+                    current = watcher.config["Watcher"].get("enable_sound", True)
+                    new_val = not current
+                    watcher.config["Watcher"]["enable_sound"] = new_val
+                    watcher._save_runtime_state()
                 print(f"Sound {'enabled' if new_val else 'disabled'}.")
                 watcher.logger.info(f"Sound {'enabled' if new_val else 'disabled'} by user command.")
 
             elif cmd == "togglenotifications":
-                current = watcher.config["Watcher"].get("enable_notifications", True)
-                new_val = not current
-                watcher.config["Watcher"]["enable_notifications"] = new_val
-                watcher._config_parser.set("Watcher", "enable_notifications", str(new_val))
-                watcher._save_runtime_state()
+                with watcher.config_lock:
+                    current = watcher.config["Watcher"].get("enable_notifications", True)
+                    new_val = not current
+                    watcher.config["Watcher"]["enable_notifications"] = new_val
+                    watcher._save_runtime_state()
                 print(f"Notifications {'enabled' if new_val else 'disabled'}.")
                 watcher.logger.info(f"Notifications {'enabled' if new_val else 'disabled'} by user command.")
 
