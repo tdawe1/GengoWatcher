@@ -17,23 +17,12 @@ from pathlib import Path
 import configparser
 import datetime
 import subprocess
-import colorama
-from colorama import Fore, Style
-colorama.init()
-
-class ColoredFormatter(logging.Formatter):
-    COLORS = {
-        'DEBUG': Style.DIM + Fore.CYAN,
-        'INFO': Fore.CYAN,
-        'WARNING': Fore.YELLOW,
-        'ERROR': Fore.RED,
-        'CRITICAL': Style.BRIGHT + Fore.RED
-    }
-    RESET = Style.RESET_ALL
-
-    def format(self, record):
-        log_message = super().format(record)
-        return self.COLORS.get(record.levelname, self.RESET) + log_message + self.RESET
+import rich
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
@@ -52,13 +41,15 @@ class GengoWatcher:
             "vivaldi_path": r"C:\\path\\to\\your\\vivaldi.exe",
             "log_file": "rss_check_log.txt",
             "notification_icon_path": "",
-            # New cross-platform browser settings:
-            "browser_path": "",  # Leave empty to use system default browser
-            "browser_args": "--new-window {url}"  # {url} will be replaced with the actual URL
+            "browser_path": "",  
+            "browser_args": "--new-window {url}",
+            "all_entries_log": "all_entries_log.txt"  # Added for all-entries log
         },
         "Logging": {
             "log_max_bytes": "1000000",
-            "log_backup_count": "3"
+            "log_backup_count": "3",
+            "log_main_enabled": "True",
+            "log_all_entries_enabled": "True"
         },
         "Network": {
             "max_backoff": "300",
@@ -71,6 +62,7 @@ class GengoWatcher:
     }
 
     def __init__(self):
+        self.console = Console()
         self.config = {}
         self._config_parser = configparser.ConfigParser()
         self.last_seen_link = None
@@ -91,24 +83,7 @@ class GengoWatcher:
         self._setup_signal_handlers()
         self.last_error_message = "None"
 
-        self.logger.info("-" * 40)
-        self.logger.info("GengoWatcher Initialized with Settings:")
-        for section_name, section_dict in self.config.items():
-            if isinstance(section_dict, dict):
-                for key, value in section_dict.items():
-                    if key in ["sound_file", "vivaldi_path", "log_file", "notification_icon_path"]:
-                        self.logger.info(f"   {section_name}.{key}: [PATH_HIDDEN]")
-                    elif key == "user_agent_email":
-                        if "@" in value:
-                            parts = value.split("@")
-                            self.logger.info(f"   {section_name}.{key}: {parts[0][:2]}...@{parts[1]}")
-                        else:
-                            self.logger.info(f"   {section_name}.{key}: [EMAIL_HIDDEN]")
-                    else:
-                        self.logger.info(f"   {section_name}.{key}: {value}")
-            else:
-                self.logger.info(f"   {section_name}: {self.config[section_name]}")
-        self.logger.info("-" * 40)
+        self._print_initialization_summary_rich()  
         self.logger.info("Command listener active. Type 'help' for commands.")
         self.start_time = time.time()
 
@@ -151,12 +126,15 @@ class GengoWatcher:
                 "log_file": Path(self._config_parser.get("Paths", "log_file")),
                 "notification_icon_path": Path(notification_icon_path_str) if notification_icon_path_str else None,
                 "browser_path": self._config_parser.get("Paths", "browser_path", fallback=""),
-                "browser_args": self._config_parser.get("Paths", "browser_args", fallback="--new-window {url}")
+                "browser_args": self._config_parser.get("Paths", "browser_args", fallback="--new-window {url}"),
+                "all_entries_log": Path(self._config_parser.get("Paths", "all_entries_log"))  # Load all_entries_log path
             }
 
             self.config["Logging"] = {
                 "log_max_bytes": self._config_parser.getint("Logging", "log_max_bytes"),
-                "log_backup_count": self._config_parser.getint("Logging", "log_backup_count")
+                "log_backup_count": self._config_parser.getint("Logging", "log_backup_count"),
+                "log_main_enabled": self._config_parser.getboolean("Logging", "log_main_enabled", fallback=True),
+                "log_all_entries_enabled": self._config_parser.getboolean("Logging", "log_all_entries_enabled", fallback=True)
             }
 
             self.config["Network"] = {
@@ -194,31 +172,49 @@ class GengoWatcher:
             self.logger.error(f"Failed to save runtime state to {self.CONFIG_FILE}: {e}")
 
     def _setup_logging(self):
-        self.logger = logging.getLogger("GengoWatcher")
-        self.logger.setLevel(logging.INFO)
-
-        if not self.logger.handlers:
-            file_handler = RotatingFileHandler(
-                self.config["Paths"]["log_file"],
+        """Sets up logging to both a file and the rich console, with toggles."""
+        log_file_path = Path(self.config["Paths"]["log_file"])
+        log_file_path.parent.mkdir(exist_ok=True)
+        self.log_main_enabled = self.config.get("Logging", {}).get("log_main_enabled", True)
+        self.log_all_entries_enabled = self.config.get("Logging", {}).get("log_all_entries_enabled", False)
+        self.all_entries_log_path = Path(self.config["Paths"].get("all_entries_log", "all_entries_log.txt"))
+        self.all_entries_log_path.parent.mkdir(exist_ok=True)
+        handlers = [
+            RichHandler(
+                console=self.console,
+                rich_tracebacks=True,
+                markup=True
+            )
+        ]
+        if self.log_main_enabled:
+            handlers.append(RotatingFileHandler(
+                log_file_path,
                 maxBytes=self.config["Logging"]["log_max_bytes"],
                 backupCount=self.config["Logging"]["log_backup_count"],
                 encoding="utf-8"
-            )
-            file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            file_handler.setFormatter(file_formatter)
-            self.logger.addHandler(file_handler)
+            ))
+        logging.basicConfig(
+            level="INFO",
+            format="%(message)s",
+            datefmt="[%X]",
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("rich")
 
-            console_handler = logging.StreamHandler(sys.stdout)
-            colored_formatter = ColoredFormatter('%(asctime)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(colored_formatter)
-            self.logger.addHandler(console_handler)
+    def _log_all_entry(self, entry):
+        if not getattr(self, 'log_all_entries_enabled', False):
+            return
+        try:
+            with open(self.all_entries_log_path, 'a', encoding='utf-8') as f:
+                f.write(f"{datetime.datetime.now().isoformat()} | {entry.get('title', '(No Title)')} | {entry.get('link', '')}\n")
+        except Exception as e:
+            self.error(f"Failed to write to all-entries log: {e}")
 
     def _setup_signal_handlers(self):
         signal.signal(signal.SIGINT, self.handle_exit)
 
     def _smart_wait(self, total_seconds: float) -> bool:
         """Waits up to total_seconds for shutdown or manual check."""
-        # Wait for either shutdown or manual check, but only break loop if shutdown_event is set
         self.check_now_event.wait(timeout=total_seconds)
         return self.shutdown_event.is_set()
 
@@ -297,6 +293,38 @@ class GengoWatcher:
         if open_link and url:
             self.open_in_browser(url)
 
+    def print_status(self):
+        # Use rich Table and Panel for dashboard
+        status = "Running"
+        status_color = "green"
+        if self.shutdown_event.is_set():
+            status, status_color = "Stopped", "red"
+        elif os.path.exists(self.PAUSE_FILE):
+            status, status_color = "Paused", "yellow"
+        last_check = self.last_check_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_check_time else "Never"
+        notif_enabled = "[green]Enabled[/]" if self.config["Watcher"]["enable_notifications"] else "[yellow]Disabled[/]"
+        sound_enabled = "[green]Enabled[/]" if self.config["Watcher"].get("enable_sound", True) else "[yellow]Disabled[/]"
+        vivaldi_configured = "[green]Yes[/]" if bool(self.config["Paths"]["vivaldi_path"] and self.config["Paths"]["vivaldi_path"].is_file()) else "[red]No[/]"
+        uptime_seconds = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
+        uptime_str = str(datetime.timedelta(seconds=uptime_seconds))
+        version = globals().get("__version__", "?")
+        release_date = globals().get("__release_date__", "?")
+        table = Table(box=None, show_header=False, expand=False)
+        table.add_row("[bold white]Version:[/]", f"v{version} ({release_date})")
+        table.add_row("[bold white]Status:[/]", f"[{status_color}]{status}[/]")
+        table.add_row("[bold white]Uptime:[/]", uptime_str)
+        table.add_row("[bold white]Current Action:[/]", f"'{self.current_action}'")
+        table.add_row("[bold magenta] ── Configuration ──[/]", "")
+        table.add_row("[bold white]Polling Interval:[/]", f"{self.config['Watcher']['check_interval']} seconds")
+        table.add_row("[bold white]Notifications:[/]", notif_enabled)
+        table.add_row("[bold white]Sound:[/]", sound_enabled)
+        table.add_row("[bold white]Vivaldi Path Set:[/]", vivaldi_configured)
+        table.add_row("[bold magenta] ── Session Stats ──[/]", "")
+        table.add_row("[bold white]New Posts Found:[/]", str(self.total_new_entries_found))
+        table.add_row("[bold white]Last Check Time:[/]", last_check)
+        table.add_row("[bold white]Last Error:[/]", str(getattr(self, 'last_error_message', 'None')))
+        self.console.print(Panel(table, title="GengoWatcher Status", border_style="magenta"))
+
     def _process_feed_entries(self, entries):
         """
         Processes entries from the RSS feed to find and handle new items.
@@ -336,12 +364,13 @@ class GengoWatcher:
         # Reverse the list so we process from oldest-new to newest-new
         for entry in reversed(new_entries_to_process):
             title = entry.get("title", "(No Title)")
-            link = entry.get("link")  # We know this exists from the check above
-
-            self.logger.info(f"  -> New Job: '{title}'")
+            link = entry.get("link")
+            # --- MODIFICATION HERE ---
+            self.logger.info(
+                f"✨ New Job Found: '{title}'"
+            )
             self.total_new_entries_found += 1
-
-            # Trigger combined notification and action
+            # --- END MODIFICATION ---
             self.show_notification(
                 message=title,
                 title="New Gengo Job Available!",
@@ -450,73 +479,168 @@ class GengoWatcher:
         self.logger.info("Exiting main loop.")
         self.current_action = "Stopped"
 
+    def _print_initialization_summary_rich(self):
+        """Prints a clean, formatted summary using the rich library."""
+        version = globals().get("__version__", "?")
+        config_table = Table(box=None, show_header=False, pad_edge=False)
+        config_table.add_column("Key", style="cyan")
+        config_table.add_column("Value")
+        for section_name, section_dict in self.config.items():
+            if not isinstance(section_dict, dict):
+                continue
+            config_table.add_row(f"[bold white]── {section_name} Settings ──", style="magenta")
+            for key, value in section_dict.items():
+                display_value = str(value)
+                style = ""
+                if key in ["sound_file", "vivaldi_path", "log_file", "notification_icon_path", "browser_path"]:
+                    display_value, style = "[PATH_HIDDEN]", "yellow"
+                elif key == "user_agent_email" and "@" in str(value):
+                    parts = str(value).split("@")
+                    display_value = f"{parts[0][:2]}...@{parts[1]}"
+                config_table.add_row(key, Text(display_value, style=style))
+            config_table.add_row()
+        panel = Panel(
+            config_table,
+            title="[bold magenta]GengoWatcher Initialized[/]",
+            subtitle=f"[cyan]v{version}[/]",
+            border_style="magenta"
+        )
+        self.console.print(panel)
+
+    def print_help_rich(self):
+        commands = {
+            "Core Controls": {
+                "status": "Show the real-time status dashboard.",
+                "check": "Trigger an immediate RSS feed check.",
+                "exit": "Save state and gracefully quit the application."
+            },
+            "Watcher Management": {
+                "pause": "Pause RSS checks (by creating a pause file).",
+                "resume": "Resume RSS checks (by deleting the pause file).",
+                "restart": "Restart the entire script.",
+            },
+            "Settings & Tests": {
+                "togglesound": "Toggle sound alerts on/off.",
+                "togglenotifications": "Toggle desktop notifications on/off.",
+                "reloadconfig": "Reload all settings from config.ini.",
+                "notifytest": "Send a test notification to check settings.",
+                "togglemainlog": "Toggle the main log file on/off.",
+                "toggleallentrieslog": "Toggle the all-entries log on/off."
+            }
+        }
+        help_table = Table(box=None, show_header=False, pad_edge=False)
+        help_table.add_column("Command", style="yellow", width=25)
+        help_table.add_column("Description", style="cyan")
+        for category, cmds in commands.items():
+            help_table.add_row(f"[bold bright_white]-- {category} --", style="white")
+            for cmd, desc in cmds.items():
+                help_table.add_row(f"  {cmd}", desc)
+            help_table.add_row()
+        panel = Panel(
+            help_table,
+            title="[bold]GengoWatcher Commands[/]",
+            border_style="magenta",
+            padding=(1, 2)
+        )
+        self.console.print(panel)
+
+    def warn(self, message):
+        self.logger.warning(message)
+        self.console.print(f"[bold yellow][!][/bold yellow] {message}")
+
+    def error(self, message):
+        self.logger.error(message)
+        self.console.print(f"[bold red][-][/bold red] {message}")
+
 if __name__ == "__main__":
     watcher = GengoWatcher()
-
-    # Start the main watcher loop in a daemon thread so it doesn't block
+    console = watcher.console
     watcher_thread = threading.Thread(target=watcher.run, daemon=True, name="WatcherThread")
     watcher_thread.start()
-
-    print("Type 'help' for commands. Type 'exit' to quit.")
-
+    console.print("[bold cyan][>][/] Type 'help' for commands. Type 'exit' to quit.")
+    OK = "[bold green][+][/bold green]"
+    WARN = "[bold yellow][!][/bold yellow]"
+    ERR = "[bold red][-][/bold red]"
+    INFO = "[bold cyan][>][/bold cyan]"
     try:
         while not watcher.shutdown_event.is_set():
-            cmd = input(">>> ").strip().lower()
-
+            cmd = console.input("[bold]>>> [/] ").strip().lower()
             if cmd in ("exit", "quit", "stop", "end", "ex", "qu"):
-                print("Exiting...")
+                console.print("Exiting...")
                 watcher.shutdown_event.set()
                 break
-
             elif cmd == "check":
                 watcher.logger.info("Manual check requested via command.")
                 watcher.check_now_event.set()
-
             elif cmd == "status":
                 watcher.print_status()
-
             elif cmd == "pause":
                 if not os.path.exists(watcher.PAUSE_FILE):
                     with open(watcher.PAUSE_FILE, "w") as f:
                         f.write("Paused by user command.\n")
-                    print(f"Watcher paused. Enter 'resume' to continue.")
+                    console.print(f" {OK} Watcher paused. Enter 'resume' to continue.")
                     watcher.logger.info(f"Pause file '{watcher.PAUSE_FILE}' created by user command.")
                 else:
-                    print(f"Watcher is already paused (pause file exists).")
-
+                    console.print(f" {WARN} Watcher is already paused.")
             elif cmd == "resume":
                 if os.path.exists(watcher.PAUSE_FILE):
                     try:
                         os.remove(watcher.PAUSE_FILE)
-                        print(f"Watcher resumed.")
+                        console.print(f" {OK} Watcher resumed.")
                         watcher.logger.info(f"Pause file '{watcher.PAUSE_FILE}' removed by user command.")
                     except Exception as e:
-                        print(f"Failed to remove pause file: {e}")
+                        console.print(f" {ERR} Failed to remove pause file: {e}")
                         watcher.logger.error(f"Failed to remove pause file: {e}")
                 else:
-                    print(f"Watcher is not paused (pause file does not exist).")
-
+                    console.print(f" {WARN} Watcher is not paused.")
             elif cmd == "togglesound":
                 with watcher.config_lock:
                     current = watcher.config["Watcher"].get("enable_sound", True)
                     new_val = not current
                     watcher.config["Watcher"]["enable_sound"] = new_val
                     watcher._save_runtime_state()
-                print(f"Sound {'enabled' if new_val else 'disabled'}.")
-                watcher.logger.info(f"Sound {'enabled' if new_val else 'disabled'} by user command.")
-
+                status_text = f"{'enabled' if new_val else 'disabled'}"
+                console.print(f" {OK} Sound {status_text}.")
+                watcher.logger.info(f"Sound {status_text} by user command.")
             elif cmd == "togglenotifications":
                 with watcher.config_lock:
                     current = watcher.config["Watcher"].get("enable_notifications", True)
                     new_val = not current
                     watcher.config["Watcher"]["enable_notifications"] = new_val
                     watcher._save_runtime_state()
-                print(f"Notifications {'enabled' if new_val else 'disabled'}.")
-                watcher.logger.info(f"Notifications {'enabled' if new_val else 'disabled'} by user command.")
-
+                status_text = f"{'enabled' if new_val else 'disabled'}"
+                console.print(f" {OK} Notifications {status_text}.")
+                watcher.logger.info(f"Notifications {status_text} by user command.")
+            elif cmd == "togglemainlog":
+                watcher.log_main_enabled = not watcher.log_main_enabled
+                watcher.config["Logging"]["log_main_enabled"] = watcher.log_main_enabled
+                watcher._save_runtime_state()
+                console.print(f" {OK} Main log {'enabled' if watcher.log_main_enabled else 'disabled'}.")
+                watcher._setup_logging()
+            elif cmd == "toggleallentrieslog":
+                watcher.log_all_entries_enabled = not watcher.log_all_entries_enabled
+                watcher.config["Logging"]["log_all_entries_enabled"] = watcher.log_all_entries_enabled
+                watcher._save_runtime_state()
+                console.print(f" {OK} All-entries log {'enabled' if watcher.log_all_entries_enabled else 'disabled'}.")
             elif cmd == "help":
-                print("Commands:\n  check   - Check RSS immediately\n  status  - Show status\n  pause   - Pause RSS checks\n  resume  - Resume RSS checks\n  togglesound - Toggle sound on/off\n  togglenotifications - Toggle notifications on/off\n  restart - Restart the script\n  reloadconfig - Reload the configuration file\n  exit    - Quit\n  help    - Show this message\n  notifytest - Test the notification functionality")
-
+                watcher.print_help_rich()
+            elif cmd == "reloadconfig":
+                try:
+                    watcher._load_config()
+                    watcher._setup_logging()
+                    console.print(f" {OK} Configuration reloaded.")
+                    watcher.logger.info("Configuration reloaded by user command.")
+                except Exception as e:
+                    console.print(f" {ERR} Failed to reload configuration: {e}")
+                    watcher.logger.error(f"Failed to reload configuration: {e}")
+            elif cmd == "restart":
+                console.print(f" {INFO} Restarting GengoWatcher...")
+                watcher.logger.info("Restart command received. Restarting script.")
+                watcher.shutdown_event.set()
+                watcher._save_runtime_state()
+                watcher_thread.join(timeout=5)
+                python = sys.executable
+                os.execv(python, [python] + sys.argv)
             elif cmd == "notifytest":
                 watcher.logger.info("Notification test command triggered.")
                 test_url = "https://gengo.com/t/jobs/status/available" # Example URL
@@ -527,34 +651,11 @@ if __name__ == "__main__":
                     open_link=True,
                     url=test_url
                 )
-
-            elif cmd == "restart":
-                print("Restarting GengoWatcher...")
-                watcher.logger.info("Restart command received. Restarting script.")
-                watcher.shutdown_event.set()
-                watcher._save_runtime_state()
-                watcher_thread.join(timeout=5)
-                python = sys.executable
-                os.execv(python, [python] + sys.argv)
-
-            elif cmd == "reloadconfig":
-                try:
-                    watcher._load_config()
-                    watcher._setup_logging()
-                    print("Configuration reloaded.")
-                    watcher.logger.info("Configuration reloaded by user command.")
-                except Exception as e:
-                    print(f"Failed to reload configuration: {e}")
-                    watcher.logger.error(f"Failed to reload configuration: {e}")
-
             else:
-                print(f"Unknown command: {cmd}")
-
+                console.print(f"Unknown command: {cmd}")
     except KeyboardInterrupt:
         watcher.logger.info("Keyboard interrupt received in main thread.")
         watcher.handle_exit() # Ensure graceful shutdown on Ctrl+C
-
-    # Wait for the watcher thread to finish if it's not already
     watcher_thread.join(timeout=5)
     watcher.logger.info("Program exited cleanly.")
     sys.exit(0)
