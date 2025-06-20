@@ -635,7 +635,7 @@ class CommandLineInterface:
             "status": {
                 "handler": self._handle_status,
                 "aliases": ["s", "st"],
-                "help": "Show the real-time status dashboard."
+                "help": "Show the real-time status dashboard (press q or Enter to exit)."
             },
             "check": {
                 "handler": self._handle_check,
@@ -826,6 +826,9 @@ class CommandLineInterface:
             open_link=True,
             url="https://gengo.com/t/jobs/status/available"
         )
+
+    def _handle_status(self):
+        self.watcher.print_status()
 
 if __name__ == "__main__":
     watcher = GengoWatcher()
