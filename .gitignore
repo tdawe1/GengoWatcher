@@ -8,3 +8,4 @@ assets/ecg-monitor.png
 build/
 dist/
 GengoWatcher 64cfbf7b4bf436e6ac2acbc08f0d5509656b6bb1.py
+all_entries_log.txt
