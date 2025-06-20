@@ -21,633 +21,506 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.progress import Progress, BarColumn, TimeRemainingColumn
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
+from rich.layout import Layout
 import re
 import csv
 import inspect
+import collections
+
+# Platform-specific imports for non-blocking input
+try:
+    import msvcrt
+    PLATFORM = "windows"
+except ImportError:
+    import select
+    PLATFORM = "linux"
 
 APP_THEME = Theme({
-    "info": "cyan",
-    "success": "bold green",
-    "warning": "yellow",
-    "error": "bold red",
-    "title": "bold magenta",
-    "header": "bold bright_white",
-    "label": "cyan",
-    "value": "white",
-    "path": "italic yellow",
-    "panel_border": "bright_blue",
-    "table_header": "bold magenta"
+    "info": "cyan", "success": "bold green", "warning": "yellow", "error": "bold red",
+    "title": "bold magenta", "header": "bold bright_white", "label": "cyan", "value": "white",
+    "path": "italic yellow", "panel_border": "bright_blue", "table_header": "bold magenta",
+    "prompt": "bold white", "input": "white"
 })
+
+class UILoggingHandler(logging.Handler):
+    """A custom logging handler that captures styled logs for display in the UI."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.log_queue = collections.deque(maxlen=10)
+
+    def emit(self, record):
+        level_style_map = {
+            logging.INFO: "info",
+            logging.WARNING: "warning",
+            logging.ERROR: "error",
+            logging.CRITICAL: "bold red",
+        }
+        style = level_style_map.get(record.levelno, "default")
+        # Prepend timestamp to the message
+        message = f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - {record.getMessage()}"
+        self.log_queue.append(Text(message, style=style))
 
 class GengoWatcher:
     CONFIG_FILE = "config.ini"
     PAUSE_FILE = "gengowatcher.pause"
 
     DEFAULT_CONFIG = {
-        "Watcher": {
-            "feed_url": "https://www.theguardian.com/uk/rss",
-            "check_interval": "31",
-            "min_reward": "0.0",
-            "enable_notifications": "True",
-            "use_custom_user_agent": "False",
-            "enable_sound": "True"
-        },
-        "Paths": {
-            "sound_file": r"C:\\path\\to\\your\\sound.wav",
-            "log_file": "logs/gengowatcher.log",
-            "notification_icon_path": "",
-            "browser_path": "",
-            "browser_args": "--new-window {url}",
-            "all_entries_log": "logs/all_entries.csv"
-        },
-        "Logging": {
-            "log_max_bytes": "1000000",
-            "log_backup_count": "3",
-            "log_main_enabled": "True",
-            "log_all_entries_enabled": "True"
-        },
-        "Network": {
-            "max_backoff": "300",
-            "user_agent_email": "your_email@example.com"
-        },
-        "State": {
-            "last_seen_link": "",
-            "total_new_entries_found": "0"
-        }
+        "Watcher": { "feed_url": "https://www.theguardian.com/uk/rss", "check_interval": 31, "min_reward": 0.0, "enable_notifications": True, "use_custom_user_agent": False, "enable_sound": True },
+        "Paths": { "sound_file": "C:\\path\\to\\your\\sound.wav", "log_file": "logs/gengowatcher.log", "notification_icon_path": "", "browser_path": "", "browser_args": "--new-window {url}", "all_entries_log": "logs/all_entries.csv" },
+        "Logging": { "log_max_bytes": 1000000, "log_backup_count": 3, "log_main_enabled": True, "log_all_entries_enabled": True },
+        "Network": { "max_backoff": 300, "user_agent_email": "your_email@example.com" },
+        "State": { "last_seen_link": "", "total_new_entries_found": 0 }
     }
 
-    def __init__(self):
-        self.console = Console(theme=APP_THEME)
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
         self.config = {}
         self._config_parser = configparser.ConfigParser()
-        self.last_seen_link = None
         self.shutdown_event = threading.Event()
         self.check_now_event = threading.Event()
+        self.config_lock = threading.Lock()
+        
+        self.last_seen_link = None
         self.last_check_time = None
+        self.next_check_time = time.time()
         self.total_new_entries_found = 0
         self.failure_count = 0
         self.current_action = "Initializing"
-        self.config_lock = threading.Lock()
+        
+        self.start_time = time.time()
+        self.session_new_entries = 0
+        self.session_total_value = 0.0
 
         self._load_config()
-        self.last_seen_link = self.config["State"]["last_seen_link"] or None
-        self.total_new_entries_found = int(self.config["State"]["total_new_entries_found"])
-
-        self._setup_logging()
-        self._setup_signal_handlers()
-        self.last_error_message = "None"
-
-        self._print_initialization_summary_rich()
-        self.logger.info("Command listener active. Type 'help' for commands.")
-        self.start_time = time.time()
-
+        self.total_new_entries_found = int(self.config["State"].get("total_new_entries_found", 0))
+        self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
     def _create_default_config(self):
         parser = configparser.ConfigParser()
         for section, settings in self.DEFAULT_CONFIG.items():
             parser.add_section(section)
             for key, value in settings.items():
-                parser.set(section, key, value)
-
+                parser.set(section, key, str(value))
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
-
-        with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-            parser.write(f)
-
-        self.console.print(f"\nCreated default '[success]{self.CONFIG_FILE}[/]'.")
-        self.console.print("Please edit this file with your preferences, then restart the script.")
+        with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f: parser.write(f)
+        print(f"\nCreated default 'config.ini'. Please edit it and restart.")
         sys.exit(0)
 
     def _load_config(self):
-        if not Path(self.CONFIG_FILE).is_file():
-            self._create_default_config()
-
+        if not Path(self.CONFIG_FILE).is_file(): self._create_default_config()
         self._config_parser.read(self.CONFIG_FILE, encoding='utf-8')
-
-        try:
-            self.config["Watcher"] = {
-                "feed_url": self._config_parser.get("Watcher", "feed_url"),
-                "check_interval": self._config_parser.getint("Watcher", "check_interval"),
-                "min_reward": self._config_parser.getfloat("Watcher", "min_reward", fallback=0.0),
-                "enable_notifications": self._config_parser.getboolean("Watcher", "enable_notifications"),
-                "use_custom_user_agent": self._config_parser.getboolean("Watcher", "use_custom_user_agent", fallback=False),
-                "enable_sound": self._config_parser.getboolean("Watcher", "enable_sound", fallback=True)
-            }
-            notification_icon_path_str = self._config_parser.get("Paths", "notification_icon_path", fallback="").strip()
-            self.config["Paths"] = {
-                "sound_file": Path(self._config_parser.get("Paths", "sound_file")),
-                "log_file": Path(self._config_parser.get("Paths", "log_file")),
-                "notification_icon_path": Path(notification_icon_path_str) if notification_icon_path_str else None,
-                "browser_path": self._config_parser.get("Paths", "browser_path", fallback=""),
-                "browser_args": self._config_parser.get("Paths", "browser_args", fallback="--new-window {url}"),
-                "all_entries_log": Path(self._config_parser.get("Paths", "all_entries_log"))
-            }
-            self.config["Logging"] = {
-                "log_max_bytes": self._config_parser.getint("Logging", "log_max_bytes"),
-                "log_backup_count": self._config_parser.getint("Logging", "log_backup_count"),
-                "log_main_enabled": self._config_parser.getboolean("Logging", "log_main_enabled", fallback=True),
-                "log_all_entries_enabled": self._config_parser.getboolean("Logging", "log_all_entries_enabled", fallback=True)
-            }
-            self.config["Network"] = {
-                "max_backoff": self._config_parser.getint("Network", "max_backoff"),
-                "user_agent_email": self._config_parser.get("Network", "user_agent_email", fallback=self.DEFAULT_CONFIG["Network"]["user_agent_email"])
-            }
-            self.config["State"] = {
-                "last_seen_link": self._config_parser.get("State", "last_seen_link", fallback=""),
-                "total_new_entries_found": self._config_parser.getint("State", "total_new_entries_found", fallback=0)
-            }
-        except (configparser.Error, ValueError) as e:
-            self.console.print(f"[[error]Error[/]] reading configuration file '{self.CONFIG_FILE}': {e}")
-            self.console.print("Please check the file's format. If unsure, delete it to regenerate.")
-            sys.exit(1)
-
-    def _save_runtime_state(self):
         with self.config_lock:
-            if not self._config_parser.has_section("State"):
-                self._config_parser.add_section("State")
-            self._config_parser.set("State", "last_seen_link", self.last_seen_link if self.last_seen_link else "")
-            self._config_parser.set("State", "total_new_entries_found", str(self.total_new_entries_found))
-
-            if not self._config_parser.has_section("Watcher"):
-                self._config_parser.add_section("Watcher")
-            self._config_parser.set("Watcher", "enable_sound", str(self.config["Watcher"].get("enable_sound", True)))
-            self._config_parser.set("Watcher", "enable_notifications", str(self.config["Watcher"].get("enable_notifications", True)))
-            self._config_parser.set("Watcher", "min_reward", str(self.config["Watcher"].get("min_reward", 0.0)))
-
             try:
-                with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-                    self._config_parser.write(f)
-                self.logger.debug("Runtime state saved.")
-            except IOError as e:
-                self.logger.error(f"Failed to save runtime state to {self.CONFIG_FILE}: {e}")
+                for section, defaults in self.DEFAULT_CONFIG.items():
+                    if not self._config_parser.has_section(section): self._config_parser.add_section(section)
+                    self.config[section] = {}
+                    for key, default_val in defaults.items():
+                        if isinstance(default_val, bool): method = self._config_parser.getboolean
+                        elif isinstance(default_val, int): method = self._config_parser.getint
+                        elif isinstance(default_val, float): method = self._config_parser.getfloat
+                        else: method = self._config_parser.get
+                        self.config[section][key] = method(section, key, fallback=default_val)
+                self.last_seen_link = self.config["State"].get("last_seen_link") or None
+            except (configparser.Error, ValueError) as e:
+                # Use standard print for startup errors before logging is fully configured
+                print(f"CRITICAL: Error reading 'config.ini': {e}")
+                sys.exit(1)
 
-    def _setup_logging(self):
-        log_file_path = self.config["Paths"]["log_file"]
-        log_file_path.parent.mkdir(exist_ok=True, parents=True)
-        self.log_all_entries_path = self.config["Paths"]["all_entries_log"]
-        self.log_all_entries_path.parent.mkdir(exist_ok=True, parents=True)
-
-        handlers = [RichHandler(console=self.console, rich_tracebacks=True, markup=True)]
-        if self.config["Logging"]["log_main_enabled"]:
-            handlers.append(RotatingFileHandler(
-                log_file_path,
-                maxBytes=self.config["Logging"]["log_max_bytes"],
-                backupCount=self.config["Logging"]["log_backup_count"],
-                encoding="utf-8"
-            ))
-        logging.basicConfig(level="INFO", format="%(message)s", datefmt="[%X]", handlers=handlers)
-        self.logger = logging.getLogger("rich")
-
-    def _log_all_entry(self, entry, reward):
-        if not self.config["Logging"]["log_all_entries_enabled"]:
-            return
-        log_path = self.log_all_entries_path
-        file_exists = log_path.is_file()
-        try:
-            with open(log_path, 'a', encoding='utf-8', newline='') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(["timestamp", "title", "reward_usd", "link"])
-                writer.writerow([datetime.datetime.now().isoformat(), entry.get('title', '(No Title)'), f"{reward:.2f}", entry.get('link', '')])
-        except Exception as e:
-            self.logger.error(f"Failed to write to all-entries CSV log: {e}")
-
-    def _setup_signal_handlers(self):
-        signal.signal(signal.SIGINT, self.handle_exit)
+    def _save_config_and_state(self):
+        with self.config_lock:
+            self.config["State"]["total_new_entries_found"] = self.total_new_entries_found
+            self.config["State"]["last_seen_link"] = self.last_seen_link if self.last_seen_link is not None else ""
+            for section, settings in self.config.items():
+                if not self._config_parser.has_section(section): self._config_parser.add_section(section)
+                for key, value in settings.items():
+                    self._config_parser.set(section, key, str(value))
+            try:
+                with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f: self._config_parser.write(f)
+            except IOError as e: self.logger.error(f"Error saving config: {e}")
 
     def handle_exit(self, signum=None, frame=None):
         if not self.shutdown_event.is_set():
-            self.logger.info("Shutdown signal received.")
+            self.logger.info("Shutdown initiated. Saving state...")
             self.shutdown_event.set()
-            self.logger.debug("Saving runtime state...")
-            self._save_runtime_state()
-            self.logger.debug("Shutdown complete.")
-        sys.exit(0)
+            self._save_config_and_state()
 
     def play_sound(self):
-        if self.config["Paths"]["sound_file"].is_file():
-            winsound.PlaySound(str(self.config["Paths"]["sound_file"]), winsound.SND_FILENAME)
-        else:
-            winsound.MessageBeep()
-            self.logger.warning(f"Sound file not found: {self.config['Paths']['sound_file']}. Playing default beep.")
-
-    def play_sound_async(self):
-        threading.Thread(target=self.play_sound, daemon=True).start()
+        sound_file = Path(self.config["Paths"]["sound_file"])
+        if sound_file.is_file(): winsound.PlaySound(str(sound_file), winsound.SND_FILENAME)
+        else: winsound.MessageBeep()
 
     def open_in_browser(self, url):
-        browser_path_str = self.config["Paths"].get("browser_path", "")
-        if not browser_path_str:
-            webbrowser.open(url)
-            self.logger.info(f"Opened URL in default browser: {url}")
-            return
-        browser_path = Path(browser_path_str)
-        if not browser_path.is_file():
-            self.logger.warning(f"Browser path invalid or not set: {browser_path}")
-            return
         try:
-            browser_args_template = self.config["Paths"].get("browser_args", "{url}")
-            final_args = [arg.format(url=url) for arg in browser_args_template.split()]
-            subprocess.Popen([str(browser_path)] + final_args)
-            self.logger.debug(f"Opened URL using custom browser: {browser_path}")
+            browser_path_str = self.config["Paths"].get("browser_path", "")
+            if not browser_path_str or not Path(browser_path_str).is_file():
+                webbrowser.open(url)
+            else:
+                args = [arg.format(url=url) for arg in self.config["Paths"]["browser_args"].split()]
+                subprocess.Popen([str(browser_path_str)] + args)
         except Exception as e:
-            self.logger.error(f"Failed to open URL in custom browser: {e}")
-
-    def notify(self, title, message):
-        icon = self.config["Paths"]["notification_icon_path"]
-        icon_path = str(icon) if icon and icon.is_file() else None
-        try:
-            notification.notify(title=title, message=message, app_name='GengoWatcher', app_icon=icon_path, timeout=8)
-            self.logger.debug(f"Notification shown: {title} - {message}")
-        except Exception as e:
-            self.logger.error(f"Notification error: {e}")
+            self.logger.error(f"Browser Error: {e}")
 
     def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
         if self.config["Watcher"]["enable_notifications"]:
-            self.notify(title, message)
+            try:
+                icon = Path(self.config["Paths"]["notification_icon_path"])
+                icon_path = str(icon) if icon.is_file() else None
+                notification.notify(title=title, message=message, app_name='GengoWatcher', app_icon=icon_path, timeout=8)
+            except Exception as e:
+                self.logger.error(f"Notify Error: {e}")
         if play_sound and self.config["Watcher"]["enable_sound"]:
-            self.play_sound_async()
+            threading.Thread(target=self.play_sound, daemon=True).start()
         if open_link and url:
             self.open_in_browser(url)
 
-    def get_status_panel(self) -> Panel:
-        status, status_color = ("Running", "success")
-        if self.shutdown_event.is_set(): status, status_color = ("Stopped", "error")
-        elif os.path.exists(self.PAUSE_FILE): status, status_color = ("Paused", "warning")
-
-        last_check = self.last_check_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_check_time else "Never"
-        notif_enabled = "[success]Enabled[/]" if self.config["Watcher"]["enable_notifications"] else "[warning]Disabled[/]"
-        sound_enabled = "[success]Enabled[/]" if self.config["Watcher"].get("enable_sound", True) else "[warning]Disabled[/]"
-
-        min_reward = self.config["Watcher"].get("min_reward", 0.0)
-        min_reward_status = f"[success]Enabled (US${min_reward:.2f})[/]" if min_reward > 0.0 else "[warning]Disabled[/]"
-
-        table = Table(box=None, show_header=False, pad_edge=False)
-        table.add_column("Label", style="label", justify="right", width=20)
-        table.add_column("Value", style="value")
-
-        table.add_row("Version:", f"v{__version__} ({__release_date__})")
-        table.add_row("Status:", f"[{status_color}]{status}[/]")
-        table.add_row("Current Action:", f"'{self.current_action}'")
-        table.add_row()
-        table.add_row("[table_header]Configuration[/]", "")
-        table.add_row("Min Reward Filter:", min_reward_status)
-        table.add_row("Notifications:", notif_enabled)
-        table.add_row("Sound:", sound_enabled)
-        table.add_row()
-        table.add_row("[table_header]Session Stats[/]", "")
-        table.add_row("New Jobs Found:", str(self.total_new_entries_found))
-        table.add_row("Last Check:", last_check)
-        table.add_row("Last Error:", str(self.last_error_message))
-
-        return Panel(table, title="[title]GengoWatcher Status[/]", border_style="panel_border")
-
-    def print_status(self):
-        self.console.print(self.get_status_panel())
-
     def _extract_reward(self, entry) -> float:
-        text_to_search = entry.get("title", "") + " | " + entry.get("summary", "")
-        match = re.search(r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text_to_search, re.IGNORECASE)
-        if not match: return 0.0
+        text = entry.get("title", "") + " | " + entry.get("summary", "")
+        match = re.search(r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE)
         try:
-            return float(match.group(1))
+            return float(match.group(1)) if match else 0.0
         except (ValueError, IndexError):
-            self.logger.warning(f"Could not parse reward value from entry: '{entry.get('title', '')}'")
             return 0.0
 
-    def _create_new_job_panel(self, entry, reward: float) -> Panel:
-        title = entry.get("title", "No Title")
-        link = entry.get("link", "#")
-        lang_match = re.search(r"\|\s*([a-zA-Z\s]+/[a-zA-Z\s]+)", title)
-        chars_match = re.search(r"\|\s*([\d,]+)\s*chars", title)
-        language_pair = lang_match.group(1).strip() if lang_match else "N/A"
-        char_count = chars_match.group(1).strip() if chars_match else "N/A"
-        job_table = Table(box=None, show_header=False, pad_edge=False)
-        job_table.add_column("Label", style="label", justify="right", width=15)
-        job_table.add_column("Value", style="value")
-        job_table.add_row("Reward:", f"[success]US$ {reward:.2f}[/]")
-        job_table.add_row("Language Pair:", language_pair)
-        job_table.add_row("Character Count:", char_count)
-        job_table.add_row("Direct Link:", f"[link={link}]{link}[/link]")
-        clean_title = title.split('|')[0].strip()
-        return Panel(job_table, title="[title]✨ New Job Alert[/]", subtitle=f"[info]{clean_title}[/]", border_style="success")
-
     def _process_feed_entries(self, entries):
-        if not entries:
-            self.logger.debug("Feed fetched, but it contains no entries to process.")
-            return
-        min_reward_threshold = self.config["Watcher"]["min_reward"]
-        new_entries_to_process = []
+        if not entries: return
+        new_entries = []
         for entry in entries:
-            link = entry.get("link")
-            if not link:
-                self.logger.warning("Found an entry with no link, skipping.")
-                continue
-            if link == self.last_seen_link:
-                break
-            new_entries_to_process.append(entry)
+            if entry.get("link") == self.last_seen_link: break
+            new_entries.append(entry)
+        if not new_entries: return
 
-        if not new_entries_to_process:
-            self.logger.debug("No new entries detected since last check.")
-            return
-
-        self.console.log(f"Discovered {len(new_entries_to_process)} new entries. Filtering...")
+        min_reward = self.config["Watcher"]["min_reward"]
         processed_count = 0
-        for entry in reversed(new_entries_to_process):
+        for entry in reversed(new_entries):
             reward = self._extract_reward(entry)
-            self._log_all_entry(entry, reward)
-
-            if min_reward_threshold > 0.0 and reward < min_reward_threshold:
-                self.logger.debug(f"Skipping job (Reward US${reward:.2f} is below minimum of US${min_reward_threshold:.2f})")
-                continue
-
+            if min_reward > 0.0 and reward < min_reward: continue
+            
             processed_count += 1
             self.total_new_entries_found += 1
-            self.console.print(self._create_new_job_panel(entry, reward))
-            self.show_notification(message=entry.get("title", "(No Title)"), title="New Gengo Job Available!", play_sound=True, open_link=True, url=entry.get("link"))
+            self.session_new_entries += 1
+            self.session_total_value += reward
+            
+            title = entry.get("title", "No Title")
+            self.logger.info(f"New job: {title.split('|')[0].strip()} (US$ {reward:.2f})")
+            self.show_notification(message=title, title="New Gengo Job Available!", play_sound=True, open_link=True, url=entry.get("link"))
 
-        original_last_seen = self.last_seen_link
-        self.last_seen_link = new_entries_to_process[0].get("link")
-
-        if processed_count > 0 or self.last_seen_link != original_last_seen:
-            self.console.log(f"Processing complete. {processed_count} jobs met criteria. Updating state.")
-            self._save_runtime_state()
+        if processed_count > 0:
+            self.last_seen_link = new_entries[0].get("link")
+            self._save_config_and_state()
 
     def fetch_rss(self):
         headers = {}
         if self.config["Watcher"]["use_custom_user_agent"]:
-            headers['User-Agent'] = f"GengoWatcher/{__version__} (mailto:{self.config['Network']['user_agent_email']})"
+            headers['User-Agent'] = f"GengoWatcher/{__version__} ({self.config['Network']['user_agent_email']})"
         try:
             feed = feedparser.parse(self.config["Watcher"]["feed_url"], request_headers=headers)
             if feed.bozo:
-                self.logger.warning(f"Malformed feed or parsing error: {feed.bozo_exception}")
-                if not getattr(feed, 'entries', None): return None
+                self.logger.error(f"Feed Error: {feed.bozo_exception}")
+                return None
             return feed
         except Exception as e:
-            self.logger.error(f"RSS fetch error: {e}")
-            self.last_error_message = str(e)
+            self.logger.error(f"RSS Error: {e}")
             return None
 
     def run(self):
-        self.current_action = "Starting main loop"
-
+        self.logger.info("Watcher thread started.")
         if not self.last_seen_link:
-            self.console.print("[info]First run detected (no last seen link). Priming the feed...[/]")
             self.current_action = "Priming feed"
             initial_feed = self.fetch_rss()
             if initial_feed and initial_feed.entries:
                 self.last_seen_link = initial_feed.entries[0].get("link")
-                self._save_runtime_state()
-                self.console.print("[success]Feed primed.[/] Will now watch for new entries.")
-            else:
-                self.logger.warning("Could not prime feed. Will check again on the next cycle.")
-
-        base_interval = self.config["Watcher"]["check_interval"]
-        max_backoff = self.config["Network"]["max_backoff"]
-        is_paused = False
-
-        def get_live_display():
-            status_panel = self.get_status_panel()
-            progress_bar = Progress(
-                "{task.description}",
-                BarColumn(),
-                "[progress.percentage]{task.percentage:>3.0f}%",
-                TimeRemainingColumn(),
-            )
-            return Group(status_panel, Panel(progress_bar, border_style="panel_border")), progress_bar
-
-        live_display_group, progress = get_live_display()
-        with Live(live_display_group, console=self.console, refresh_per_second=2, screen=False, transient=True) as live:
-            while not self.shutdown_event.is_set():
-                try:
-                    pause_file_exists = os.path.exists(self.PAUSE_FILE)
-                    if pause_file_exists and not is_paused:
-                        self.current_action = "Paused"
-                        live.update(get_live_display()[0])
-                        self.console.log(f"Pause file '{self.PAUSE_FILE}' detected. Pausing RSS checks.")
-                        is_paused = True
-
-                    if is_paused:
-                        if not pause_file_exists:
-                             self.console.log("Pause file removed. Resuming RSS checks.")
-                             is_paused = False
-                        else:
-                            time.sleep(1)
-                            continue
-
-                    self.current_action = "Fetching RSS feed..."
-                    live.update(get_live_display()[0])
-
+                self.logger.info("Initial feed primed successfully.")
+                self._save_config_and_state()
+        
+        while not self.shutdown_event.is_set():
+            if self.check_now_event.is_set() or time.time() >= self.next_check_time:
+                self.check_now_event.clear()
+                is_paused = os.path.exists(self.PAUSE_FILE)
+                
+                if is_paused:
+                    self.current_action = "Paused"
+                    wait_time = 5
+                else:
+                    self.current_action = "Fetching"
                     feed = self.fetch_rss()
                     if feed is None:
                         self.failure_count += 1
-                        wait_time = min(base_interval * self.failure_count, max_backoff)
-                        self.current_action = f"Waiting {wait_time}s (backoff)"
-                        self.logger.warning(f"RSS fetch failed. Backing off for {wait_time} seconds.")
+                        wait_time = min(self.config["Watcher"]["check_interval"] * self.failure_count, self.config["Network"]["max_backoff"])
+                        self.current_action = f"Backoff ({int(wait_time)}s)"
                     else:
+                        if self.failure_count > 0: self.logger.info("Connection re-established.")
                         self.failure_count = 0
                         self.last_check_time = datetime.datetime.now()
-                        self.current_action = f"Processing {len(feed.entries)} entries..."
-                        live.update(get_live_display()[0])
+                        self.current_action = "Processing"
                         self._process_feed_entries(feed.entries)
-                        wait_time = base_interval
+                        wait_time = self.config["Watcher"]["check_interval"]
+                        self.current_action = "Waiting"
+                self.next_check_time = time.time() + wait_time
+            time.sleep(0.1)
 
-                    self.current_action = f"Waiting {wait_time}s"
-                    live_display_group, progress = get_live_display()
-                    live.update(live_display_group)
-                    task = progress.add_task("[cyan]Next check in...", total=wait_time)
+    def toggle_sound_enabled(self):
+        with self.config_lock:
+            self.config["Watcher"]["enable_sound"] = not self.config["Watcher"]["enable_sound"]
+            self._save_config_and_state()
+            return self.config["Watcher"]["enable_sound"]
 
-                    for i in range(wait_time):
-                        if self.shutdown_event.is_set() or self.check_now_event.is_set():
-                            break
-                        progress.update(task, advance=1)
-                        time.sleep(1)
+    def toggle_notifications_enabled(self):
+        with self.config_lock:
+            self.config["Watcher"]["enable_notifications"] = not self.config["Watcher"]["enable_notifications"]
+            self._save_config_and_state()
+            return self.config["Watcher"]["enable_notifications"]
 
-                    if self.check_now_event.is_set():
-                        self.console.log("Manual check triggered.")
-                    self.check_now_event.clear()
+    def set_min_reward(self, amount: float):
+        with self.config_lock:
+            self.config["Watcher"]["min_reward"] = amount
+            self._save_config_and_state()
 
-                except Exception as e:
-                    self.logger.error(f"An unexpected error occurred in the main loop: {e}", exc_info=True)
-                    self.last_error_message = str(e)
-                    self.current_action = "Error state"
-                    time.sleep(10)
+    def run_notify_test(self):
+        self.logger.info("Sending a test notification...")
+        self.show_notification(message="This is a test notification!", title="GengoWatcher Test", play_sound=True, open_link=True, url="https://gengo.com/t/jobs/status/available")
 
-        self.logger.info("Exiting main loop.")
-        self.current_action = "Stopped"
+    def restart(self):
+        self.handle_exit()
+        python = sys.executable
+        os.execv(python, [python] + sys.argv)
 
-    def _print_initialization_summary_rich(self):
-        config_table = Table(box=None, show_header=False, pad_edge=False)
-        config_table.add_column("Key", style="label", width=25)
-        config_table.add_column("Value", style="value")
-        for section_name, section_dict in self.config.items():
-            if not isinstance(section_dict, dict): continue
-            config_table.add_row(f"[{'table_header'}]{section_name} Settings[/{'table_header'}]")
-            for key, value in section_dict.items():
-                display_value, style_name = str(value), "value"
-                if key in ["sound_file", "log_file", "notification_icon_path", "browser_path"]:
-                    display_value, style_name = "[PATH_HIDDEN]", "path"
-                elif key == "user_agent_email" and "@" in str(value):
-                    display_value = f"{str(value).split('@')[0][:2]}...@{str(value).split('@')[1]}"
-                config_table.add_row(key, Text(display_value, style=style_name))
-            config_table.add_row()
-        panel = Panel(config_table, title=f"[title]GengoWatcher Initialized[/]", subtitle=f"[info]v{__version__}[/]", border_style="panel_border")
-        self.console.print(panel)
 
 class CommandLineInterface:
-    def __init__(self, watcher: GengoWatcher):
+    def __init__(self, watcher: GengoWatcher, console: Console, log_queue: collections.deque):
         self.watcher = watcher
-        self.console = watcher.console
+        self.console = console
+        self.log_queue = log_queue
+        self.input_buffer = ""
+        self.command_output = collections.deque(maxlen=20)
+        
         self.commands = {
-            "status": {"handler": self.watcher.print_status, "aliases": ["s", "st"], "help": "Show a static status dashboard."},
-            "peek": {"handler": self._handle_peek, "aliases": ["live"], "help": "Show a live dashboard for 10s (e.g., `peek 20`)."},
-            "check": {"handler": self._handle_check, "aliases": ["c", "now"], "help": "Trigger an immediate RSS feed check."},
-            "help": {"handler": self.print_help, "aliases": ["h"], "help": "Display this list of commands."},
+            "check": {"handler": self._handle_check, "help": "Trigger an immediate RSS feed check."},
+            "help": {"handler": self.print_help, "help": "Display this list of commands."},
             "exit": {"handler": self._handle_exit, "aliases": ["q", "quit"], "help": "Save state and quit the application."},
-            "pause": {"handler": self._handle_pause, "aliases": ["p"], "help": "Pause RSS checks."},
-            "resume": {"handler": self._handle_resume, "aliases": ["r"], "help": "Resume RSS checks."},
+            "pause": {"handler": self._handle_pause, "aliases": ["p"], "help": "Pause RSS feed checks."},
+            "resume": {"handler": self._handle_resume, "aliases": ["r"], "help": "Resume RSS feed checks."},
             "togglesound": {"handler": self._handle_toggle_sound, "aliases": ["ts"], "help": "Toggle sound alerts on/off."},
             "togglenotifications": {"handler": self._handle_toggle_notifications, "aliases": ["tn"], "help": "Toggle desktop notifications on/off."},
             "setminreward": {"handler": self._handle_set_min_reward, "aliases": ["smr"], "help": "Set min reward (e.g., `smr 5.50`)."},
             "reloadconfig": {"handler": self._handle_reload_config, "aliases": ["rl"], "help": "Reload all settings from config.ini."},
-            "restart": {"handler": self._handle_restart, "aliases": [], "help": "Restart the entire script."},
-            "notifytest": {"handler": self._handle_notify_test, "aliases": ["nt"], "help": "Send a test notification."}
+            "restart": {"handler": self.watcher.restart, "aliases": [], "help": "Restart the entire script."},
+            "notifytest": {"handler": self.watcher.run_notify_test, "aliases": ["nt"], "help": "Send a test notification."},
+            "clear": {"handler": self._handle_clear, "help": "Clear the command output panel."},
         }
-        self.alias_map = {alias: cmd for cmd, details in self.commands.items() for alias in [cmd] + details["aliases"]}
-        self.OK = "[success][+][/success]"
-        self.WARN = "[warning][!][/warning]"
-        self.ERR = "[error][-][/error]"
-        self.INFO = "[info][>][/info]"
+        self.alias_map = {alias: cmd for cmd, details in self.commands.items() for alias in [cmd] + details.get("aliases", [])}
+        signal.signal(signal.SIGINT, self._handle_exit)
+
+        # Build the static layout structure ONCE.
+        self.layout = self._build_layout()
+
+    def _build_layout(self) -> Layout:
+        """Builds the main layout structure. This is done only once."""
+        layout = Layout(name="root")
+        layout.split(
+            Layout(self._get_header_panel(), name="header", size=8),
+            Layout(ratio=1, name="main"),
+            Layout(size=3, name="footer"),
+            Layout(size=1, name="input"),
+        )
+        layout["main"].split_row(
+            Layout(name="left", minimum_size=50),
+            Layout(name="right")
+        )
+        # Create named, empty layouts that will be updated in the run loop
+        layout["left"].split(
+            Layout(name="runtime_status"),
+            Layout(name="recent_activity")
+        )
+        layout["right"].update(Layout(name="output"))
+        return layout
+
+    def _get_header_panel(self) -> Panel:
+        """Creates the static header panel."""
+        config_table = Table.grid(expand=True, padding=(0, 1))
+        config_table.add_column(style="label", justify="right", width=24)
+        config_table.add_column(style="value", justify="left")
+        
+        config_table.add_row("Feed URL:", f"[path]{self.watcher.config['Watcher']['feed_url']}[/]")
+        config_table.add_row("Check Interval:", f" {self.watcher.config['Watcher']['check_interval']} seconds")
+        config_table.add_row() # Spacer
+        config_table.add_row("Minimum Reward:", f"[success]US$ {self.watcher.config['Watcher']['min_reward']:.2f}[/]")
+        config_table.add_row("Desktop Notifications:", Text("Enabled", style="success") if self.watcher.config['Watcher']['enable_notifications'] else Text("Disabled", style="error"))
+        config_table.add_row("Sound Alerts:", Text("Enabled", style="success") if self.watcher.config['Watcher']['enable_sound'] else Text("Disabled", style="error"))
+        
+        return Panel(config_table, title=f"[title]Welcome to GengoWatcher[/]", subtitle=f"v{__version__}", subtitle_align="center", border_style="panel_border")
 
     def run(self):
-        try:
+        """Runs the main, flicker-free live display loop."""
+        with Live(self.layout, console=self.console, screen=True, auto_refresh=False, vertical_overflow="visible") as live:
             while not self.watcher.shutdown_event.is_set():
-                cmd_full = self.console.input("[bold]>>> [/]").strip()
-                if cmd_full: self.handle_command(cmd_full)
-        except (KeyboardInterrupt, EOFError):
-            self.console.print("\nKeyboard interrupt received.")
-            self._handle_exit()
+                # Update the dynamic parts of the layout
+                self.layout["runtime_status"].update(self._get_runtime_status_panel())
+                self.layout["recent_activity"].update(self._get_recent_activity_panel())
+                self.layout["right"].update(self._get_output_panel())
+                self.layout["footer"].update(self._get_status_bar())
+                self.layout["input"].update(Text(f"> {self.input_buffer}", no_wrap=True))
+                
+                live.refresh()
+                
+                if PLATFORM == "windows":
+                    start_time = time.time()
+                    while time.time() - start_time < 0.2:
+                        if msvcrt.kbhit():
+                            char = msvcrt.getch()
+                            if char == b'\r':
+                                self.handle_command(self.input_buffer)
+                                self.input_buffer = ""
+                            elif char == b'\x08': # Backspace
+                                self.input_buffer = self.input_buffer[:-1]
+                            else:
+                                try: self.input_buffer += char.decode()
+                                except UnicodeDecodeError: pass
+                        time.sleep(0.01)
 
-    def handle_command(self, cmd_full: str):
-        parts = cmd_full.split()
-        command_alias, args = parts[0].lower(), parts[1:]
-        primary_command = self.alias_map.get(command_alias)
-        if not primary_command:
-            self.console.print(f"{self.ERR} Unknown command: '{command_alias}'")
+    def _get_runtime_status_panel(self) -> Panel:
+        table = Table.grid(expand=True, padding=(0, 1))
+        table.add_column(style="label", justify="right", width=18)
+        table.add_column(style="value", justify="left")
+        uptime_seconds = time.time() - self.watcher.start_time
+        table.add_row("Uptime:", f" {str(datetime.timedelta(seconds=int(uptime_seconds)))}")
+        last_check_str = self.watcher.last_check_time.strftime('%Y-%m-%d %H:%M:%S') if self.watcher.last_check_time else "Never"
+        table.add_row("Last Check:", f" {last_check_str}")
+        failures = self.watcher.failure_count
+        table.add_row("Feed Failures:", Text(f" {failures}", style="warning" if failures > 0 else "default"))
+        table.add_row()
+        table.add_row("Jobs (Session):", f" {self.watcher.session_new_entries}")
+        table.add_row("Value (Session):", f" US$ {self.watcher.session_total_value:.2f}")
+        return Panel(table, title="[title]Runtime Status[/]", title_align="center")
+
+    def _get_recent_activity_panel(self) -> Panel:
+        return Panel(Group(*self.log_queue), title="[title]Recent Activity[/]", title_align="center")
+
+    def _get_output_panel(self) -> Panel:
+        return Panel(Group(*self.command_output), title="[title]Output[/]", title_align="center")
+
+    def _get_status_bar(self) -> Panel:
+        status, color = ("Running", "success")
+        if self.watcher.shutdown_event.is_set(): status, color = ("Stopped", "error")
+        elif os.path.exists(self.watcher.PAUSE_FILE): status, color = ("Paused", "error")
+        
+        remaining = self.watcher.next_check_time - time.time()
+        rem_str = f"{int(max(0,remaining))}s"
+        action = self.watcher.current_action
+        if status == "Running" and action == "Waiting": action = f"Next check in {rem_str}"
+        elif status == "Paused": action = f"Paused"
+        
+        return Panel(Text.assemble(
+            ("Status: ", "default"), (status, color), (" | ", "dim"),
+            ("Action: ", "default"), (action, "cyan"), (" | ", "dim"),
+            ("Found (Total): ", "default"), (str(self.watcher.total_new_entries_found), "green")
+        ), border_style="dim")
+
+    def handle_command(self, command_str):
+        parts = command_str.strip().lower().split()
+        if not parts: return
+        cmd_alias, args = parts[0], parts[1:]
+        command = self.alias_map.get(cmd_alias)
+        if not command:
+            self.watcher.logger.error(f"Unknown command: '{command_str}'")
             return
-        handler = self.commands[primary_command]["handler"]
+        
+        handler = self.commands[command]["handler"]
         try:
             sig = inspect.signature(handler)
-            if 'args' in sig.parameters: handler(args)
-            else: handler()
+            if 'args' in sig.parameters: output = handler(args)
+            else: output = handler()
+            if output:
+                self.command_output.clear()
+                self.command_output.append(output)
         except Exception as e:
-            self.watcher.logger.error(f"Error executing command '{primary_command}': {e}", exc_info=True)
-            self.console.print(f"{self.ERR} An error occurred: {e}")
+            self.watcher.logger.error(f"Error executing '{command}': {e}")
 
     def print_help(self):
-        help_table = Table(box=None, show_header=False, pad_edge=False)
-        help_table.add_column("Command", style="label")
-        help_table.add_column("Aliases", style="info")
-        help_table.add_column("Description", style="value")
-        for command, details in self.commands.items():
-            aliases = ", ".join(details["aliases"])
-            help_table.add_row(f"[header]{command}[/]", aliases, details["help"])
-        panel = Panel(help_table, title="[title]GengoWatcher Commands[/]", border_style="panel_border")
-        self.console.print(panel)
+        table = Table(box=None, show_header=False, padding=(0, 1))
+        table.add_column(style="label", width=22)
+        table.add_column(style="value")
+        for cmd, info in self.commands.items():
+            aliases = ", ".join(info.get("aliases", []))
+            table.add_row(f"[header]{cmd}[/] ({aliases})", info["help"])
+        return Panel(table, title="[title]Commands[/]", border_style="panel_border")
 
-    def _handle_exit(self):
-        self.console.print("Exiting...")
-        self.watcher.handle_exit()
-
-    def _handle_check(self):
-        self.watcher.check_now_event.set()
-
-    def _handle_pause(self):
+    def _handle_exit(self, *args): self.watcher.handle_exit()
+    def _handle_check(self, args=None): self.watcher.check_now_event.set(); self.watcher.logger.info("Manual check triggered.")
+    def _handle_clear(self, args=None): self.command_output.clear(); self.watcher.logger.info("Command output cleared.")
+        
+    def _handle_pause(self, args=None):
         if not os.path.exists(self.watcher.PAUSE_FILE):
             with open(self.watcher.PAUSE_FILE, "w") as f: f.write("Paused.")
-            self.console.print(f" {self.OK} Watcher paused.")
-        else: self.console.print(f" {self.WARN} Watcher is already paused.")
-
-    def _handle_resume(self):
+            self.watcher.logger.warning("Watcher paused.")
+        else: self.watcher.logger.warning("Watcher is already paused.")
+    
+    def _handle_resume(self, args=None):
         if os.path.exists(self.watcher.PAUSE_FILE):
             os.remove(self.watcher.PAUSE_FILE)
-            self.console.print(f" {self.OK} Watcher resumed.")
-        else: self.console.print(f" {self.WARN} Watcher is not paused.")
-
-    def _handle_toggle_sound(self):
-        with self.watcher.config_lock:
-            new_val = not self.watcher.config["Watcher"].get("enable_sound", True)
-            self.watcher.config["Watcher"]["enable_sound"] = new_val
-            self.watcher._save_runtime_state()
-        self.console.print(f" {self.OK} Sound {'enabled' if new_val else 'disabled'}.")
-
-    def _handle_toggle_notifications(self):
-        with self.watcher.config_lock:
-            new_val = not self.watcher.config["Watcher"].get("enable_notifications", True)
-            self.watcher.config["Watcher"]["enable_notifications"] = new_val
-            self.watcher._save_runtime_state()
-        self.console.print(f" {self.OK} Notifications {'enabled' if new_val else 'disabled'}.")
+            self.watcher.logger.info("Watcher resumed.")
+        else: self.watcher.logger.warning("Watcher is not paused.")
+    
+    def _handle_toggle_sound(self, args=None):
+        new_state = self.watcher.toggle_sound_enabled()
+        self.watcher.logger.info(f"Sound alerts {'enabled' if new_state else 'disabled'}.")
+    
+    def _handle_toggle_notifications(self, args=None):
+        new_state = self.watcher.toggle_notifications_enabled()
+        self.watcher.logger.info(f"Desktop notifications {'enabled' if new_state else 'disabled'}.")
 
     def _handle_set_min_reward(self, args):
-        if len(args) != 1:
-            self.console.print(f" {self.ERR} Usage: setminreward <amount>")
+        if not args:
+            self.watcher.logger.error("Usage: setminreward <amount>")
             return
         try:
-            new_val = float(args[0])
-            with self.watcher.config_lock:
-                self.watcher.config["Watcher"]["min_reward"] = new_val
-                self.watcher._save_runtime_state()
-            self.console.print(f" {self.OK} Minimum reward set to US${new_val:.2f}.")
+            amount = float(args[0])
+            self.watcher.set_min_reward(amount)
+            self.watcher.logger.info(f"Minimum reward set to US$ {amount:.2f}")
         except ValueError:
-            self.console.print(f" {self.ERR} Invalid amount.")
+            self.watcher.logger.error("Invalid amount. Please enter a number.")
 
-    def _handle_reload_config(self):
-        try:
-            self.watcher._load_config()
-            self.watcher._setup_logging()
-            self.console.print(f" {self.OK} Configuration reloaded.")
-        except Exception as e:
-            self.console.print(f" {self.ERR} Failed to reload configuration: {e}")
+    def _handle_reload_config(self, args=None):
+        self.watcher._load_config()
+        self.watcher.logger.info("Configuration reloaded from config.ini.")
 
-    def _handle_restart(self):
-        self.console.print(f" {self.INFO} Restarting GengoWatcher...")
-        self.watcher.handle_exit()
-        python = sys.executable
-        os.execv(python, [python] + sys.argv)
-
-    def _handle_notify_test(self):
-        self.watcher.logger.info("Notification test command triggered.")
-        self.watcher.show_notification(
-            message="This is a notification test!",
-            title="GengoWatcher Test",
-            play_sound=True,
-            open_link=True,
-            url="https://gengo.com/t/jobs/status/available"
-        )
-
-    def _handle_peek(self, args):
-        try: duration = int(args[0]) if args else 10
-        except (ValueError, IndexError): duration = 10
-        self.console.print(f"{self.INFO} Showing live status for {duration} seconds (Note: main display is already live).")
-        with Live(self.watcher.get_status_panel(), console=self.console, refresh_per_second=2, transient=True) as live:
-            end_time = time.time() + duration
-            while time.time() < end_time:
-                live.update(self.watcher.get_status_panel())
-                time.sleep(0.5)
-        self.console.print(f"{self.INFO} Peek view finished.")
 
 if __name__ == "__main__":
-    watcher = GengoWatcher()
+    console = Console(theme=APP_THEME)
+
+    log = logging.getLogger("gengowatcher")
+    log.setLevel(logging.INFO)
+    
+    ui_handler = UILoggingHandler()
+    log.addHandler(ui_handler)
+    
+    watcher = GengoWatcher(logger=log)
+
+    if watcher.config["Logging"]["log_main_enabled"]:
+        log_file = Path(watcher.config["Paths"]["log_file"])
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            log_file, 
+            maxBytes=watcher.config["Logging"]["log_max_bytes"], 
+            backupCount=watcher.config["Logging"]["log_backup_count"]
+        )
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        log.addHandler(file_handler)
+
+    cli = CommandLineInterface(watcher, console, log_queue=ui_handler.log_queue)
+    
     watcher_thread = threading.Thread(target=watcher.run, daemon=True, name="WatcherThread")
     watcher_thread.start()
-
-    cli = CommandLineInterface(watcher)
-    cli.run()
-
-    watcher_thread.join(timeout=2)
-    watcher.logger.info("Program exited cleanly.")
-    sys.exit(0)
+    
+    try:
+        cli.run()
+    finally:
+        # Ensure shutdown is clean even if UI loop crashes
+        if not watcher.shutdown_event.is_set():
+            watcher.shutdown_event.set()
+        watcher_thread.join(timeout=2)
+        # The 'screen' mode will automatically restore the console
+        console.print("GengoWatcher has shut down.")
