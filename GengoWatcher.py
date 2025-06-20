@@ -407,7 +407,7 @@ class GengoWatcher:
             if initial_feed and initial_feed.entries:
                 self.last_seen_link = initial_feed.entries[0].get("link")
                 self._save_runtime_state()
-                self.console.print("[success]Feed primed.[/])
+                self.console.print("[success]Feed primed.[/]")
                 self.console.print("Will now watch for new entries.")
             else:
                 self.logger.warning("Could not prime feed. Will check again on the next cycle.")
