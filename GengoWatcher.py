@@ -571,131 +571,144 @@ class GengoWatcher:
         # Treat 0.0 as disabled, any other value as enabled
         return self.config["Watcher"].get("min_reward", 0.0) > 0.0 or self.min_reward_filter_enabled
 
+class CommandLineInterface:
+    def __init__(self, watcher: GengoWatcher):
+        self.watcher = watcher
+        self.console = watcher.console
+        self.OK = "[bold green][+][/bold green]"
+        self.WARN = "[bold yellow][!][/bold yellow]"
+        self.ERR = "[bold red][-][/bold red]"
+        self.INFO = "[bold cyan][>][/bold cyan]"
+
+    def run(self):
+        self.console.print("[bold cyan][>][/] Type 'help' for commands. Type 'exit' to quit.")
+        try:
+            while not self.watcher.shutdown_event.is_set():
+                cmd = self.console.input("[bold]>>> [/] ").strip()
+                self.handle_command(cmd)
+        except KeyboardInterrupt:
+            self.watcher.logger.info("Keyboard interrupt received in main thread.")
+            self.watcher.handle_exit()
+
+    def handle_command(self, cmd: str):
+        cmd_lower = cmd.lower()
+        if cmd_lower in ("exit", "quit", "stop", "end", "ex", "qu"):
+            self.console.print("Exiting...")
+            self.watcher.shutdown_event.set()
+            return
+        elif cmd_lower == "check":
+            self.watcher.logger.info("Manual check requested via command.")
+            self.watcher.check_now_event.set()
+        elif cmd_lower == "status":
+            self.watcher.print_status()
+        elif cmd_lower == "pause":
+            if not os.path.exists(self.watcher.PAUSE_FILE):
+                with open(self.watcher.PAUSE_FILE, "w") as f:
+                    f.write("Paused by user command.\n")
+                self.console.print(f" {self.OK} Watcher paused. Enter 'resume' to continue.")
+                self.watcher.logger.info(f"Pause file '{self.watcher.PAUSE_FILE}' created by user command.")
+            else:
+                self.console.print(f" {self.WARN} Watcher is already paused.")
+        elif cmd_lower == "resume":
+            if os.path.exists(self.watcher.PAUSE_FILE):
+                try:
+                    os.remove(self.watcher.PAUSE_FILE)
+                    self.console.print(f" {self.OK} Watcher resumed.")
+                    self.watcher.logger.info(f"Pause file '{self.watcher.PAUSE_FILE}' removed by user command.")
+                except Exception as e:
+                    self.console.print(f" {self.ERR} Failed to remove pause file: {e}")
+                    self.watcher.logger.error(f"Failed to remove pause file: {e}")
+            else:
+                self.console.print(f" {self.WARN} Watcher is not paused.")
+        elif cmd_lower == "togglesound":
+            with self.watcher.config_lock:
+                current = self.watcher.config["Watcher"].get("enable_sound", True)
+                new_val = not current
+                self.watcher.config["Watcher"]["enable_sound"] = new_val
+                self.watcher._save_runtime_state()
+            status_text = f"{'enabled' if new_val else 'disabled'}"
+            self.console.print(f" {self.OK} Sound {status_text}.")
+            self.watcher.logger.info(f"Sound {status_text} by user command.")
+        elif cmd_lower == "togglenotifications":
+            with self.watcher.config_lock:
+                current = self.watcher.config["Watcher"].get("enable_notifications", True)
+                new_val = not current
+                self.watcher.config["Watcher"]["enable_notifications"] = new_val
+                self.watcher._save_runtime_state()
+            status_text = f"{'enabled' if new_val else 'disabled'}"
+            self.console.print(f" {self.OK} Notifications {status_text}.")
+            self.watcher.logger.info(f"Notifications {status_text} by user command.")
+        elif cmd_lower == "togglemainlog":
+            self.watcher.log_main_enabled = not self.watcher.log_main_enabled
+            self.watcher.config["Logging"]["log_main_enabled"] = self.watcher.log_main_enabled
+            self.watcher._save_runtime_state()
+            self.console.print(f" {self.OK} Main log {'enabled' if self.watcher.log_main_enabled else 'disabled'}.")
+            self.watcher._setup_logging()
+        elif cmd_lower == "toggleallentrieslog":
+            self.watcher.log_all_entries_enabled = not self.watcher.log_all_entries_enabled
+            self.watcher.config["Logging"]["log_all_entries_enabled"] = self.watcher.log_all_entries_enabled
+            self.watcher._save_runtime_state()
+            self.console.print(f" {self.OK} All-entries log {'enabled' if self.watcher.log_all_entries_enabled else 'disabled'}.")
+        elif cmd_lower == "togglerewardfilter":
+            self.watcher.min_reward_filter_enabled = not getattr(self.watcher, 'min_reward_filter_enabled', True)
+            state = 'enabled' if self.watcher.min_reward_filter_enabled else 'disabled'
+            self.console.print(f" {self.OK} Minimum reward filter {state}.")
+            self.watcher.logger.info(f"Minimum reward filter {state} by user command.")
+        elif cmd_lower.startswith("setminreward"):
+            parts = cmd.split()
+            if len(parts) == 2:
+                try:
+                    new_val = float(parts[1])
+                    with self.watcher.config_lock:
+                        self.watcher.config["Watcher"]["min_reward"] = new_val
+                        self.watcher._config_parser.set("Watcher", "min_reward", str(new_val))
+                        self.watcher._save_runtime_state()
+                    self.console.print(f" {self.OK} Minimum reward set to US${new_val:.2f}.")
+                    self.watcher.logger.info(f"Minimum reward set to US${new_val:.2f} by user command.")
+                except ValueError:
+                    self.console.print(f" {self.ERR} Invalid value for minimum reward. Usage: setminreward 2.50")
+            else:
+                self.console.print(f" {self.INFO} Usage: setminreward <amount>")
+        elif cmd_lower == "help":
+            self.watcher.print_help_rich()
+        elif cmd == "reloadconfig":
+            try:
+                self.watcher._load_config()
+                self.watcher._setup_logging()
+                self.console.print(f" {self.OK} Configuration reloaded.")
+                self.watcher.logger.info("Configuration reloaded by user command.")
+            except Exception as e:
+                self.console.print(f" {self.ERR} Failed to reload configuration: {e}")
+                self.watcher.logger.error(f"Failed to reload configuration: {e}")
+        elif cmd == "restart":
+            self.console.print(f" {self.INFO} Restarting GengoWatcher...")
+            self.watcher.logger.info("Restart command received. Restarting script.")
+            self.watcher.shutdown_event.set()
+            self.watcher._save_runtime_state()
+            # Wait for watcher thread to finish
+            # Restart the script
+            import sys, os
+            python = sys.executable
+            os.execv(python, [python] + sys.argv)
+        elif cmd == "notifytest":
+            self.watcher.logger.info("Notification test command triggered.")
+            test_url = "https://gengo.com/t/jobs/status/available" # Example URL
+            self.watcher.show_notification(
+                "This is a notification test!",
+                title="GengoWatcher Test",
+                play_sound=True,
+                open_link=True,
+                url=test_url
+            )
+        else:
+            self.console.print(f"Unknown command: {cmd}")
+
 if __name__ == "__main__":
     watcher = GengoWatcher()
-    console = watcher.console
     watcher_thread = threading.Thread(target=watcher.run, daemon=True, name="WatcherThread")
     watcher_thread.start()
-    console.print("[bold cyan][>][/] Type 'help' for commands. Type 'exit' to quit.")
-    OK = "[bold green][+][/bold green]"
-    WARN = "[bold yellow][!][/bold yellow]"
-    ERR = "[bold red][-][/bold red]"
-    INFO = "[bold cyan][>][/bold cyan]"
-    try:
-        while not watcher.shutdown_event.is_set():
-            cmd = console.input("[bold]>>> [/] ").strip()
-            cmd_lower = cmd.lower()
-            if cmd_lower in ("exit", "quit", "stop", "end", "ex", "qu"):
-                console.print("Exiting...")
-                watcher.shutdown_event.set()
-                break
-            elif cmd_lower == "check":
-                watcher.logger.info("Manual check requested via command.")
-                watcher.check_now_event.set()
-            elif cmd_lower == "status":
-                watcher.print_status()
-            elif cmd_lower == "pause":
-                if not os.path.exists(watcher.PAUSE_FILE):
-                    with open(watcher.PAUSE_FILE, "w") as f:
-                        f.write("Paused by user command.\n")
-                    console.print(f" {OK} Watcher paused. Enter 'resume' to continue.")
-                    watcher.logger.info(f"Pause file '{watcher.PAUSE_FILE}' created by user command.")
-                else:
-                    console.print(f" {WARN} Watcher is already paused.")
-            elif cmd_lower == "resume":
-                if os.path.exists(watcher.PAUSE_FILE):
-                    try:
-                        os.remove(watcher.PAUSE_FILE)
-                        console.print(f" {OK} Watcher resumed.")
-                        watcher.logger.info(f"Pause file '{watcher.PAUSE_FILE}' removed by user command.")
-                    except Exception as e:
-                        console.print(f" {ERR} Failed to remove pause file: {e}")
-                        watcher.logger.error(f"Failed to remove pause file: {e}")
-                else:
-                    console.print(f" {WARN} Watcher is not paused.")
-            elif cmd_lower == "togglesound":
-                with watcher.config_lock:
-                    current = watcher.config["Watcher"].get("enable_sound", True)
-                    new_val = not current
-                    watcher.config["Watcher"]["enable_sound"] = new_val
-                    watcher._save_runtime_state()
-                status_text = f"{'enabled' if new_val else 'disabled'}"
-                console.print(f" {OK} Sound {status_text}.")
-                watcher.logger.info(f"Sound {status_text} by user command.")
-            elif cmd_lower == "togglenotifications":
-                with watcher.config_lock:
-                    current = watcher.config["Watcher"].get("enable_notifications", True)
-                    new_val = not current
-                    watcher.config["Watcher"]["enable_notifications"] = new_val
-                    watcher._save_runtime_state()
-                status_text = f"{'enabled' if new_val else 'disabled'}"
-                console.print(f" {OK} Notifications {status_text}.")
-                watcher.logger.info(f"Notifications {status_text} by user command.")
-            elif cmd_lower == "togglemainlog":
-                watcher.log_main_enabled = not watcher.log_main_enabled
-                watcher.config["Logging"]["log_main_enabled"] = watcher.log_main_enabled
-                watcher._save_runtime_state()
-                console.print(f" {OK} Main log {'enabled' if watcher.log_main_enabled else 'disabled'}.")
-                watcher._setup_logging()
-            elif cmd_lower == "toggleallentrieslog":
-                watcher.log_all_entries_enabled = not watcher.log_all_entries_enabled
-                watcher.config["Logging"]["log_all_entries_enabled"] = watcher.log_all_entries_enabled
-                watcher._save_runtime_state()
-                console.print(f" {OK} All-entries log {'enabled' if watcher.log_all_entries_enabled else 'disabled'}.")
-            elif cmd_lower == "togglerewardfilter":
-                watcher.min_reward_filter_enabled = not getattr(watcher, 'min_reward_filter_enabled', True)
-                state = 'enabled' if watcher.min_reward_filter_enabled else 'disabled'
-                console.print(f" {OK} Minimum reward filter {state}.")
-                watcher.logger.info(f"Minimum reward filter {state} by user command.")
-            elif cmd_lower.startswith("setminreward"):
-                parts = cmd.split()
-                if len(parts) == 2:
-                    try:
-                        new_val = float(parts[1])
-                        with watcher.config_lock:
-                            watcher.config["Watcher"]["min_reward"] = new_val
-                            watcher._config_parser.set("Watcher", "min_reward", str(new_val))
-                            watcher._save_runtime_state()
-                        console.print(f" {OK} Minimum reward set to US${new_val:.2f}.")
-                        watcher.logger.info(f"Minimum reward set to US${new_val:.2f} by user command.")
-                    except ValueError:
-                        console.print(f" {ERR} Invalid value for minimum reward. Usage: setminreward 2.50")
-                else:
-                    console.print(f" {INFO} Usage: setminreward <amount>")
-            elif cmd_lower == "help":
-                watcher.print_help_rich()
-            elif cmd == "reloadconfig":
-                try:
-                    watcher._load_config()
-                    watcher._setup_logging()
-                    console.print(f" {OK} Configuration reloaded.")
-                    watcher.logger.info("Configuration reloaded by user command.")
-                except Exception as e:
-                    console.print(f" {ERR} Failed to reload configuration: {e}")
-                    watcher.logger.error(f"Failed to reload configuration: {e}")
-            elif cmd == "restart":
-                console.print(f" {INFO} Restarting GengoWatcher...")
-                watcher.logger.info("Restart command received. Restarting script.")
-                watcher.shutdown_event.set()
-                watcher._save_runtime_state()
-                watcher_thread.join(timeout=5)
-                python = sys.executable
-                os.execv(python, [python] + sys.argv)
-            elif cmd == "notifytest":
-                watcher.logger.info("Notification test command triggered.")
-                test_url = "https://gengo.com/t/jobs/status/available" # Example URL
-                watcher.show_notification(
-                    "This is a notification test!",
-                    title="GengoWatcher Test",
-                    play_sound=True,
-                    open_link=True,
-                    url=test_url
-                )
-            else:
-                console.print(f"Unknown command: {cmd}")
-    except KeyboardInterrupt:
-        watcher.logger.info("Keyboard interrupt received in main thread.")
-        watcher.handle_exit() # Ensure graceful shutdown on Ctrl+C
+    cli = CommandLineInterface(watcher)
+    cli.run()
     watcher_thread.join(timeout=5)
     watcher.logger.info("Program exited cleanly.")
     sys.exit(0)
