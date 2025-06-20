@@ -107,4 +107,4 @@ The app logs feed checks and notification events to a log file (default: `rss_ch
 ## Updating
 
 Download the latest version `gengowatcher.exe` and replace the old executable.
-Your `config.ini` and log files will remain intact.
+Your `config.ini` and log files will remain intact.# lazysearch
