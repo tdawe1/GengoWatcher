@@ -1,107 +1,120 @@
-# GengoWatcher
+Of course. Here is a comprehensive README.md file for your GitHub repository. It includes a description, key features, installation instructions, usage guide, and configuration details.
 
-A terminal-based utility for monitoring RSS feeds. It provides desktop notifications and filters new entries based on user-defined criteria. The application is primarily designed for use with Gengo's RSS feed but can be configured for other feeds.
+Just copy and paste the entire block of text into a new `README.md` file in your project's root directory.
 
----
+```markdown
+# GengoWatcher v1.2.1
 
-## 💾 Standalone Executable
+GengoWatcher is a sophisticated terminal application designed to monitor RSS feeds, specifically for platforms like Gengo, to find and alert you to new freelance jobs the instant they become available. It features a rich, interactive text-based user interface (TUI) that runs directly in your terminal, providing real-time status updates and command controls.
 
-For users who do not wish to install Python or manage dependencies, a pre-compiled executable is available.
 
-1.  Navigate to the **[Releases](https://github.com/tdawe1/GengoWatcher/releases)** page.
-2.  Download the `GengoWatcher-vX.X.X.exe` file from the most recent release.
-3.  Place the executable in its own folder.
-4.  Run the executable. A `config.ini` file will be generated in the same directory for configuration.
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
-*   **Terminal User Interface:** Provides a text-based user interface using the `rich` library for formatted output, including a status dashboard and tables.
-*   **Reward-Based Filtering:** Allows users to set a minimum monetary value to filter which feed entries trigger an alert.
-*   **Desktop Notifications:** Delivers desktop notifications via `plyer` and can play a `.wav` sound file upon finding a qualifying entry.
-*   **Interactive Console:** An interactive console accepts commands and aliases for real-time application control.
-*   **State Persistence:** The application saves the last-seen feed entry to `config.ini` on exit, allowing it to resume without reprocessing old entries.
-*   **Configuration File:** Most application behavior is controlled through a `config.ini` file.
-*   **Error Handling:** Implements an exponential backoff strategy to handle temporary network or feed availability issues.
-*   **Logging:** Can maintain a main application log and a secondary log that records all entries found in the feed.
-
----
-
-## 🐍 Installation from Source
-
-This method is for users who prefer to run the script directly from its source code.
-
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/tdawe1/GengoWatcher.git
-    cd GengoWatcher
-    ```
-2.  **Create and activate a virtual environment:**
-    ```bash
-    # On Windows
-    python -m venv .venv
-    .\.venv\Scripts\activate
-    ```
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  **Configure and Run:**
-    The `config.ini` file will be generated on the first run. Edit this file with the required settings and then start the application:
-    ```bash
-    python gengowatcher.py
-    ```
+- **Instant Notifications**: Opens new jobs in your browser immediately upon discovery, giving you the best chance to secure the work.
+- **Rich Interactive TUI**: A clean, modern interface built with Rich that provides at-a-glance status, recent activity, and a list of available commands.
+- **Cross-Platform**: Runs on Windows, macOS, and Linux.
+- **Customizable Alerts**:
+    - Filter jobs by a minimum reward value.
+    - Toggle desktop notifications on/off.
+    - Toggle sound alerts on/off (with support for custom sound files).
+- **Interactive Controls**: Pause, resume, restart, and trigger manual checks on the fly without ever leaving the terminal.
+- **Configuration on the Fly**: Adjust settings like minimum reward and notification toggles instantly with commands.
+- **Robust & Efficient**: Low CPU usage while idle, handles connection errors with an exponential backoff strategy, and automatically re-establishes connections.
+- **Persistent State**: Remembers the last job seen, so you only get notified about truly new entries, even after restarting.
+- **CSV Logging**: Optionally logs every job entry it finds to a CSV file for historical data analysis.
 
 ---
 
-## ⚙️ Configuration (`config.ini`)
+## 🚀 Installation
 
-The `config.ini` file contains all user-configurable settings.
+GengoWatcher is a Python application. To run it, you'll need Python 3.8 or newer.
 
-*   **`[Watcher]`**
-    *   `feed_url`: The URL of the RSS feed to monitor.
-    *   `check_interval`: Time in seconds between feed checks.
-    *   `min_reward`: The minimum value to trigger an alert. A value of `0.0` disables the filter.
-    *   `enable_notifications`: Toggles desktop notifications (`True`/`False`).
-    *   `enable_sound`: Toggles sound alerts (`True`/`False`).
-*   **`[Paths]`**
-    *   `sound_file`: Filesystem path to a `.wav` file for sound alerts.
-    *   `browser_path`: Path to a browser executable. If empty, the system default is used.
-    *   `browser_args`: Command-line arguments for the custom browser (e.g., `--new-window {url}`).
-*   **`[Logging]`**
-    *   `log_main_enabled`: Toggles the main application log (`rss_check_log.txt`).
-    *   `log_all_entries_enabled`: Toggles the log that records all found feed entries (`all_entries_log.txt`).
+**1. Clone the Repository**
 
----
+First, clone this repository to your local machine using Git:
+```bash
+git clone https://github.com/your-username/GengoWatcher.git
+cd GengoWatcher
+```
 
-## ⌨️ Command Reference
+**2. Set Up a Virtual Environment (Recommended)**
 
-Type a command or its alias and press Enter. Commands are not case-sensitive.
+It's highly recommended to use a virtual environment to manage project dependencies without affecting your system's global Python installation.
 
-| Command              | Aliases          | Arguments  | Description                                        |
-| -------------------- | ---------------- | ---------- | -------------------------------------------------- |
-| **`status`**         | `s`, `st`        | -          | Show the application status dashboard.             |
-| **`check`**          | `c`, `now`       | -          | Trigger an immediate RSS feed check.               |
-| **`help`**           | `h`              | -          | Display the list of available commands.            |
-| **`exit`**           | `q`, `quit`      | -          | Save state and exit the application.               |
-| **`pause`**          | `p`              | -          | Pause RSS feed checks.                             |
-| **`resume`**         | `r`              | -          | Resume RSS feed checks.                            |
-| **`togglesound`**    | `ts`             | -          | Enable or disable sound alerts.                    |
-| **`togglenotifications`** | `tn`        | -          | Enable or disable desktop notifications.           |
-| **`setminreward`**   | `smr`            | `<amount>` | Set the minimum reward value for filtering.        |
-| **`reloadconfig`**   | `rl`             | -          | Reload settings from the `config.ini` file.        |
-| **`restart`**        | -                | -          | Restart the application.                           |
-| **`notifytest`**     | `nt`             | -          | Send a test notification to verify settings.       |
+```bash
+# Create a virtual environment
+python -m venv venv
+
+# Activate it
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+```
+
+**3. Install Dependencies**
+
+Install all the required Python packages using the `requirements.txt` file:
+
+```bash
+pip install -r requirements.txt
+```
 
 ---
 
-## 📄 License
+## ⚙️ Configuration & Usage
 
-This project is distributed under the MIT License. See the `LICENSE` file for details.
+**First Run**
+
+The first time you run the application, it will automatically create a `config.ini` file and then exit.
+
+```bash
+python main.py
+```
+> Created default 'config.ini'. Please review it and restart the application.
+
+Before running again, you **must** open `config.ini` in a text editor and configure it, paying special attention to the following:
+
+- **`feed_url`**: This is the most important setting. Replace the default Guardian RSS feed with your personal Gengo RSS feed URL.
+- **`sound_file`**: By default, this points to a standard Windows sound. On macOS/Linux, you should change this to a valid path for a `.wav` file (e.g., `/System/Library/Sounds/Glass.aiff`).
+
+**Running the Application**
+
+Once configured, launch the application again from your terminal:
+
+```bash
+python main.py
+```
+
+The GengoWatcher interface will load, and it will begin monitoring your feed.
 
 ---
-## Acknowledgements
-*   [Rich](https://github.com/Textualize/rich) - For terminal UI formatting.
-*   [feedparser](https://github.com/kurtmckee/feedparser) - For RSS feed parsing.
-*   [plyer](https://github.com/kivy/plyer) - For cross-platform desktop notifications.
+
+## ⌨️ Commands
+
+You can type commands directly into the TUI and press `Enter` to execute them.
+
+| Command               | Aliases      | Description                                                 |
+| --------------------- | ------------ | ----------------------------------------------------------- |
+| `check`               |              | Trigger an immediate RSS feed check.                        |
+| `help`                |              | Display the list of available commands.                     |
+| `exit`                | `q`, `quit`  | Save the current state and exit the application.            |
+| `pause`               | `p`          | Pause feed checks. A `gengowatcher.pause` file is created.  |
+| `resume`              | `r`          | Resume feed checks by deleting the pause file.              |
+| `togglesound`         | `ts`         | Toggle sound alerts on or off.                              |
+| `togglenotifications` | `tn`         | Toggle desktop notifications on or off.                     |
+| `setminreward <amt>`  | `smr <amt>`  | Set a minimum reward value (e.g., `smr 5.50`).              |
+| `reloadconfig`        | `rl`         | Reload all settings from `config.ini`.                      |
+| `restart`             |              | Restart the entire script.                                  |
+| `notifytest`          | `nt`         | Send a test notification to check sound and alerts.         |
+| `clear`               |              | Clear the command output panel.                             |
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.
+```
