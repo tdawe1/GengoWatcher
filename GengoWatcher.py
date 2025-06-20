@@ -428,11 +428,10 @@ class GengoWatcher:
                 url=link
             )
         self.last_seen_link = new_entries_to_process[0].get("link")
-        if processed_count > 0:
-            self.logger.info(f"Processing complete. {processed_count} jobs met the criteria. Total found this session: {self.total_new_entries_found}")
-        else:
-            self.logger.info("Processing complete. No new jobs met the minimum reward criteria.")
-        self._save_runtime_state()
+        # Only save runtime state if jobs were processed or last_seen_link changed
+        last_seen_link_changed = self.last_seen_link != self.config["State"].get("last_seen_link", "")
+        if processed_count > 0 or last_seen_link_changed:
+            self._save_runtime_state()
 
     def fetch_rss(self):
         headers = {}
