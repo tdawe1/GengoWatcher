@@ -4,7 +4,7 @@ __release_date__ = "2025-06-22"
 import feedparser
 import time
 import webbrowser
-from plyer import notification
+from plyer import notification # pip install plyer
 import os
 import winsound
 import signal
@@ -18,10 +18,8 @@ import datetime
 import subprocess
 import rich
 from rich.console import Console, Group
-from rich.live import Live
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.progress import Progress, BarColumn, TimeRemainingColumn
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
@@ -29,6 +27,7 @@ import re
 import csv
 import inspect
 
+# Define a central theme for consistent styling across the application
 APP_THEME = Theme({
     "info": "cyan",
     "success": "bold green",
@@ -51,18 +50,18 @@ class GengoWatcher:
         "Watcher": {
             "feed_url": "https://www.theguardian.com/uk/rss",
             "check_interval": "31",
-            "min_reward": "0.0",
+            "min_reward": "0.0",  
             "enable_notifications": "True",
             "use_custom_user_agent": "False",
-            "enable_sound": "True"
+            "enable_sound": "True"  
         },
         "Paths": {
             "sound_file": r"C:\\path\\to\\your\\sound.wav",
             "log_file": "logs/gengowatcher.log",
             "notification_icon_path": "",
-            "browser_path": "",
+            "browser_path": "",  
             "browser_args": "--new-window {url}",
-            "all_entries_log": "logs/all_entries.csv"
+            "all_entries_log": "logs/all_entries.csv"  
         },
         "Logging": {
             "log_max_bytes": "1000000",
@@ -112,10 +111,11 @@ class GengoWatcher:
             parser.add_section(section)
             for key, value in settings.items():
                 parser.set(section, key, value)
-
+        
+        # Ensure log directory exists before writing config
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
-
+        
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
             parser.write(f)
 
@@ -172,13 +172,13 @@ class GengoWatcher:
                 self._config_parser.add_section("State")
             self._config_parser.set("State", "last_seen_link", self.last_seen_link if self.last_seen_link else "")
             self._config_parser.set("State", "total_new_entries_found", str(self.total_new_entries_found))
-
+            
             if not self._config_parser.has_section("Watcher"):
                 self._config_parser.add_section("Watcher")
             self._config_parser.set("Watcher", "enable_sound", str(self.config["Watcher"].get("enable_sound", True)))
             self._config_parser.set("Watcher", "enable_notifications", str(self.config["Watcher"].get("enable_notifications", True)))
             self._config_parser.set("Watcher", "min_reward", str(self.config["Watcher"].get("min_reward", 0.0)))
-
+            
             try:
                 with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
                     self._config_parser.write(f)
@@ -191,7 +191,7 @@ class GengoWatcher:
         log_file_path.parent.mkdir(exist_ok=True, parents=True)
         self.log_all_entries_path = self.config["Paths"]["all_entries_log"]
         self.log_all_entries_path.parent.mkdir(exist_ok=True, parents=True)
-
+        
         handlers = [RichHandler(console=self.console, rich_tracebacks=True, markup=True)]
         if self.config["Logging"]["log_main_enabled"]:
             handlers.append(RotatingFileHandler(
@@ -219,6 +219,10 @@ class GengoWatcher:
 
     def _setup_signal_handlers(self):
         signal.signal(signal.SIGINT, self.handle_exit)
+
+    def _smart_wait(self, total_seconds: float) -> bool:
+        self.check_now_event.wait(timeout=total_seconds)
+        return self.shutdown_event.is_set()
 
     def handle_exit(self, signum=None, frame=None):
         if not self.shutdown_event.is_set():
@@ -278,18 +282,18 @@ class GengoWatcher:
         status, status_color = ("Running", "success")
         if self.shutdown_event.is_set(): status, status_color = ("Stopped", "error")
         elif os.path.exists(self.PAUSE_FILE): status, status_color = ("Paused", "warning")
-
+        
         last_check = self.last_check_time.strftime("%Y-%m-%d %H:%M:%S") if self.last_check_time else "Never"
         notif_enabled = "[success]Enabled[/]" if self.config["Watcher"]["enable_notifications"] else "[warning]Disabled[/]"
         sound_enabled = "[success]Enabled[/]" if self.config["Watcher"].get("enable_sound", True) else "[warning]Disabled[/]"
-
+        
         min_reward = self.config["Watcher"].get("min_reward", 0.0)
         min_reward_status = f"[success]Enabled (US${min_reward:.2f})[/]" if min_reward > 0.0 else "[warning]Disabled[/]"
 
         table = Table(box=None, show_header=False, pad_edge=False)
         table.add_column("Label", style="label", justify="right", width=20)
         table.add_column("Value", style="value")
-
+        
         table.add_row("Version:", f"v{__version__} ({__release_date__})")
         table.add_row("Status:", f"[{status_color}]{status}[/]")
         table.add_row("Current Action:", f"'{self.current_action}'")
@@ -303,7 +307,7 @@ class GengoWatcher:
         table.add_row("New Jobs Found:", str(self.total_new_entries_found))
         table.add_row("Last Check:", last_check)
         table.add_row("Last Error:", str(self.last_error_message))
-
+        
         return Panel(table, title="[title]GengoWatcher Status[/]", border_style="panel_border")
 
     def print_status(self):
@@ -338,7 +342,7 @@ class GengoWatcher:
 
     def _process_feed_entries(self, entries):
         if not entries:
-            self.logger.debug("Feed fetched, but it contains no entries to process.")
+            self.logger.info("Feed fetched, but it contains no entries to process.")
             return
         min_reward_threshold = self.config["Watcher"]["min_reward"]
         new_entries_to_process = []
@@ -350,31 +354,31 @@ class GengoWatcher:
             if link == self.last_seen_link:
                 break
             new_entries_to_process.append(entry)
-
+        
         if not new_entries_to_process:
-            self.logger.debug("No new entries detected since last check.")
+            self.logger.info("No new entries detected since last check.")
             return
 
-        self.console.log(f"Discovered {len(new_entries_to_process)} new entries. Filtering...")
+        self.logger.info(f"Discovered {len(new_entries_to_process)} new entries. Filtering by minimum reward...")
         processed_count = 0
         for entry in reversed(new_entries_to_process):
             reward = self._extract_reward(entry)
             self._log_all_entry(entry, reward)
-
+            
             if min_reward_threshold > 0.0 and reward < min_reward_threshold:
-                self.logger.debug(f"Skipping job (Reward US${reward:.2f} is below minimum of US${min_reward_threshold:.2f})")
+                self.logger.info(f"  -> Skipping job (Reward US${reward:.2f} is below minimum of US${min_reward_threshold:.2f})")
                 continue
-
+            
             processed_count += 1
             self.total_new_entries_found += 1
             self.console.print(self._create_new_job_panel(entry, reward))
             self.show_notification(message=entry.get("title", "(No Title)"), title="New Gengo Job Available!", play_sound=True, open_link=True, url=entry.get("link"))
-
+        
         original_last_seen = self.last_seen_link
         self.last_seen_link = new_entries_to_process[0].get("link")
-
+        
         if processed_count > 0 or self.last_seen_link != original_last_seen:
-            self.console.log(f"Processing complete. {processed_count} jobs met criteria. Updating state.")
+            self.logger.info(f"Processing complete. {processed_count} jobs met criteria. Updating state.")
             self._save_runtime_state()
 
     def fetch_rss(self):
@@ -394,7 +398,8 @@ class GengoWatcher:
 
     def run(self):
         self.current_action = "Starting main loop"
-
+        
+        # --- NEW PRIMING LOGIC ---
         if not self.last_seen_link:
             self.console.print("[info]First run detected (no last seen link). Priming the feed...[/]")
             self.current_action = "Priming feed"
@@ -402,81 +407,57 @@ class GengoWatcher:
             if initial_feed and initial_feed.entries:
                 self.last_seen_link = initial_feed.entries[0].get("link")
                 self._save_runtime_state()
-                self.console.print("[success]Feed primed.[/] Will now watch for new entries.")
+                self.console.print("[success]Feed primed.[/]")
+                self.console.print("Will now watch for new entries.")
             else:
                 self.logger.warning("Could not prime feed. Will check again on the next cycle.")
+        # --- END OF PRIMING LOGIC ---
 
         base_interval = self.config["Watcher"]["check_interval"]
+        backoff = base_interval
         max_backoff = self.config["Network"]["max_backoff"]
         is_paused = False
 
-        def get_live_display():
-            status_panel = self.get_status_panel()
-            progress_bar = Progress(
-                "{task.description}",
-                BarColumn(),
-                "[progress.percentage]{task.percentage:>3.0f}%",
-                TimeRemainingColumn(),
-            )
-            return Group(status_panel, Panel(progress_bar, border_style="panel_border")), progress_bar
-
-        live_display_group, progress = get_live_display()
-        with Live(live_display_group, console=self.console, refresh_per_second=2, screen=False, transient=True) as live:
-            while not self.shutdown_event.is_set():
-                try:
-                    pause_file_exists = os.path.exists(self.PAUSE_FILE)
-                    if pause_file_exists and not is_paused:
-                        self.current_action = "Paused"
-                        live.update(get_live_display()[0])
-                        self.console.log(f"Pause file '{self.PAUSE_FILE}' detected. Pausing RSS checks.")
+        while not self.shutdown_event.is_set():
+            try:
+                if os.path.exists(self.PAUSE_FILE):
+                    if not is_paused:
+                        self.logger.info(f"Pause file '{self.PAUSE_FILE}' detected. Pausing RSS checks.")
                         is_paused = True
-
-                    if is_paused:
-                        if not pause_file_exists:
-                             self.console.log("Pause file removed. Resuming RSS checks.")
-                             is_paused = False
-                        else:
-                            time.sleep(1)
-                            continue
-
-                    self.current_action = "Fetching RSS feed..."
-                    live.update(get_live_display()[0])
-
-                    feed = self.fetch_rss()
-                    if feed is None:
-                        self.failure_count += 1
-                        wait_time = min(base_interval * self.failure_count, max_backoff)
-                        self.current_action = f"Waiting {wait_time}s (backoff)"
-                        self.logger.warning(f"RSS fetch failed. Backing off for {wait_time} seconds.")
-                    else:
-                        self.failure_count = 0
-                        self.last_check_time = datetime.datetime.now()
-                        self.current_action = f"Processing {len(feed.entries)} entries..."
-                        live.update(get_live_display()[0])
-                        self._process_feed_entries(feed.entries)
-                        wait_time = base_interval
-
-                    self.current_action = f"Waiting {wait_time}s"
-                    live_display_group, progress = get_live_display()
-                    live.update(live_display_group)
-                    task = progress.add_task("[cyan]Next check in...", total=wait_time)
-
-                    for i in range(wait_time):
-                        if self.shutdown_event.is_set() or self.check_now_event.is_set():
-                            break
-                        progress.update(task, advance=1)
-                        time.sleep(1)
-
-                    if self.check_now_event.is_set():
-                        self.console.log("Manual check triggered.")
+                    self.current_action = "Paused"
+                    time.sleep(1)
+                    continue
+                if is_paused:
+                    self.logger.info(f"Pause file removed. Resuming RSS checks.")
+                    is_paused = False
+                
+                self.current_action = "Fetching RSS feed..."
+                feed = self.fetch_rss()
+                if feed is None:
+                    self.failure_count += 1
+                    wait_time = min(backoff * self.failure_count, max_backoff)
+                    self.logger.warning(f"RSS fetch failed. Backing off for {wait_time} seconds.")
+                    self.current_action = f"Waiting {wait_time}s (backoff)"
+                    if self._smart_wait(wait_time): break
                     self.check_now_event.clear()
-
-                except Exception as e:
-                    self.logger.error(f"An unexpected error occurred in the main loop: {e}", exc_info=True)
-                    self.last_error_message = str(e)
-                    self.current_action = "Error state"
-                    time.sleep(10)
-
+                    continue
+                
+                self.last_check_time = datetime.datetime.now()
+                self.failure_count = 0
+                
+                self.current_action = f"Processing {len(feed.entries)} entries..."
+                self._process_feed_entries(feed.entries)
+                
+                self.current_action = f"Waiting {base_interval}s"
+                self.check_now_event.clear()
+                if self._smart_wait(base_interval): break
+            
+            except Exception as e:
+                self.logger.error(f"An unexpected error occurred in the main loop: {e}", exc_info=True)
+                self.last_error_message = str(e)
+                self.current_action = "Error state"
+                time.sleep(10)
+        
         self.logger.info("Exiting main loop.")
         self.current_action = "Stopped"
 
@@ -524,11 +505,12 @@ class CommandLineInterface:
         self.INFO = "[info][>][/info]"
 
     def run(self):
+        self.console.print(f"{self.INFO} Type 'help' for commands.")
         try:
             while not self.watcher.shutdown_event.is_set():
                 cmd_full = self.console.input("[bold]>>> [/]").strip()
                 if cmd_full: self.handle_command(cmd_full)
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt:
             self.console.print("\nKeyboard interrupt received.")
             self._handle_exit()
 
@@ -564,6 +546,7 @@ class CommandLineInterface:
         self.watcher.handle_exit()
 
     def _handle_check(self):
+        self.watcher.logger.info("Manual check requested via command.")
         self.watcher.check_now_event.set()
 
     def _handle_pause(self):
@@ -628,26 +611,22 @@ class CommandLineInterface:
             open_link=True,
             url="https://gengo.com/t/jobs/status/available"
         )
-
+        
     def _handle_peek(self, args):
         try: duration = int(args[0]) if args else 10
         except (ValueError, IndexError): duration = 10
-        self.console.print(f"{self.INFO} Showing live status for {duration} seconds (Note: main display is already live).")
+        self.console.print(f"{self.INFO} Showing live status for {duration} seconds...")
+        from rich.live import Live
         with Live(self.watcher.get_status_panel(), console=self.console, refresh_per_second=2, transient=True) as live:
-            end_time = time.time() + duration
-            while time.time() < end_time:
-                live.update(self.watcher.get_status_panel())
-                time.sleep(0.5)
-        self.console.print(f"{self.INFO} Peek view finished.")
+            time.sleep(duration)
+        self.console.print(f"{self.INFO} Live view finished.")
 
 if __name__ == "__main__":
     watcher = GengoWatcher()
     watcher_thread = threading.Thread(target=watcher.run, daemon=True, name="WatcherThread")
     watcher_thread.start()
-
     cli = CommandLineInterface(watcher)
     cli.run()
-
-    watcher_thread.join(timeout=2)
+    watcher_thread.join(timeout=5)
     watcher.logger.info("Program exited cleanly.")
     sys.exit(0)
