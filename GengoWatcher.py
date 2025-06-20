@@ -301,35 +301,66 @@ class GengoWatcher:
             return None
 
     def process_entries(self, entries):
+        """
+        Processes entries from the RSS feed to find and handle new items.
+
+        This method iterates through the feed entries (which are newest-first),
+        collects all entries until it finds the last one it has already seen,
+        and then processes the collected new entries in chronological order.
+        """
         if not entries:
-            self.logger.info("No entries found.")
+            self.logger.info("Feed was fetched, but it contains no entries to process.")
             return
 
-        new_found = 0
-        for entry in reversed(entries):
-            link = entry.get("link", None)
-            title = entry.get("title", "(No Title)")
+        # Collect all entries that are newer than our last_seen_link
+        new_entries_to_process = []
+        for entry in entries:  # feedparser entries are sorted newest to oldest
+            link = entry.get("link")
             if not link:
+                self.logger.warning("Found an entry with no link, skipping.")
                 continue
 
-            if self.last_seen_link == link:
-                break  # Stop at the first known entry (newest first)
+            if link == self.last_seen_link:
+                # We've found the last job we processed. Everything before this is new.
+                break
+            
+            # This is a new entry, add it to our list
+            new_entries_to_process.append(entry)
 
-            new_found += 1
+        if not new_entries_to_process:
+            self.logger.info("No new entries detected since last check.")
+            return
+
+        # We have new entries. Log the count and process them.
+        entry_count = len(new_entries_to_process)
+        plural = "entries" if entry_count > 1 else "entry"
+        self.logger.info(f"Discovered {entry_count} new {plural}. Processing...")
+
+        # Reverse the list so we process from oldest-new to newest-new
+        for entry in reversed(new_entries_to_process):
+            title = entry.get("title", "(No Title)")
+            link = entry.get("link")  # We know this exists from the check above
+
+            self.logger.info(f"  -> New Job: '{title}'")
             self.total_new_entries_found += 1
-            self.logger.info(f"New entry: {title} - {link}")
 
-            self.show_notification(title, "New RSS Entry", play_sound=True, open_link=False)
+            # Trigger combined notification and action
+            self.show_notification(
+                message=title,
+                title="New Gengo Job Available!",
+                play_sound=True,
+                open_link=True,
+                url=link
+            )
 
-            # Open URL
-            self.open_in_vivaldi(link)
+        # IMPORTANT: After processing, update the last_seen_link to the newest one
+        # from this batch, which is the first one we saw in the original list.
+        self.last_seen_link = new_entries_to_process[0].get("link")
 
-        if new_found > 0:
-            self.last_seen_link = entries[0].get("link", self.last_seen_link)
-            self._save_runtime_state()
-            self.logger.info(f"Total new entries found so far: {self.total_new_entries_found}")
-        else:
-            self.logger.info("No new entries detected this check.")
+        self.logger.info(f"Processing complete. Total jobs found this session: {self.total_new_entries_found}")
+        
+        # Persist the new state to the config file for the next run
+        self._save_runtime_state()
 
     def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
         self.notify(title, message)
