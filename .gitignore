@@ -9,3 +9,11 @@ build/
 dist/
 GengoWatcher 64cfbf7b4bf436e6ac2acbc08f0d5509656b6bb1.py
 all_entries_log.txt
+gengowatcher.spec
+GengoWatcher.py
+v1.2 backup/requirements.txt
+v1.2 backup/README.md
+v1.2 backup/config template.ini
+v1.2 backup/build_release.py
+gengowatcher.spec
+GengoWatcher.py
