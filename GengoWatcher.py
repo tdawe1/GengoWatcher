@@ -525,10 +525,11 @@ class GengoWatcher:
         self.current_action = "Stopped"
 
     def _print_initialization_summary_rich(self):
-        """Prints a visually prominent summary using rich, with a border, title, and subtitle."""
+        """Prints a visually prominent summary using rich."""
         version = globals().get("__version__", "?")
-        banner_text = Text("GengoWatcher", style="bold magenta")
-        subtitle = Text("Your real-time Gengo RSS job monitor", style="italic cyan")
+        release_date = globals().get("__release_date__", "?")
+        banner_text = Text(f"GengoWatcher v{version}", style="bold magenta")
+        subtitle = Text(f"Release date: {release_date}", style="italic cyan")
         # Build the config table
         config_table = Table(box=None, show_header=False, pad_edge=False)
         config_table.add_column("Key", style="cyan")
@@ -612,18 +613,6 @@ class GengoWatcher:
     def is_min_reward_enabled(self):
         # Treat 0.0 as disabled, any other value as enabled
         return self.config["Watcher"].get("min_reward", 0.0) > 0.0
-
-def print_welcome_banner():
-    console = Console()
-    banner_text = Text("GengoWatcher", style="bold magenta")
-    subtitle = Text("Your real-time Gengo RSS job monitor", style="italic cyan")
-    panel = Panel.fit(
-        Text.assemble(banner_text, "\n", subtitle),
-        border_style="bright_blue",
-        title="🚀 Welcome",
-        padding=(1, 4),
-    )
-    console.print(panel)
 
 class CommandLineInterface:
     def __init__(self, watcher: GengoWatcher):
