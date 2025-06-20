@@ -2,3 +2,5 @@ config.ini
 gengo_rss_log.txt
 rss_check_log.txt
 gengowatcher.pause
+config.ini.new
+assets/ecg-monitor.png
