@@ -398,6 +398,21 @@ class GengoWatcher:
 
     def run(self):
         self.current_action = "Starting main loop"
+        
+        # --- NEW PRIMING LOGIC ---
+        if not self.last_seen_link:
+            self.console.print("[info]First run detected (no last seen link). Priming the feed...[/]")
+            self.current_action = "Priming feed"
+            initial_feed = self.fetch_rss()
+            if initial_feed and initial_feed.entries:
+                self.last_seen_link = initial_feed.entries[0].get("link")
+                self._save_runtime_state()
+                self.console.print("[success]Feed primed.[/])
+                self.console.print("Will now watch for new entries.")
+            else:
+                self.logger.warning("Could not prime feed. Will check again on the next cycle.")
+        # --- END OF PRIMING LOGIC ---
+
         base_interval = self.config["Watcher"]["check_interval"]
         backoff = base_interval
         max_backoff = self.config["Network"]["max_backoff"]

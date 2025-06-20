@@ -1,0 +1,10 @@
+feedparser
+plyer
+rich
+
+# For Windows sound support (standard library, no pip needed):
+# winsound
+
+# For config file parsing and logging (standard library, no pip needed):
+# configparser
+# logging
