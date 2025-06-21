@@ -31,6 +31,7 @@ jobs:
           pytest -s -v tests/
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          set PYTHONPATH=.
+          $env:PYTHONPATH = '.'
           pytest -s -v tests/
