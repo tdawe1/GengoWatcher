@@ -13,9 +13,9 @@ from rich.table import Table
 from rich.text import Text
 from rich.layout import Layout
 
-from watcher import GengoWatcher, __version__
-from config import AppConfig
-from state import AppState
+from .watcher import GengoWatcher, __version__
+from .config import AppConfig
+from .state import AppState
 
 if sys.platform == "win32":
     import msvcrt

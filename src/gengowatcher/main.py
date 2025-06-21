@@ -10,10 +10,10 @@ from rich.console import Console
 from rich.text import Text
 from rich.theme import Theme
 
-from config import AppConfig
-from state import AppState
-from watcher import GengoWatcher
-from ui import CommandLineInterface
+from .config import AppConfig
+from .state import AppState
+from .watcher import GengoWatcher
+from .ui import CommandLineInterface
 
 APP_THEME = Theme(
     {

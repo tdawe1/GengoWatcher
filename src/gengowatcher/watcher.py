@@ -1,5 +1,5 @@
-__version__ = "1.2.1"
-__release_date__ = "2025-06-23"
+__version__ = "2.0.0"
+__release_date__ = "2025-06-21"
 
 import feedparser
 import time
@@ -14,8 +14,8 @@ import datetime
 import subprocess
 import re
 import csv
-from config import AppConfig
-from state import AppState
+from .config import AppConfig
+from .state import AppState
 
 if sys.platform == "win32":
     try:

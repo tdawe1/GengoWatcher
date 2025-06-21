@@ -1,5 +1,5 @@
 import pytest
-import state
+from gengowatcher import state
 import logging
 import os
 
