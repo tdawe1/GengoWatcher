@@ -1,16 +1,18 @@
 import json
 import threading
-from pathlib import Path
+import pathlib
 import logging
 
 
 class AppState:
     STATE_FILE = "state.json"
 
-    def __init__(self, logger: logging.Logger):
+    def __init__(
+        self, logger: logging.Logger, state_file_path: str | pathlib.Path | None = None
+    ):
         self.logger = logger
         self._lock = threading.Lock()
-        self.state_file_path = Path(self.STATE_FILE)
+        self.state_file_path = pathlib.Path(state_file_path or self.STATE_FILE)
 
         self.last_seen_link = None
         self.total_new_entries_found = 0
