@@ -15,15 +15,18 @@ import subprocess
 import re
 import csv
 
-try:
-    from playsound import playsound
-
-    SOUND_PLAYER = "playsound"
-except ImportError:
+if sys.platform == "win32":
     try:
         import winsound
 
         SOUND_PLAYER = "winsound"
+    except ImportError:
+        SOUND_PLAYER = "none"
+else:
+    try:
+        from playsound import playsound
+
+        SOUND_PLAYER = "playsound"
     except ImportError:
         SOUND_PLAYER = "none"
 
@@ -90,7 +93,7 @@ class GengoWatcher:
         elif SOUND_PLAYER == "winsound":
             winsound.PlaySound(sound_file_path, winsound.SND_FILENAME)
         else:
-            self.logger.warning("No sound library installed. Skipping sound.")
+            self.logger.warning("No sound library available. Skipping sound.")
 
     def open_in_browser(self, url):
         try:
