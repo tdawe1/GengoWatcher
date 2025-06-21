@@ -20,6 +20,10 @@ GengoWatcher is a sophisticated terminal application designed to monitor RSS fee
 
 ---
 
+![GengoWatcher TUI Screenshot](assets/tui-screenshot.png)
+
+---
+
 ## 🚀 Installation
 
 GengoWatcher is a Python application requiring Python 3.8 or newer.
@@ -80,14 +84,6 @@ Once configured, run the application again to start monitoring:
 ```bash
 python -m gengowatcher.main
 ```
-
----
-
-## 🖼️ Preview
-
-Below is a screenshot of the GengoWatcher TUI in action:
-
-![GengoWatcher TUI Screenshot](assets/tui-screenshot.png)
 
 ---
 
