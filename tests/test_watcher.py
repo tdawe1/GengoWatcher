@@ -117,3 +117,18 @@ def test_process_feed_entries():
     assert state.save_state_called is True
     assert state.last_seen_link == "link1"
     assert state.total_new_entries_found == 1
+
+
+@pytest.mark.parametrize(
+    "entry, expected_reward",
+    [
+        ({"title": "Job - Reward: $12.34", "summary": ""}, 12.34),
+        ({"title": "Job", "summary": "Reward: US$ 5.50"}, 5.50),
+        ({"title": "Job", "summary": "No reward info"}, 0.0),
+        ({"title": "Job - Reward: $0", "summary": ""}, 0.0),
+        ({"title": "Job with no reward info", "summary": ""}, 0.0),
+        ({"title": "Job", "summary": "Reward: $notanumber"}, 0.0),
+    ],
+)
+def test_extract_reward(watcher_instance, entry, expected_reward):
+    assert watcher_instance._extract_reward(entry) == expected_reward
