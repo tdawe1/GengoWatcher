@@ -116,16 +116,17 @@ class CommandLineInterface:
                 
                 live.refresh()
                 
-                # Tier 1 Fix: Handle input for both platforms
+                # OPTIMIZATION: The input check timeout now governs the UI refresh rate.
+                # A value of 0.5 seconds (2 FPS) is much more efficient than 0.05s (20 FPS).
                 if PLATFORM == "windows":
                     if msvcrt.kbhit():
                         char = msvcrt.getch()
                         self._process_char(char)
                     else:
-                        time.sleep(0.05) # Prevent high CPU usage
+                        time.sleep(0.5) # Prevent high CPU usage
                 else: # Linux/macOS
                     # Check if there is input to be read with a timeout
-                    if select.select([sys.stdin], [], [], 0.1)[0]:
+                    if select.select([sys.stdin], [], [], 0.5)[0]:
                         char = sys.stdin.read(1)
                         self._process_char(char)
         
