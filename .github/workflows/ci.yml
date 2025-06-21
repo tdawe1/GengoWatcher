@@ -42,6 +42,7 @@ jobs:
         else
           pip install -r requirements-dev.txt
         fi
+        pip install rich feedparser
       shell: bash
 
     - name: Lint with flake8

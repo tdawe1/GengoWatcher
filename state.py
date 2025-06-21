@@ -1,6 +1,7 @@
 import json
 import threading
 import pathlib
+from typing import Union
 import logging
 
 
@@ -8,7 +9,9 @@ class AppState:
     STATE_FILE = "state.json"
 
     def __init__(
-        self, logger: logging.Logger, state_file_path: str | pathlib.Path | None = None
+        self,
+        logger: logging.Logger,
+        state_file_path: Union[str, pathlib.Path, None] = None,
     ):
         self.logger = logger
         self._lock = threading.Lock()
