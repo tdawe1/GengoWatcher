@@ -71,8 +71,8 @@ class CommandLineInterface:
             Layout(size=1, name="input"),
         )
         layout["main"].split_row(
-            Layout(name="left", minimum_size=50),
-            Layout(name="right")
+            Layout(name="left", ratio=3),
+            Layout(name="right", ratio=2)
         )
         layout["left"].split(
             Layout(name="runtime_status"),
@@ -152,18 +152,54 @@ class CommandLineInterface:
             self.input_buffer += char
 
     def _get_runtime_status_panel(self) -> Panel:
+        # Create a 4-column grid for a dense, information-rich layout
         table = Table.grid(expand=True, padding=(0, 1))
-        table.add_column(style="label", justify="right", width=18)
-        table.add_column(style="value", justify="left")
+        # Adjusted column widths for a better fit
+        table.add_column(style="label", justify="right", width=15)
+        table.add_column(style="value", justify="left", width=11)
+        table.add_column(style="label", justify="right", width=15)
+        table.add_column(style="value", justify="left", width=11)
+
+        # --- Calculate new metrics ---
         uptime_seconds = time.time() - self.watcher.start_time
-        table.add_row("Uptime:", f" {str(datetime.timedelta(seconds=int(uptime_seconds)))}")
-        last_check_str = self.watcher.last_check_time.strftime('%Y-%m-%d %H:%M:%S') if self.watcher.last_check_time else "Never"
-        table.add_row("Last Check:", f" {last_check_str}")
+        uptime_hours = uptime_seconds / 3600.0
+        
+        # Jobs per hour (avoid division by zero)
+        jobs_per_hour = (self.watcher.session_new_entries / uptime_hours) if uptime_hours > 0 else 0.0
+        
+        # Average reward (avoid division by zero)
+        avg_reward = (self.watcher.session_total_value / self.watcher.session_new_entries) if self.watcher.session_new_entries > 0 else 0.0
+        
+        # Next check countdown string
+        if os.path.exists(self.watcher.PAUSE_FILE):
+            next_check_text = Text("Paused", "warning")
+        elif self.watcher.shutdown_event.is_set():
+            next_check_text = Text("N/A", "dim")
+        else:
+            seconds_remaining = max(0, self.watcher.next_check_time - time.time())
+            next_check_text = Text(f"{int(seconds_remaining)}s", "cyan")
+
+        # --- Populate the table ---
+        table.add_row(
+            "Uptime:", f" {str(datetime.timedelta(seconds=int(uptime_seconds)))}",
+            "Jobs/Hour:", f" {jobs_per_hour:.1f}"
+        )
+        table.add_row(
+            "Jobs (Session):", f" {self.watcher.session_new_entries}",
+            "Found (Total):", f" {self.state.total_new_entries_found}"
+        )
+        table.add_row(
+            "Value (Session):", f" US$ {self.watcher.session_total_value:.2f}",
+            "Avg. Reward:", f"US$ {avg_reward:.2f}"
+        )
+        
         failures = self.watcher.failure_count
-        table.add_row("Feed Failures:", Text(f" {failures}", style="warning" if failures > 0 else "default"))
-        table.add_row()
-        table.add_row("Jobs (Session):", f" {self.watcher.session_new_entries}")
-        table.add_row("Value (Session):", f" US$ {self.watcher.session_total_value:.2f}")
+        failures_text = Text(f" {failures}", style="warning" if failures > 0 else "success")
+        table.add_row(
+            "Next Check In:", next_check_text,
+            "Feed Failures:", failures_text
+        )
+
         return Panel(table, title="[title]Runtime Status[/]", title_align="center")
 
     def _get_recent_activity_panel(self) -> Panel:
