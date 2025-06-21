@@ -17,3 +17,10 @@ v1.2 backup/config template.ini
 v1.2 backup/build_release.py
 gengowatcher.spec
 GengoWatcher.py
+__pycache__/config.cpython-311.pyc
+__pycache__/state.cpython-311.pyc
+logs/all_entries.csv
+logs/gengowatcher.log
+assets/Generated File June 21, 2025 - 10_26AM.x-python
+__pycache__/watcher.cpython-311.pyc
+__pycache__/ui.cpython-311.pyc
