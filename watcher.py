@@ -1,4 +1,4 @@
-__version__ = "1.2.1"  # Incremented version
+__version__ = "1.2.1"
 __release_date__ = "2025-06-23"
 
 import feedparser
@@ -14,6 +14,8 @@ import datetime
 import subprocess
 import re
 import csv
+from config import AppConfig
+from state import AppState
 
 if sys.platform == "win32":
     try:
@@ -29,9 +31,6 @@ else:
         SOUND_PLAYER = "playsound"
     except ImportError:
         SOUND_PLAYER = "none"
-
-from config import AppConfig
-from state import AppState
 
 
 class GengoWatcher:
