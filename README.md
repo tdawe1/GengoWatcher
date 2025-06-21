@@ -6,17 +6,17 @@ GengoWatcher is a sophisticated terminal application designed to monitor RSS fee
 
 ## ✨ Key Features
 
-- **Instant Notifications**: Opens new jobs in your browser immediately upon discovery. [2, 12]
-- **Rich Interactive TUI**: A clean, modern interface that provides at-a-glance status, recent activity, and a list of available commands. [2, 11]
-- **Cross-Platform**: Runs on Windows, macOS, and Linux. [2, 12]
+- **Instant Notifications**: Opens new jobs in your browser immediately upon discovery.
+- **Rich Interactive TUI**: A clean, modern interface that provides at-a-glance status, recent activity, and a list of available commands. 
+- **Cross-Platform**: Runs on Windows, macOS, and Linux. 
 - **Customizable Alerts**:
-    - Filter jobs by a minimum reward value. [2, 11, 12]
-    - Toggle desktop and sound alerts on/off. [2, 11, 12]
-- **Interactive Controls**: Pause, resume, restart, and trigger manual checks on the fly. [2, 11]
-- **Configuration on the Fly**: Adjust settings instantly with commands without needing to restart the application. [2, 11]
-- **Robust & Efficient**: Handles connection errors with an exponential backoff strategy and automatically re-establishes connections. [12]
-- **Persistent State**: Remembers the last job seen in `state.json`, so you only get notified about truly new entries. [10]
-- **CSV Logging**: Optionally logs every job entry to a CSV file for historical data analysis. [12]
+    - Filter jobs by a minimum reward value. 
+    - Toggle desktop and sound alerts on/off. 
+- **Interactive Controls**: Pause, resume, restart, and trigger manual checks on the fly. 
+- **Configuration on the Fly**: Adjust settings instantly with commands without needing to restart the application. 
+- **Robust & Efficient**: Handles connection errors with an exponential backoff strategy and automatically re-establishes connections. 
+- **Persistent State**: Remembers the last job seen in `state.json`, so you only get notified about truly new entries. 
+- **CSV Logging**: Optionally logs every job entry to a CSV file for historical data analysis. 
 
 ---
 
