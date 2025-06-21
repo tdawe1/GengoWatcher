@@ -1,0 +1,8 @@
+[run]
+omit =
+    tests/*
+    __pycache__/*
+    build/*
+    logs/*
+    release/*
+    v1.2 backup/*
