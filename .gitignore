@@ -24,3 +24,4 @@ logs/gengowatcher.log
 assets/Generated File June 21, 2025 - 10_26AM.x-python
 __pycache__/watcher.cpython-311.pyc
 __pycache__/ui.cpython-311.pyc
+tests/__pycache__/test_state.cpython-311-pytest-8.4.1.pyc
