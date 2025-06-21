@@ -12,12 +12,10 @@ from rich.table import Table
 from rich.text import Text
 from rich.layout import Layout
 
-# Local imports
 from watcher import GengoWatcher, __version__
 from config import AppConfig
 from state import AppState
 
-# Tier 1 Fix: Platform-specific imports for non-blocking input
 try:
     import msvcrt
     PLATFORM = "windows"
@@ -28,6 +26,7 @@ except ImportError:
     import termios
     PLATFORM = "linux"
 
+
 class CommandLineInterface:
     def __init__(self, watcher: GengoWatcher, config: AppConfig, state: AppState, console: Console, log_queue: collections.deque):
         self.watcher = watcher
@@ -35,14 +34,10 @@ class CommandLineInterface:
         self.state = state
         self.console = console
         self.log_queue = log_queue
-        
         self.input_buffer = ""
         self.command_output = collections.deque(maxlen=20)
-        
         self._init_commands()
         signal.signal(signal.SIGINT, self._handle_exit)
-
-        # Build the static layout structure ONCE.
         self.layout = self._build_layout()
 
     def _init_commands(self):
@@ -85,93 +80,73 @@ class CommandLineInterface:
         config_table = Table.grid(expand=True, padding=(0, 1))
         config_table.add_column(style="label", justify="right", width=24)
         config_table.add_column(style="value", justify="left")
-        
         config_table.add_row("Feed URL:", f"[path]{self.config.get('Watcher', 'feed_url')}[/]")
         config_table.add_row("Check Interval:", f" {self.config.get('Watcher', 'check_interval')} seconds")
         config_table.add_row()
         config_table.add_row("Minimum Reward:", f"[success]US$ {self.config.get('Watcher', 'min_reward'):.2f}[/]")
-        
         notif_enabled = self.config.get('Watcher', 'enable_notifications')
         sound_enabled = self.config.get('Watcher', 'enable_sound')
         config_table.add_row("Desktop Notifications:", Text("Enabled", style="success") if notif_enabled else Text("Disabled", style="error"))
         config_table.add_row("Sound Alerts:", Text("Enabled", style="success") if sound_enabled else Text("Disabled", style="error"))
-        
         return Panel(config_table, title=f"[title]Welcome to GengoWatcher[/]", subtitle=f"v{__version__}", subtitle_align="center", border_style="panel_border")
 
     def run(self):
         if PLATFORM == "linux":
-            # Set terminal to raw mode for character-by-character input
             old_settings = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
-
         with Live(self.layout, console=self.console, screen=True, auto_refresh=False, vertical_overflow="visible") as live:
             while not self.watcher.shutdown_event.is_set():
-                # Update all dynamic parts of the layout
                 self.layout["header"].update(self._get_header_panel())
                 self.layout["runtime_status"].update(self._get_runtime_status_panel())
                 self.layout["recent_activity"].update(self._get_recent_activity_panel())
                 self.layout["right"].update(self._get_output_panel())
                 self.layout["footer"].update(self._get_status_bar())
                 self.layout["input"].update(Text(f"> {self.input_buffer}", no_wrap=True))
-                
                 live.refresh()
-                
-                # OPTIMIZATION: The input check timeout now governs the UI refresh rate.
-                # A value of 0.5 seconds (2 FPS) is much more efficient than 0.05s (20 FPS).
                 if PLATFORM == "windows":
                     if msvcrt.kbhit():
                         char = msvcrt.getch()
                         self._process_char(char)
                     else:
-                        time.sleep(0.5) # Prevent high CPU usage
-                else: # Linux/macOS
-                    # Check if there is input to be read with a timeout
+                        time.sleep(0.5)
+                else:
                     if select.select([sys.stdin], [], [], 0.5)[0]:
                         char = sys.stdin.read(1)
                         self._process_char(char)
-        
         if PLATFORM == "linux":
-            # Restore terminal settings
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
     def _process_char(self, char):
-        # Normalize char type (bytes from msvcrt, str from stdin)
         if isinstance(char, bytes):
-            # Handle special keys on Windows
-            if char == b'\r': char = '\n'
-            elif char == b'\x08': char = 'backspace'
+            if char == b'\r':
+                char = '\n'
+            elif char == b'\x08':
+                char = 'backspace'
             else:
-                try: char = char.decode()
-                except UnicodeDecodeError: char = ''
-        
-        if char == '\n': # Enter key
+                try:
+                    char = char.decode()
+                except UnicodeDecodeError:
+                    char = ''
+        if char == '\n':
             self.handle_command(self.input_buffer)
             self.input_buffer = ""
-        elif char in ('\x7f', 'backspace', '\b'): # Backspace
+        elif char in ('\x7f', 'backspace', '\b'):
             self.input_buffer = self.input_buffer[:-1]
         elif char.isprintable():
             self.input_buffer += char
 
     def _get_runtime_status_panel(self) -> Panel:
-        # Create a 4-column grid for a dense, information-rich layout
         table = Table.grid(expand=True, padding=(0, 1))
-        # Adjusted column widths for a better fit
         table.add_column(style="label", justify="right", width=15)
         table.add_column(style="value", justify="left", width=11)
         table.add_column(style="label", justify="right", width=15)
         table.add_column(style="value", justify="left", width=11)
-
-        # --- Calculate new metrics ---
         uptime_seconds = time.time() - self.watcher.start_time
         uptime_hours = uptime_seconds / 3600.0
-        
-        # Jobs per hour (avoid division by zero)
         jobs_per_hour = (self.watcher.session_new_entries / uptime_hours) if uptime_hours > 0 else 0.0
-        
-        # Average reward (avoid division by zero)
-        avg_reward = (self.watcher.session_total_value / self.watcher.session_new_entries) if self.watcher.session_new_entries > 0 else 0.0
-        
-        # Next check countdown string
+        avg_reward = (
+            self.watcher.session_total_value / self.watcher.session_new_entries
+        ) if self.watcher.session_new_entries > 0 else 0.0
         if os.path.exists(self.watcher.PAUSE_FILE):
             next_check_text = Text("Paused", "warning")
         elif self.watcher.shutdown_event.is_set():
@@ -179,8 +154,6 @@ class CommandLineInterface:
         else:
             seconds_remaining = max(0, self.watcher.next_check_time - time.time())
             next_check_text = Text(f"{int(seconds_remaining)}s", "cyan")
-
-        # --- Populate the table ---
         table.add_row(
             "Uptime:", f" {str(datetime.timedelta(seconds=int(uptime_seconds)))}",
             "Jobs/Hour:", f" {jobs_per_hour:.1f}"
@@ -193,14 +166,12 @@ class CommandLineInterface:
             "Value (Session):", f" US$ {self.watcher.session_total_value:.2f}",
             "Avg. Reward:", f"US$ {avg_reward:.2f}"
         )
-        
         failures = self.watcher.failure_count
         failures_text = Text(f" {failures}", style="warning" if failures > 0 else "success")
         table.add_row(
             "Next Check In:", next_check_text,
             "Feed Failures:", failures_text
         )
-
         return Panel(table, title="[title]Runtime Status[/]", title_align="center")
 
     def _get_recent_activity_panel(self) -> Panel:
@@ -211,32 +182,36 @@ class CommandLineInterface:
 
     def _get_status_bar(self) -> Panel:
         status, color = ("Running", "success")
-        if self.watcher.shutdown_event.is_set(): status, color = ("Stopped", "error")
-        elif os.path.exists(self.watcher.PAUSE_FILE): status, color = ("Paused", "warning")
-        
+        if self.watcher.shutdown_event.is_set():
+            status, color = ("Stopped", "error")
+        elif os.path.exists(self.watcher.PAUSE_FILE):
+            status, color = ("Paused", "warning")
         action = self.watcher.current_action
-        
-        # Tier 1 Fix: Use the state object for total found
-        return Panel(Text.assemble(
-            ("Status: ", "default"), (status, color), (" | ", "dim"),
-            ("Action: ", "default"), (action, "cyan"), (" | ", "dim"),
-            ("Found (Total): ", "default"), (str(self.state.total_new_entries_found), "green")
-        ), border_style="dim")
+        return Panel(
+            Text.assemble(
+                ("Status: ", "default"), (status, color), (" | ", "dim"),
+                ("Action: ", "default"), (action, "cyan"), (" | ", "dim"),
+                ("Found (Total): ", "default"), (str(self.state.total_new_entries_found), "green")
+            ),
+            border_style="dim"
+        )
 
     def handle_command(self, command_str):
         parts = command_str.strip().lower().split()
-        if not parts: return
+        if not parts:
+            return
         cmd_alias, args = parts[0], parts[1:]
         command = self.alias_map.get(cmd_alias)
         if not command:
             self.watcher.logger.error(f"Unknown command: '{command_str}'")
             return
-        
         handler = self.commands[command]["handler"]
         try:
             sig = inspect.signature(handler)
-            if 'args' in sig.parameters: output = handler(args)
-            else: output = handler()
+            if 'args' in sig.parameters:
+                output = handler(args)
+            else:
+                output = handler()
             if output:
                 self.command_output.clear()
                 self.command_output.append(output)
@@ -252,29 +227,38 @@ class CommandLineInterface:
             table.add_row(f"[header]{cmd}[/] ({aliases})", info["help"])
         return Panel(table, title="[title]Commands[/]", border_style="panel_border")
 
-    def _handle_exit(self, *args): self.watcher.handle_exit()
-    def _handle_check(self, args=None): self.watcher.check_now_event.set(); self.watcher.logger.info("Manual check triggered.")
-    def _handle_clear(self, args=None): self.command_output.clear(); self.watcher.logger.info("Command output cleared.")
-        
+    def _handle_exit(self, *args):
+        self.watcher.handle_exit()
+
+    def _handle_check(self, args=None):
+        self.watcher.check_now_event.set()
+        self.watcher.logger.info("Manual check triggered.")
+
+    def _handle_clear(self, args=None):
+        self.command_output.clear()
+        self.watcher.logger.info("Command output cleared.")
+
     def _handle_pause(self, args=None):
         if not os.path.exists(self.watcher.PAUSE_FILE):
-            with open(self.watcher.PAUSE_FILE, "w") as f: f.write("Paused.")
+            with open(self.watcher.PAUSE_FILE, "w") as f:
+                f.write("Paused.")
             self.watcher.logger.warning("Watcher paused.")
-        else: self.watcher.logger.warning("Watcher is already paused.")
-    
+        else:
+            self.watcher.logger.warning("Watcher is already paused.")
+
     def _handle_resume(self, args=None):
         if os.path.exists(self.watcher.PAUSE_FILE):
             os.remove(self.watcher.PAUSE_FILE)
             self.watcher.logger.info("Watcher resumed.")
-        else: self.watcher.logger.warning("Watcher is not paused.")
-    
-    # Tier 2 Feature: Interactive Configuration Handlers
+        else:
+            self.watcher.logger.warning("Watcher is not paused.")
+
     def _handle_toggle_sound(self, args=None):
         current_state = self.config.get("Watcher", "enable_sound")
         self.config.set("Watcher", "enable_sound", not current_state)
         self.config.save_config()
         self.watcher.logger.info(f"Sound alerts {'enabled' if not current_state else 'disabled'}.")
-    
+
     def _handle_toggle_notifications(self, args=None):
         current_state = self.config.get("Watcher", "enable_notifications")
         self.config.set("Watcher", "enable_notifications", not current_state)
