@@ -3,7 +3,7 @@ import state
 import logging
 import tempfile
 import os
-import json
+
 
 def pytest_configure(config):
     logging.basicConfig(
@@ -13,32 +13,29 @@ def pytest_configure(config):
     )
     logging.getLogger().setLevel(logging.DEBUG)
 
+
 @pytest.fixture(autouse=True)
 def debug_test_start_and_end(request):
     logging.debug(f"\n--- START TEST: {request.node.name} ---")
     yield
     logging.debug(f"--- END TEST: {request.node.name} ---\n")
 
-# Test that AppState class exists and has expected methods
+
 def test_appstate_class_and_methods():
     assert hasattr(state, "AppState")
-    # Use a temporary file for state to avoid interfering with real data
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_state_file = os.path.join(tmpdir, "state.json")
-        # Patch the STATE_FILE attribute for this test
         orig_state_file = state.AppState.STATE_FILE
         state.AppState.STATE_FILE = tmp_state_file
         try:
             app_state = state.AppState(logger=logging.getLogger("test"))
             assert hasattr(app_state, "save_state")
             assert hasattr(app_state, "_load_state")
-            # Test default values
             assert app_state.last_seen_link is None
             assert app_state.total_new_entries_found == 0
         finally:
             state.AppState.STATE_FILE = orig_state_file
 
-# Test saving and loading state
 
 def test_save_and_load_state():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -51,14 +48,12 @@ def test_save_and_load_state():
             app_state.last_seen_link = "http://example.com/job1"
             app_state.total_new_entries_found = 42
             app_state.save_state()
-            # Create a new instance to load from file
             app_state2 = state.AppState(logger=logger)
             assert app_state2.last_seen_link == "http://example.com/job1"
             assert app_state2.total_new_entries_found == 42
         finally:
             state.AppState.STATE_FILE = orig_state_file
 
-# Test that corrupted state file is handled gracefully
 
 def test_corrupted_state_file():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -66,16 +61,15 @@ def test_corrupted_state_file():
         orig_state_file = state.AppState.STATE_FILE
         state.AppState.STATE_FILE = tmp_state_file
         try:
-            # Write invalid JSON
             with open(tmp_state_file, "w", encoding="utf-8") as f:
                 f.write("not a json")
             logger = logging.getLogger("test")
             app_state = state.AppState(logger=logger)
-            # Should fall back to defaults
             assert app_state.last_seen_link is None
             assert app_state.total_new_entries_found == 0
         finally:
             state.AppState.STATE_FILE = orig_state_file
+
 
 def test_extract_reward():
     import watcher
@@ -86,18 +80,15 @@ def test_extract_reward():
         pass
     logger = logging.getLogger("test")
     w = watcher.GengoWatcher(DummyConfig(), DummyState(), logger)
-    # Test with reward in title
     entry = {"title": "Job - Reward: $12.34", "summary": ""}
     assert w._extract_reward(entry) == 12.34
-    # Test with reward in summary
     entry = {"title": "Job", "summary": "Reward: US$ 5.50"}
     assert w._extract_reward(entry) == 5.50
-    # Test with no reward
     entry = {"title": "Job", "summary": "No reward info"}
     assert w._extract_reward(entry) == 0.0
-    # Test with malformed reward
     entry = {"title": "Job", "summary": "Reward: $notanumber"}
     assert w._extract_reward(entry) == 0.0
+
 
 def test_open_in_browser_default(monkeypatch):
     import watcher
@@ -119,6 +110,7 @@ def test_open_in_browser_default(monkeypatch):
     w.open_in_browser("http://example.com")
     assert called['url'] == "http://example.com"
 
+
 def test_handle_exit(monkeypatch):
     import watcher
     class DummyConfig:
@@ -135,6 +127,7 @@ def test_handle_exit(monkeypatch):
     w.handle_exit()
     assert called.get('state_saved')
     assert called.get('config_saved')
+
 
 def test_fetch_rss(monkeypatch):
     import watcher
@@ -155,6 +148,7 @@ def test_fetch_rss(monkeypatch):
     monkeypatch.setattr(watcher.feedparser, "parse", lambda url, request_headers=None: DummyFeed())
     feed = w.fetch_rss()
     assert isinstance(feed, DummyFeed)
+
 
 def test_process_feed_entries(monkeypatch):
     import watcher
@@ -182,6 +176,7 @@ def test_process_feed_entries(monkeypatch):
     assert hasattr(w, 'notified')
     assert w.state.save_state_called
 
+
 def test_handle_command_known(monkeypatch):
     import ui
     class DummyWatcher:
@@ -191,9 +186,12 @@ def test_handle_command_known(monkeypatch):
             pass
         def run_notify_test(self):
             pass
-    class DummyConfig: pass
-    class DummyState: pass
-    class DummyConsole: pass
+    class DummyConfig:
+        pass
+    class DummyState:
+        pass
+    class DummyConsole:
+        pass
     import collections
     log_queue = collections.deque()
     tui = ui.CommandLineInterface(DummyWatcher(), DummyConfig(), DummyState(), DummyConsole(), log_queue)
@@ -202,6 +200,7 @@ def test_handle_command_known(monkeypatch):
     tui.command_output = []
     tui.handle_command("help")
     assert tui.command_output == ["help output"]
+
 
 def test_handle_command_unknown(monkeypatch):
     import ui
@@ -215,9 +214,12 @@ def test_handle_command_unknown(monkeypatch):
             pass
         def run_notify_test(self):
             pass
-    class DummyConfig: pass
-    class DummyState: pass
-    class DummyConsole: pass
+    class DummyConfig:
+        pass
+    class DummyState:
+        pass
+    class DummyConsole:
+        pass
     import collections
     log_queue = collections.deque()
     watcher = DummyWatcher()

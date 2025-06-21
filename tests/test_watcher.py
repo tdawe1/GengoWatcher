@@ -2,20 +2,25 @@ import pytest
 import watcher
 import logging
 
+
 class DummyConfig:
     def get(self, section, key):
         return ""
+
     def save_config(self):
         pass
+
 
 class DummyState:
     def save_state(self):
         pass
 
+
 @pytest.fixture
 def watcher_instance():
     logger = logging.getLogger("test")
     return watcher.GengoWatcher(DummyConfig(), DummyState(), logger)
+
 
 def test_extract_reward(watcher_instance):
     entry = {"title": "Job - Reward: $12.34", "summary": ""}

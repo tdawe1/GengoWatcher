@@ -24,6 +24,7 @@ APP_THEME = Theme({
     "prompt": "bold white", "input": "white"
 })
 
+
 class UILoggingHandler(logging.Handler):
     """A custom logging handler that captures styled logs for display in the UI."""
     def __init__(self, *args, **kwargs):
@@ -42,6 +43,7 @@ class UILoggingHandler(logging.Handler):
         # Prepend timestamp to the message, Rich will handle styling
         message = f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - {record.getMessage()}"
         self.log_queue.append(Text(message, style=style))
+
 
 def main():
     """Main function to set up and run the application."""
@@ -95,6 +97,7 @@ def main():
             watcher.handle_exit()
         watcher_thread.join(timeout=2)
         console.print("[info]GengoWatcher has shut down.[/]")
+
 
 if __name__ == "__main__":
     main()

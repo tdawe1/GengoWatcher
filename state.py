@@ -3,6 +3,7 @@ import threading
 from pathlib import Path
 import logging
 
+
 class AppState:
     STATE_FILE = "state.json"
 
@@ -10,10 +11,10 @@ class AppState:
         self.logger = logger
         self._lock = threading.Lock()
         self.state_file_path = Path(self.STATE_FILE)
-        
+
         self.last_seen_link = None
         self.total_new_entries_found = 0
-        
+
         self._load_state()
 
     def _load_state(self):
@@ -23,9 +24,13 @@ class AppState:
                     state_data = json.load(f)
                     with self._lock:
                         self.last_seen_link = state_data.get("last_seen_link")
-                        self.total_new_entries_found = int(state_data.get("total_new_entries_found", 0))
+                        self.total_new_entries_found = int(
+                            state_data.get("total_new_entries_found", 0)
+                        )
         except (json.JSONDecodeError, IOError) as e:
-            self.logger.error(f"Could not load state file. Starting fresh. Error: {e}")
+            self.logger.error(
+                f"Could not load state file. Starting fresh. Error: {e}"
+            )
 
     def save_state(self):
         try:

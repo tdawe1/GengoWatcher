@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import threading
 
+
 class AppConfig:
     CONFIG_FILE = "config.ini"
     DEFAULT_CONFIG = {
@@ -50,13 +51,13 @@ class AppConfig:
             parser.add_section(section)
             for key, value in settings.items():
                 parser.set(section, key, str(value))
-        
+
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
-        
+
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
             parser.write(f)
-        
+
         print(f"Created default '{self.CONFIG_FILE}'. Please review it and restart the application.")
         sys.exit(0)
 
@@ -69,7 +70,6 @@ class AppConfig:
                         self._config_parser.add_section(section)
                     self.config[section] = {}
                     for key, default_val in defaults.items():
-                        # Determine the appropriate getter method based on default value type
                         if isinstance(default_val, bool):
                             method = self._config_parser.getboolean
                         elif isinstance(default_val, int):
@@ -78,7 +78,6 @@ class AppConfig:
                             method = self._config_parser.getfloat
                         else:
                             method = self._config_parser.get
-                        
                         self.config[section][key] = method(section, key, fallback=default_val)
             except (configparser.Error, ValueError) as e:
                 print(f"CRITICAL: Error reading '{self.CONFIG_FILE}': {e}. Please fix or delete the file.")
@@ -91,12 +90,10 @@ class AppConfig:
                     self._config_parser.add_section(section)
                 for key, value in settings.items():
                     self._config_parser.set(section, key, str(value))
-            
             try:
                 with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
                     self._config_parser.write(f)
             except IOError as e:
-                # Use a simple print here as logger might not be available or configured
                 print(f"Error saving config: {e}")
 
     def get(self, section, key):
