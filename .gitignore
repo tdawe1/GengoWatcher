@@ -34,3 +34,5 @@ tests/__pycache__/test_watcher.cpython-311-pytest-8.4.1.pyc
 .flake8
 tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
 tests/__pycache__/test_watcher.cpython-311-pytest-8.4.1.pyc
+tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
+tests/__pycache__/test_watcher.cpython-311-pytest-8.4.1.pyc
