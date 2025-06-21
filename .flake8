@@ -1,3 +1,20 @@
 [flake8]
-max-line-length = 100
-exclude = __pycache__,build,logs,release,v1.2 backup
+exclude =
+    .git,
+    .pytest_cache,
+    .mypy_cache,
+    .venv,
+    .tox,
+    __pycache__,
+    build,
+    dist,
+    eggs,
+    logs,
+    release,
+    venv,
+    v1.2 backup,
+    gengowatcher.py
+
+max-line-length = 88
+
+ignore = E203, W503
