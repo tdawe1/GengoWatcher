@@ -8,7 +8,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,5 +26,10 @@ jobs:
           pip install pytest
       - name: Run tests
         run: |
-          export PYTHONPATH=.
-          pytest -s -v tests/
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            set PYTHONPATH=.
+            pytest -s -v tests/
+          else
+            export PYTHONPATH=.
+            pytest -s -v tests/
+          fi
