@@ -4,6 +4,7 @@ import datetime
 import os
 import signal
 import inspect
+import sys
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -16,17 +17,12 @@ from watcher import GengoWatcher, __version__
 from config import AppConfig
 from state import AppState
 
-try:
+if sys.platform == "win32":
     import msvcrt
-
-    PLATFORM = "windows"
-except ImportError:
-    import sys
+else:
     import select
     import tty
     import termios
-
-    PLATFORM = "linux"
 
 
 class CommandLineInterface:
@@ -175,7 +171,7 @@ class CommandLineInterface:
         )
 
     def run(self):
-        if PLATFORM == "linux":
+        if sys.platform != "win32":
             old_settings = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
         with Live(
@@ -195,7 +191,7 @@ class CommandLineInterface:
                     Text(f"> {self.input_buffer}", no_wrap=True)
                 )
                 live.refresh()
-                if PLATFORM == "windows":
+                if sys.platform == "win32":
                     if msvcrt.kbhit():
                         char = msvcrt.getch()
                         self._process_char(char)
@@ -205,7 +201,7 @@ class CommandLineInterface:
                     if select.select([sys.stdin], [], [], 0.5)[0]:
                         char = sys.stdin.read(1)
                         self._process_char(char)
-        if PLATFORM == "linux":
+        if sys.platform != "win32":
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
     def _process_char(self, char):
