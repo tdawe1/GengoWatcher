@@ -61,7 +61,8 @@ class AppConfig:
         sys.exit(0)
 
     def load_config(self):
-        self._config_parser.read(self.CONFIG_FILE, encoding="utf-8")
+        with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
+            self._config_parser.read_file(f)
         with self._lock:
             try:
                 for section, defaults in self.DEFAULT_CONFIG.items():

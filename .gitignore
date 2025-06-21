@@ -31,3 +31,5 @@ setup_dev.bat
 .vscode/tasks.json
 tests/__pycache__/
 .flake8
+MagicMock/mock.get()/1650902819408
+tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
