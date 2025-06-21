@@ -29,10 +29,5 @@ flake8-report.txt
 setup_dev.bat
 .vscode/settings.json
 .vscode/tasks.json
-tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
-tests/__pycache__/test_watcher.cpython-311-pytest-8.4.1.pyc
+tests/__pycache__/
 .flake8
-tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
-tests/__pycache__/test_watcher.cpython-311-pytest-8.4.1.pyc
-tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
-tests/__pycache__/test_watcher.cpython-311-pytest-8.4.1.pyc
