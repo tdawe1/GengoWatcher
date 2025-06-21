@@ -5,7 +5,7 @@ from pathlib import Path
 
 from unittest.mock import patch
 
-from config import AppConfig
+from gengowatcher.config import AppConfig
 
 
 @pytest.fixture

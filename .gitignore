@@ -35,3 +35,5 @@ MagicMock/mock.get()/1650902819408
 tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
 .vscode/launch.json
 MagicMock/
+pyproject.toml
+gengowatcher.egg-info/
