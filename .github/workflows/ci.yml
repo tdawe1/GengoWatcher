@@ -52,4 +52,7 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --statistics
 
     - name: Test with pytest and coverage
-      run: pytest --cov=. --cov-report=xml
+      run: |
+        $env:PYTHONPATH = "${PWD}"
+        pytest --cov=. --cov-report=xml
+      shell: pwsh
