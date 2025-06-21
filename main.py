@@ -17,16 +17,28 @@ from watcher import GengoWatcher
 from ui import CommandLineInterface
 
 # Define the application's look and feel
-APP_THEME = Theme({
-    "info": "cyan", "success": "bold green", "warning": "yellow", "error": "bold red",
-    "title": "bold magenta", "header": "bold bright_white", "label": "cyan", "value": "white",
-    "path": "italic yellow", "panel_border": "bright_blue", "table_header": "bold magenta",
-    "prompt": "bold white", "input": "white"
-})
+APP_THEME = Theme(
+    {
+        "info": "cyan",
+        "success": "bold green",
+        "warning": "yellow",
+        "error": "bold red",
+        "title": "bold magenta",
+        "header": "bold bright_white",
+        "label": "cyan",
+        "value": "white",
+        "path": "italic yellow",
+        "panel_border": "bright_blue",
+        "table_header": "bold magenta",
+        "prompt": "bold white",
+        "input": "white",
+    }
+)
 
 
 class UILoggingHandler(logging.Handler):
     """A custom logging handler that captures styled logs for display in the UI."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # This queue will be shared with the UI
@@ -41,7 +53,10 @@ class UILoggingHandler(logging.Handler):
         }
         style = level_style_map.get(record.levelno, "default")
         # Prepend timestamp to the message, Rich will handle styling
-        message = f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - {record.getMessage()}"
+        message = (
+            f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - "
+            f"{record.getMessage()}"
+        )
         self.log_queue.append(Text(message, style=style))
 
 
@@ -52,11 +67,11 @@ def main():
     # Set up the root logger
     log = logging.getLogger("gengowatcher")
     log.setLevel(logging.INFO)
-    
+
     # Create the handler that will send logs to the UI
     ui_handler = UILoggingHandler()
     log.addHandler(ui_handler)
-    
+
     # --- Initialization ---
     try:
         config = AppConfig()
@@ -72,21 +87,27 @@ def main():
             log_file = Path(config.get("Paths", "log_file"))
             log_file.parent.mkdir(parents=True, exist_ok=True)
             file_handler = RotatingFileHandler(
-                log_file, 
-                maxBytes=config.get("Logging", "log_max_bytes"), 
-                backupCount=config.get("Logging", "log_backup_count")
+                log_file,
+                maxBytes=config.get("Logging", "log_max_bytes"),
+                backupCount=config.get("Logging", "log_backup_count"),
             )
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
             log.addHandler(file_handler)
         except IOError as e:
             console.print(f"[error]Could not set up file logging: {e}[/]")
 
     # --- UI and Threading Setup ---
-    cli = CommandLineInterface(watcher, config, state, console, log_queue=ui_handler.log_queue)
-    
-    watcher_thread = threading.Thread(target=watcher.run, daemon=True, name="WatcherThread")
+    cli = CommandLineInterface(
+        watcher, config, state, console, log_queue=ui_handler.log_queue
+    )
+
+    watcher_thread = threading.Thread(
+        target=watcher.run, daemon=True, name="WatcherThread"
+    )
     watcher_thread.start()
-    
+
     try:
         cli.run()
     except Exception as e:
