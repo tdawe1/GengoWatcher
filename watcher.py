@@ -6,7 +6,6 @@ import time
 import webbrowser
 from plyer import notification
 import os
-import signal
 import sys
 import threading
 import logging
@@ -18,10 +17,12 @@ import csv
 
 try:
     from playsound import playsound
+
     SOUND_PLAYER = "playsound"
 except ImportError:
     try:
         import winsound
+
         SOUND_PLAYER = "winsound"
     except ImportError:
         SOUND_PLAYER = "none"
@@ -63,12 +64,14 @@ class GengoWatcher:
         try:
             log_path = Path(self.config.get("Paths", "all_entries_log"))
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            self._all_entries_log_file = open(log_path, 'a', newline='', encoding='utf-8')
+            self._all_entries_log_file = open(
+                log_path, "a", newline="", encoding="utf-8"
+            )
             self._csv_writer = csv.writer(self._all_entries_log_file)
             if log_path.stat().st_size == 0:
-                self._csv_writer.writerow([
-                    "timestamp", "title", "reward", "link", "summary"
-                ])
+                self._csv_writer.writerow(
+                    ["timestamp", "title", "reward", "link", "summary"]
+                )
         except IOError as e:
             self.logger.error(f"Could not open all_entries_log file: {e}")
             self._all_entries_log_file = None
@@ -103,13 +106,19 @@ class GengoWatcher:
         except Exception as e:
             self.logger.error(f"Browser Error: {e}")
 
-    def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
+    def show_notification(
+        self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None
+    ):
         if self.config.get("Watcher", "enable_notifications"):
             try:
                 icon_path = self.config.get("Paths", "notification_icon_path")
                 app_icon = str(icon_path) if Path(icon_path).is_file() else None
                 notification.notify(
-                    title=title, message=message, app_name='GengoWatcher', app_icon=app_icon, timeout=8
+                    title=title,
+                    message=message,
+                    app_name="GengoWatcher",
+                    app_icon=app_icon,
+                    timeout=8,
                 )
             except Exception as e:
                 self.logger.error(f"Notify Error: {e}")
@@ -131,13 +140,15 @@ class GengoWatcher:
             return
         timestamp = datetime.datetime.now().isoformat()
         for entry in entries:
-            self._csv_writer.writerow([
-                timestamp,
-                entry.get("title", "N/A"),
-                self._extract_reward(entry),
-                entry.get("link", "N/A"),
-                entry.get("summary", "N/A")
-            ])
+            self._csv_writer.writerow(
+                [
+                    timestamp,
+                    entry.get("title", "N/A"),
+                    self._extract_reward(entry),
+                    entry.get("link", "N/A"),
+                    entry.get("summary", "N/A"),
+                ]
+            )
         self._all_entries_log_file.flush()
 
     def _process_feed_entries(self, entries):
@@ -170,7 +181,7 @@ class GengoWatcher:
                 title="New Gengo Job Available!",
                 play_sound=True,
                 open_link=True,
-                url=entry.get("link")
+                url=entry.get("link"),
             )
         if processed_count > 0:
             self.state.last_seen_link = new_entries[0].get("link")
@@ -180,9 +191,11 @@ class GengoWatcher:
         headers = {}
         if self.config.get("Watcher", "use_custom_user_agent"):
             email = self.config.get("Network", "user_agent_email")
-            headers['User-Agent'] = f"GengoWatcher/{__version__} ({email})"
+            headers["User-Agent"] = f"GengoWatcher/{__version__} ({email})"
         try:
-            feed = feedparser.parse(self.config.get("Watcher", "feed_url"), request_headers=headers)
+            feed = feedparser.parse(
+                self.config.get("Watcher", "feed_url"), request_headers=headers
+            )
             if feed.bozo:
                 self.logger.error(f"Feed Error: {feed.bozo_exception}")
                 return None
@@ -221,7 +234,11 @@ class GengoWatcher:
                     feed = self.fetch_rss()
                     if feed is None:
                         self.failure_count += 1
-                        wait_time = min(self.config.get("Watcher", "check_interval") * (2**self.failure_count), self.config.get("Network", "max_backoff"))
+                        wait_time = min(
+                            self.config.get("Watcher", "check_interval")
+                            * (2**self.failure_count),
+                            self.config.get("Network", "max_backoff"),
+                        )
                         self.current_action = f"Backoff ({int(wait_time)}s)"
                     else:
                         if self.failure_count > 0:
@@ -241,7 +258,7 @@ class GengoWatcher:
             title="GengoWatcher Test",
             play_sound=True,
             open_link=True,
-            url="https://gengo.com/t/jobs/status/available"
+            url="https://gengo.com/t/jobs/status/available",
         )
 
     def restart(self):

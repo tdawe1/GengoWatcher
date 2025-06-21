@@ -35,7 +35,9 @@ class DummyConsole:
 def tui_instance():
     log_queue = collections.deque()
     watcher = DummyWatcher()
-    tui = ui.CommandLineInterface(watcher, DummyConfig(), DummyState(), DummyConsole(), log_queue)
+    tui = ui.CommandLineInterface(
+        watcher, DummyConfig(), DummyState(), DummyConsole(), log_queue
+    )
     return tui, watcher
 
 
@@ -53,6 +55,6 @@ def test_handle_command_unknown(tui_instance):
     tui.commands = {}
     tui.alias_map = {}
     tui.command_output = []
-    watcher.logger.error = lambda msg: setattr(watcher, 'logged', True)
+    watcher.logger.error = lambda msg: setattr(watcher, "logged", True)
     tui.handle_command("unknowncmd")
     assert watcher.logged
