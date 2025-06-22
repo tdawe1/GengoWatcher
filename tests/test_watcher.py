@@ -1,22 +1,19 @@
 import pytest
 import logging
 from unittest.mock import MagicMock, patch
+import collections
 
-# Correctly import from the gengowatcher package
 from gengowatcher import watcher
 from gengowatcher.config import AppConfig
 from gengowatcher.state import AppState
 
 
-# A fixture to create a mocked watcher instance for tests
 @pytest.fixture
 def watcher_instance():
     logger = logging.getLogger("test")
-    # Use MagicMock for dependencies to isolate the watcher for testing
     mock_config = MagicMock(spec=AppConfig)
     mock_state = MagicMock(spec=AppState)
-
-    # Configure the mock to return default values
+    mock_state.seen_job_ids = collections.deque(maxlen=50)
     mock_config.get.side_effect = (
         lambda section, key, **kwargs: {
             "Watcher": {
@@ -31,7 +28,6 @@ def watcher_instance():
         .get(key)
     )
 
-    # Use the real GengoWatcher class but with mocked dependencies
     w = watcher.GengoWatcher(mock_config, mock_state, logger)
     return w
 
@@ -52,7 +48,6 @@ def test_extract_reward(watcher_instance, entry, expected_reward):
 def test_open_in_browser_default(monkeypatch, watcher_instance):
     """Test that the default system browser is used when no path is configured."""
     mock_webbrowser_open = MagicMock()
-    # The path to the object to patch must now include the package name
     monkeypatch.setattr(watcher.webbrowser, "open", mock_webbrowser_open)
 
     watcher_instance.open_in_browser("http://example.com")
@@ -63,12 +58,10 @@ def test_handle_exit(watcher_instance):
     """Test that state and config are saved on exit."""
     watcher_instance.handle_exit()
 
-    # Assert that the save methods on the mocked dependencies were called
     watcher_instance.state.save_state.assert_called_once()
     watcher_instance.config.save_config.assert_called_once()
 
 
-# Use @patch decorator with the corrected path
 @patch("gengowatcher.watcher.feedparser.parse")
 def test_fetch_rss(mock_parse, watcher_instance):
     """Test the RSS fetching logic."""
@@ -86,22 +79,42 @@ def test_fetch_rss(mock_parse, watcher_instance):
 
 def test_process_feed_entries(watcher_instance):
     """Test the logic for processing new entries from the feed."""
-    # Mock the notification method on the instance to avoid side effects
-    watcher_instance.show_notification = MagicMock()
+    watcher_instance._process_new_job = MagicMock()
 
     entries = [
-        {"title": "Job1 - Reward: $10.00", "link": "link1", "summary": ""},
-        {"title": "Job2 - Reward: $5.00", "link": "link2", "summary": ""},
+        {"title": "Job1", "link": "https://gengo.com/t/jobs/details/101/"},
+        {"title": "Job2", "link": "https://gengo.com/t/jobs/details/102/"},
     ]
 
-    # Set the state on the mocked state object
-    watcher_instance.state.last_seen_link = "link2"
-    watcher_instance.state.total_new_entries_found = 1
+    watcher_instance.state.last_seen_link = "https://gengo.com/t/jobs/details/102/"
 
     watcher_instance._process_feed_entries(entries)
 
-    # Assert the test outcome
-    watcher_instance.show_notification.assert_called_once()
-    watcher_instance.state.save_state.assert_called_once()
-    assert watcher_instance.state.last_seen_link == "link1"
-    assert watcher_instance.state.total_new_entries_found == 2
+    watcher_instance._process_new_job.assert_called_once()
+
+
+def test_process_new_job_deduplication(watcher_instance):
+    """Test that the same job is not processed twice."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    mock_state = w.state
+
+    mock_state.total_new_entries_found = 0
+    mock_state.seen_job_ids = collections.deque(maxlen=50)
+
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "Test")
+    assert w.show_notification.call_count == 1
+    mock_state.save_state.assert_called_once()
+    assert 123 in mock_state.seen_job_ids
+    assert mock_state.total_new_entries_found == 1
+
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "Test")
+    assert w.show_notification.call_count == 1
+    assert mock_state.save_state.call_count == 1
+    assert mock_state.total_new_entries_found == 1
+
+    w._process_new_job(456, "Another Job", 5.0, "http://example.com/456", "Test")
+    assert w.show_notification.call_count == 2
+    assert mock_state.save_state.call_count == 2
+    assert 456 in mock_state.seen_job_ids
+    assert mock_state.total_new_entries_found == 2

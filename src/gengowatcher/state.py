@@ -3,6 +3,7 @@ import threading
 import pathlib
 from typing import Union
 import logging
+import collections
 
 
 class AppState:
@@ -19,6 +20,7 @@ class AppState:
 
         self.last_seen_link = None
         self.total_new_entries_found = 0
+        self.seen_job_ids = collections.deque(maxlen=50)
 
         self._load_state()
 
@@ -32,6 +34,9 @@ class AppState:
                         self.total_new_entries_found = int(
                             state_data.get("total_new_entries_found", 0)
                         )
+                        loaded_ids = state_data.get("seen_job_ids", [])
+                        self.seen_job_ids.clear()
+                        self.seen_job_ids.extend(loaded_ids)
         except (json.JSONDecodeError, IOError) as e:
             self.logger.error(f"Could not load state file. Starting fresh. Error: {e}")
 
@@ -41,6 +46,7 @@ class AppState:
                 state_data = {
                     "last_seen_link": self.last_seen_link,
                     "total_new_entries_found": self.total_new_entries_found,
+                    "seen_job_ids": list(self.seen_job_ids),
                 }
                 with open(self.state_file_path, "w", encoding="utf-8") as f:
                     json.dump(state_data, f, indent=4)

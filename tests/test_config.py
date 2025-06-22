@@ -38,3 +38,9 @@ def test_config_loads_default_values(test_dir):
     assert app_config.get("Watcher", "check_interval") == 31
     assert app_config.get("Watcher", "enable_notifications") is True
     assert app_config.get("Network", "user_agent_email") == "your_email@example.com"
+
+    assert app_config.get("WebSocket", "enable_websocket") is True
+    assert app_config.get("WebSocket", "user_id") == 0
+    assert (
+        app_config.get("WebSocket", "user_session") == "REPLACE_WITH_YOUR_SESSION_TOKEN"
+    )

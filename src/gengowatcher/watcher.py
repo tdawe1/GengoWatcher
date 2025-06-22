@@ -1,4 +1,4 @@
-__version__ = "2.0.1"
+__version__ = "2.1.0"
 __release_date__ = "2025-06-22"
 
 import feedparser
@@ -48,12 +48,12 @@ class GengoWatcher:
         self.last_check_time = None
         self.next_check_time = time.time()
         self.failure_count = 0
-        self.current_action = "Initializing"
+        self.rss_action = "Initializing"
         self.start_time = time.time()
         self.session_new_entries = 0
         self.session_total_value = 0.0
         self.websocket_status = "Disabled"
-        self._seen_jobs_session = set()
+        self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
         self._csv_writer = None
@@ -166,6 +166,7 @@ class GengoWatcher:
             if job_id in self._seen_jobs_session:
                 return
             self._seen_jobs_session.add(job_id)
+            self.state.seen_job_ids.append(job_id)
 
         min_reward = self.config.get("Watcher", "min_reward")
         if min_reward > 0.0 and reward < min_reward:
@@ -214,11 +215,15 @@ class GengoWatcher:
             title = entry.get("title", "No Title")
             url = entry.get("link")
             try:
-                job_id = int(url.split("/jobs/")[1].strip("/"))
+                match = re.search(r"/jobs/(?:details/)?(\d+)", url)
+                if not match:
+                    self.logger.warning(f"Could not parse job ID from RSS link: {url}")
+                    continue
+                job_id = int(match.group(1))
                 reward = self._extract_reward(entry)
                 self._process_new_job(job_id, title, reward, url, source="RSS")
-            except (ValueError, IndexError):
-                self.logger.warning(f"Could not parse job ID from RSS link: {url}")
+            except (ValueError, IndexError) as e:
+                self.logger.warning(f"Error processing RSS entry {url}: {e}")
 
     def fetch_rss(self):
         headers = {}
@@ -237,81 +242,66 @@ class GengoWatcher:
             self.logger.error(f"RSS Error: {e}")
             return None
 
+    async def _websocket_logic(self):
+        """The core async logic for a single WebSocket connection attempt."""
+        ws_url = "wss://live-dashboard.gengo.com"
+        self.websocket_status = "Connecting"
+        try:
+            async with websockets.connect(ws_url) as websocket:
+                self.websocket_status = "Authenticating"
+                auth_payload = {
+                    "user_id": self.config.get("WebSocket", "user_id"),
+                    "user_session": self.config.get("WebSocket", "user_session"),
+                }
+                await websocket.send(json.dumps(auth_payload))
+
+                self.websocket_status = "Live"
+                self.logger.info("WebSocket connection is live and listening.")
+
+                async for message in websocket:
+                    data = json.loads(message)
+                    if data.get("type") == "available_collection":
+                        job = data.get("collection", {})
+                        job_id = job.get("id")
+                        if job_id:
+                            reward = float(job.get("rewards", 0.0))
+                            title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
+                            url = f"https://gengo.com/t/jobs/details/{job_id}"
+                            self._process_new_job(
+                                job_id, title, reward, url, source="WebSocket"
+                            )
+        except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError) as e:
+            self.logger.warning(f"WebSocket disconnected: {e}")
+        except Exception as e:
+            self.logger.error(f"WebSocket error: {e}")
+
     def _run_websocket_monitor(self):
-        # Add this check at the very beginning
-        user_session = self.config.get("WebSocket", "user_session")
-        if user_session == "REPLACE_WITH_YOUR_SESSION_TOKEN":
-            self.logger.warning(
-                "WebSocket monitor disabled: Please set 'user_session' in config.ini."
-            )
-            self.websocket_status = "Disabled"
-            return
-
         """The main loop for the WebSocket connection, designed to run in a thread."""
-
-        async def websocket_logic():
-            ws_url = "wss://live-dashboard.gengo.com"
-            self.websocket_status = "Connecting"
-
-            try:
-                async with websockets.connect(ws_url) as websocket:
-                    self.websocket_status = "Authenticating"
-                    auth_payload = {
-                        "user_id": self.config.get("WebSocket", "user_id"),
-                        "user_session": self.config.get("WebSocket", "user_session"),
-                    }
-                    await websocket.send(json.dumps(auth_payload))
-
-                    self.websocket_status = "Live"
-                    self.logger.info("WebSocket connection is live and listening.")
-
-                    async for message in websocket:
-                        data = json.loads(message)
-                        if data.get("type") == "available_collection":
-                            job = data.get("collection", {})
-                            job_id = job.get("id")
-                            if job_id:
-                                reward = float(job.get("rewards", 0.0))
-                                title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
-                                url = f"https://gengo.com/t/jobs/details/{job_id}"
-                                self._process_new_job(
-                                    job_id, title, reward, url, source="WebSocket"
-                                )
-
-            except (
-                websockets.exceptions.ConnectionClosed,
-                ConnectionRefusedError,
-            ) as e:
-                self.logger.warning(f"WebSocket disconnected: {e}")
-            except Exception as e:
-                self.logger.error(f"WebSocket error: {e}")
-
-        # --- REVISED SYNCHRONOUS WRAPPER ---
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
         while not self.shutdown_event.is_set():
+            if (
+                self.config.get("WebSocket", "user_session")
+                == "REPLACE_WITH_YOUR_SESSION_TOKEN"
+            ):
+                self.logger.warning(
+                    "WebSocket disabled: Please set 'user_session' in config.ini."
+                )
+                self.websocket_status = "Disabled"
+                self.shutdown_event.wait()
+                break
             try:
-                loop.run_until_complete(websocket_logic())
-
+                asyncio.run(self._websocket_logic())
                 if self.shutdown_event.is_set():
                     break
-
                 self.websocket_status = "Offline"
                 self.logger.info(
                     "WebSocket connection closed. Reconnecting in 20 seconds..."
                 )
                 if self.shutdown_event.wait(20):
                     break
-
-            except KeyboardInterrupt:
-                break
             except Exception as e:
-                self.logger.error(f"Error in WebSocket runner: {e}")
+                self.logger.error(f"Critical error in WebSocket runner: {e}")
                 if self.shutdown_event.wait(20):
                     break
-
-        loop.close()
         self.logger.info("WebSocket monitor thread stopped.")
         self.websocket_status = "Stopped"
 
@@ -337,7 +327,7 @@ class GengoWatcher:
         """This is the original 'run' method, now dedicated to RSS checking."""
         self.logger.info("RSS monitor thread started.")
         if not self.state.last_seen_link:
-            self.current_action = "Priming feed"
+            self.rss_action = "Priming feed"
             initial_feed = self.fetch_rss()
             if initial_feed and initial_feed.entries:
                 self.state.last_seen_link = initial_feed.entries[0].get("link")
@@ -357,10 +347,10 @@ class GengoWatcher:
                 self.check_now_event.clear()
 
                 if is_paused:
-                    self.current_action = "Paused"
+                    self.rss_action = "Paused"
                     wait_time = 5
                 else:
-                    self.current_action = "Fetching RSS"
+                    self.rss_action = "Fetching RSS"
                     feed = self.fetch_rss()
                     if feed is None:
                         self.failure_count += 1
@@ -369,16 +359,16 @@ class GengoWatcher:
                             * (2**self.failure_count),
                             self.config.get("Network", "max_backoff"),
                         )
-                        self.current_action = f"RSS Backoff ({int(wait_time)}s)"
+                        self.rss_action = f"RSS Backoff ({int(wait_time)}s)"
                     else:
                         if self.failure_count > 0:
                             self.logger.info("RSS Connection re-established.")
                         self.failure_count = 0
                         self.last_check_time = datetime.datetime.now()
-                        self.current_action = "Processing RSS"
+                        self.rss_action = "Processing RSS"
                         self._process_feed_entries(feed.entries)
                         wait_time = self.config.get("Watcher", "check_interval")
-                        self.current_action = "Waiting"
+                        self.rss_action = "Waiting"
                 self.next_check_time = time.time() + wait_time
 
         self.logger.info("RSS monitor thread stopped.")

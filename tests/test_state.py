@@ -2,6 +2,7 @@ import pytest
 from gengowatcher import state
 import logging
 import os
+import collections
 
 
 def pytest_configure(config):
@@ -44,12 +45,14 @@ def test_save_and_load_state(temp_state_file):
     app_state = state.AppState(logger=logger, state_file_path=temp_state_file)
     app_state.last_seen_link = "http://example.com/job1"
     app_state.total_new_entries_found = 42
+    app_state.seen_job_ids.extend([101, 102, 103])
     app_state.save_state()
 
-    # Create a new instance to load the state from the file
     app_state2 = state.AppState(logger=logger, state_file_path=temp_state_file)
     assert app_state2.last_seen_link == "http://example.com/job1"
     assert app_state2.total_new_entries_found == 42
+    assert isinstance(app_state2.seen_job_ids, collections.deque)
+    assert list(app_state2.seen_job_ids) == [101, 102, 103]
 
 
 def test_corrupted_state_file(temp_state_file):
