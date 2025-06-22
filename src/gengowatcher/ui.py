@@ -187,6 +187,7 @@ class CommandLineInterface:
         if sys.platform != "win32":
             old_settings = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
+
         with Live(
             self.layout,
             console=self.console,
@@ -204,17 +205,19 @@ class CommandLineInterface:
                     Text(f"> {self.input_buffer}", no_wrap=True)
                 )
                 live.refresh()
+
                 try:
                     if sys.platform == "win32":
                         if msvcrt.kbhit():
                             self._process_char(msvcrt.getch())
+                        time.sleep(0.1)
                     else:
-                        rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                        rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
                         if rlist:
                             self._process_char(sys.stdin.read(1))
                 except (OSError, IOError):
-                    pass
-                time.sleep(0.05)
+                    time.sleep(0.5)
+
         if sys.platform != "win32":
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
