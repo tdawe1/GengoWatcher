@@ -159,7 +159,7 @@ class GengoWatcher:
         text = entry.get("title", "") + " | " + entry.get("summary", "")
         self.logger.debug(f"Extracting reward from entry: {text}")
         match = re.search(
-            r"Reward:\s*(?:US\\$|\\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE
+            r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE
         )
         try:
             return float(match.group(1)) if match else 0.0
