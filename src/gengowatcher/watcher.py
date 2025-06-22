@@ -197,16 +197,16 @@ class GengoWatcher:
             self.state.seen_job_ids.append(job_id)
             min_reward = self.config.get("Watcher", "min_reward")
             if min_reward > 0.0 and reward < min_reward:
-                self.logger.info(
-                    f"Job '{title}' (US$ {reward:.2f}) ignored due to min_reward filter."
+                self.logger.warning(
+                    f"Job '{title}' (US$ {reward:.2f}) ignored due to [yellow]min_reward filter[/]."
                 )
                 return
             self.state.total_new_entries_found += 1
             self.session_new_entries += 1
             self.session_total_value += reward
-            # self.state.last_seen_link = url  # Remove this line
-        self.logger.info(
-            f"New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})"
+
+        self.logger.info(  # Using the 'success' style for new jobs
+            f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
         )
         self.show_notification(
             message=title,
