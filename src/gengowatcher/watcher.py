@@ -1,4 +1,4 @@
-__version__ = "2.1.0"
+__version__ = "2.0.1"
 __release_date__ = "2025-06-22"
 
 import feedparser
