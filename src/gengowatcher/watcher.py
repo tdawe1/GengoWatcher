@@ -29,7 +29,7 @@ if sys.platform == "win32":
         SOUND_PLAYER = "none"
 else:
     try:
-        from playsound import playsound
+        import playsound
 
         SOUND_PLAYER = "playsound"
     except ImportError:
@@ -40,6 +40,18 @@ class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
 
     def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
+        # Diagnostic: Log websockets and asyncio module paths and versions
+        logger.info(
+            f"[DIAG] websockets module path: {getattr(websockets, '__file__', 'unknown')}"
+        )
+        logger.info(
+            f"[DIAG] websockets version: {getattr(websockets, '__version__', 'unknown')}"
+        )
+        import asyncio
+
+        logger.info(
+            f"[DIAG] asyncio module path: {getattr(asyncio, '__file__', 'unknown')}"
+        )
         self.logger = logger
         self.config = config
         self.state = state
@@ -57,11 +69,15 @@ class GengoWatcher:
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
         self._csv_writer = None
+        self.logger.debug(
+            f"Initializing GengoWatcher with config: {self.config.config}"
+        )
         if self.config.get("Logging", "log_all_entries_enabled"):
             self._setup_csv_logging()
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
     def handle_exit(self, signum=None, frame=None):
+        self.logger.debug("handle_exit called.")
         if not self.shutdown_event.is_set():
             self.logger.info("Shutdown initiated. Saving state...")
             self.shutdown_event.set()
@@ -69,6 +85,7 @@ class GengoWatcher:
             self.config.save_config()
 
     def _setup_csv_logging(self):
+        self.logger.debug("Setting up CSV logging.")
         try:
             log_path = Path(self.config.get("Paths", "all_entries_log"))
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +97,7 @@ class GengoWatcher:
                 self._csv_writer.writerow(
                     ["timestamp", "title", "reward", "link", "summary"]
                 )
+            self.logger.debug(f"CSV logging enabled at {log_path}")
         except IOError as e:
             self.logger.error(f"Could not open all_entries_log file: {e}")
             self._all_entries_log_file = None
@@ -87,12 +105,13 @@ class GengoWatcher:
 
     def play_sound(self):
         sound_file_path = self.config.get("Paths", "sound_file")
+        self.logger.debug(f"Attempting to play sound: {sound_file_path}")
         if not Path(sound_file_path).is_file():
             self.logger.warning(f"Sound file not found at: {sound_file_path}")
             return
         if SOUND_PLAYER == "playsound":
             try:
-                playsound(sound_file_path)
+                playsound.playsound(sound_file_path)
             except Exception as e:
                 self.logger.error(f"playsound error: {e}")
         elif SOUND_PLAYER == "winsound":
@@ -101,6 +120,7 @@ class GengoWatcher:
             self.logger.warning("No sound library available. Skipping sound.")
 
     def open_in_browser(self, url):
+        self.logger.debug(f"Opening URL in browser: {url}")
         try:
             browser_path_str = self.config.get("Paths", "browser_path")
             if not browser_path_str or not Path(browser_path_str).is_file():
@@ -117,6 +137,7 @@ class GengoWatcher:
     def show_notification(
         self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None
     ):
+        self.logger.debug(f"Showing notification: {title} - {message}")
         if self.config.get("Watcher", "enable_notifications"):
             try:
                 icon_path = self.config.get("Paths", "notification_icon_path")
@@ -137,13 +158,17 @@ class GengoWatcher:
 
     def _extract_reward(self, entry) -> float:
         text = entry.get("title", "") + " | " + entry.get("summary", "")
-        match = re.search(r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE)
+        self.logger.debug(f"Extracting reward from entry: {text}")
+        match = re.search(
+            r"Reward:\s*(?:US\\$|\\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE
+        )
         try:
             return float(match.group(1)) if match else 0.0
         except (ValueError, IndexError):
             return 0.0
 
     def _log_all_entries(self, entries):
+        self.logger.debug(f"Logging {len(entries)} entries to CSV.")
         if not self._csv_writer:
             return
         timestamp = datetime.datetime.now().isoformat()
@@ -160,7 +185,9 @@ class GengoWatcher:
         self._all_entries_log_file.flush()
 
     def _process_new_job(self, job_id, title, reward, url, source):
-        """A centralized, thread-safe method to process a newly found job."""
+        self.logger.debug(
+            f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
+        )
 
         with self._seen_jobs_lock:
             if job_id in self._seen_jobs_session:
@@ -194,6 +221,7 @@ class GengoWatcher:
         self.state.save_state()
 
     def _process_feed_entries(self, entries):
+        self.logger.debug(f"Processing {len(entries) if entries else 0} RSS entries.")
         if not entries:
             return
 
@@ -203,17 +231,21 @@ class GengoWatcher:
         for entry in entries:
             link = entry.get("link")
             if not link:
+                self.logger.debug(f"Skipping entry with no link: {entry}")
                 continue
             if link == self.state.last_seen_link:
+                self.logger.debug(f"Reached last seen link: {link}")
                 break
             new_entries.append(entry)
 
+        self.logger.debug(f"Found {len(new_entries)} new RSS entries.")
         if not new_entries:
             return
 
         for entry in reversed(new_entries):
             title = entry.get("title", "No Title")
             url = entry.get("link")
+            self.logger.debug(f"Processing new RSS entry: {title} {url}")
             try:
                 match = re.search(r"/jobs/(?:details/)?(\d+)", url)
                 if not match:
@@ -230,6 +262,9 @@ class GengoWatcher:
         if self.config.get("Watcher", "use_custom_user_agent"):
             email = self.config.get("Network", "user_agent_email")
             headers["User-Agent"] = f"GengoWatcher/{__version__} ({email})"
+        self.logger.debug(
+            f"Fetching RSS feed: {self.config.get('Watcher', 'feed_url')} with headers: {headers}"
+        )
         try:
             feed = feedparser.parse(
                 self.config.get("Watcher", "feed_url"), request_headers=headers
@@ -237,46 +272,149 @@ class GengoWatcher:
             if feed.bozo:
                 self.logger.error(f"Feed Error: {feed.bozo_exception}")
                 return None
+            self.logger.debug(
+                f"RSS feed fetched successfully. Entries: {len(feed.entries)}"
+            )
             return feed
         except Exception as e:
             self.logger.error(f"RSS Error: {e}")
             return None
 
     async def _websocket_logic(self):
-        """The core async logic for a single WebSocket connection attempt."""
+        """The core async logic for a single WebSocket connection attempt, with close code/reason logging and keepalive pings."""
         ws_url = "wss://live-dashboard.gengo.com"
         self.websocket_status = "Connecting"
+        self.logger.debug(f"Attempting WebSocket connection to {ws_url}")
         try:
-            async with websockets.connect(ws_url) as websocket:
+            # Use a list of tuples for extra_headers for compatibility with older websockets versions
+            extra_headers = [
+                (
+                    "Cookie",
+                    f"my_gengo_session={self.config.get('WebSocket', 'user_session')}",
+                ),
+                ("Origin", "https://gengo.com"),
+                (
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                ),
+            ]
+            async with websockets.connect(
+                ws_url, extra_headers=extra_headers, ping_interval=None
+            ) as websocket:
                 self.websocket_status = "Authenticating"
                 auth_payload = {
                     "user_id": self.config.get("WebSocket", "user_id"),
                     "user_session": self.config.get("WebSocket", "user_session"),
                 }
+                self.logger.debug(f"WebSocket: Sending auth payload: {auth_payload}")
                 await websocket.send(json.dumps(auth_payload))
 
                 self.websocket_status = "Live"
                 self.logger.info("WebSocket connection is live and listening.")
 
-                async for message in websocket:
-                    data = json.loads(message)
-                    if data.get("type") == "available_collection":
-                        job = data.get("collection", {})
-                        job_id = job.get("id")
-                        if job_id:
-                            reward = float(job.get("rewards", 0.0))
-                            title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
-                            url = f"https://gengo.com/t/jobs/details/{job_id}"
-                            self._process_new_job(
-                                job_id, title, reward, url, source="WebSocket"
+                # Try to receive a message immediately after authentication
+                try:
+                    first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
+                    self.logger.debug(
+                        f"WebSocket: First message after auth: {first_message}"
+                    )
+                    try:
+                        data = json.loads(first_message)
+                        self.logger.debug(f"WebSocket: First message JSON: {data}")
+                    except Exception as e:
+                        self.logger.warning(
+                            f"WebSocket: Could not parse first message as JSON: {e}"
+                        )
+                except asyncio.TimeoutError:
+                    self.logger.debug(
+                        "WebSocket: No message received immediately after authentication."
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        f"WebSocket: Error receiving first message: {e}"
+                    )
+
+                async def keepalive():
+                    self.logger.debug("WebSocket: Keepalive task started.")
+                    try:
+                        while True:
+                            await asyncio.sleep(30)
+                            try:
+                                self.logger.debug("WebSocket: Sending keepalive ping.")
+                                pong_waiter = await websocket.ping()
+                                await asyncio.wait_for(pong_waiter, timeout=10)
+                                self.logger.debug("WebSocket: Pong received.")
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"WebSocket: Keepalive ping failed: {e}"
+                                )
+                                break
+                    except asyncio.CancelledError:
+                        self.logger.debug("WebSocket: Keepalive task cancelled.")
+                        # Task cancelled cleanly
+
+                keepalive_task = asyncio.create_task(keepalive())
+                try:
+                    async for message in websocket:
+                        self.logger.debug(f"WebSocket: Message received: {message}")
+                        try:
+                            data = json.loads(message)
+                            self.logger.debug(f"WebSocket: Message JSON: {data}")
+                        except Exception as e:
+                            self.logger.warning(
+                                f"WebSocket: Could not parse message as JSON: {e}"
                             )
+                        if (
+                            isinstance(data, dict)
+                            and data.get("type") == "available_collection"
+                        ):
+                            job = data.get("collection", {})
+                            job_id = job.get("id")
+                            self.logger.debug(f"WebSocket: Job data: {job}")
+                            if job_id:
+                                reward = float(job.get("rewards", 0.0))
+                                title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
+                                url = f"https://gengo.com/t/jobs/details/{job_id}"
+                                self._process_new_job(
+                                    job_id, title, reward, url, source="WebSocket"
+                                )
+                except websockets.exceptions.ConnectionClosed as e:
+                    self.logger.warning(
+                        f"WebSocket: Disconnected: code={e.code}, reason={e.reason}"
+                    )
+                except Exception as e:
+                    self.logger.error(f"WebSocket: Error in main loop: {e}")
+                finally:
+                    keepalive_task.cancel()
+                    try:
+                        await keepalive_task
+                    except asyncio.CancelledError:
+                        self.logger.debug(
+                            "WebSocket: keepalive_task cancelled and awaited cleanly."
+                        )
+                    except Exception as e:
+                        self.logger.warning(
+                            f"WebSocket: Exception while awaiting keepalive_task: {e}"
+                        )
+                # Log close code/reason after exiting async with
+                if hasattr(websocket, "close_code") or hasattr(
+                    websocket, "close_reason"
+                ):
+                    self.logger.info(
+                        f"WebSocket: Closed: code={getattr(websocket, 'close_code', None)}, reason={getattr(websocket, 'close_reason', None)}"
+                    )
         except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError) as e:
-            self.logger.warning(f"WebSocket disconnected: {e}")
+            code = getattr(e, "code", None)
+            reason = getattr(e, "reason", None)
+            self.logger.warning(
+                f"WebSocket: Outer disconnect: code={code}, reason={reason}, error={e}"
+            )
         except Exception as e:
-            self.logger.error(f"WebSocket error: {e}")
+            self.logger.error(f"WebSocket: Outer error: {e}")
 
     def _run_websocket_monitor(self):
         """The main loop for the WebSocket connection, designed to run in a thread."""
+        self.logger.debug("Starting WebSocket monitor thread.")
         while not self.shutdown_event.is_set():
             if (
                 self.config.get("WebSocket", "user_session")
@@ -289,6 +427,7 @@ class GengoWatcher:
                 self.shutdown_event.wait()
                 break
             try:
+                self.logger.debug("Running websocket logic (asyncio.run)")
                 asyncio.run(self._websocket_logic())
                 if self.shutdown_event.is_set():
                     break
@@ -306,6 +445,7 @@ class GengoWatcher:
         self.websocket_status = "Stopped"
 
     def run(self):
+        self.logger.debug("Starting watcher parent thread.")
         self.logger.info("Watcher parent thread started. Launching monitors...")
 
         rss_thread = threading.Thread(target=self._run_rss_monitor, daemon=True)
@@ -324,7 +464,7 @@ class GengoWatcher:
         self.logger.info("Watcher parent thread shutting down.")
 
     def _run_rss_monitor(self):
-        """This is the original 'run' method, now dedicated to RSS checking."""
+        self.logger.debug("Starting RSS monitor thread.")
         self.logger.info("RSS monitor thread started.")
         if not self.state.last_seen_link:
             self.rss_action = "Priming feed"
@@ -338,12 +478,16 @@ class GengoWatcher:
             is_paused = os.path.exists(self.PAUSE_FILE)
             time_to_next_check = self.next_check_time - time.time()
             wait_duration = max(0, time_to_next_check)
+            self.logger.debug(
+                f"Waiting for next RSS check: {wait_duration:.2f}s (paused={is_paused})"
+            )
 
             triggered = self.check_now_event.wait(timeout=wait_duration)
             if self.shutdown_event.is_set():
                 break
 
             if triggered or time.time() >= self.next_check_time:
+                self.logger.debug("RSS check triggered.")
                 self.check_now_event.clear()
 
                 if is_paused:
@@ -387,3 +531,62 @@ class GengoWatcher:
         self.handle_exit()
         python = sys.executable
         os.execv(python, [python] + sys.argv)
+
+    def set_config_value(self, section, option, value):
+        self.logger.debug(f"Setting config value: [{section}] {option} = {value}")
+        self.config.set(section, option, value)
+        self.config.save_config()
+        self.logger.info(f"Config updated: [{section}] {option} = {value}")
+
+    def get_config_value(self, section, option):
+        value = self.config.get(section, option)
+        self.logger.debug(f"Getting config value: [{section}] {option} = {value}")
+        return value
+
+    def list_config_values(self):
+        config_dict = {}
+        for section in self.config._config_parser.sections():
+            config_dict[section] = dict(self.config._config_parser.items(section))
+        self.logger.debug(f"Listing all config values: {config_dict}")
+        return config_dict
+
+    def prompt_for_config_values(self, required_fields=None):
+        import getpass
+
+        self.logger.debug("Prompting for config values interactively.")
+        if required_fields is None:
+            required_fields = []
+            for section in self.config._config_parser.sections():
+                for option in self.config._config_parser.options(section):
+                    if self.config.get(section, option) in (
+                        None,
+                        "",
+                        "REPLACE_WITH_YOUR_SESSION_TOKEN",
+                    ):
+                        required_fields.append((section, option))
+        for section, option in required_fields:
+            current = self.config.get(section, option)
+            prompt = f"Enter value for [{section}] {option} (current: {current}): "
+            if "password" in option or "session" in option:
+                value = getpass.getpass(prompt)
+            else:
+                value = input(prompt)
+            if value:
+                self.set_config_value(section, option, value)
+        self.logger.info("Config interactive prompt complete.")
+
+    def is_config_complete(self, required_fields=None):
+        self.logger.debug("Checking if config is complete.")
+        if required_fields is None:
+            required_fields = []
+            for section in self.config._config_parser.sections():
+                for option in self.config._config_parser.options(section):
+                    required_fields.append((section, option))
+        for section, option in required_fields:
+            val = self.config.get(section, option)
+            if val in (None, "", "REPLACE_WITH_YOUR_SESSION_TOKEN"):
+                self.logger.debug(
+                    f"Config incomplete: [{section}] {option} is unset or placeholder."
+                )
+                return False
+        return True
