@@ -18,7 +18,8 @@ class AppState:
         self._lock = threading.Lock()
         self.state_file_path = pathlib.Path(state_file_path or self.STATE_FILE)
 
-        self.last_seen_link = None
+        self.last_seen_rss_link = None  # New variable for RSS tracking
+        self.last_seen_link = None  # General last job (for display, optional)
         self.total_new_entries_found = 0
         self.seen_job_ids = collections.deque(maxlen=50)
 
@@ -30,6 +31,7 @@ class AppState:
                 with open(self.state_file_path, "r", encoding="utf-8") as f:
                     state_data = json.load(f)
                     with self._lock:
+                        self.last_seen_rss_link = state_data.get("last_seen_rss_link")
                         self.last_seen_link = state_data.get("last_seen_link")
                         self.total_new_entries_found = int(
                             state_data.get("total_new_entries_found", 0)
@@ -44,6 +46,7 @@ class AppState:
         try:
             with self._lock:
                 state_data = {
+                    "last_seen_rss_link": self.last_seen_rss_link,
                     "last_seen_link": self.last_seen_link,
                     "total_new_entries_found": self.total_new_entries_found,
                     "seen_job_ids": list(self.seen_job_ids),
