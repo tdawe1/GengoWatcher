@@ -14,20 +14,21 @@ def watcher_instance():
     mock_config = MagicMock(spec=AppConfig)
     mock_state = MagicMock(spec=AppState)
     mock_state.seen_job_ids = collections.deque(maxlen=50)
-    mock_config.get.side_effect = (
-        lambda section, key, **kwargs: {
-            "Watcher": {
-                "min_reward": 0.0,
-                "use_custom_user_agent": False,
-                "feed_url": "https://example.com/feed",
-            },
-            "Paths": {"browser_path": "", "browser_args": "{url}"},
-            "Network": {"user_agent_email": "test@example.com"},
-        }
-        .get(section, {})
-        .get(key)
-    )
 
+    config_data = {
+        "Watcher": {
+            "min_reward": 0.0,
+            "use_custom_user_agent": False,
+            "feed_url": "https://example.com/feed",
+        },
+        "Paths": {"browser_path": "", "browser_args": "{url}"},
+        "Network": {"user_agent_email": "test@example.com"},
+        "Logging": {"log_all_entries_enabled": False},
+    }
+    mock_config.get.side_effect = (
+        lambda section, key, **kwargs: config_data.get(section, {}).get(key)
+    )
+    mock_config.config = config_data  
     w = watcher.GengoWatcher(mock_config, mock_state, logger)
     return w
 
