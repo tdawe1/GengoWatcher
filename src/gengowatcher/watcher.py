@@ -1,4 +1,4 @@
-__version__ = "2.1.3"
+__version__ = "2.1.4"
 __release_date__ = "2025-06-22"
 
 import feedparser
@@ -161,9 +161,7 @@ class GengoWatcher:
     def _extract_reward(self, entry) -> float:
         text = entry.get("title", "") + " | " + entry.get("summary", "")
         self.logger.debug(f"Extracting reward from entry: {text}")
-        match = re.search(
-            r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE
-        )
+        match = re.search(r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE)
         try:
             return float(match.group(1)) if match else 0.0
         except (ValueError, IndexError):
@@ -620,10 +618,8 @@ class GengoWatcher:
         fake_reward = 12.34
         fake_url = f"https://gengo.com/t/jobs/details/{fake_job_id}"
         self._process_new_job(
-            fake_job_id,
-            fake_title,
-            fake_reward,
-            fake_url,
-            source="Test Simulation"
+            fake_job_id, fake_title, fake_reward, fake_url, source="Test Simulation"
         )
-        self.logger.info("[bold green]Test job notification sent. Please check your system notifications.[/bold green]")
+        self.logger.info(
+            "[bold green]Test job notification sent. Please check your system notifications.[/bold green]"
+        )
