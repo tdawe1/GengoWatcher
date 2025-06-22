@@ -175,7 +175,7 @@ This application uses a Text-Based User Interface (TUI) which draws and redraws 
 
 #### WebSocket Errors or Failures to Connect
 
-GengoWatcher's WebSocket client may require specific HTTP headers to connect successfully. This functionality depends on a parameter (`extra_headers`) that was added in version **8.0** of the `websockets` library.
+GengoWatcher's WebSocket client may require specific HTTP headers to connect successfully. This functionality depends on a parameter (`extra_headers`) that is removed after the **11.0.3** release** of the `websockets` library.
 
 **Symptom**: You see errors in the "Recent Activity" panel related to "unexpected keyword argument 'extra_headers'" or other WebSocket connection failures, even with correct credentials.
 
@@ -184,10 +184,7 @@ GengoWatcher's WebSocket client may require specific HTTP headers to connect suc
     ```bash
     pip show websockets
     ```
-2.  If the version is below 8.0, upgrade it:
-    ```bash
-    pip install --upgrade websockets
-    ```
+
 
 
 ---
@@ -196,5 +193,3 @@ GengoWatcher's WebSocket client may require specific HTTP headers to connect suc
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
 
-
-Excellent point. That's a critical detail for ensuring the WebSocket feature works correctly, and adding it to the troubleshooting section is a great idea.
