@@ -5,6 +5,7 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 import collections
 import datetime
+import argparse
 
 from rich.console import Console
 from rich.text import Text
@@ -55,8 +56,25 @@ class UILoggingHandler(logging.Handler):
 
 
 def main():
-    console = Console(theme=APP_THEME)
+    parser = argparse.ArgumentParser(description="GengoWatcher CLI")
+    parser.add_argument(
+        "--set",
+        nargs=3,
+        metavar=("SECTION", "OPTION", "VALUE"),
+        help="Set a config value",
+    )
+    parser.add_argument(
+        "--get", nargs=2, metavar=("SECTION", "OPTION"), help="Get a config value"
+    )
+    parser.add_argument("--list", action="store_true", help="List all config values")
+    parser.add_argument(
+        "--configure",
+        action="store_true",
+        help="Interactively configure missing/required values",
+    )
+    args, unknown = parser.parse_known_args()
 
+    console = Console(theme=APP_THEME)
     log = logging.getLogger("gengowatcher")
     log.setLevel(logging.INFO)
     ui_handler = UILoggingHandler()
@@ -64,7 +82,6 @@ def main():
 
     try:
         config = AppConfig()
-
         if config.get("Logging", "log_main_enabled"):
             try:
                 log_file = Path(config.get("Paths", "log_file"))
@@ -80,10 +97,8 @@ def main():
                 log.addHandler(file_handler)
             except IOError as e:
                 console.print(f"[error]Could not set up file logging: {e}[/]")
-
         state = AppState(logger=log)
         watcher = GengoWatcher(config=config, state=state, logger=log)
-
     except Exception as e:
         if log.handlers:
             log.critical(f"A critical error occurred during initialization: {e}")
@@ -92,6 +107,33 @@ def main():
                 f"[error]A critical error occurred during initialization: {e}[/]"
             )
         sys.exit(1)
+
+    # CLI commands
+    if args.set:
+        section, option, value = args.set
+        watcher.set_config_value(section, option, value)
+        print(f"Set [{section}] {option} = {value}")
+        sys.exit(0)
+    if args.get:
+        section, option = args.get
+        value = watcher.get_config_value(section, option)
+        print(f"[{section}] {option} = {value}")
+        sys.exit(0)
+    if args.list:
+        all_values = watcher.list_config_values()
+        for section, options in all_values.items():
+            print(f"[{section}]")
+            for option, value in options.items():
+                print(f"  {option} = {value}")
+        sys.exit(0)
+    if args.configure:
+        watcher.prompt_for_config_values()
+        sys.exit(0)
+
+    # Auto-prompt if config is incomplete
+    if not watcher.is_config_complete():
+        print("Config is incomplete. Please provide missing values:")
+        watcher.prompt_for_config_values()
 
     cli = CommandLineInterface(
         watcher, config, state, console, log_queue=ui_handler.log_queue
