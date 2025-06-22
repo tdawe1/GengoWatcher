@@ -80,6 +80,11 @@ class CommandLineInterface:
                 "aliases": ["tn"],
                 "help": "Toggle desktop notifications on/off.",
             },
+            "togglewebsocket": {
+                "handler": self._handle_toggle_websocket,
+                "aliases": ["tw"],
+                "help": "Toggle WebSocket monitoring (requires restart).",
+            },
             "setminreward": {
                 "handler": self._handle_set_min_reward,
                 "aliases": ["smr"],
@@ -225,10 +230,11 @@ class CommandLineInterface:
 
     def _get_runtime_status_panel(self) -> Panel:
         table = Table.grid(expand=True, padding=(0, 1))
-        table.add_column(style="label", justify="right", width=15)
-        table.add_column(style="value", justify="left", width=11)
-        table.add_column(style="label", justify="right", width=15)
-        table.add_column(style="value", justify="left", width=11)
+        table.add_column(style="label", justify="right", width=16)
+        table.add_column(style="value", justify="left", width=14)
+        table.add_column(style="label", justify="right", width=14)
+        table.add_column(style="value", justify="left")
+
         uptime_seconds = time.time() - self.watcher.start_time
         uptime_hours = uptime_seconds / 3600.0
         jobs_per_hour = (
@@ -241,38 +247,49 @@ class CommandLineInterface:
             if self.watcher.session_new_entries > 0
             else 0.0
         )
-        if os.path.exists(self.watcher.PAUSE_FILE):
-            next_check_text = Text("Paused", "warning")
-        elif self.watcher.shutdown_event.is_set():
-            next_check_text = Text("N/A", "dim")
+
+        ws_status, ws_color = {
+            "Live": ("Live", "success"),
+            "Connecting": ("Connecting", "yellow"),
+            "Authenticating": ("Authenticating", "yellow"),
+            "Offline": ("Offline", "warning"),
+            "Disabled": ("Disabled", "dim"),
+            "Stopped": ("Stopped", "error"),
+        }.get(self.watcher.websocket_status, (self.watcher.websocket_status, "error"))
+
+        seconds_remaining = max(0, self.watcher.next_check_time - time.time())
+        rss_status_text = f"{self.watcher.rss_action} ({int(seconds_remaining)}s)"
+        if "Backoff" in self.watcher.rss_action:
+            rss_color = "warning"
+        elif "Paused" in self.watcher.rss_action:
+            rss_color = "warning"
         else:
-            seconds_remaining = max(0, self.watcher.next_check_time - time.time())
-            next_check_text = Text(f"{int(seconds_remaining)}s", "cyan")
+            rss_color = "cyan"
+        if os.path.exists(self.watcher.PAUSE_FILE):
+            rss_status_text = "Paused"
+
         table.add_row(
             "Uptime:",
-            f" {str(datetime.timedelta(seconds=int(uptime_seconds)))}",
+            f"{str(datetime.timedelta(seconds=int(uptime_seconds)))}",
             "Jobs/Hour:",
-            f" {jobs_per_hour:.1f}",
+            f"{jobs_per_hour:.1f}",
         )
         table.add_row(
             "Jobs (Session):",
-            f" {self.watcher.session_new_entries}",
+            f"{self.watcher.session_new_entries}",
             "Found (Total):",
-            f" {self.state.total_new_entries_found}",
+            f"{self.state.total_new_entries_found}",
         )
         table.add_row(
             "Value (Session):",
-            f" US$ {self.watcher.session_total_value:.2f}",
+            f"US$ {self.watcher.session_total_value:.2f}",
             "Avg. Reward:",
             f"US$ {avg_reward:.2f}",
         )
-        failures = self.watcher.failure_count
-        failures_text = Text(
-            f" {failures}", style="warning" if failures > 0 else "success"
-        )
-        table.add_row(
-            "Next Check In:", next_check_text, "Feed Failures:", failures_text
-        )
+        table.add_row()
+        table.add_row("WebSocket:", Text(ws_status, style=ws_color))
+        table.add_row("RSS Fallback:", Text(rss_status_text, style=rss_color))
+
         return Panel(table, title="[title]Runtime Status[/]", title_align="center")
 
     def _get_recent_activity_panel(self) -> Panel:
@@ -293,9 +310,8 @@ class CommandLineInterface:
             status, color = ("Stopped", "error")
         elif os.path.exists(self.watcher.PAUSE_FILE):
             status, color = ("Paused", "warning")
-        action = self.watcher.current_action
 
-        ws_status_text = {
+        ws_status_text, ws_status_color = {
             "Live": ("Live", "success"),
             "Connecting": ("Connecting", "yellow"),
             "Authenticating": ("Authenticating", "yellow"),
@@ -310,10 +326,10 @@ class CommandLineInterface:
                 (status, color),
                 (" | ", "dim"),
                 ("WebSocket: ", "default"),
-                (ws_status_text[0], ws_status_text[1]),
+                (ws_status_text, ws_status_color),
                 (" | ", "dim"),
-                ("Action: ", "default"),
-                (action, "cyan"),
+                ("RSS: ", "default"),
+                (self.watcher.rss_action, "cyan"),
                 (" | ", "dim"),
                 ("Found (Total): ", "default"),
                 (str(self.state.total_new_entries_found), "green"),
@@ -392,6 +408,16 @@ class CommandLineInterface:
         self.config.save_config()
         self.watcher.logger.info(
             f"Desktop notifications {'enabled' if not current_state else 'disabled'}."
+        )
+
+    def _handle_toggle_websocket(self, args=None):
+        current_state = self.config.get("WebSocket", "enable_websocket")
+        self.config.set("WebSocket", "enable_websocket", not current_state)
+        self.config.save_config()
+        new_state_text = "enabled" if not current_state else "disabled"
+        self.watcher.logger.info(f"WebSocket monitoring has been {new_state_text}.")
+        self.watcher.logger.warning(
+            "A restart is required for this change to take effect."
         )
 
     def _handle_set_min_reward(self, args):
