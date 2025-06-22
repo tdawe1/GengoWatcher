@@ -5,6 +5,7 @@ import os
 import signal
 import inspect
 import sys
+import threading
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -44,6 +45,7 @@ class CommandLineInterface:
         self._init_commands()
         signal.signal(signal.SIGINT, self._handle_exit)
         self.layout = self._build_layout()
+        self.exit_event = threading.Event()  
 
     def _init_commands(self):
         self.commands = {
@@ -181,9 +183,11 @@ class CommandLineInterface:
         )
 
     def run(self):
+        """The main loop for the command-line interface."""
         if sys.platform != "win32":
             old_settings = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
+
         with Live(
             self.layout,
             console=self.console,
@@ -197,20 +201,27 @@ class CommandLineInterface:
                 self.layout["recent_activity"].update(self._get_recent_activity_panel())
                 self.layout["right"].update(self._get_output_panel())
                 self.layout["footer"].update(self._get_status_bar())
-                self.layout["input"].update(
-                    Text(f"> {self.input_buffer}", no_wrap=True)
-                )
+                self.layout["input"].update(Text(f"> {self.input_buffer}", no_wrap=True))
                 live.refresh()
-                if sys.platform == "win32":
-                    if msvcrt.kbhit():
-                        char = msvcrt.getch()
-                        self._process_char(char)
-                    else:
-                        time.sleep(0.5)
+
+                char = None
+                try:
+                    if sys.platform == "win32":
+                        if msvcrt.kbhit():
+                            char = msvcrt.getch()
+                    else: 
+                        rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
+                        if rlist:
+                            char = sys.stdin.read(1)
+                except (OSError, IOError):
+                    time.sleep(0.5)
+                    continue
+
+                if char:
+                    self._process_char(char)
                 else:
-                    if select.select([sys.stdin], [], [], 0.5)[0]:
-                        char = sys.stdin.read(1)
-                        self._process_char(char)
+                    time.sleep(0.05)
+
         if sys.platform != "win32":
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
@@ -375,7 +386,8 @@ class CommandLineInterface:
 
     def _handle_exit(self, *args):
         self.watcher.handle_exit()
-
+        self.exit_event.set()  
+        
     def _handle_check(self, args=None):
         self.watcher.check_now_event.set()
         self.watcher.logger.info("Manual check triggered.")
@@ -447,7 +459,7 @@ class CommandLineInterface:
         - No args: PING test (if WebSocket is live).
         - 'notify': Simulates a new job notification.
         """
-        command = "ping"  # Default command
+        command = "ping" 
         if args and args[0].lower() == "notify":
             command = "notify"
         with self.watcher._test_command_lock:
