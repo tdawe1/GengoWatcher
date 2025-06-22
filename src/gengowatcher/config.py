@@ -15,6 +15,11 @@ class AppConfig:
             "enable_sound": True,
             "use_custom_user_agent": False,
         },
+        "WebSocket": {
+            "enable_websocket": True,
+            "user_id": 0,
+            "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
+        },
         "Paths": {
             "sound_file": "C:\\Windows\\Media\\chimes.wav",
             "log_file": "logs/gengowatcher.log",

@@ -294,10 +294,23 @@ class CommandLineInterface:
         elif os.path.exists(self.watcher.PAUSE_FILE):
             status, color = ("Paused", "warning")
         action = self.watcher.current_action
+
+        ws_status_text = {
+            "Live": ("Live", "success"),
+            "Connecting": ("Connecting", "yellow"),
+            "Authenticating": ("Authenticating", "yellow"),
+            "Offline": ("Offline", "warning"),
+            "Disabled": ("Disabled", "dim"),
+            "Stopped": ("Stopped", "error"),
+        }.get(self.watcher.websocket_status, (self.watcher.websocket_status, "error"))
+
         return Panel(
             Text.assemble(
                 ("Status: ", "default"),
                 (status, color),
+                (" | ", "dim"),
+                ("WebSocket: ", "default"),
+                (ws_status_text[0], ws_status_text[1]),
                 (" | ", "dim"),
                 ("Action: ", "default"),
                 (action, "cyan"),
