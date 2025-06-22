@@ -1,4 +1,4 @@
-__version__ = "2.1.4"
+__version__ = "2.1.5"
 __release_date__ = "2025-06-22"
 
 import feedparser
@@ -56,7 +56,6 @@ class GengoWatcher:
         self.state = state
         self.shutdown_event = threading.Event()
         self.check_now_event = threading.Event()
-        # VVV REPLACE THE EVENT WITH A SHARED VARIABLE AND LOCK VVV
         self._test_command = None
         self._test_command_lock = threading.Lock()
         self.last_check_time = None
@@ -203,7 +202,7 @@ class GengoWatcher:
             self.session_new_entries += 1
             self.session_total_value += reward
 
-        self.logger.info(  # Using the 'success' style for new jobs
+        self.logger.info(
             f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
         )
         self.show_notification(
@@ -233,7 +232,6 @@ class GengoWatcher:
         self.logger.debug(f"Found {len(new_entries)} new RSS entries.")
         if not new_entries:
             return
-        # Update last_seen_rss_link with the newest link from this batch
         self.state.last_seen_rss_link = new_entries[0].get("link")
         for entry in reversed(new_entries):
             title = entry.get("title", "No Title")
@@ -351,7 +349,7 @@ class GengoWatcher:
                         with self._test_command_lock:
                             if self._test_command:
                                 command = self._test_command
-                                self._test_command = None  # Consume the command
+                                self._test_command = None
                         if command == "ping":
                             self.logger.info("WebSocket: PING test initiated by user.")
                             try:
@@ -613,7 +611,7 @@ class GengoWatcher:
     def _simulate_new_job_notification(self):
         """Injects a fake job into the processing pipeline to test notifications."""
         self.logger.info("Simulating a new job notification...")
-        fake_job_id = int(time.time())  # Use timestamp for a unique-ish ID
+        fake_job_id = int(time.time())
         fake_title = "TEST JOB: English > Japanese"
         fake_reward = 12.34
         fake_url = f"https://gengo.com/t/jobs/details/{fake_job_id}"
