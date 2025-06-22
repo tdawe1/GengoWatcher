@@ -108,7 +108,6 @@ def main():
             )
         sys.exit(1)
 
-    # CLI commands
     if args.set:
         section, option, value = args.set
         watcher.set_config_value(section, option, value)
@@ -130,7 +129,6 @@ def main():
         watcher.prompt_for_config_values()
         sys.exit(0)
 
-    # Auto-prompt if config is incomplete
     if not watcher.is_config_complete():
         print("Config is incomplete. Please provide missing values:")
         watcher.prompt_for_config_values()
