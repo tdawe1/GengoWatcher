@@ -511,7 +511,7 @@ class GengoWatcher:
                 self.logger.debug("RSS check triggered.")
                 self.check_now_event.clear()
 
-                if is_paused:
+                if os.path.exists(self.PAUSE_FILE):
                     self.rss_action = "Paused"
                     wait_time = 5
                 else:
