@@ -40,7 +40,6 @@ class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
 
     def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
-        # Diagnostic: Log websockets and asyncio module paths and versions
         logger.info(
             f"[DIAG] websockets module path: {getattr(websockets, '__file__', 'unknown')}"
         )
@@ -286,7 +285,6 @@ class GengoWatcher:
         self.websocket_status = "Connecting"
         self.logger.debug(f"Attempting WebSocket connection to {ws_url}")
         try:
-            # Use a list of tuples for extra_headers for compatibility with older websockets versions
             extra_headers = [
                 (
                     "Cookie",
@@ -312,7 +310,6 @@ class GengoWatcher:
                 self.websocket_status = "Live"
                 self.logger.info("WebSocket connection is live and listening.")
 
-                # Try to receive a message immediately after authentication
                 try:
                     first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
                     self.logger.debug(
@@ -351,7 +348,6 @@ class GengoWatcher:
                                 break
                     except asyncio.CancelledError:
                         self.logger.debug("WebSocket: Keepalive task cancelled.")
-                        # Task cancelled cleanly
 
                 keepalive_task = asyncio.create_task(keepalive())
                 try:
@@ -396,7 +392,6 @@ class GengoWatcher:
                         self.logger.warning(
                             f"WebSocket: Exception while awaiting keepalive_task: {e}"
                         )
-                # Log close code/reason after exiting async with
                 if hasattr(websocket, "close_code") or hasattr(
                     websocket, "close_reason"
                 ):
