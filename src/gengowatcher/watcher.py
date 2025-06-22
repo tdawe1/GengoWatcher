@@ -1,4 +1,4 @@
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 __release_date__ = "2025-06-22"
 
 import feedparser
@@ -56,6 +56,9 @@ class GengoWatcher:
         self.state = state
         self.shutdown_event = threading.Event()
         self.check_now_event = threading.Event()
+        # VVV REPLACE THE EVENT WITH A SHARED VARIABLE AND LOCK VVV
+        self._test_command = None
+        self._test_command_lock = threading.Lock()
         self.last_check_time = None
         self.next_check_time = time.time()
         self.failure_count = 0
@@ -342,7 +345,35 @@ class GengoWatcher:
                     except asyncio.CancelledError:
                         self.logger.debug("WebSocket: Keepalive task cancelled.")
 
+                async def monitor_test_request():
+                    """Monitors for a manual test request from the UI."""
+                    self.logger.debug("WebSocket: Test command monitor started.")
+                    while True:
+                        command = None
+                        with self._test_command_lock:
+                            if self._test_command:
+                                command = self._test_command
+                                self._test_command = None  # Consume the command
+                        if command == "ping":
+                            self.logger.info("WebSocket: PING test initiated by user.")
+                            try:
+                                pong_waiter = await websocket.ping()
+                                await asyncio.wait_for(pong_waiter, timeout=5)
+                                self.logger.info(
+                                    "[bold green]WebSocket: PING test successful. Connection is live.[/bold green]"
+                                )
+                            except asyncio.TimeoutError:
+                                self.logger.warning(
+                                    "[bold red]WebSocket: PING test failed (timeout). Connection may be stalled.[/bold red]"
+                                )
+                            except Exception as e:
+                                self.logger.error(f"WebSocket: PING test failed: {e}")
+                        elif command == "notify":
+                            self._simulate_new_job_notification()
+                        await asyncio.sleep(0.2)
+
                 keepalive_task = asyncio.create_task(keepalive())
+                test_monitor_task = asyncio.create_task(monitor_test_request())
                 try:
                     async for message in websocket:
                         self.logger.debug(f"WebSocket: Message received: {message}")
@@ -375,15 +406,17 @@ class GengoWatcher:
                     self.logger.error(f"WebSocket: Error in main loop: {e}")
                 finally:
                     keepalive_task.cancel()
+                    test_monitor_task.cancel()
                     try:
                         await keepalive_task
+                        await test_monitor_task
                     except asyncio.CancelledError:
                         self.logger.debug(
-                            "WebSocket: keepalive_task cancelled and awaited cleanly."
+                            "WebSocket: keepalive_task and test_monitor_task cancelled and awaited cleanly."
                         )
                     except Exception as e:
                         self.logger.warning(
-                            f"WebSocket: Exception while awaiting keepalive_task: {e}"
+                            f"WebSocket: Exception while awaiting tasks: {e}"
                         )
                 if hasattr(websocket, "close_code") or hasattr(
                     websocket, "close_reason"
@@ -578,3 +611,19 @@ class GengoWatcher:
                 )
                 return False
         return True
+
+    def _simulate_new_job_notification(self):
+        """Injects a fake job into the processing pipeline to test notifications."""
+        self.logger.info("Simulating a new job notification...")
+        fake_job_id = int(time.time())  # Use timestamp for a unique-ish ID
+        fake_title = "TEST JOB: English > Japanese"
+        fake_reward = 12.34
+        fake_url = f"https://gengo.com/t/jobs/details/{fake_job_id}"
+        self._process_new_job(
+            fake_job_id,
+            fake_title,
+            fake_reward,
+            fake_url,
+            source="Test Simulation"
+        )
+        self.logger.info("[bold green]Test job notification sent. Please check your system notifications.[/bold green]")

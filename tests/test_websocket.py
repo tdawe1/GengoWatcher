@@ -74,7 +74,6 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
             "rewards": "25.50",
         },
     }
-    # Provide a dummy first message for the initial `recv` call, and the actual job for the loop.
     dummy_message = '{"type": "welcome"}'
     job_message = json.dumps(job_payload)
     mock_ws_client = MockAsyncWebSocket([dummy_message, job_message])
@@ -116,7 +115,6 @@ async def test_websocket_logic_processes_job(mock_connect, watcher_instance):
             "rewards": "25.50",
         },
     }
-    # Provide a dummy first message for the initial `recv` call, and the actual job for the loop.
     dummy_message = '{"type": "welcome"}'
     job_message = json.dumps(job_payload)
     mock_ws_client = MockAsyncWebSocket([dummy_message, job_message])

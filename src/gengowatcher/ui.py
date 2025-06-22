@@ -109,6 +109,11 @@ class CommandLineInterface:
                 "handler": self._handle_clear,
                 "help": "Clear the command output panel.",
             },
+            "wstest": {
+                "handler": self._handle_websocket_test,
+                "aliases": ["wt"],
+                "help": "Test WebSocket. Use 'wt' for PING, 'wt notify' for a test notification.",
+            },
         }
         self.alias_map = {
             alias: cmd
@@ -435,3 +440,25 @@ class CommandLineInterface:
     def _handle_reload_config(self, args=None):
         self.config.load_config()
         self.watcher.logger.info("Configuration reloaded from config.ini.")
+
+    def _handle_websocket_test(self, args):
+        """
+        Triggers a test.
+        - No args: PING test (if WebSocket is live).
+        - 'notify': Simulates a new job notification.
+        """
+        command = "ping"  # Default command
+        if args and args[0].lower() == "notify":
+            command = "notify"
+        with self.watcher._test_command_lock:
+            if command == "ping":
+                if self.watcher.websocket_status == "Live":
+                    self.watcher.logger.info("Triggering WebSocket PING test...")
+                    self.watcher._test_command = "ping"
+                else:
+                    self.watcher.logger.warning(
+                        f"WebSocket is not live (status: {self.watcher.websocket_status}). PING test aborted."
+                    )
+            elif command == "notify":
+                self.watcher.logger.info("Triggering test job notification...")
+                self.watcher._test_command = "notify"
