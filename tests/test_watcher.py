@@ -87,7 +87,7 @@ def test_process_feed_entries(watcher_instance):
         {"title": "Job2", "link": "https://gengo.com/t/jobs/details/102/"},
     ]
 
-    watcher_instance.state.last_seen_link = "https://gengo.com/t/jobs/details/102/"
+    watcher_instance.state.last_seen_rss_link = "https://gengo.com/t/jobs/details/102/"
 
     watcher_instance._process_feed_entries(entries)
 

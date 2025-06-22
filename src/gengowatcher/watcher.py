@@ -187,24 +187,21 @@ class GengoWatcher:
         self.logger.debug(
             f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
         )
-
         with self._seen_jobs_lock:
             if job_id in self._seen_jobs_session:
                 return
             self._seen_jobs_session.add(job_id)
             self.state.seen_job_ids.append(job_id)
-
-        min_reward = self.config.get("Watcher", "min_reward")
-        if min_reward > 0.0 and reward < min_reward:
-            self.logger.info(
-                f"Job '{title}' (US$ {reward:.2f}) ignored due to min_reward filter."
-            )
-            return
-
-        self.state.total_new_entries_found += 1
-        self.session_new_entries += 1
-        self.session_total_value += reward
-
+            min_reward = self.config.get("Watcher", "min_reward")
+            if min_reward > 0.0 and reward < min_reward:
+                self.logger.info(
+                    f"Job '{title}' (US$ {reward:.2f}) ignored due to min_reward filter."
+                )
+                return
+            self.state.total_new_entries_found += 1
+            self.session_new_entries += 1
+            self.session_total_value += reward
+            # self.state.last_seen_link = url  # Remove this line
         self.logger.info(
             f"New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})"
         )
@@ -215,32 +212,28 @@ class GengoWatcher:
             open_link=True,
             url=url,
         )
-
-        self.state.last_seen_link = url
         self.state.save_state()
 
     def _process_feed_entries(self, entries):
         self.logger.debug(f"Processing {len(entries) if entries else 0} RSS entries.")
         if not entries:
             return
-
         self._log_all_entries(entries)
-
         new_entries = []
         for entry in entries:
             link = entry.get("link")
             if not link:
                 self.logger.debug(f"Skipping entry with no link: {entry}")
                 continue
-            if link == self.state.last_seen_link:
-                self.logger.debug(f"Reached last seen link: {link}")
+            if link == self.state.last_seen_rss_link:
+                self.logger.debug(f"Reached last seen RSS link: {link}")
                 break
             new_entries.append(entry)
-
         self.logger.debug(f"Found {len(new_entries)} new RSS entries.")
         if not new_entries:
             return
-
+        # Update last_seen_rss_link with the newest link from this batch
+        self.state.last_seen_rss_link = new_entries[0].get("link")
         for entry in reversed(new_entries):
             title = entry.get("title", "No Title")
             url = entry.get("link")
