@@ -1,4 +1,4 @@
-# GengoWatcher v2.1.0
+# GengoWatcher v2.1.5
 
 GengoWatcher is a terminal application designed to find and alert you to new freelance jobs the instant they become available. It monitors both your personal Gengo RSS feed and a real-time WebSocket connection, ensuring maximum notification speed.
 
@@ -8,15 +8,15 @@ It features an interactive text-based user interface (TUI) that runs directly in
 
 ## ✨ Key Features
 
-- **Dual-Source Monitoring**: Fetches jobs from both a personal RSS feed (as a fallback) and a real-time WebSocket connection, ensuring you get notified the second a job is available.
-- **Zero-Config First Run**: Guides you through an interactive setup on first launch. No need to manually edit config files to get started
-- **Rich Interactive TUI**: A clean, modern interface that provides at-a-glance status, recent activity, and a list of available commands.
+- **Dual-Source Monitoring**: Fetches jobs from both a personal RSS feed (as a fallback) and a real-time WebSocket connection.
+- **Highly Efficient**: Near-zero CPU usage when idle, ensuring it runs quietly in the background without impacting system performance.
+- **Responsive Interactive TUI**: A clean, modern interface that provides at-a-glance status, feels responsive to user input, and includes command controls.
+- **Interactive Diagnostics**: A `wstest` command allows you to test WebSocket connectivity and the full notification pipeline on demand.
 - **Customizable Alerts**:
     - Filter jobs by a minimum reward value.
     - Toggle desktop and sound alerts on/off.
 - **Interactive Controls**: Pause, resume, restart, and trigger manual checks on the fly.
-- **Configuration on the Fly**: Adjust settings instantly with commands without needing to restart the application.
-- **Robust & Efficient**: Handles connection errors with an exponential backoff strategy and automatically re-establishes connections.
+- **Robust & Resilient**: Handles connection errors with an exponential backoff strategy and runs correctly even in non-interactive terminals.
 - **Persistent State**: Remembers the last job seen in `state.json`, so you only get notified about truly new entries.
 - **CSV Logging**: Optionally logs every job entry to a CSV file for historical data analysis.
 
@@ -86,15 +86,6 @@ python -m gengowatcher.main
 
 The first time you run GengoWatcher, it will detect that it's a new installation and guide you through an interactive setup. It will ask for essential details needed for WebSocket and RSS monitoring.
 
-> **How to find your Gengo `user_id` and `user_session`:**
->
-> 1.  Log in to your Gengo dashboard in your web browser.
-> 2.  Open your browser's Developer Tools (usually by pressing `F12` or `Ctrl+Shift+I`).
-> 3.  Go to the **Network** tab.
-> 4.  In the filter box, type `ws` or `websocket` to find the WebSocket connection. You should see an entry for `live-dashboard.gengo.com`.
-> 5.  Click on this entry, and then look at the **Messages** or **Payload** tab.
-> 6.  The very first message sent from your browser to the server will contain your `user_id` and `user_session` token. Copy these values into the terminal prompts.
-
 **3. Start Monitoring**
 
 After you complete the prompts, the application will automatically save your details to `config.ini` and begin monitoring for jobs.
@@ -147,18 +138,19 @@ Type commands directly into the TUI and press `Enter` to execute them.
 | Command               | Aliases      | Description                                                 |
 | --------------------- | ------------ | ----------------------------------------------------------- |
 | `check`               |              | Trigger an immediate RSS feed check.                        |
-| `help`                |              | Display the list of available commands.                     |
+| `clear`               |              | Clear the command output panel.                             |
 | `exit`                | `q`, `quit`  | Save the current state and exit the application.            |
+| `help`                |              | Display the list of available commands.                     |
+| `notifytest`          | `nt`         | Send a test notification to check sound and alerts.         |
 | `pause`               | `p`          | Pause feed checks. A `gengowatcher.pause` file is created.  |
-| `resume`              | `r`          | Resume feed checks by deleting the pause file.              |
-| `togglesound`         | `ts`         | Toggle sound alerts on or off.                              |
-| `togglenotifications` | `tn`         | Toggle desktop notifications on or off.                     |
-| `togglewebsocket`     | `tw`         | Toggle WebSocket monitoring (requires restart).             |
-| `setminreward <amt>`  | `smr <amt>`  | Set a minimum reward value (e.g., `smr 5.50`).              |
 | `reloadconfig`        | `rl`         | Reload all settings from `config.ini`.                      |
 | `restart`             |              | Restart the entire script.                                  |
-| `notifytest`          | `nt`         | Send a test notification to check sound and alerts.         |
-| `clear`               |              | Clear the command output panel.                             |
+| `resume`              | `r`          | Resume feed checks by deleting the pause file.              |
+| `setminreward <amt>`  | `smr <amt>`  | Set a minimum reward value (e.g., `smr 5.50`).              |
+| `togglenotifications` | `tn`         | Toggle desktop notifications on or off.                     |
+| `togglesound`         | `ts`         | Toggle sound alerts on or off.                              |
+| `togglewebsocket`     | `tw`         | Toggle WebSocket monitoring (requires restart).             |
+| `wstest [mode]`       | `wt`         | Test the watcher. `wt` checks the WebSocket connection. `wt notify` sends a test job. |
 
 ---
 
@@ -173,23 +165,8 @@ This application uses a Text-Based User Interface (TUI) which draws and redraws 
 -   **macOS**: [**iTerm2**](https://iterm2.com/)
 -   **Linux/Cross-Platform**: [**Alacritty**](https://alacritty.org/), [**Kitty**](https://sw.kovidgoyal.net/kitty/)
 
-#### WebSocket Errors or Failures to Connect
-
-GengoWatcher's WebSocket client may require specific HTTP headers to connect successfully. This functionality depends on a parameter (`extra_headers`) that is removed after the **11.0.3** release** of the `websockets` library.
-
-**Symptom**: You see errors in the "Recent Activity" panel related to "unexpected keyword argument 'extra_headers'" or other WebSocket connection failures, even with correct credentials.
-
-**Solution**: Ensure you are using a compatible version of the `websockets` library.
-1.  Check your installed version:
-    ```bash
-    pip show websockets
-    ```
-
-
-
 ---
 
 ## 📜 License
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
-

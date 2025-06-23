@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.1.5] - 2025-06-23
+
+### 🚀 Performance
+- Drastically reduced idle CPU usage by replacing the high-frequency polling UI loop with an efficient, event-driven model. This results in near-zero CPU consumption when the application is running in the background.
+- Eliminated input lag in the terminal, making the user interface feel instantly responsive.
+- Reduced unnecessary disk I/O by optimizing the frequency of pause file checks.
+
+### ✨ Added
+- Added a new interactive diagnostic command, `wstest` (alias `wt`), to allow users to verify application health in real-time.
+    - `wstest`: Checks WebSocket connection liveness with a PING/PONG test.
+    - `wstest notify`: Simulates a fake job to test the full notification pipeline.
+
+### 🔧 Changed
+- Improved log message readability with enhanced color-coding:
+    - New jobs are now highlighted in bold green.
+    - Jobs ignored by the `min_reward` filter are now logged as yellow warnings.
+- Standardized code formatting across the entire project for better readability and maintainability.
+
+### 🐛 Fixed
+- Resolved a race condition where job statistics could be calculated incorrectly from concurrent RSS and WebSocket events.
+- Fixed a bug that caused the application to crash on startup when run in non-interactive terminals (e.g., IDE debug consoles).
+- Corrected a rendering bug where `rich` markup tags in log messages were displayed as plain text instead of being parsed into colors.
+
 
 ## [2.0.0] - 2025-06-21
 
