@@ -27,13 +27,6 @@ if sys.platform == "win32":
         SOUND_PLAYER = "winsound"
     except ImportError:
         SOUND_PLAYER = "none"
-else:
-    try:
-        import playsound
-
-        SOUND_PLAYER = "playsound"
-    except ImportError:
-        SOUND_PLAYER = "none"
 
 
 class GengoWatcher:
@@ -106,19 +99,23 @@ class GengoWatcher:
 
     def play_sound(self):
         sound_file_path = self.config.get("Paths", "sound_file")
-        self.logger.debug(f"Attempting to play sound: {sound_file_path}")
+        self.logger.debug(f"Attempting to play sound with paplay: {sound_file_path}")
+
         if not Path(sound_file_path).is_file():
             self.logger.warning(f"Sound file not found at: {sound_file_path}")
             return
-        if SOUND_PLAYER == "playsound":
-            try:
-                playsound.playsound(sound_file_path)
-            except Exception as e:
-                self.logger.error(f"playsound error: {e}")
-        elif SOUND_PLAYER == "winsound":
-            winsound.PlaySound(sound_file_path, winsound.SND_FILENAME)
-        else:
-            self.logger.warning("No sound library available. Skipping sound.")
+
+        try:
+            subprocess.Popen(
+                ['paplay', sound_file_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except FileNotFoundError:
+            self.logger.error("`paplay` command not found. Please install `libpulse` (sudo pacman -S libpulse).")
+        except Exception as e:
+            self.logger.error(f"Error playing sound with paplay: {e}")
+
 
     def open_in_browser(self, url):
         self.logger.debug(f"Opening URL in browser: {url}")
@@ -156,6 +153,7 @@ class GengoWatcher:
             threading.Thread(target=self.play_sound, daemon=True).start()
         if open_link and url:
             self.open_in_browser(url)
+
 
     def _extract_reward(self, entry) -> float:
         text = entry.get("title", "") + " | " + entry.get("summary", "")
