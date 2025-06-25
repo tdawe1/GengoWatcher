@@ -76,7 +76,7 @@ def main():
 
     console = Console(theme=APP_THEME)
     log = logging.getLogger("gengowatcher")
-    log.setLevel(logging.INFO)
+    log.setLevel(logging.DEBUG)
     ui_handler = UILoggingHandler()
     log.addHandler(ui_handler)
 
