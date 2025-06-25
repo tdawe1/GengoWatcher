@@ -287,7 +287,10 @@ class GengoWatcher:
                 ),
             ]
             async with websockets.connect(
-                ws_url, extra_headers=extra_headers, ping_interval=None
+                    ws_url,
+                    extra_headers=extra_headers,
+                    ping_interval=20,
+                    ping_timeout=10,
             ) as websocket:
                 self.websocket_status = "Authenticating"
                 auth_payload = {
@@ -321,24 +324,6 @@ class GengoWatcher:
                         f"WebSocket: Error receiving first message: {e}"
                     )
 
-                async def keepalive():
-                    self.logger.debug("WebSocket: Keepalive task started.")
-                    try:
-                        while True:
-                            await asyncio.sleep(30)
-                            try:
-                                self.logger.debug("WebSocket: Sending keepalive ping.")
-                                pong_waiter = await websocket.ping()
-                                await asyncio.wait_for(pong_waiter, timeout=10)
-                                self.logger.debug("WebSocket: Pong received.")
-                            except Exception as e:
-                                self.logger.warning(
-                                    f"WebSocket: Keepalive ping failed: {e}"
-                                )
-                                break
-                    except asyncio.CancelledError:
-                        self.logger.debug("WebSocket: Keepalive task cancelled.")
-
                 async def monitor_test_request():
                     """Monitors for a manual test request from the UI."""
                     self.logger.debug("WebSocket: Test command monitor started.")
@@ -366,7 +351,6 @@ class GengoWatcher:
                             self._simulate_new_job_notification()
                         await asyncio.sleep(0.2)
 
-                keepalive_task = asyncio.create_task(keepalive())
                 test_monitor_task = asyncio.create_task(monitor_test_request())
                 try:
                     async for message in websocket:
@@ -399,10 +383,8 @@ class GengoWatcher:
                 except Exception as e:
                     self.logger.error(f"WebSocket: Error in main loop: {e}")
                 finally:
-                    keepalive_task.cancel()
                     test_monitor_task.cancel()
                     try:
-                        await keepalive_task
                         await test_monitor_task
                     except asyncio.CancelledError:
                         self.logger.debug(
