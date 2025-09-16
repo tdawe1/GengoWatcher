@@ -87,6 +87,16 @@ class CommandLineInterface:
                 "aliases": ["tw"],
                 "help": "Toggle WebSocket monitoring (requires restart).",
             },
+            "autoaccept": {
+                "handler": self._handle_autoaccept,
+                "aliases": ["aa"],
+                "help": "Toggle auto-accept on/off.",
+            },
+            "captchatoggle": {
+                "handler": self._handle_captchatoggle,
+                "aliases": ["ct"],
+                "help": "Toggle CAPTCHA solving on/off.",
+            },
             "setminreward": {
                 "handler": self._handle_set_min_reward,
                 "aliases": ["smr"],
@@ -115,6 +125,26 @@ class CommandLineInterface:
                 "handler": self._handle_websocket_test,
                 "aliases": ["wt"],
                 "help": "Test WebSocket. Use 'wt' for PING, 'wt notify' for a test notification.",
+            },
+            "captchasetup": {
+                "handler": self._handle_captcha_setup,
+                "help": "Configure CAPTCHA solver service.",
+            },
+            "captchatest": {
+                "handler": self._handle_captcha_test,
+                "help": "Test CAPTCHA solver configuration.",
+            },
+            "captchastats": {
+                "handler": self._handle_captcha_stats,
+                "help": "Show CAPTCHA solver statistics.",
+            },
+            "captchareset": {
+                "handler": self._handle_captcha_reset,
+                "help": "Reset CAPTCHA configuration.",
+            },
+            "acceptstats": {
+                "handler": self._handle_accept_stats,
+                "help": "Display job acceptance statistics.",
             },
         }
         self.alias_map = {
@@ -299,8 +329,22 @@ class CommandLineInterface:
             f"US$ {avg_reward:.2f}",
         )
         table.add_row()
+
+        # Auto-accept status
+        autoaccept_enabled = self.config.getboolean("AutoAccept", "enabled")
+        autoaccept_status = "Enabled" if autoaccept_enabled else "Disabled"
+        autoaccept_color = "success" if autoaccept_enabled else "dim"
+
         table.add_row("WebSocket:", Text(ws_status, style=ws_color))
         table.add_row("RSS Fallback:", Text(rss_status_text, style=rss_color))
+        table.add_row("Auto-Accept:", Text(autoaccept_status, style=autoaccept_color))
+
+        # CAPTCHA solving status
+        captcha_enabled = self.config.getboolean("Captcha", "enabled")
+        captcha_status = "Enabled" if captcha_enabled else "Disabled"
+        captcha_color = "success" if captcha_enabled else "dim"
+
+        table.add_row("CAPTCHA Solver:", Text(captcha_status, style=captcha_color))
 
         return Panel(table, title="[title]Runtime Status[/]", title_align="center")
 
@@ -377,7 +421,7 @@ class CommandLineInterface:
         table.add_column(style="value")
         for cmd, info in self.commands.items():
             aliases = ", ".join(info.get("aliases", []))
-            table.add_row(f"[header]{cmd}[/] ({aliases})", info["help"])
+            table.add_row(f"[header]{cmd}[/] ({aliases})" if aliases else f"[header]{cmd}[/]", info["help"])
         return Panel(table, title="[title]Commands[/]", border_style="panel_border")
 
     def _handle_exit(self, *args):
@@ -433,6 +477,31 @@ class CommandLineInterface:
             "A restart is required for this change to take effect."
         )
 
+    def _handle_autoaccept(self, args=None):
+        current_state = self.config.getboolean("AutoAccept", "enabled")
+        self.config.set("AutoAccept", "enabled", not current_state)
+        self.config.save_config()
+        new_state_text = "enabled" if not current_state else "disabled"
+        self.watcher.logger.info(f"Auto-accept has been {new_state_text}.")
+
+        # Update the job acceptance engine if it exists
+        if hasattr(self.watcher, 'job_acceptance_engine'):
+            self.watcher.job_acceptance_engine.enabled = not current_state
+            self.watcher.logger.info(f"Job acceptance engine updated.")
+
+    def _handle_captchatoggle(self, args=None):
+        current_state = self.config.getboolean("Captcha", "enabled")
+        self.config.set("Captcha", "enabled", not current_state)
+        self.config.save_config()
+        new_state_text = "enabled" if not current_state else "disabled"
+        self.watcher.logger.info(f"CAPTCHA solving has been {new_state_text}.")
+
+        # Update the CAPTCHA solver if it exists
+        if hasattr(self.watcher, 'captcha_solver'):
+            # Reinitialize the CAPTCHA solver with new settings
+            self.watcher.captcha_solver._initialize_solver()
+            self.watcher.logger.info(f"CAPTCHA solver updated.")
+
     def _handle_set_min_reward(self, args):
         if not args:
             self.watcher.logger.error("Usage: setminreward <amount>")
@@ -470,3 +539,48 @@ class CommandLineInterface:
             elif command == "notify":
                 self.watcher.logger.info("Triggering test job notification...")
                 self.watcher._test_command = "notify"
+    
+    def _handle_captcha_setup(self, args=None):
+        """Handle CAPTCHA setup command"""
+        from .captcha_cli import setup_captcha_solver
+        try:
+            setup_captcha_solver(self.watcher)
+        except Exception as e:
+            self.watcher.logger.error(f"Error setting up CAPTCHA solver: {e}")
+    
+    def _handle_captcha_test(self, args=None):
+        """Handle CAPTCHA test command"""
+        from .captcha_cli import test_captcha_solver
+        try:
+            test_captcha_solver(self.watcher)
+        except Exception as e:
+            self.watcher.logger.error(f"Error testing CAPTCHA solver: {e}")
+    
+    def _handle_captcha_stats(self, args=None):
+        """Handle CAPTCHA stats command"""
+        from .captcha_cli import show_captcha_stats
+        try:
+            show_captcha_stats(self.watcher)
+        except Exception as e:
+            self.watcher.logger.error(f"Error showing CAPTCHA stats: {e}")
+    
+    def _handle_captcha_reset(self, args=None):
+        """Handle CAPTCHA reset command"""
+        from .captcha_cli import reset_captcha_config
+        try:
+            reset_captcha_config(self.watcher)
+        except Exception as e:
+            self.watcher.logger.error(f"Error resetting CAPTCHA config: {e}")
+
+    def _handle_accept_stats(self, args=None):
+        """Handle job acceptance stats command"""
+        try:
+            stats = self.watcher.get_job_acceptance_stats()
+            self.watcher.logger.info("Job Acceptance Statistics:")
+            self.watcher.logger.info(f"  Enabled: {stats['enabled']}")
+            self.watcher.logger.info(f"  Accepted Jobs: {stats['accepted_jobs']}")
+            self.watcher.logger.info(f"  Failed Acceptances: {stats['failed_acceptances']}")
+            self.watcher.logger.info(f"  Rate Limited: {stats['rate_limited']}")
+            self.watcher.logger.info(f"  Current Rate: {stats['current_rate']:.2f} requests/sec")
+        except Exception as e:
+            self.watcher.logger.error(f"Error showing job acceptance stats: {e}")
