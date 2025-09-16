@@ -84,7 +84,8 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
     mock_connect.assert_called_once_with(
         "wss://live-dashboard.gengo.com",
         extra_headers=ANY,
-        ping_interval=None,
+        ping_interval=20,
+        ping_timeout=10,
     )
     mock_ws_client.send.assert_awaited_once()
     auth_call = mock_ws_client.send.await_args[0][0]
@@ -125,7 +126,8 @@ async def test_websocket_logic_processes_job(mock_connect, watcher_instance):
     mock_connect.assert_called_once_with(
         "wss://live-dashboard.gengo.com",
         extra_headers=ANY,
-        ping_interval=None,
+        ping_interval=20,
+        ping_timeout=10,
     )
     mock_ws_client.send.assert_awaited_once()
     auth_call = mock_ws_client.send.await_args[0][0]

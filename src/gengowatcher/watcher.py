@@ -19,6 +19,24 @@ import websockets
 import json
 from .config import AppConfig
 from .state import AppState
+from .captcha_manager import CaptchaSolverManager
+try:
+    from .browser_automation import BrowserAutomationEngine
+except ImportError:
+    # Placeholder for BrowserAutomationEngine if import fails
+    class BrowserAutomationEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+try:
+    from .job_acceptance import JobAcceptanceEngine
+except ImportError:
+    # Placeholder for JobAcceptanceEngine if import fails
+    class JobAcceptanceEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+        def accept_job(self, *args, **kwargs):
+            return False
 
 if sys.platform == "win32":
     try:
@@ -68,6 +86,16 @@ class GengoWatcher:
         )
         if self.config.get("Logging", "log_all_entries_enabled"):
             self._setup_csv_logging()
+        
+        # Initialize CAPTCHA solver
+        self.captcha_solver = CaptchaSolverManager(self.config.config, logger)
+        
+        # Initialize job acceptance engine
+        self.job_acceptance_engine = JobAcceptanceEngine(config, logger, self.captcha_solver)
+        
+        # Initialize browser automation engine
+        self.browser_automation_engine = BrowserAutomationEngine(config, logger, self.captcha_solver)
+        
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
     def handle_exit(self, signum=None, frame=None):
@@ -77,6 +105,33 @@ class GengoWatcher:
             self.shutdown_event.set()
             self.state.save_state()
             self.config.save_config()
+            
+            # Close CAPTCHA solver
+            if hasattr(self, 'captcha_solver'):
+                try:
+                    self.captcha_solver.close()
+                    self.logger.debug("CAPTCHA solver closed successfully")
+                except Exception as e:
+                    self.logger.error(f"Error closing CAPTCHA solver: {e}")
+            
+            # Close job acceptance engine session
+            if hasattr(self, 'job_acceptance_engine'):
+                try:
+                    # Run async close in a new event loop
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self.job_acceptance_engine.close_session())
+                    loop.close()
+                except Exception as e:
+                    self.logger.error(f"Error closing job acceptance engine session: {e}")
+            
+            # Close CAPTCHA solver session
+            if hasattr(self, 'captcha_solver'):
+                try:
+                    self.captcha_solver.close()
+                    self.logger.debug("CAPTCHA solver closed successfully")
+                except Exception as e:
+                    self.logger.error(f"Error closing CAPTCHA solver: {e}")
 
     def _setup_csv_logging(self):
         self.logger.debug("Setting up CSV logging.")
@@ -210,7 +265,63 @@ class GengoWatcher:
             open_link=True,
             url=url,
         )
+
+        # Store job in state for web API access
+        try:
+            job_data = {
+                "id": str(job_id),
+                "title": title,
+                "reward": float(reward),
+                "currency": "USD",
+                "url": url,
+                "timestamp": time.time(),
+                "source": source
+            }
+            self.state.add_job(job_data)
+        except Exception as e:
+            self.logger.warning(f"Failed to store job in state: {e}")
+
+        # Check if job should be auto-accepted
+        if self.job_acceptance_engine.is_job_eligible(job_data):
+            self.logger.info(f"Job {job_id} meets auto-accept criteria, queuing for acceptance")
+            # Run job acceptance in a separate thread to avoid blocking
+            threading.Thread(
+                target=self._async_job_acceptance_wrapper,
+                args=(job_data,),
+                daemon=True
+            ).start()
+        elif hasattr(self.browser_automation_engine, 'is_job_eligible') and self.browser_automation_engine.is_job_eligible(job_data):
+            self.logger.info(f"Job {job_id} meets browser automation criteria, queuing for acceptance")
+            # Run browser automation in a separate thread to avoid blocking
+            threading.Thread(
+                target=self._async_browser_automation_wrapper,
+                args=(job_data,),
+                daemon=True
+            ).start()
+        else:
+            self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
+
         self.state.save_state()
+
+    def _async_job_acceptance_wrapper(self, job_data: dict):
+        """
+        Wrapper to run async job acceptance in a separate thread.
+        
+        Args:
+            job_data: Dictionary containing job information
+        """
+        try:
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the async job acceptance
+            loop.run_until_complete(self.job_acceptance_engine.accept_job(job_data))
+            
+            # Close the loop
+            loop.close()
+        except Exception as e:
+            self.logger.error(f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}")
 
     def _process_feed_entries(self, entries):
         self.logger.debug(f"Processing {len(entries) if entries else 0} RSS entries.")
@@ -588,6 +699,34 @@ class GengoWatcher:
                 return False
         return True
 
+    def get_captcha_stats(self):
+        """Get CAPTCHA solver statistics"""
+        if self.captcha_solver.is_configured():
+            return {
+                'configured': True,
+                'balance': self.captcha_solver.get_balance(),
+                'stats': self.captcha_solver.get_stats()
+            }
+        else:
+            return {
+                'configured': False,
+                'balance': 0.0,
+                'stats': {}
+            }
+    
+    def get_job_acceptance_stats(self):
+        """Get job acceptance engine statistics"""
+        if hasattr(self, 'job_acceptance_engine'):
+            return self.job_acceptance_engine.get_stats()
+        else:
+            return {
+                'accepted_jobs': 0,
+                'failed_acceptances': 0,
+                'rate_limited': 0,
+                'current_rate': 0.0,
+                'enabled': False
+            }
+    
     def _simulate_new_job_notification(self):
         """Injects a fake job into the processing pipeline to test notifications."""
         self.logger.info("Simulating a new job notification...")
@@ -601,3 +740,25 @@ class GengoWatcher:
         self.logger.info(
             "[bold green]Test job notification sent. Please check your system notifications.[/bold green]"
         )
+    
+    def handle_job_rejection(self, job_data: dict):
+        """Handle job rejection that might require CAPTCHA solving"""
+        self.logger.info(f"Handling job rejection for job ID: {job_data.get('id')}")
+        
+        # Check if CAPTCHA solver is configured
+        if not self.captcha_solver.is_configured():
+            self.logger.warning("CAPTCHA solver not configured, cannot handle job rejection")
+            return False
+        
+        # Let the CAPTCHA manager handle the rejection
+        success = self.captcha_solver.handle_job_rejection(job_data)
+        
+        if success:
+            self.logger.info(f"Successfully handled CAPTCHA for rejected job {job_data.get('id')}")
+            # Here you would implement logic to resubmit the job or notify the user
+            # For example:
+            # self._resubmit_job(job_data)
+        else:
+            self.logger.error(f"Failed to handle CAPTCHA for rejected job {job_data.get('id')}")
+            
+        return success

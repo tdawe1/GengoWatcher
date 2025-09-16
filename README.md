@@ -127,7 +127,103 @@ log_all_entries_enabled = true
 [Network]
 max_backoff = 300
 user_agent_email = your_email@example.com
+
+[Captcha]
+service = 2captcha
+max_retries = 3
+retry_delay = 5
+rate_limit = 60
 ```
+
+### 🔐 CAPTCHA Solver Setup
+
+GengoWatcher supports integration with CAPTCHA solving services to automate job acceptance:
+
+1. **2Captcha** - https://2captcha.com (Pay-per-solve)
+2. **Anti-Captcha** - https://anti-captcha.com (Pay-per-solve)
+
+#### Quick Setup
+
+To configure CAPTCHA solving:
+1. Run `python -m gengowatcher.main`
+2. Type `captchasetup` in the command interface
+3. Select your service and enter your API key
+4. The API key is stored securely using AES-GCM encryption
+
+#### Configuration Options
+
+```ini
+[Captcha]
+service = 2captcha           # Service: 2captcha or anti-captcha
+max_retries = 3             # Maximum retry attempts
+retry_delay = 5              # Seconds between retries
+rate_limit = 60              # Requests per minute
+```
+
+#### Supported CAPTCHA Types
+- **reCAPTCHA v2**: Standard "I'm not a robot" checkbox
+- **reCAPTCHA v3**: Score-based verification (with optional browser fallback)
+- **hCaptcha**: Privacy-focused alternative
+
+#### Security Features
+- API keys encrypted at rest using system-specific key derivation
+- Restrictive file permissions (0o600)
+- No sensitive data logged (tokens, keys, or solutions)
+- HTTPS-only API communication
+
+#### Management Commands
+- `captchatest` - Verify API key and check balance
+- `captchastats` - View usage statistics and costs
+- `captchareset` - Clear configuration and start over
+
+#### Rate Limiting & Behavior
+- Sliding window rate limiter (60 req/min default)
+- Exponential backoff for retries
+- Adaptive polling intervals (5-30 seconds)
+- 5-minute timeout for solves
+
+⚠️ **Note**: Using CAPTCHA solving services incurs costs. Monitor usage with `captchastats`.
+
+For detailed documentation, see [docs/captcha_configuration.md](docs/captcha_configuration.md).
+
+---
+
+## 🤖 Auto Job Acceptance
+
+GengoWatcher can automatically accept jobs that meet your configured criteria:
+
+### Configuration
+
+Add the following section to your `config.ini`:
+
+```ini
+[AutoAccept]
+enabled = false
+min_reward = 0.0
+max_reward = 999999.0
+job_sources = rss,websocket
+accept_delay_min = 5
+accept_delay_max = 30
+browser_profile_path =
+notification_on_accept = true
+log_acceptance = true
+```
+
+### Configuration Options
+
+- `enabled`: Enable/disable auto job acceptance (true/false)
+- `min_reward`: Minimum reward amount for auto acceptance
+- `max_reward`: Maximum reward amount for auto acceptance
+- `job_sources`: Comma-separated list of sources (rss, websocket)
+- `accept_delay_min`: Minimum delay in seconds before accepting a job
+- `accept_delay_max`: Maximum delay in seconds before accepting a job
+- `browser_profile_path`: Path to browser profile for job acceptance (if needed)
+- `notification_on_accept`: Show notification when a job is accepted
+- `log_acceptance`: Log accepted jobs to a file
+
+### Rate Limiting & Error Handling
+
+The auto-acceptance engine includes built-in rate limiting to prevent exceeding API limits and implements retry mechanisms for failed acceptance attempts.
 
 ---
 
@@ -137,6 +233,7 @@ Type commands directly into the TUI and press `Enter` to execute them.
 
 | Command               | Aliases      | Description                                                 |
 | --------------------- | ------------ | ----------------------------------------------------------- |
+| `acceptstats`         |              | Display job acceptance statistics.                          |
 | `check`               |              | Trigger an immediate RSS feed check.                        |
 | `clear`               |              | Clear the command output panel.                             |
 | `exit`                | `q`, `quit`  | Save the current state and exit the application.            |
