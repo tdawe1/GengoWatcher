@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### 🚀 Features
+- Added job acceptance engine for automated job acceptance based on configurable criteria
+    - Configurable reward range filtering (min/max reward)
+    - Source-based filtering (RSS, WebSocket)
+    - Configurable acceptance delays with randomization
+    - Rate limiting to prevent API abuse
+    - Comprehensive error handling and retry mechanisms
+    - Detailed logging of accepted jobs
+    - Statistics tracking for monitoring
+- Added captcha solving service integration for automated job rejection
+    - Support for 2Captcha and Anti-Captcha providers
+    - Configurable auto-rejection based on job criteria (minimum reward, language pairs, etc.)
+    - Modular design allowing for easy addition of new captcha providers
+- Enhanced job filtering capabilities with automatic rejection workflows
+
+### 🔧 Improvements
+- Added `aiohttp` dependency for robust HTTP client functionality
+- Improved error handling and fallback mechanisms for external service integrations
+
 ## [2.1.5] - 2025-06-23
 
 ### 🚀 Performance
