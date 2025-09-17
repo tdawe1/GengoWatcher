@@ -23,6 +23,14 @@ class JobAcceptanceEngine:
     """Engine for automatically accepting Gengo jobs based on configured criteria."""
     
     def __init__(self, config: AppConfig, logger: logging.Logger, captcha_solver: Optional[CaptchaSolverManager] = None):
+        """
+        Initialize the JobAcceptanceEngine.
+
+        Args:
+            config (AppConfig): The application configuration object.
+            logger (logging.Logger): Logger instance for logging messages.
+            captcha_solver (Optional[CaptchaSolverManager]): Optional captcha solver manager.
+        """
         self.config = config
         self.logger = logger
         self.captcha_solver = captcha_solver
