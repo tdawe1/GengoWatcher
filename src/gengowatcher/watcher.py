@@ -90,6 +90,22 @@ class GengoWatcher:
         # Initialize CAPTCHA solver
         self.captcha_solver = CaptchaSolverManager(self.config.config, logger)
         
+        # Register alert callback for CAPTCHA monitoring
+        def captcha_alert_callback(service_name: str, level: str, message: str):
+            """Handle CAPTCHA service alerts"""
+            # Log the alert
+            getattr(self.logger, level.lower(), self.logger.info)(f"CAPTCHA Alert [{service_name}]: {message}")
+            
+            # Show notification for critical alerts
+            if level in ["ERROR", "CRITICAL"]:
+                self.show_notification(
+                    message, 
+                    title=f"CAPTCHA Service Alert ({service_name})", 
+                    play_sound=True
+                )
+        
+        self.captcha_solver.monitor.add_alert_callback(captcha_alert_callback)
+        
         # Initialize job acceptance engine
         self.job_acceptance_engine = JobAcceptanceEngine(config, logger, self.captcha_solver)
         
@@ -98,40 +114,21 @@ class GengoWatcher:
         
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
-    def handle_exit(self, signum=None, frame=None):
-        self.logger.debug("handle_exit called.")
-        if not self.shutdown_event.is_set():
-            self.logger.info("Shutdown initiated. Saving state...")
-            self.shutdown_event.set()
-            self.state.save_state()
-            self.config.save_config()
-            
-            # Close CAPTCHA solver
-            if hasattr(self, 'captcha_solver'):
-                try:
-                    self.captcha_solver.close()
-                    self.logger.debug("CAPTCHA solver closed successfully")
-                except Exception as e:
-                    self.logger.error(f"Error closing CAPTCHA solver: {e}")
-            
-            # Close job acceptance engine session
-            if hasattr(self, 'job_acceptance_engine'):
-                try:
-                    # Run async close in a new event loop
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self.job_acceptance_engine.close_session())
-                    loop.close()
-                except Exception as e:
-                    self.logger.error(f"Error closing job acceptance engine session: {e}")
-            
-            # Close CAPTCHA solver session
-            if hasattr(self, 'captcha_solver'):
-                try:
-                    self.captcha_solver.close()
-                    self.logger.debug("CAPTCHA solver closed successfully")
-                except Exception as e:
-                    self.logger.error(f"Error closing CAPTCHA solver: {e}")
+    def start_captcha_monitoring(self, interval: int = 300):
+        """Start monitoring CAPTCHA service health and performance"""
+        self.captcha_solver.start_monitoring(interval)
+    
+    def stop_captcha_monitoring(self):
+        """Stop monitoring CAPTCHA service health and performance"""
+        self.captcha_solver.stop_monitoring()
+    
+    def show_captcha_health_status(self):
+        """Show current CAPTCHA service health status"""
+        self.captcha_solver.monitor.log_health_status()
+    
+    def show_captcha_performance_metrics(self):
+        """Show CAPTCHA service performance metrics"""
+        self.captcha_solver.monitor.log_performance_metrics()
 
     def _setup_csv_logging(self):
         self.logger.debug("Setting up CSV logging.")
@@ -151,6 +148,22 @@ class GengoWatcher:
             self.logger.error(f"Could not open all_entries_log file: {e}")
             self._all_entries_log_file = None
             self._csv_writer = None
+    
+    def start_captcha_monitoring(self, interval: int = 300):
+        """Start monitoring CAPTCHA service health and performance"""
+        self.captcha_solver.start_monitoring(interval)
+    
+    def stop_captcha_monitoring(self):
+        """Stop monitoring CAPTCHA service health and performance"""
+        self.captcha_solver.stop_monitoring()
+    
+    def show_captcha_health_status(self):
+        """Show current CAPTCHA service health status"""
+        self.captcha_solver.monitor.log_health_status()
+    
+    def show_captcha_performance_metrics(self):
+        """Show CAPTCHA service performance metrics"""
+        self.captcha_solver.monitor.log_performance_metrics()
 
     def play_sound(self):
         sound_file_path = self.config.get("Paths", "sound_file")
@@ -762,3 +775,8 @@ class GengoWatcher:
             self.logger.error(f"Failed to handle CAPTCHA for rejected job {job_data.get('id')}")
             
         return success
+
+    def handle_exit(self):
+        """Handle application exit"""
+        self.logger.info("GengoWatcher shutting down...")
+        self.logger.info("GengoWatcher shutdown complete")

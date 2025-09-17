@@ -234,7 +234,7 @@ class WebAPI:
                     }
                 }
         except Exception as e:
-            self.logger.error(f"Error retrieving recent jobs: {e}")
+            self.logger.exception(f"Error retrieving recent jobs: {e}")
             return {
                 "jobs": [],
                 "pagination": {
@@ -375,7 +375,7 @@ class WebAPI:
                 }
             }
         except Exception as e:
-            self.logger.error(f"Error reading jobs from CSV: {e}")
+            self.logger.exception(f"Error reading jobs from CSV: {e}")
             return {
                 "jobs": [],
                 "pagination": {
@@ -402,7 +402,7 @@ class WebAPI:
                 self.state.add_job(job_data)
                 self.logger.debug(f"Added job to storage: {job_id}")
         except Exception as e:
-            self.logger.error(f"Error adding job to storage: {e}")
+            self.logger.exception(f"Error adding job to storage: {e}")
 
     async def accept_job(self, job_id: str) -> bool:
         """Accept a job by ID using the job acceptance engine."""
@@ -437,16 +437,32 @@ class WebAPI:
             return success
             
         except Exception as e:
-            self.logger.error(f"Error accepting job {job_id}: {e}")
+            self.logger.exception(f"Error accepting job {job_id}: {e}")
             return False
 
     def get_config(self) -> List[ConfigSection]:
         """Get current configuration."""
         sections = []
-        # The config.config is a dict with section keys
-        for section_name, section_data in self.config.config.items():
-            if isinstance(section_data, dict):
-                sections.append(ConfigSection(section=section_name, options=section_data))
+        # Use the proper config access methods
+        for section_name in self.config.config.keys():
+            section_data = {}
+            for key in self.config.config[section_name].keys():
+                try:
+                    # Try to get the value using the appropriate method based on type
+                    default_val = self.config.config[section_name][key]
+                    if isinstance(default_val, bool):
+                        value = self.config.getboolean(section_name, key, default_val)
+                    elif isinstance(default_val, int):
+                        value = self.config.getint(section_name, key, default_val)
+                    elif isinstance(default_val, float):
+                        value = self.config.getfloat(section_name, key, default_val)
+                    else:
+                        value = self.config.get(section_name, key, default_val)
+                    section_data[key] = value
+                except Exception:
+                    # Fallback to direct access if method fails
+                    section_data[key] = self.config.config[section_name][key]
+            sections.append(ConfigSection(section=section_name, options=section_data))
         return sections
 
     def update_config(self, section: str, option: str, value: str) -> bool:
@@ -455,7 +471,7 @@ class WebAPI:
             self.watcher.set_config_value(section, option, value)
             return True
         except Exception as e:
-            self.logger.error(f"Failed to update config {section}.{option}: {e}")
+            self.logger.exception(f"Failed to update config {section}.{option}: {e}")
             return False
 
     def execute_command(self, command: str, args: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -535,10 +551,19 @@ async def lifespan(app: FastAPI):
 
         config = AppConfig()
         state = AppState(logger=logger)
+
+        # Initialize authenticator with config token
+        try:
+            api_token = config.get("WebServer", "auth_token")
+        except:
+            api_token = "gengo-token-demo"
+        global authenticator
+        authenticator = APIAuthenticator(api_token)
+
         api_instance = WebAPI(config, state, logger)
         logger.info("WebAPI started successfully")
     except Exception as e:
-        logger.error(f"Failed to start WebAPI: {e}")
+        logger.exception(f"Failed to start WebAPI: {e}")
         raise
 
     yield
@@ -599,7 +624,7 @@ async def get_status(authenticated: bool = Depends(verify_auth)):
     try:
         return api_instance.get_status()
     except Exception as e:
-        api_instance.logger.error(f"Error getting status: {e}")
+        api_instance.logger.exception(f"Error getting status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -633,7 +658,7 @@ async def get_jobs(
             result = api_instance.get_recent_jobs(limit, page)
             return result
     except Exception as e:
-        api_instance.logger.error(f"Error getting jobs: {e}")
+        api_instance.logger.exception(f"Error getting jobs: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -657,7 +682,7 @@ async def accept_job(
     except HTTPException:
         raise
     except Exception as e:
-        api_instance.logger.error(f"Error accepting job {job_id}: {e}")
+        api_instance.logger.exception(f"Error accepting job {job_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
@@ -669,7 +694,7 @@ async def get_config(authenticated: bool = Depends(verify_auth)):
     try:
         return api_instance.get_config()
     except Exception as e:
-        api_instance.logger.error(f"Error getting config: {e}")
+        api_instance.logger.exception(f"Error getting config: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -696,7 +721,7 @@ async def update_config(
     except HTTPException:
         raise
     except Exception as e:
-        api_instance.logger.error(f"Error updating config: {e}")
+        api_instance.logger.exception(f"Error updating config: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -717,7 +742,7 @@ async def execute_command(
     except HTTPException:
         raise
     except Exception as e:
-        api_instance.logger.error(f"Error executing command: {e}")
+        api_instance.logger.exception(f"Error executing command: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -769,13 +794,13 @@ async def websocket_status(websocket: WebSocket):
                         "data": status.model_dump()
                     })
                 except Exception as e:
-                    api_instance.logger.error(f"Error sending status update: {e}")
+                    api_instance.logger.exception(f"Error sending status update: {e}")
                     break
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        api_instance.logger.error(f"WebSocket error: {e}")
+        api_instance.logger.exception(f"WebSocket error: {e}")
     finally:
         # Remove from active connections
         with api_instance._connections_lock:
@@ -801,7 +826,14 @@ async def root():
 @app.get("/api/auth/key")
 async def get_api_key():
     """Get API key for frontend authentication (development only)."""
-    # In production, this should be disabled or require different authentication
+    # Only allow in development mode
+    dev_mode = os.getenv("GENGOWATCHER_DEV_MODE", "false").lower() == "true"
+    if not dev_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="This endpoint is only available in development mode"
+        )
+
     return {
         "api_key": authenticator.get_api_key(),
         "warning": "This endpoint should be disabled in production"
@@ -838,7 +870,7 @@ async def get_stats(authenticated: bool = Depends(verify_auth)):
             "uptime": status.session_stats.get("uptime", 0)
         }
     except Exception as e:
-        api_instance.logger.error(f"Error getting stats: {e}")
+        api_instance.logger.exception(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
