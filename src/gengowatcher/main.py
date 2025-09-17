@@ -72,6 +72,22 @@ def main():
         action="store_true",
         help="Interactively configure missing/required values",
     )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Start web UI server alongside TUI",
+    )
+    parser.add_argument(
+        "--web-only",
+        action="store_true",
+        help="Start only the web UI server (no TUI)",
+    )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=8000,
+        help="Port for web server (default: 8000)",
+    )
     args, unknown = parser.parse_known_args()
 
     console = Console(theme=APP_THEME)
@@ -132,6 +148,39 @@ def main():
     if not watcher.is_config_complete():
         print("Config is incomplete. Please provide missing values:")
         watcher.prompt_for_config_values()
+
+    # Start web server if requested
+    web_thread = None
+    if args.web or args.web_only:
+        try:
+            from .web import run_web_server
+
+            def start_web_server():
+                print(f"Starting web server on http://127.0.0.1:{args.web_port}")
+                run_web_server(host="127.0.0.1", port=args.web_port)
+
+            web_thread = threading.Thread(
+                target=start_web_server, daemon=True, name="WebServerThread"
+            )
+            web_thread.start()
+
+            # Give web server time to start
+            import time
+            time.sleep(1)
+
+        except ImportError as e:
+            console.print(f"[error]Could not start web server: {e}[/]")
+            console.print("[error]Make sure fastapi and uvicorn are installed[/]")
+            if args.web_only:
+                sys.exit(1)
+
+    # Exit if only web server was requested
+    if args.web_only:
+        try:
+            web_thread.join()
+        except KeyboardInterrupt:
+            console.print("[info]Web server shutting down...[/]")
+        sys.exit(0)
 
     cli = CommandLineInterface(
         watcher, config, state, console, log_queue=ui_handler.log_queue
