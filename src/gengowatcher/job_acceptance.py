@@ -5,7 +5,6 @@ Handles automatic job acceptance based on configured criteria with rate limiting
 
 import time
 import random
-import threading
 import logging
 import json
 import aiohttp
@@ -27,7 +26,7 @@ class JobAcceptanceEngine:
         self.config = config
         self.logger = logger
         self.captcha_solver = captcha_solver
-        self._enabled = config.getboolean("AutoAccept", "enabled")
+        self._enabled = config.getboolean("AutoAccept", "enabled", fallback=False)
         
         if self.enabled:
             self.logger.info("Job Acceptance Engine initialized")
@@ -97,11 +96,11 @@ class JobAcceptanceEngine:
         if job_data.get("source", "").lower() not in allowed_sources:
             self.logger.debug(f"Job {job_data.get('id')} rejected: source {job_data.get('source')} not in {allowed_sources}")
             return False
-            
+
         # Check reward range
         reward = job_data.get("reward", 0.0)
-        min_reward = self.config.get("AutoAccept", "min_reward")
-        max_reward = self.config.get("AutoAccept", "max_reward")
+        min_reward = self.config.getfloat("AutoAccept", "min_reward")
+        max_reward = self.config.getfloat("AutoAccept", "max_reward")
         
         if not (min_reward <= reward <= max_reward):
             self.logger.debug(f"Job {job_data.get('id')} rejected: reward {reward} not in range [{min_reward}, {max_reward}]")
@@ -124,8 +123,7 @@ class JobAcceptanceEngine:
             return False
             
         job_id = job_data.get("id")
-        job_url = job_data.get("url")
-        
+
         self.logger.info(f"Attempting to auto-accept job {job_id}")
         
         # Check rate limits
@@ -140,8 +138,8 @@ class JobAcceptanceEngine:
                 return False
         
         # Apply random delay before acceptance (configurable)
-        delay_min = self.config.get("AutoAccept", "accept_delay_min")
-        delay_max = self.config.get("AutoAccept", "accept_delay_max")
+        delay_min = self.config.getint("AutoAccept", "accept_delay_min")
+        delay_max = self.config.getint("AutoAccept", "accept_delay_max")
         delay = random.uniform(delay_min, delay_max)
         self.logger.debug(f"Waiting {delay:.2f}s before accepting job {job_id}")
         await asyncio.sleep(delay)
@@ -158,11 +156,11 @@ class JobAcceptanceEngine:
                     self.logger.info(f"Successfully accepted job {job_id}")
                     
                     # Log acceptance if configured
-                    if self.config.get("AutoAccept", "log_acceptance"):
+                    if self.config.getboolean("AutoAccept", "log_acceptance"):
                         self._log_job_acceptance(job_data)
-                    
+
                     # Show notification if configured
-                    if self.config.get("AutoAccept", "notification_on_accept"):
+                    if self.config.getboolean("AutoAccept", "notification_on_accept"):
                         # This would integrate with the notification system
                         self.logger.debug(f"Notification would be sent for accepted job {job_id}")
                     
@@ -175,7 +173,7 @@ class JobAcceptanceEngine:
             except asyncio.TimeoutError as e:
                 self.logger.error(f"Timeout error accepting job {job_id} (attempt {attempt + 1}): {e}")
             except Exception as e:
-                self.logger.error(f"Unexpected error accepting job {job_id} (attempt {attempt + 1}): {e}")
+                self.logger.exception(f"Unexpected error accepting job {job_id} (attempt {attempt + 1}): {e}")
                 
             if attempt < self.max_retries:
                 # Exponential backoff with jitter
@@ -201,8 +199,7 @@ class JobAcceptanceEngine:
             await self.initialize_session()
             
         job_id = job_data.get("id")
-        job_url = job_data.get("url")
-        
+
         try:
             # Get authentication credentials from config
             user_session = self.config.get("WebSocket", "user_session")
@@ -277,7 +274,7 @@ class JobAcceptanceEngine:
             self.logger.error(f"Timeout error accepting job {job_id}: {e}")
             return False
         except Exception as e:
-            self.logger.error(f"Unexpected error accepting job {job_id}: {e}")
+            self.logger.exception(f"Unexpected error accepting job {job_id}: {e}")
             return False
     
     async def _handle_captcha_challenge(self, job_id: str, captcha_page_content: str, headers: Dict[str, str]) -> bool:
@@ -420,25 +417,25 @@ class JobAcceptanceEngine:
                 if not site_key:
                     self.logger.warning(f"Failed to extract reCAPTCHA v3 site key for job {job_id}")
                     # Check if we should skip or use fallback behavior
-                    if self.config.get("Captcha", {}).get("skip_on_v3_extraction_failure", True):
+                    if self.config.getboolean("Captcha", "skip_on_v3_extraction_failure", True):
                         self.logger.info(f"Skipping reCAPTCHA v3 solving for job {job_id} due to extraction failure")
                         return False
                     else:
                         # Try browser automation fallback if enabled
-                        if self.config.get("Captcha", {}).get("enable_browser_automation_fallback", False):
+                        if self.config.getboolean("Captcha", "enable_browser_automation_fallback", False):
                             self.logger.info(f"Attempting browser automation fallback for reCAPTCHA v3 for job {job_id}")
                             # Note: This would require integration with the browser automation engine
                             # For now, we'll use the fallback site key
-                            site_key = self.config.get("Captcha", {}).get("recaptcha_v3_fallback_site_key", "6Lc6BAAAAAAAAAChqR2QwNcAAAAA")
+                            site_key = self.config.get("Captcha", "recaptcha_v3_fallback_site_key", "6Lc6BAAAAAAAAAChqR2QwNcAAAAA")
                             self.logger.warning(f"Using fallback reCAPTCHA v3 site key for job {job_id}")
                         else:
                             # Use fallback site key
-                            site_key = self.config.get("Captcha", {}).get("recaptcha_v3_fallback_site_key", "6Lc6BAAAAAAAAAChqR2QwNcAAAAA")
+                            site_key = self.config.get("Captcha", "recaptcha_v3_fallback_site_key", "6Lc6BAAAAAAAAAChqR2QwNcAAAAA")
                             self.logger.warning(f"Using fallback reCAPTCHA v3 site key for job {job_id}")
-                
+
                 if not action:
                     # Use default action if not found
-                    action = self.config.get("Captcha", {}).get("recaptcha_v3_default_action", "job_acceptance")
+                    action = self.config.get("Captcha", "recaptcha_v3_default_action", "job_acceptance")
                     self.logger.debug(f"Using default reCAPTCHA v3 action for job {job_id}: {action}")
                 
                 # Solve the reCAPTCHA v3 using the configured solver
@@ -491,7 +488,7 @@ class JobAcceptanceEngine:
             return False
                     
         except Exception as e:
-            self.logger.error(f"Error handling captcha challenge for job {job_id}: {e}")
+            self.logger.exception(f"Error handling captcha challenge for job {job_id}: {e}")
             return False
     
     def _extract_recaptcha_v3_site_key(self, soup: BeautifulSoup) -> Optional[str]:
@@ -607,7 +604,7 @@ class JobAcceptanceEngine:
                 
             self.logger.debug(f"Logged job acceptance for {job_data.get('id')}")
         except Exception as e:
-            self.logger.error(f"Failed to log job acceptance: {e}")
+            self.logger.exception(f"Failed to log job acceptance: {e}")
     
     def get_stats(self) -> Dict[str, Any]:
         """
