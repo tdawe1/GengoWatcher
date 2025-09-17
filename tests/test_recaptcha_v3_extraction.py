@@ -20,7 +20,12 @@ class TestRecaptchaV3Extraction:
     
     def setup_method(self):
         """Set up test fixtures"""
-        self.config = AppConfig()
+        # Create a mock config to avoid file system dependencies
+        self.config = Mock()
+        self.config.get.return_value = "test_value"
+        self.config.getboolean.return_value = True
+        self.config.getint.return_value = 30
+        self.config.getfloat.return_value = 1.0
         self.logger = Mock()
         self.engine = JobAcceptanceEngine(self.config, self.logger)
     
@@ -29,13 +34,13 @@ class TestRecaptchaV3Extraction:
         html = """
         <html>
             <body>
-                <div class="g-recaptcha" data-sitekey="6Lc6BAAAAAAAAAChqR2QwNcAAAAA"></div>
+                <div class="g-recaptcha" data-sitekey="FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY"></div>
             </body>
         </html>
         """
         soup = BeautifulSoup(html, 'html.parser')
         site_key = self.engine._extract_recaptcha_v3_site_key(soup)
-        assert site_key == "6Lc6BAAAAAAAAAChqR2QwNcAAAAA"
+        assert site_key == "FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY"
     
     def test_extract_recaptcha_v3_site_key_from_script_execute(self):
         """Test extraction of site key from grecaptcha.execute call"""
@@ -43,7 +48,7 @@ class TestRecaptchaV3Extraction:
         <html>
             <body>
                 <script>
-                    grecaptcha.execute('6Lc6BAAAAAAAAAChqR2QwNcAAAAA', {action: 'job_acceptance'}).then(function(token) {
+                    grecaptcha.execute('FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY', {action: 'job_acceptance'}).then(function(token) {
                         // Handle token
                     });
                 </script>
@@ -52,7 +57,7 @@ class TestRecaptchaV3Extraction:
         """
         soup = BeautifulSoup(html, 'html.parser')
         site_key = self.engine._extract_recaptcha_v3_site_key(soup)
-        assert site_key == "6Lc6BAAAAAAAAAChqR2QwNcAAAAA"
+        assert site_key == "FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY"
     
     def test_extract_recaptcha_v3_site_key_from_script_ready(self):
         """Test extraction of site key from grecaptcha.ready call"""
@@ -61,7 +66,7 @@ class TestRecaptchaV3Extraction:
             <body>
                 <script>
                     grecaptcha.ready(function() {
-                        grecaptcha.execute('6Lc6BAAAAAAAAAChqR2QwNcAAAAA', {action: 'job_acceptance'}).then(function(token) {
+                        grecaptcha.execute('FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY', {action: 'job_acceptance'}).then(function(token) {
                             // Handle token
                         });
                     });
@@ -71,7 +76,7 @@ class TestRecaptchaV3Extraction:
         """
         soup = BeautifulSoup(html, 'html.parser')
         site_key = self.engine._extract_recaptcha_v3_site_key(soup)
-        assert site_key == "6Lc6BAAAAAAAAAChqR2QwNcAAAAA"
+        assert site_key == "FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY"
     
     def test_extract_recaptcha_v3_site_key_from_site_key_variable(self):
         """Test extraction of site key from recaptcha_site_key variable"""
@@ -79,7 +84,7 @@ class TestRecaptchaV3Extraction:
         <html>
             <body>
                 <script>
-                    var recaptcha_site_key = '6Lc6BAAAAAAAAAChqR2QwNcAAAAA';
+                    var recaptcha_site_key = 'FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY';
                     // Other code
                 </script>
             </body>
@@ -87,7 +92,7 @@ class TestRecaptchaV3Extraction:
         """
         soup = BeautifulSoup(html, 'html.parser')
         site_key = self.engine._extract_recaptcha_v3_site_key(soup)
-        assert site_key == "6Lc6BAAAAAAAAAChqR2QwNcAAAAA"
+        assert site_key == "FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY"
     
     def test_extract_recaptcha_v3_site_key_not_found(self):
         """Test behavior when site key is not found"""
@@ -108,7 +113,7 @@ class TestRecaptchaV3Extraction:
         <html>
             <body>
                 <script>
-                    grecaptcha.execute('6Lc6BAAAAAAAAAChqR2QwNcAAAAA', {action: 'job_acceptance'}).then(function(token) {
+                    grecaptcha.execute('FAKE_TEST_SITE_KEY_FOR_UNIT_TESTS_ONLY', {action: 'job_acceptance'}).then(function(token) {
                         // Handle token
                     });
                 </script>

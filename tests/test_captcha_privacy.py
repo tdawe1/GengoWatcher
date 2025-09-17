@@ -27,15 +27,15 @@ class TestCaptchaPrivacy:
 
         # Mock secure storage to return an API key
         with patch.object(solver_manager, '_storage') as mock_storage:
-            mock_storage.retrieve_api_key.return_value = "test_api_key_12345"
+            mock_storage.retrieve_api_key.return_value = "FAKE_TEST_API_KEY_FOR_UNIT_TESTS_ONLY"
 
             # Try to initialize the solver
-            solver_manager._ensure_solver()
+            solver_manager._initialize_solver()
 
-            # Check that API key is not in logs
-            for record in caplog.records:
-                assert "test_api_key_12345" not in record.getMessage(), f"API key found in log: {record.getMessage()}"
-                assert "api_key" not in record.getMessage().lower() or "test_api_key_12345" not in record.getMessage(), f"API key found in log: {record.getMessage()}"
+        # Check that API key is not in logs
+        for record in caplog.records:
+            assert "FAKE_TEST_API_KEY_FOR_UNIT_TESTS_ONLY" not in record.getMessage(), f"API key found in log: {record.getMessage()}"
+            assert "api_key" not in record.getMessage().lower() or "FAKE_TEST_API_KEY_FOR_UNIT_TESTS_ONLY" not in record.getMessage(), f"API key found in log: {record.getMessage()}"
 
     def test_no_solution_token_in_logs(self, caplog):
         """Ensure solution tokens are never logged"""
@@ -59,14 +59,14 @@ class TestCaptchaPrivacy:
         config = {"Captcha": {"service": "2captcha"}}
 
         # Patch TwoCaptchaSolver to avoid real API calls during initialization
-        with patch('gengowatcher.captcha_manager.TwoCaptchaSolver') as mock_solver_class:
+        with patch('gengowatcher.captcha_solver.TwoCaptchaSolver') as mock_solver_class:
             mock_solver_class.return_value = mock_solver
 
             solver_manager = CaptchaSolverManager(config, logger)
 
             # Mock the storage to return an API key
             with patch.object(solver_manager, '_storage') as mock_storage:
-                mock_storage.retrieve_api_key.return_value = "test_api_key"
+                mock_storage.retrieve_api_key.return_value = "FAKE_TEST_API_KEY_FOR_UNIT_TESTS_ONLY"
                 # Initialize the solver
                 solver_manager._initialize_solver()
                 solver_manager._solver_type = "2captcha"
@@ -122,7 +122,7 @@ class TestCaptchaPrivacy:
         logger.setLevel(logging.DEBUG)
 
         # Create a mock solver with a real TwoCaptchaSolver instance
-        with patch('gengowatcher.captcha_manager.TwoCaptchaSolver') as mock_solver_class:
+        with patch('gengowatcher.captcha_solver.TwoCaptchaSolver') as mock_solver_class:
             mock_solver = Mock()
             mock_solver_class.return_value = mock_solver
 
@@ -180,7 +180,7 @@ class TestCaptchaPrivacy:
 
         # Create a mock solver that raises an error
         mock_solver = Mock(spec=TwoCaptchaSolver)
-        mock_solver.solve_recaptcha_v2.side_effect = Exception("Invalid API key: test_api_key_12345")
+        mock_solver.solve_recaptcha_v2.side_effect = Exception("Invalid API key: FAKE_TEST_API_KEY_FOR_UNIT_TESTS_ONLY")
 
         # Create solver manager
         config = {"Captcha": {"service": "2captcha"}}
@@ -196,7 +196,7 @@ class TestCaptchaPrivacy:
             for record in caplog.records:
                 message = record.getMessage()
                 if "error" in message.lower() or "exception" in message.lower():
-                    assert "test_api_key_12345" not in message, f"Sensitive data in error log: {message}"
+                    assert "FAKE_TEST_API_KEY_FOR_UNIT_TESTS_ONLY" not in message, f"Sensitive data in error log: {message}"
 
     def test_stats_logging_privacy(self, caplog):
         """Ensure statistics logging doesn't expose sensitive data"""

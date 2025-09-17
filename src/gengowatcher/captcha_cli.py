@@ -15,41 +15,67 @@ from .captcha_solver import CaptchaServiceType
 def setup_captcha_solver(watcher):
     """Interactive setup for CAPTCHA solver"""
     print("\n=== CAPTCHA Solver Setup ===")
+    
+    # Get available services
+    available_services = watcher.captcha_solver.get_available_services()
+    
     print("Supported services:")
-    print("1. 2Captcha (https://2captcha.com)")
-    print("2. Anti-Captcha (https://anti-captcha.com)")
-    print("3. Cancel setup")
+    service_list = list(available_services.keys())
     
-    choice = input("\nSelect service (1-3): ").strip()
+    # Add local solver option
+    service_list.append("local")
     
-    service_map = {
-        "1": CaptchaServiceType.TWO_CAPTCHA.value,
-        "2": CaptchaServiceType.ANTI_CAPTCHA.value
-    }
+    for i, service in enumerate(service_list, 1):
+        if service == "local":
+            print(f"{i}. Local Solver (ML-based, no API key required)")
+        else:
+            service_name = available_services.get(service, service)
+            print(f"{i}. {service} ({service_name})")
+    print(f"{len(service_list) + 1}. Cancel setup")
     
-    if choice not in service_map:
-        print("Setup cancelled.")
-        return
-    
-    service = service_map[choice]
-    api_key = getpass.getpass(f"Enter your {service} API key: ").strip()
-    
-    if not api_key:
-        print("API key cannot be empty.")
-        return
-    
-    # Store the API key securely
-    storage = SecureKeyStorage(logger=watcher.logger)
-    if storage.store_api_key(service, api_key):
-        # Update config
-        watcher.set_config_value("Captcha", "service", service)
-        print(f"\n{service} configured successfully!")
-        print("API key stored securely.")
+    try:
+        choice = int(input(f"\nSelect service (1-{len(service_list) + 1}): ").strip())
+        
+        if choice < 1 or choice > len(service_list) + 1:
+            print("Invalid choice.")
+            return
+            
+        if choice == len(service_list) + 1:
+            print("Setup cancelled.")
+            return
+            
+        service = service_list[choice - 1]
+        
+        # For local solver, no API key is needed
+        if service == "local":
+            # Update config
+            watcher.set_config_value("Captcha", "service", service)
+            print(f"\nLocal CAPTCHA solver configured successfully!")
+        else:
+            api_key = getpass.getpass(f"Enter your {service} API key: ").strip()
+            
+            if not api_key:
+                print("API key cannot be empty.")
+                return
+            
+            # Store the API key securely
+            storage = SecureKeyStorage(logger=watcher.logger)
+            if storage.store_api_key(service, api_key):
+                # Update config
+                watcher.set_config_value("Captcha", "service", service)
+                print(f"\n{service} configured successfully!")
+                print("API key stored securely.")
+            else:
+                print("Failed to store API key securely.")
+                return
         
         # Reinitialize the captcha manager
         watcher.captcha_solver = CaptchaSolverManager(watcher.config.config, watcher.logger)
-    else:
-        print("Failed to store API key securely.")
+        
+    except ValueError:
+        print("Invalid input. Please enter a number.")
+    except Exception as e:
+        print(f"Error during setup: {e}")
 
 
 def test_captcha_solver(watcher):
@@ -85,15 +111,74 @@ def show_captcha_stats(watcher):
         return
     
     stats = watcher.captcha_solver.get_stats()
-    service_name = watcher.captcha_solver.solver.get_service_name()
+    service_name = watcher.captcha_solver.solver.get_service_name() if watcher.captcha_solver.solver else "Unknown"
     balance = watcher.captcha_solver.get_balance()
     
     print(f"Service: {service_name}")
-    print(f"Balance: ${balance:.2f}")
+    print(f"Balance: ${balance:.4f}")
     print(f"Solved CAPTCHAs: {stats['solved_count']}")
     print(f"Failed attempts: {stats['failed_count']}")
+    print(f"Success rate: {stats['success_rate']:.1f}%")
     print(f"Total cost: ${stats['total_cost']:.4f}")
     print(f"Last solved: {stats['last_solved_at'] or 'Never'}")
+    
+    # Show CAPTCHA type statistics
+    print("\nCAPTCHA Type Statistics:")
+    for captcha_type, type_stats in stats['captcha_type_stats'].items():
+        print(f"  {captcha_type}:")
+        print(f"    Solved: {type_stats['solved']}")
+        print(f"    Failed: {type_stats['failed']}")
+        print(f"    Success Rate: {type_stats['success_rate']:.1f}%")
+        print(f"    Cost: ${type_stats['total_cost']:.4f}")
+    
+    # Show service statistics
+    if stats['service_stats']:
+        print("\nService Statistics:")
+        for service_name, service_stats in stats['service_stats'].items():
+            print(f"  {service_name}:")
+            print(f"    Solved: {service_stats['solved']}")
+            print(f"    Failed: {service_stats['failed']}")
+            print(f"    Success Rate: {service_stats['success_rate']:.1f}%")
+            print(f"    Cost: ${service_stats['total_cost']:.4f}")
+            if service_stats['solve_times']:
+                print(f"    Avg Solve Time: {service_stats['avg_solve_time']:.2f}s")
+                print(f"    Min Solve Time: {service_stats['min_solve_time']:.2f}s")
+                print(f"    Max Solve Time: {service_stats['max_solve_time']:.2f}s")
+    
+    # Show performance statistics
+    if stats['solve_times']:
+        print(f"\nOverall Performance:")
+        print(f"  Avg Solve Time: {stats['avg_solve_time']:.2f}s")
+        print(f"  Min Solve Time: {stats['min_solve_time']:.2f}s")
+        print(f"  Max Solve Time: {stats['max_solve_time']:.2f}s")
+    
+    # Show error statistics
+    if stats['error_stats']:
+        print("\nError Statistics:")
+        for error_type, count in sorted(stats['error_stats'].items(), key=lambda x: x[1], reverse=True):
+            print(f"  {error_type}: {count}")
+
+
+def show_captcha_health(watcher):
+    """Show CAPTCHA service health status"""
+    print("\n=== CAPTCHA Service Health ===")
+    
+    if not watcher.captcha_solver.is_configured():
+        print("CAPTCHA solver is not configured.")
+        return
+    
+    watcher.show_captcha_health_status()
+
+
+def show_captcha_performance(watcher):
+    """Show CAPTCHA service performance metrics"""
+    print("\n=== CAPTCHA Service Performance ===")
+    
+    if not watcher.captcha_solver.is_configured():
+        print("CAPTCHA solver is not configured.")
+        return
+    
+    watcher.show_captcha_performance_metrics()
 
 
 def reset_captcha_config(watcher):
