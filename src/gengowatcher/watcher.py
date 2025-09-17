@@ -19,6 +19,24 @@ import websockets
 import json
 from .config import AppConfig
 from .state import AppState
+from .captcha_manager import CaptchaSolverManager
+try:
+    from .browser_automation import BrowserAutomationEngine
+except ImportError:
+    # Placeholder for BrowserAutomationEngine if import fails
+    class BrowserAutomationEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+try:
+    from .job_acceptance import JobAcceptanceEngine
+except ImportError:
+    # Placeholder for JobAcceptanceEngine if import fails
+    class JobAcceptanceEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+        def accept_job(self, *args, **kwargs):
+            return False
 
 if sys.platform == "win32":
     try:
@@ -33,6 +51,17 @@ class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
 
     def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
+        """Initialize the GengoWatcher instance.
+
+        Sets up the watcher with configuration, state management, logging, and initializes
+        various components including CAPTCHA solver, job acceptance engine, and browser
+        automation engine.
+
+        Args:
+            config: Application configuration object containing all settings.
+            state: Application state object for managing persistent data.
+            logger: Logger instance for recording application events.
+        """
         logger.info(
             f"[DIAG] websockets module path: {getattr(websockets, '__file__', 'unknown')}"
         )
@@ -68,17 +97,59 @@ class GengoWatcher:
         )
         if self.config.get("Logging", "log_all_entries_enabled"):
             self._setup_csv_logging()
+
+        # Initialize CAPTCHA solver
+        self.captcha_solver = CaptchaSolverManager(self.config.config, logger)
+
+        # Register alert callback for CAPTCHA monitoring
+        def captcha_alert_callback(service_name: str, level: str, message: str):
+            """Handle CAPTCHA service alerts"""
+            # Log the alert
+            getattr(self.logger, level.lower(), self.logger.info)(f"CAPTCHA Alert [{service_name}]: {message}")
+
+            # Show notification for critical alerts
+            if level in ["ERROR", "CRITICAL"]:
+                self.show_notification(
+                    message,
+                    title=f"CAPTCHA Service Alert ({service_name})",
+                    play_sound=True
+                )
+
+        self.captcha_solver.monitor.add_alert_callback(captcha_alert_callback)
+
+        # Initialize job acceptance engine
+        self.job_acceptance_engine = JobAcceptanceEngine(config, logger, self.captcha_solver)
+
+        # Initialize browser automation engine
+        self.browser_automation_engine = BrowserAutomationEngine(config, logger, self.captcha_solver)
+
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
-    def handle_exit(self, signum=None, frame=None):
-        self.logger.debug("handle_exit called.")
-        if not self.shutdown_event.is_set():
-            self.logger.info("Shutdown initiated. Saving state...")
-            self.shutdown_event.set()
-            self.state.save_state()
-            self.config.save_config()
+    def start_captcha_monitoring(self, interval: int = 300):
+        """Start monitoring CAPTCHA service health and performance"""
+        self.captcha_solver.start_monitoring(interval)
+    
+    def stop_captcha_monitoring(self):
+        """Stop monitoring CAPTCHA service health and performance"""
+        self.captcha_solver.stop_monitoring()
+    
+    def show_captcha_health_status(self):
+        """Show current CAPTCHA service health status"""
+        self.captcha_solver.monitor.log_health_status()
+    
+    def show_captcha_performance_metrics(self):
+        """Show CAPTCHA service performance metrics"""
+        self.captcha_solver.monitor.log_performance_metrics()
 
     def _setup_csv_logging(self):
+        """Set up CSV logging for recording all RSS feed entries.
+
+        Creates the log directory if it doesn't exist and initializes the CSV writer
+        with appropriate headers if the file is empty.
+
+        Raises:
+            IOError: If the log file cannot be opened or created.
+        """
         self.logger.debug("Setting up CSV logging.")
         try:
             log_path = Path(self.config.get("Paths", "all_entries_log"))
@@ -96,8 +167,17 @@ class GengoWatcher:
             self.logger.error(f"Could not open all_entries_log file: {e}")
             self._all_entries_log_file = None
             self._csv_writer = None
-
+    
     def play_sound(self):
+        """Play notification sound using paplay.
+
+        Attempts to play the configured sound file using the paplay command.
+        Logs warnings if the sound file is not found or if paplay is not available.
+
+        Raises:
+            FileNotFoundError: If paplay command is not found in system PATH.
+            Exception: For other errors during sound playback.
+        """
         sound_file_path = self.config.get("Paths", "sound_file")
         self.logger.debug(f"Attempting to play sound with paplay: {sound_file_path}")
 
@@ -118,6 +198,17 @@ class GengoWatcher:
 
 
     def open_in_browser(self, url):
+        """Open a URL in the configured browser.
+
+        Uses the configured browser path and arguments if available, otherwise
+        falls back to the system default browser.
+
+        Args:
+            url: The URL to open in the browser.
+
+        Raises:
+            Exception: If there's an error opening the browser.
+        """
         self.logger.debug(f"Opening URL in browser: {url}")
         try:
             browser_path_str = self.config.get("Paths", "browser_path")
@@ -135,6 +226,21 @@ class GengoWatcher:
     def show_notification(
         self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None
     ):
+        """Show a desktop notification with optional sound and browser opening.
+
+        Displays a notification using the plyer library if notifications are enabled.
+        Can optionally play a sound and/or open a URL in the browser.
+
+        Args:
+            message: The notification message text.
+            title: The notification title (default: "GengoWatcher").
+            play_sound: Whether to play a notification sound (default: False).
+            open_link: Whether to open the provided URL in browser (default: False).
+            url: The URL to open if open_link is True (default: None).
+
+        Raises:
+            Exception: If there's an error displaying the notification.
+        """
         self.logger.debug(f"Showing notification: {title} - {message}")
         if self.config.get("Watcher", "enable_notifications"):
             try:
@@ -156,6 +262,17 @@ class GengoWatcher:
 
 
     def _extract_reward(self, entry) -> float:
+        """Extract the reward amount from an RSS feed entry.
+
+        Parses the title and summary of an RSS entry to find reward information
+        using a regular expression pattern.
+
+        Args:
+            entry: Dictionary containing RSS entry data with 'title' and 'summary' keys.
+
+        Returns:
+            float: The extracted reward amount, or 0.0 if not found or invalid.
+        """
         text = entry.get("title", "") + " | " + entry.get("summary", "")
         self.logger.debug(f"Extracting reward from entry: {text}")
         match = re.search(r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE)
@@ -165,6 +282,14 @@ class GengoWatcher:
             return 0.0
 
     def _log_all_entries(self, entries):
+        """Log all RSS entries to the CSV file.
+
+        Writes each entry's timestamp, title, reward, link, and summary to the
+        configured CSV log file. Only logs if CSV writer is properly initialized.
+
+        Args:
+            entries: List of RSS entry dictionaries to log.
+        """
         self.logger.debug(f"Logging {len(entries)} entries to CSV.")
         if not self._csv_writer:
             return
@@ -182,6 +307,18 @@ class GengoWatcher:
         self._all_entries_log_file.flush()
 
     def _process_new_job(self, job_id, title, reward, url, source):
+        """Process a newly discovered job from RSS or WebSocket sources.
+
+        Handles job filtering, notification, storage, and auto-acceptance logic.
+        Updates session statistics and ensures thread-safe access to shared state.
+
+        Args:
+            job_id: Unique identifier for the job.
+            title: Job title/description.
+            reward: Job reward amount in USD.
+            url: URL to access the job.
+            source: Source of the job discovery ("RSS" or "WebSocket").
+        """
         self.logger.debug(
             f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
         )
@@ -210,9 +347,74 @@ class GengoWatcher:
             open_link=True,
             url=url,
         )
+
+        # Store job in state for web API access
+        try:
+            job_data = {
+                "id": str(job_id),
+                "title": title,
+                "reward": float(reward),
+                "currency": "USD",
+                "url": url,
+                "timestamp": time.time(),
+                "source": source
+            }
+            self.state.add_job(job_data)
+        except Exception as e:
+            self.logger.warning(f"Failed to store job in state: {e}")
+
+        # Check if job should be auto-accepted
+        if self.job_acceptance_engine.is_job_eligible(job_data):
+            self.logger.info(f"Job {job_id} meets auto-accept criteria, queuing for acceptance")
+            # Run job acceptance in a separate thread to avoid blocking
+            threading.Thread(
+                target=self._async_job_acceptance_wrapper,
+                args=(job_data,),
+                daemon=True
+            ).start()
+        elif hasattr(self.browser_automation_engine, 'is_job_eligible') and self.browser_automation_engine.is_job_eligible(job_data):
+            self.logger.info(f"Job {job_id} meets browser automation criteria, queuing for acceptance")
+            # Run browser automation in a separate thread to avoid blocking
+            threading.Thread(
+                target=self._async_browser_automation_wrapper,
+                args=(job_data,),
+                daemon=True
+            ).start()
+        else:
+            self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
+
         self.state.save_state()
 
+    def _async_job_acceptance_wrapper(self, job_data: dict):
+        """
+        Wrapper to run async job acceptance in a separate thread.
+        
+        Args:
+            job_data: Dictionary containing job information
+        """
+        try:
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the async job acceptance
+            loop.run_until_complete(self.job_acceptance_engine.accept_job(job_data))
+            
+            # Close the loop
+            loop.close()
+        except Exception as e:
+            self.logger.error(f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}")
+
     def _process_feed_entries(self, entries):
+        """Process RSS feed entries to identify new jobs.
+
+        Filters entries to find only new ones since the last check, extracts job
+        information, and processes each new job. Updates the last seen RSS link
+        to avoid duplicate processing.
+
+        Args:
+            entries: List of RSS entry dictionaries from the feed parser.
+        """
         self.logger.debug(f"Processing {len(entries) if entries else 0} RSS entries.")
         if not entries:
             return
@@ -247,6 +449,17 @@ class GengoWatcher:
                 self.logger.warning(f"Error processing RSS entry {url}: {e}")
 
     def fetch_rss(self):
+        """Fetch and parse the RSS feed from Gengo.
+
+        Retrieves the RSS feed using feedparser with optional custom user agent.
+        Handles various error conditions and logs appropriate messages.
+
+        Returns:
+            feedparser.FeedParserDict: Parsed RSS feed object, or None if fetch failed.
+
+        Raises:
+            Exception: For network or parsing errors (logged internally).
+        """
         headers = {}
         if self.config.get("Watcher", "use_custom_user_agent"):
             email = self.config.get("Network", "user_agent_email")
@@ -588,6 +801,34 @@ class GengoWatcher:
                 return False
         return True
 
+    def get_captcha_stats(self):
+        """Get CAPTCHA solver statistics"""
+        if self.captcha_solver.is_configured():
+            return {
+                'configured': True,
+                'balance': self.captcha_solver.get_balance(),
+                'stats': self.captcha_solver.get_stats()
+            }
+        else:
+            return {
+                'configured': False,
+                'balance': 0.0,
+                'stats': {}
+            }
+    
+    def get_job_acceptance_stats(self):
+        """Get job acceptance engine statistics"""
+        if hasattr(self, 'job_acceptance_engine'):
+            return self.job_acceptance_engine.get_stats()
+        else:
+            return {
+                'accepted_jobs': 0,
+                'failed_acceptances': 0,
+                'rate_limited': 0,
+                'current_rate': 0.0,
+                'enabled': False
+            }
+    
     def _simulate_new_job_notification(self):
         """Injects a fake job into the processing pipeline to test notifications."""
         self.logger.info("Simulating a new job notification...")
@@ -601,3 +842,30 @@ class GengoWatcher:
         self.logger.info(
             "[bold green]Test job notification sent. Please check your system notifications.[/bold green]"
         )
+    
+    def handle_job_rejection(self, job_data: dict):
+        """Handle job rejection that might require CAPTCHA solving"""
+        self.logger.info(f"Handling job rejection for job ID: {job_data.get('id')}")
+        
+        # Check if CAPTCHA solver is configured
+        if not self.captcha_solver.is_configured():
+            self.logger.warning("CAPTCHA solver not configured, cannot handle job rejection")
+            return False
+        
+        # Let the CAPTCHA manager handle the rejection
+        success = self.captcha_solver.handle_job_rejection(job_data)
+        
+        if success:
+            self.logger.info(f"Successfully handled CAPTCHA for rejected job {job_data.get('id')}")
+            # Here you would implement logic to resubmit the job or notify the user
+            # For example:
+            # self._resubmit_job(job_data)
+        else:
+            self.logger.error(f"Failed to handle CAPTCHA for rejected job {job_data.get('id')}")
+            
+        return success
+
+    def handle_exit(self):
+        """Handle application exit"""
+        self.logger.info("GengoWatcher shutting down...")
+        self.logger.info("GengoWatcher shutdown complete")

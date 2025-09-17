@@ -1,0 +1,630 @@
+"""
+Job Acceptance Engine for GengoWatcher
+Handles automatic job acceptance based on configured criteria with rate limiting and error handling.
+"""
+
+import time
+import random
+import logging
+import json
+import aiohttp
+import asyncio
+import re
+from typing import Dict, Any, Optional
+from pathlib import Path
+from bs4 import BeautifulSoup
+
+from .rate_limiter import RateLimiter
+from .config import AppConfig
+from .captcha_manager import CaptchaSolverManager
+
+
+class JobAcceptanceEngine:
+    """Engine for automatically accepting Gengo jobs based on configured criteria."""
+    
+    def __init__(self, config: AppConfig, logger: logging.Logger, captcha_solver: Optional[CaptchaSolverManager] = None):
+        """
+        Initialize the JobAcceptanceEngine.
+
+        Args:
+            config (AppConfig): The application configuration object.
+            logger (logging.Logger): Logger instance for logging messages.
+            captcha_solver (Optional[CaptchaSolverManager]): Optional captcha solver manager.
+        """
+        self.config = config
+        self.logger = logger
+        self.captcha_solver = captcha_solver
+        self._enabled = config.getboolean("AutoAccept", "enabled", fallback=False)
+        
+        if self.enabled:
+            self.logger.info("Job Acceptance Engine initialized")
+            
+        # Rate limiter to prevent exceeding API limits
+        self.rate_limiter = RateLimiter(
+            max_requests=30,  # Max 30 job acceptances per minute
+            time_window=60    # 1 minute window
+        )
+        
+        # Session for HTTP requests
+        self.session: Optional[aiohttp.ClientSession] = None
+        
+        # Retry settings
+        self.max_retries = 3
+        self.retry_delay = 2  # seconds
+        
+        # Stats tracking
+        self.accepted_jobs_count = 0
+        self.failed_acceptances = 0
+        self.rate_limited_count = 0
+        
+    async def initialize_session(self):
+        """Initialize the HTTP session for API requests."""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                headers={
+                    "User-Agent": "GengoWatcher/2.1.5",
+                    "Content-Type": "application/json",
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            )
+            self.logger.debug("HTTP session initialized for job acceptance")
+    
+    async def close_session(self):
+        """Close the HTTP session."""
+        if self.session and not self.session.closed:
+            await self.session.close()
+            self.logger.debug("HTTP session closed")
+
+    @property
+    def enabled(self):
+        """Get the enabled state of auto-accept."""
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value):
+        """Set the enabled state of auto-accept."""
+        self._enabled = value
+        self.logger.info(f"Auto-accept {'enabled' if value else 'disabled'}")
+    
+    def is_job_eligible(self, job_data: Dict[str, Any]) -> bool:
+        """
+        Check if a job meets the auto-accept criteria.
+
+        Args:
+            job_data: Dictionary containing job information
+
+        Returns:
+            bool: True if job is eligible for auto-accept, False otherwise
+        """
+        if not self.enabled:
+            return False
+            
+        # Check if job source is allowed
+        allowed_sources = {s.strip() for s in self.config.get("AutoAccept", "job_sources").split(",")}
+        if job_data.get("source", "").lower() not in allowed_sources:
+            self.logger.debug(f"Job {job_data.get('id')} rejected: source {job_data.get('source')} not in {allowed_sources}")
+            return False
+
+        # Check reward range
+        reward = job_data.get("reward", 0.0)
+        min_reward = self.config.getfloat("AutoAccept", "min_reward")
+        max_reward = self.config.getfloat("AutoAccept", "max_reward")
+        
+        if not (min_reward <= reward <= max_reward):
+            self.logger.debug(f"Job {job_data.get('id')} rejected: reward {reward} not in range [{min_reward}, {max_reward}]")
+            return False
+            
+        # Additional checks could be added here (e.g., language pairs, job type, etc.)
+        
+        return True
+    
+    async def accept_job(self, job_data: Dict[str, Any]) -> bool:
+        """Attempt to accept a job with retry and rate limiting.
+        
+        Args:
+            job_data: Dictionary containing job information
+            
+        Returns:
+            bool: True if job was accepted successfully, False otherwise
+        """
+        if not self.enabled:
+            return False
+            
+        job_id = job_data.get("id")
+
+        self.logger.info(f"Attempting to auto-accept job {job_id}")
+        
+        # Check rate limits
+        if not self.rate_limiter.acquire():
+            self.rate_limited_count += 1
+            wait_time = self.rate_limiter.wait_time()
+            self.logger.warning(f"Rate limit exceeded for job acceptance. Waiting {wait_time:.2f}s")
+            await asyncio.sleep(wait_time)
+            # Try again after waiting
+            if not self.rate_limiter.acquire():
+                self.logger.error(f"Still rate limited after waiting for job {job_id}")
+                return False
+        
+        # Apply random delay before acceptance (configurable)
+        delay_min = self.config.getint("AutoAccept", "accept_delay_min")
+        delay_max = self.config.getint("AutoAccept", "accept_delay_max")
+        delay = random.uniform(delay_min, delay_max)
+        self.logger.debug(f"Waiting {delay:.2f}s before accepting job {job_id}")
+        await asyncio.sleep(delay)
+        
+        # Initialize session if needed
+        await self.initialize_session()
+        
+        # Try to accept the job with retries
+        for attempt in range(self.max_retries + 1):
+            try:
+                success = await self._attempt_job_acceptance(job_data)
+                if success:
+                    self.accepted_jobs_count += 1
+                    self.logger.info(f"Successfully accepted job {job_id}")
+                    
+                    # Log acceptance if configured
+                    if self.config.getboolean("AutoAccept", "log_acceptance"):
+                        self._log_job_acceptance(job_data)
+
+                    # Show notification if configured
+                    if self.config.getboolean("AutoAccept", "notification_on_accept"):
+                        # This would integrate with the notification system
+                        self.logger.debug(f"Notification would be sent for accepted job {job_id}")
+                    
+                    return True
+                else:
+                    self.logger.warning(f"Failed to accept job {job_id} (attempt {attempt + 1}/{self.max_retries + 1})")
+                    
+            except aiohttp.ClientError as e:
+                self.logger.error(f"HTTP client error accepting job {job_id} (attempt {attempt + 1}): {e}")
+            except asyncio.TimeoutError as e:
+                self.logger.error(f"Timeout error accepting job {job_id} (attempt {attempt + 1}): {e}")
+            except Exception as e:
+                self.logger.exception(f"Unexpected error accepting job {job_id} (attempt {attempt + 1}): {e}")
+                
+            if attempt < self.max_retries:
+                # Exponential backoff with jitter
+                backoff_time = self.retry_delay * (2 ** attempt) + random.uniform(0, 1)
+                self.logger.info(f"Retrying job {job_id} in {backoff_time:.2f}s (attempt {attempt + 2}/{self.max_retries + 1})")
+                await asyncio.sleep(backoff_time)
+        
+        # If we get here, all attempts failed
+        self.failed_acceptances += 1
+        self.logger.error(f"Failed to accept job {job_id} after {self.max_retries + 1} attempts")
+        return False
+    
+    async def _attempt_job_acceptance(self, job_data: Dict[str, Any]) -> bool:
+        """Make the actual API call to accept a job.
+        
+        Args:
+            job_data: Dictionary containing job information
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.session:
+            await self.initialize_session()
+            
+        job_id = job_data.get("id")
+
+        try:
+            # Get authentication credentials from config
+            user_session = self.config.get("WebSocket", "user_session")
+            user_id = self.config.get("WebSocket", "user_id")
+            
+            # Validate that we have the necessary credentials
+            if not user_session or user_session == "REPLACE_WITH_YOUR_SESSION_TOKEN":
+                self.logger.error("User session token not configured for job acceptance")
+                return False
+                
+            if not user_id:
+                self.logger.error("User ID not configured for job acceptance")
+                return False
+            
+            # Set up authentication headers
+            headers = {
+                "Cookie": f"my_gengo_session={user_session}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                "Origin": "https://gengo.com",
+                "Referer": "https://gengo.com/t/jobs/status/available"
+            }
+            
+            # First, try to access the job page to check if we're authenticated
+            self.logger.debug(f"Checking authentication by accessing job page for {job_id}")
+            async with self.session.get(f"https://gengo.com/t/jobs/details/{job_id}", headers=headers, timeout=30) as response:
+                if response.status == 403 or response.status == 401:
+                    self.logger.error(f"Authentication failed for job {job_id} - session may be expired")
+                    return False
+                elif response.status != 200:
+                    self.logger.error(f"Failed to access job page for {job_id}, status: {response.status}")
+                    return False
+            
+            # Now try to accept the job
+            # The actual endpoint might be different - this is a common pattern for job acceptance
+            accept_url = f"https://gengo.com/t/jobs/accept/{job_id}"
+            
+            self.logger.debug(f"Attempting to accept job {job_id} at {accept_url}")
+            async with self.session.post(accept_url, headers=headers, timeout=30) as response:
+                self.logger.debug(f"Job acceptance response status: {response.status}")
+                
+                # Check if we got redirected to a captcha page
+                if response.status == 200:
+                    content = await response.text()
+                    if "captcha" in content.lower() or "recaptcha" in content.lower():
+                        self.logger.warning(f"Job acceptance for {job_id} requires captcha solving")
+                        # Try to solve the captcha
+                        success = await self._handle_captcha_challenge(job_id, content, headers)
+                        return success
+                
+                # Check if job was accepted successfully
+                if response.status == 200:
+                    # Parse response to check if job was actually accepted
+                    content = await response.text()
+                    if "accepted" in content.lower() or "success" in content.lower():
+                        self.logger.info(f"Successfully accepted job {job_id}")
+                        return True
+                    else:
+                        self.logger.warning(f"Job {job_id} acceptance may have failed - unexpected response content")
+                        return False
+                elif response.status == 302 or response.status == 303:
+                    # Redirect usually means success
+                    self.logger.info(f"Successfully accepted job {job_id} (redirect response)")
+                    return True
+                else:
+                    self.logger.error(f"Failed to accept job {job_id}, status: {response.status}")
+                    return False
+                
+        except aiohttp.ClientError as e:
+            self.logger.error(f"HTTP client error accepting job {job_id}: {e}")
+            return False
+        except asyncio.TimeoutError as e:
+            self.logger.error(f"Timeout error accepting job {job_id}: {e}")
+            return False
+        except Exception as e:
+            self.logger.exception(f"Unexpected error accepting job {job_id}: {e}")
+            return False
+    
+    async def _handle_captcha_challenge(self, job_id: str, captcha_page_content: str, headers: Dict[str, str]) -> bool:
+        """Handle captcha challenge during job acceptance.
+        
+        Args:
+            job_id: The job ID being accepted
+            captcha_page_content: HTML content of the captcha page
+            headers: Authentication headers
+            
+        Returns:
+            bool: True if captcha was solved and job accepted, False otherwise
+        """
+        try:
+            # Check if captcha solver is configured
+            if not self.captcha_solver or not self.captcha_solver.is_configured():
+                self.logger.error("Captcha solver not configured - cannot solve captcha challenge")
+                return False
+                
+            self.logger.info(f"Attempting to solve captcha for job {job_id}")
+            
+            # Extract captcha information from the page
+            # We need to parse the HTML to find the specific captcha elements
+            from bs4 import BeautifulSoup
+            
+            soup = BeautifulSoup(captcha_page_content, 'html.parser')
+            
+            # Check for reCAPTCHA v2
+            recaptcha_div = soup.find('div', class_='g-recaptcha')
+            if recaptcha_div:
+                site_key = recaptcha_div.get('data-sitekey')
+                if site_key:
+                    page_url = f"https://gengo.com/t/jobs/accept/{job_id}"
+                    
+                    # Solve the reCAPTCHA using the configured solver
+                    self.logger.debug(f"Found reCAPTCHA v2 with site key: {site_key}")
+                    try:
+                        solution = await asyncio.get_event_loop().run_in_executor(
+                            None, 
+                            self.captcha_solver.solve_recaptcha_v2, 
+                            site_key, 
+                            page_url
+                        )
+                        
+                        if not solution:
+                            self.logger.error(f"Failed to solve reCAPTCHA for job {job_id}")
+                            return False
+                            
+                        self.logger.info(f"Successfully solved reCAPTCHA for job {job_id}")
+                        
+                        # Submit the solved captcha along with the job acceptance request
+                        captcha_data = {
+                            "g-recaptcha-response": solution.solution,
+                            "job_id": job_id
+                        }
+                        
+                        # Submit the captcha solution
+                        async with self.session.post(
+                            f"https://gengo.com/t/jobs/accept/{job_id}",
+                            headers=headers,
+                            data=captcha_data,
+                            timeout=30
+                        ) as response:
+                            if response.status == 200:
+                                content = await response.text()
+                                if "accepted" in content.lower() or "success" in content.lower():
+                                    self.logger.info(f"Successfully accepted job {job_id} after solving reCAPTCHA")
+                                    return True
+                                else:
+                                    self.logger.warning(f"Job {job_id} acceptance may have failed after reCAPTCHA - unexpected response")
+                                    return False
+                            else:
+                                self.logger.error(f"Failed to accept job {job_id} after reCAPTCHA solving, status: {response.status}")
+                                return False
+                    except Exception as e:
+                        self.logger.error(f"Error solving reCAPTCHA for job {job_id}: {e}")
+                        return False
+            
+            # Check for hCaptcha
+            hcaptcha_div = soup.find('div', class_='h-captcha')
+            if hcaptcha_div:
+                site_key = hcaptcha_div.get('data-sitekey')
+                if site_key:
+                    page_url = f"https://gengo.com/t/jobs/accept/{job_id}"
+                    
+                    # Solve the hCaptcha using the configured solver
+                    self.logger.debug(f"Found hCaptcha with site key: {site_key}")
+                    try:
+                        solution = await asyncio.get_event_loop().run_in_executor(
+                            None, 
+                            self.captcha_solver.solve_hcaptcha, 
+                            site_key, 
+                            page_url
+                        )
+                        
+                        if not solution:
+                            self.logger.error(f"Failed to solve hCaptcha for job {job_id}")
+                            return False
+                            
+                        self.logger.info(f"Successfully solved hCaptcha for job {job_id}")
+                        
+                        # Submit the solved captcha along with the job acceptance request
+                        captcha_data = {
+                            "h-captcha-response": solution.solution,
+                            "job_id": job_id
+                        }
+                        
+                        # Submit the captcha solution
+                        async with self.session.post(
+                            f"https://gengo.com/t/jobs/accept/{job_id}",
+                            headers=headers,
+                            data=captcha_data,
+                            timeout=30
+                        ) as response:
+                            if response.status == 200:
+                                content = await response.text()
+                                if "accepted" in content.lower() or "success" in content.lower():
+                                    self.logger.info(f"Successfully accepted job {job_id} after solving hCaptcha")
+                                    return True
+                                else:
+                                    self.logger.warning(f"Job {job_id} acceptance may have failed after hCaptcha - unexpected response")
+                                    return False
+                            else:
+                                self.logger.error(f"Failed to accept job {job_id} after hCaptcha solving, status: {response.status}")
+                                return False
+                    except Exception as e:
+                        self.logger.error(f"Error solving hCaptcha for job {job_id}: {e}")
+                        return False
+            
+            # Check for reCAPTCHA v3 (invisible)
+            recaptcha_v3_scripts = soup.find_all('script', src=lambda x: x and 'recaptcha' in x)
+            if recaptcha_v3_scripts:
+                # For reCAPTCHA v3, we need to extract the site key from the script
+                page_url = f"https://gengo.com/t/jobs/accept/{job_id}"
+                
+                # Extract site key and action from the page
+                site_key = self._extract_recaptcha_v3_site_key(soup)
+                action = self._extract_recaptcha_v3_action(soup)
+                
+                if not site_key:
+                    self.logger.warning(f"Failed to extract reCAPTCHA v3 site key for job {job_id}")
+                    # Check if we should skip or use fallback behavior
+                    if self.config.getboolean("Captcha", "skip_on_v3_extraction_failure", True):
+                        self.logger.info(f"Skipping reCAPTCHA v3 solving for job {job_id} due to extraction failure")
+                        return False
+                    else:
+                        # Try browser automation fallback if enabled
+                        if self.config.getboolean("Captcha", "enable_browser_automation_fallback", False):
+                            self.logger.info(f"Attempting browser automation fallback for reCAPTCHA v3 for job {job_id}")
+                            # Note: This would require integration with the browser automation engine
+                            # For now, we'll use the fallback site key
+                            site_key = self.config.get("Captcha", "recaptcha_v3_fallback_site_key", "6Lc6BAAAAAAAAAChqR2QwNcAAAAA")
+                            self.logger.warning(f"Using fallback reCAPTCHA v3 site key for job {job_id}")
+                        else:
+                            # Use fallback site key
+                            site_key = self.config.get("Captcha", "recaptcha_v3_fallback_site_key", "6Lc6BAAAAAAAAAChqR2QwNcAAAAA")
+                            self.logger.warning(f"Using fallback reCAPTCHA v3 site key for job {job_id}")
+
+                if not action:
+                    # Use default action if not found
+                    action = self.config.get("Captcha", "recaptcha_v3_default_action", "job_acceptance")
+                    self.logger.debug(f"Using default reCAPTCHA v3 action for job {job_id}: {action}")
+                
+                # Solve the reCAPTCHA v3 using the configured solver
+                self.logger.debug(f"Attempting to solve reCAPTCHA v3 for job {job_id} with site key: {site_key}, action: {action}")
+                try:
+                    solution = await asyncio.get_event_loop().run_in_executor(
+                        None, 
+                        self.captcha_solver.solve_recaptcha_v3, 
+                        site_key,
+                        page_url,
+                        action
+                    )
+                    
+                    if not solution:
+                        self.logger.error(f"Failed to solve reCAPTCHA v3 for job {job_id}")
+                        return False
+                        
+                    self.logger.info(f"Successfully solved reCAPTCHA v3 for job {job_id}")
+                    
+                    # Submit the solved captcha along with the job acceptance request
+                    captcha_data = {
+                        "g-recaptcha-response": solution.solution,
+                        "job_id": job_id
+                    }
+                    
+                    # Submit the captcha solution
+                    async with self.session.post(
+                        f"https://gengo.com/t/jobs/accept/{job_id}",
+                        headers=headers,
+                        data=captcha_data,
+                        timeout=30
+                    ) as response:
+                        if response.status == 200:
+                            content = await response.text()
+                            if "accepted" in content.lower() or "success" in content.lower():
+                                self.logger.info(f"Successfully accepted job {job_id} after solving reCAPTCHA v3")
+                                return True
+                            else:
+                                self.logger.warning(f"Job {job_id} acceptance may have failed after reCAPTCHA v3 - unexpected response")
+                                return False
+                        else:
+                            self.logger.error(f"Failed to accept job {job_id} after reCAPTCHA v3 solving, status: {response.status}")
+                            return False
+                except Exception as e:
+                    self.logger.error(f"Error solving reCAPTCHA v3 for job {job_id}: {e}")
+                    return False
+            
+            # If we can't identify the captcha type, log the issue
+            self.logger.error(f"Unable to identify captcha type for job {job_id}")
+            return False
+                    
+        except Exception as e:
+            self.logger.exception(f"Error handling captcha challenge for job {job_id}: {e}")
+            return False
+    
+    def _extract_recaptcha_v3_site_key(self, soup: BeautifulSoup) -> Optional[str]:
+        """
+        Extract reCAPTCHA v3 site key from HTML content.
+        
+        Args:
+            soup: BeautifulSoup object containing parsed HTML
+            
+        Returns:
+            str: Site key if found, None otherwise
+        """
+        # Try to extract from data attributes
+        recaptcha_elements = soup.find_all(attrs={"data-sitekey": True})
+        for element in recaptcha_elements:
+            site_key = element.get("data-sitekey")
+            if site_key and len(site_key) > 10:  # Basic validation
+                self.logger.debug(f"Found reCAPTCHA v3 site key in data attribute: {site_key[:10]}...")
+                return site_key
+        
+        # Try to extract from inline scripts
+        scripts = soup.find_all('script')
+        for script in scripts:
+            if script.string:
+                self.logger.debug(f"Examining script content: {script.string[:100]}...")
+                # Look for common reCAPTCHA v3 patterns
+                # Pattern for grecaptcha.execute('site_key', ...)
+                pattern1 = r"grecaptcha\.execute\s*\(\s*['\"]([A-Za-z0-9_-]{25,})['\"]"
+                match1 = re.search(pattern1, script.string, re.DOTALL)
+                if match1:
+                    site_key = match1.group(1)
+                    self.logger.debug(f"Found reCAPTCHA v3 site key in script (execute): {site_key[:10]}...")
+                    return site_key
+                
+                # Pattern for grecaptcha.ready(function() { grecaptcha.execute('site_key', ...)
+                pattern2 = r"grecaptcha\.ready\s*\(\s*function\s*\(\s*\)\s*\{\s*grecaptcha\.execute\s*\(\s*['\"]([A-Za-z0-9_-]{25,})['\"]"
+                match2 = re.search(pattern2, script.string, re.DOTALL)
+                if match2:
+                    site_key = match2.group(1)
+                    self.logger.debug(f"Found reCAPTCHA v3 site key in script (ready): {site_key[:10]}...")
+                    return site_key
+                
+                # Pattern for reCAPTCHA rendering parameters
+                pattern3 = r"recaptcha_site_key\s*[:=]\s*['\"]([A-Za-z0-9_-]{25,})['\"]"
+                match3 = re.search(pattern3, script.string, re.IGNORECASE | re.DOTALL)
+                if match3:
+                    site_key = match3.group(1)
+                    self.logger.debug(f"Found reCAPTCHA v3 site key in script (site_key var): {site_key[:10]}...")
+                    return site_key
+        
+        self.logger.warning("Failed to extract reCAPTCHA v3 site key from page content")
+        return None
+    
+    def _extract_recaptcha_v3_action(self, soup: BeautifulSoup) -> Optional[str]:
+        """
+        Extract reCAPTCHA v3 action from HTML content.
+        
+        Args:
+            soup: BeautifulSoup object containing parsed HTML
+            
+        Returns:
+            str: Action if found, None otherwise
+        """
+        # Try to extract from inline scripts
+        scripts = soup.find_all('script')
+        for script in scripts:
+            if script.string:
+                # Look for common reCAPTCHA v3 action patterns
+                import re
+                # Pattern for action parameter in grecaptcha.execute
+                pattern1 = r"grecaptcha\.execute\s*\(\s*['\"][A-Za-z0-9_-]{30,}['\"]\s*,\s*\{\s*action\s*:\s*['\"]([^'\"]+)['\"]"
+                match1 = re.search(pattern1, script.string)
+                if match1:
+                    action = match1.group(1)
+                    self.logger.debug(f"Found reCAPTCHA v3 action in script: {action}")
+                    return action
+                
+                # Pattern for action in object
+                pattern2 = r"action\s*:\s*['\"]([^'\"]+)['\"]"
+                match2 = re.search(pattern2, script.string)
+                if match2:
+                    action = match2.group(1)
+                    # Basic validation to avoid false positives
+                    if action and len(action) > 2 and not action.startswith('http'):
+                        self.logger.debug(f"Found reCAPTCHA v3 action in script (generic): {action}")
+                        return action
+        
+        self.logger.warning("Failed to extract reCAPTCHA v3 action from page content")
+        return None
+    
+    def _log_job_acceptance(self, job_data: Dict[str, Any]):
+        """
+        Log job acceptance to a file.
+        
+        Args:
+            job_data: Dictionary containing job information
+        """
+        try:
+            log_path = Path("logs/accepted_jobs.log")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            log_entry = {
+                "timestamp": time.time(),
+                "job_id": job_data.get("id"),
+                "title": job_data.get("title"),
+                "reward": job_data.get("reward"),
+                "source": job_data.get("source"),
+                "url": job_data.get("url")
+            }
+            
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry) + "\n")
+                
+            self.logger.debug(f"Logged job acceptance for {job_data.get('id')}")
+        except Exception as e:
+            self.logger.exception(f"Failed to log job acceptance: {e}")
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about job acceptance.
+        
+        Returns:
+            Dict containing acceptance statistics
+        """
+        return {
+            "accepted_jobs": self.accepted_jobs_count,
+            "failed_acceptances": self.failed_acceptances,
+            "rate_limited": self.rate_limited_count,
+            "current_rate": self.rate_limiter.get_current_rate(),
+            "enabled": self.enabled
+        }
