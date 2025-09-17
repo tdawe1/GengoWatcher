@@ -12,7 +12,7 @@ The following new configuration options have been added to the `[Captcha]` secti
 [Captcha]
 # ... existing options ...
 skip_on_v3_extraction_failure = true
-recaptcha_v3_fallback_site_key = 6Lc6BAAAAAAAAAChqR2QwNcAAAAA
+recaptcha_v3_fallback_site_key = 6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI
 recaptcha_v3_default_action = job_acceptance
 enable_browser_automation_fallback = false
 ```
@@ -23,7 +23,7 @@ enable_browser_automation_fallback = false
    - When `true`, the system will skip reCAPTCHA v3 solving if site key extraction fails
    - When `false`, the system will use the fallback site key
 
-2. `recaptcha_v3_fallback_site_key` (string, default: `6Lc6BAAAAAAAAAChqR2QwNcAAAAA`)
+2. `recaptcha_v3_fallback_site_key` (string, default: `6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI`)
    - Fallback site key to use when extraction fails and `skip_on_v3_extraction_failure` is `false`
 
 3. `recaptcha_v3_default_action` (string, default: `job_acceptance`)

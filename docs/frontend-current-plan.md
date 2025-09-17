@@ -44,7 +44,7 @@ Description: Solve a CAPTCHA challenge
 Request Body:
 {
   "type": "recaptcha_v2",  // or "recaptcha_v3", "hcaptcha"
-  "site_key": "6Lc_aCMTAAAAABx7epKV5lXs3EB5gshht2s3i13M",
+    "site_key": "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI",
   "page_url": "https://example.com/login",
   "action": "login"  // for recaptcha_v3
 }
@@ -139,7 +139,7 @@ curl -X POST http://localhost:8000/captcha/solve \\
   -H "Content-Type: application/json" \\
   -d '{
     "type": "recaptcha_v2",
-    "site_key": "6Lc_aCMTAAAAABx7epKV5lXs3EB5gshht2s3i13M",
+    "site_key": "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI",
     "page_url": "https://example.com/login"
   }'
 ```

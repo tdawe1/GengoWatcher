@@ -63,7 +63,7 @@ rate_limit = 60
 API keys are stored securely using the `SecureKeyStorage` system:
 
 - **Location**: System-specific secure storage
-- **Encryption**: AES-GCM encryption with system-specific key derivation
+- **Encryption**: Fernet encryption (AES-128-CBC with HMAC) with system-specific key derivation
 - **Permissions**: Restrictive file permissions (0o600)
 - **No Exposure**: Keys are never logged or displayed in plain text
 
@@ -235,7 +235,7 @@ solver = CaptchaSolverManager(config.config, logger)
 if solver.is_configured():
     # Solve a reCAPTCHA v2
     solution = solver.solve_recaptcha_v2(
-        site_key="6Le-wvkSAAAAAPBMRTvw0Q4Muexq9bi0DJwx_mJ-",
+        site_key="6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI",
         page_url="https://example.com"
     )
 

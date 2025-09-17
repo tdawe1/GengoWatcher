@@ -57,7 +57,7 @@ We will implement a modular CAPTCHA solving architecture with the following comp
 
 6. **RateLimiter**
    - Prevents exceeding API request limits
-   - Implements token bucket algorithm
+   - Implements sliding window algorithm
 
 ### Security Considerations
 - API keys are stored encrypted, not in plaintext config files

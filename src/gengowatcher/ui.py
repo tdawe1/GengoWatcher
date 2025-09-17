@@ -413,7 +413,7 @@ class CommandLineInterface:
                 self.command_output.clear()
                 self.command_output.append(output)
         except Exception as e:
-            self.watcher.logger.error(f"Error executing '{command}': {e}")
+            self.watcher.logger.exception(f"Error executing '{command}': {e}")
 
     def print_help(self):
         table = Table(box=None, show_header=False, padding=(0, 1))
@@ -429,14 +429,17 @@ class CommandLineInterface:
         self.exit_event.set()
 
     def _handle_check(self, args=None):
+        _ = args
         self.watcher.check_now_event.set()
         self.watcher.logger.info("Manual check triggered.")
 
     def _handle_clear(self, args=None):
+        _ = args
         self.command_output.clear()
         self.watcher.logger.info("Command output cleared.")
 
     def _handle_pause(self, args=None):
+        _ = args
         if not os.path.exists(self.watcher.PAUSE_FILE):
             with open(self.watcher.PAUSE_FILE, "w") as f:
                 f.write("Paused.")
@@ -445,6 +448,7 @@ class CommandLineInterface:
             self.watcher.logger.warning("Watcher is already paused.")
 
     def _handle_resume(self, args=None):
+        _ = args
         if os.path.exists(self.watcher.PAUSE_FILE):
             os.remove(self.watcher.PAUSE_FILE)
             self.watcher.logger.info("Watcher resumed.")
@@ -452,6 +456,7 @@ class CommandLineInterface:
             self.watcher.logger.warning("Watcher is not paused.")
 
     def _handle_toggle_sound(self, args=None):
+        _ = args
         current_state = self.config.get("Watcher", "enable_sound")
         self.config.set("Watcher", "enable_sound", not current_state)
         self.config.save_config()
@@ -460,6 +465,7 @@ class CommandLineInterface:
         )
 
     def _handle_toggle_notifications(self, args=None):
+        _ = args
         current_state = self.config.get("Watcher", "enable_notifications")
         self.config.set("Watcher", "enable_notifications", not current_state)
         self.config.save_config()
@@ -468,6 +474,7 @@ class CommandLineInterface:
         )
 
     def _handle_toggle_websocket(self, args=None):
+        _ = args
         current_state = self.config.get("WebSocket", "enable_websocket")
         self.config.set("WebSocket", "enable_websocket", not current_state)
         self.config.save_config()
@@ -478,6 +485,7 @@ class CommandLineInterface:
         )
 
     def _handle_autoaccept(self, args=None):
+        _ = args
         current_state = self.config.getboolean("AutoAccept", "enabled")
         self.config.set("AutoAccept", "enabled", not current_state)
         self.config.save_config()
@@ -490,6 +498,7 @@ class CommandLineInterface:
             self.watcher.logger.info(f"Job acceptance engine updated.")
 
     def _handle_captchatoggle(self, args=None):
+        _ = args
         current_state = self.config.getboolean("Captcha", "enabled")
         self.config.set("Captcha", "enabled", not current_state)
         self.config.save_config()
@@ -515,6 +524,7 @@ class CommandLineInterface:
             self.watcher.logger.error("Invalid amount. Please enter a number.")
 
     def _handle_reload_config(self, args=None):
+        _ = args
         self.config.load_config()
         self.watcher.logger.info("Configuration reloaded from config.ini.")
 
@@ -542,38 +552,43 @@ class CommandLineInterface:
     
     def _handle_captcha_setup(self, args=None):
         """Handle CAPTCHA setup command"""
+        _ = args
         from .captcha_cli import setup_captcha_solver
         try:
             setup_captcha_solver(self.watcher)
         except Exception as e:
-            self.watcher.logger.error(f"Error setting up CAPTCHA solver: {e}")
+            self.watcher.logger.exception(f"Error setting up CAPTCHA solver: {e}")
     
     def _handle_captcha_test(self, args=None):
         """Handle CAPTCHA test command"""
+        _ = args
         from .captcha_cli import test_captcha_solver
         try:
             test_captcha_solver(self.watcher)
         except Exception as e:
-            self.watcher.logger.error(f"Error testing CAPTCHA solver: {e}")
+            self.watcher.logger.exception(f"Error testing CAPTCHA solver: {e}")
     
     def _handle_captcha_stats(self, args=None):
         """Handle CAPTCHA stats command"""
+        _ = args
         from .captcha_cli import show_captcha_stats
         try:
             show_captcha_stats(self.watcher)
         except Exception as e:
-            self.watcher.logger.error(f"Error showing CAPTCHA stats: {e}")
+            self.watcher.logger.exception(f"Error showing CAPTCHA stats: {e}")
     
     def _handle_captcha_reset(self, args=None):
         """Handle CAPTCHA reset command"""
+        _ = args
         from .captcha_cli import reset_captcha_config
         try:
             reset_captcha_config(self.watcher)
         except Exception as e:
-            self.watcher.logger.error(f"Error resetting CAPTCHA config: {e}")
+            self.watcher.logger.exception(f"Error resetting CAPTCHA config: {e}")
 
     def _handle_accept_stats(self, args=None):
         """Handle job acceptance stats command"""
+        _ = args
         try:
             stats = self.watcher.get_job_acceptance_stats()
             self.watcher.logger.info("Job Acceptance Statistics:")
@@ -583,4 +598,4 @@ class CommandLineInterface:
             self.watcher.logger.info(f"  Rate Limited: {stats['rate_limited']}")
             self.watcher.logger.info(f"  Current Rate: {stats['current_rate']:.2f} requests/sec")
         except Exception as e:
-            self.watcher.logger.error(f"Error showing job acceptance stats: {e}")
+            self.watcher.logger.exception(f"Error showing job acceptance stats: {e}")

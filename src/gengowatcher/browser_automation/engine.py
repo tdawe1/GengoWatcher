@@ -3,12 +3,7 @@ Browser Automation Engine for GengoWatcher
 Handles automatic job acceptance through browser automation with CAPTCHA solving capabilities.
 """
 
-import time
-import random
-import logging
-import json
-import threading
-from typing import Dict, Any, Optional
+from typing import Optional
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -18,7 +13,6 @@ from selenium.webdriver.chrome.options import Options
 
 class BrowserAutomationEngine:
     """Browser automation engine for job acceptance"""
-    
     def __init__(self, config, logger, captcha_solver=None):
         self.config = config
         self.logger = logger
@@ -51,7 +45,9 @@ class BrowserAutomationEngine:
             self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
             raise
     
-    def solve_recaptcha_v3_with_browser(self, site_key: str, page_url: str, action: str = "job_acceptance") -> Optional[str]:
+    def solve_recaptcha_v3_with_browser(
+        self, site_key: str, page_url: str, action: str = "job_acceptance"
+    ) -> Optional[str]:
         """
         Solve reCAPTCHA v3 using browser automation to execute the challenge.
         

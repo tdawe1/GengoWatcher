@@ -242,19 +242,19 @@ rate_limit = 60             # requests per minute
 ## 7. Rate Limiting Implementation
 
 ### 7.1 Algorithm
-- **Token Bucket**: Fixed capacity bucket that refills at a steady rate
+- **Sliding Window**: Tracks request timestamps in a time-based window
 - **Thread Safety**: Lock-based synchronization for concurrent access
-- **Time-based**: Real-time tracking of request timing
+- **Time-based**: Real-time tracking of request timing with automatic cleanup
 
 ### 7.2 Parameters
-- **Bucket Capacity**: Maximum requests allowed in burst
-- **Refill Rate**: Tokens added per time unit
-- **Time Window**: Rate calculation period (default: 60 seconds)
+- **Max Requests**: Maximum requests allowed within the time window
+- **Time Window**: Sliding time period for rate calculation (default: 60 seconds)
+- **Cleanup**: Automatic removal of expired timestamps
 
 ### 7.3 Integration Points
-- **Before Request**: Check and consume tokens
-- **On Limit Hit**: Calculate and enforce wait times
-- **Statistics**: Track usage and limit hits
+- **Before Request**: Check current request count in sliding window
+- **On Limit Hit**: Calculate and enforce wait times based on oldest request
+- **Statistics**: Track usage and limit hits with real-time rate calculation
 
 ### 7.4 Adaptive Behavior
 - **Dynamic Limits**: Adjust based on service responses
@@ -266,7 +266,7 @@ rate_limit = 60             # requests per minute
 ### Phase 1: Core Infrastructure
 1. Implement BaseCaptchaSolver abstract class
 2. Create SecureKeyStorage with encryption
-3. Implement RateLimiter with token bucket algorithm
+3. Implement RateLimiter with sliding window algorithm
 4. Develop CaptchaSolverManager coordination layer
 
 ### Phase 2: Service Implementations

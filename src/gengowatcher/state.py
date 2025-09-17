@@ -53,7 +53,7 @@ class AppState:
                             # Sort by timestamp descending (newest first)
                             self._jobs.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
         except (json.JSONDecodeError, IOError) as e:
-            self.logger.error(f"Could not load state file. Starting fresh. Error: {e}")
+            self.logger.exception(f"Could not load state file. Starting fresh. Error: {e}")
 
     def save_state(self):
         try:
@@ -69,7 +69,7 @@ class AppState:
                 with open(self.state_file_path, "w", encoding="utf-8") as f:
                     json.dump(state_data, f, indent=4)
         except IOError as e:
-            self.logger.error(f"Error saving state to {self.STATE_FILE}: {e}")
+            self.logger.exception(f"Error saving state to {self.STATE_FILE}: {e}")
 
     def get_recent_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get recent jobs from storage."""
