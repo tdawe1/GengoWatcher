@@ -34,6 +34,11 @@ class APIAuthenticator:
     """Simple API key authentication for web API."""
 
     def __init__(self, api_key: str = None):
+        """Initialize the API authenticator.
+
+        Args:
+            api_key: Optional API key string. If not provided, generates a secure random key.
+        """
         self.api_key = api_key or secrets.token_urlsafe(32)
 
     def authenticate(self, credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
@@ -157,6 +162,16 @@ class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
     def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
+        """Initialize the WebAPI instance.
+
+        Creates a separate GengoWatcher instance for the web API to avoid conflicts
+        with the TUI. Sets up thread safety mechanisms and starts the watcher thread.
+
+        Args:
+            config: Application configuration object.
+            state: Application state object for data persistence.
+            logger: Logger instance for recording events.
+        """
         self.config = config
         self.state = state
         self.logger = logger
