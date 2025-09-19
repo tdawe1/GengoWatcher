@@ -225,7 +225,7 @@ class CommandLineInterface:
             auto_refresh=False,
             vertical_overflow="visible",
         ) as live:
-            while not self.watcher.shutdown_event.is_set():
+            while not (self.exit_event.is_set() or self.watcher.shutdown_event.is_set()):
                 self.layout["header"].update(self._get_header_panel())
                 self.layout["runtime_status"].update(self._get_runtime_status_panel())
                 self.layout["recent_activity"].update(self._get_recent_activity_panel())
@@ -257,11 +257,16 @@ class CommandLineInterface:
                 char = "\n"
             elif char == b"\x08":
                 char = "backspace"
+            elif char == b"\x04":
+                char = "\x04"
             else:
                 try:
                     char = char.decode()
                 except UnicodeDecodeError:
                     char = ""
+        if char in ("", "\x04"):
+            self._handle_exit()
+            return
         if char == "\n":
             self.handle_command(self.input_buffer)
             self.input_buffer = ""
@@ -507,9 +512,20 @@ class CommandLineInterface:
 
         # Update the CAPTCHA solver if it exists
         if hasattr(self.watcher, 'captcha_solver'):
-            # Reinitialize the CAPTCHA solver with new settings
-            self.watcher.captcha_solver._initialize_solver()
-            self.watcher.logger.info(f"CAPTCHA solver updated.")
+            try:
+                self.watcher.captcha_solver.reinitialize()
+                status_text = (
+                    "enabled"
+                    if self.watcher.captcha_solver.is_configured()
+                    else "disabled"
+                )
+                self.watcher.logger.info(
+                    "CAPTCHA solver reinitialised and is currently %s.", status_text
+                )
+            except Exception as error:
+                self.watcher.logger.exception(
+                    "Failed to reinitialise CAPTCHA solver: %s", error
+                )
 
     def _handle_set_min_reward(self, args):
         if not args:
