@@ -35,6 +35,12 @@ class AppConfig:
             "log_all_entries_enabled": True,
         },
         "Network": {"max_backoff": 300, "user_agent_email": "your_email@example.com"},
+        "WebServer": {
+            "enabled": False,
+            "host": "127.0.0.1",
+            "port": 8000,
+            "cors_origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+        },
         "AutoAccept": {
             "enabled": False,
             "min_reward": 0.0,
@@ -45,6 +51,10 @@ class AppConfig:
             "browser_profile_path": "",
             "notification_on_accept": True,
             "log_acceptance": True,
+            "concurrent_submission": True,
+            "accept_click_probe_ms": 75,
+            "attempt_timeout_sec": 12,
+            "selenium_attempt_timeout_sec": 8,
         },
         "Captcha": {
             "enabled": True,
@@ -82,6 +92,12 @@ class AppConfig:
             "extreme_threshold": 1000.0,
             "auto_cancel_extreme_value": True,
         },
+        "SeleniumMonitoring": {
+            "enable_live_dashboard": True,
+            "enable_list_refresh": True,
+            "refresh_interval_ms": 1500,
+            "headless": False,
+        },
     }
 
     def __init__(self):
@@ -108,9 +124,9 @@ class AppConfig:
             parser.write(f)
 
         print(
-            f"Created default '{self.CONFIG_FILE}'. Please review it and restart the application."
+            f"Created default '{self.CONFIG_FILE}'. You can now configure it interactively."
         )
-        sys.exit(0)
+        # Don't exit - let the interactive config prompt handle it
 
     def load_config(self):
         with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -246,7 +262,11 @@ class AppConfig:
 
     def get(self, section, key):
         with self._lock:
-            return self.config[section][key]
+            try:
+                return self.config[section][key]
+            except KeyError:
+                # Section or key doesn't exist, return None
+                return None
 
     def set(self, section, key, value):
         with self._lock:
