@@ -1,0 +1,9 @@
+-r requirements.txt
+
+pytest
+pytest-cov
+black
+flake8
+pytest-asyncio
+cryptography>=3.4.8
+requests>=2.25.1
