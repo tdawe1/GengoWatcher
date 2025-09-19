@@ -9,3 +9,32 @@ build/
 dist/
 GengoWatcher 64cfbf7b4bf436e6ac2acbc08f0d5509656b6bb1.py
 all_entries_log.txt
+gengowatcher.spec
+GengoWatcher.py
+v1.2 backup/requirements.txt
+v1.2 backup/README.md
+v1.2 backup/config template.ini
+v1.2 backup/build_release.py
+gengowatcher.spec
+GengoWatcher.py
+__pycache__/config.cpython-311.pyc
+__pycache__/state.cpython-311.pyc
+logs/all_entries.csv
+logs/gengowatcher.log
+assets/Generated File June 21, 2025 - 10_26AM.x-python
+__pycache__/watcher.cpython-311.pyc
+__pycache__/ui.cpython-311.pyc
+tests/__pycache__/test_state.cpython-311-pytest-8.4.1.pyc
+flake8-report.txt
+setup_dev.bat
+.vscode/settings.json
+.vscode/tasks.json
+tests/__pycache__/
+.flake8
+MagicMock/mock.get()/1650902819408
+tests/__pycache__/test_ui.cpython-311-pytest-8.4.1.pyc
+.vscode/launch.json
+MagicMock/
+pyproject.toml
+gengowatcher.egg-info/
+release todolist.md
