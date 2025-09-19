@@ -146,7 +146,8 @@ def main():
         sys.exit(0)
 
     if not watcher.is_config_complete():
-        print("Config is incomplete. Please provide missing values:")
+        print("\n⚠️  Configuration is incomplete or contains placeholder values.")
+        print("The following settings need to be configured for GengoWatcher to work properly:")
         watcher.prompt_for_config_values()
 
     # Start web server if requested
@@ -198,8 +199,22 @@ def main():
     finally:
         if not watcher.shutdown_event.is_set():
             watcher.handle_exit()
+
+    # Print helpful exit message
+    print("\n" + "="*60)
+    print("👋 GengoWatcher has shut down.")
+    print("💡 Tip: Run with --configure to change settings later")
+    print("   Example: python -m gengowatcher.main --configure")
+    print("="*60)
+
+    try:
         watcher_thread.join(timeout=2)
         console.print("[info]GengoWatcher has shut down.[/]")
+    except KeyboardInterrupt:
+        console.print("[info]Web server shutting down...[/]")
+    finally:
+        if not watcher.shutdown_event.is_set():
+            watcher.handle_exit()
 
 
 if __name__ == "__main__":

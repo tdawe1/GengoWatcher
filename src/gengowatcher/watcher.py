@@ -20,6 +20,7 @@ import json
 from .config import AppConfig
 from .state import AppState
 from .captcha_manager import CaptchaSolverManager
+from .job_cancellation_manager import JobCancellationManager
 try:
     from .browser_automation import BrowserAutomationEngine
 except ImportError:
@@ -30,13 +31,55 @@ except ImportError:
 
 try:
     from .job_acceptance import JobAcceptanceEngine
-except ImportError:
-    # Placeholder for JobAcceptanceEngine if import fails
+    _JOB_ACCEPTANCE_IMPORT_ERROR = None
+except ImportError as import_error:
+    _JOB_ACCEPTANCE_IMPORT_ERROR = import_error
+
     class JobAcceptanceEngine:
-        def __init__(self, *args, **kwargs):
-            pass
-        def accept_job(self, *args, **kwargs):
+        """Fallback job acceptance engine used when dependencies are missing."""
+
+        def __init__(self, config, logger, captcha_solver=None):
+            self.config = config
+            self.logger = logger or logging.getLogger(__name__)
+            self.captcha_solver = captcha_solver
+            self._enabled = False
+            self.logger.warning(
+                "Auto-accept disabled: failed to import job_acceptance module (%s). "
+                "Install required dependencies such as aiohttp and beautifulsoup4 to enable auto-accept.",
+                import_error,
+            )
+
+        @property
+        def enabled(self):
+            return self._enabled
+
+        @enabled.setter
+        def enabled(self, value):
+            if value:
+                self.logger.warning(
+                    "Cannot enable auto-accept because required dependencies are missing."
+                )
+                self._enabled = False
+            else:
+                self._enabled = False
+
+        def is_job_eligible(self, job_data):
             return False
+
+        async def accept_job(self, job_data):
+            return False
+
+        async def close_session(self):
+            return
+
+        def get_stats(self):
+            return {
+                "accepted_jobs": 0,
+                "failed_acceptances": 0,
+                "rate_limited": 0,
+                "current_rate": 0.0,
+                "enabled": self._enabled,
+            }
 
 if sys.platform == "win32":
     try:
@@ -92,6 +135,7 @@ class GengoWatcher:
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
         self._csv_writer = None
+        self._shutdown_initiated = False
         self.logger.debug(
             f"Initializing GengoWatcher with config: {self.config.config}"
         )
@@ -117,11 +161,38 @@ class GengoWatcher:
 
         self.captcha_solver.monitor.add_alert_callback(captcha_alert_callback)
 
-        # Initialize job acceptance engine
-        self.job_acceptance_engine = JobAcceptanceEngine(config, logger, self.captcha_solver)
-
         # Initialize browser automation engine
         self.browser_automation_engine = BrowserAutomationEngine(config, logger, self.captcha_solver)
+        try:
+            session_token = self.config.get("WebSocket", "user_session")
+            if session_token and session_token != "REPLACE_WITH_YOUR_SESSION_TOKEN":
+                if self.browser_automation_engine.login_with_session(str(session_token)):
+                    # Start monitors if configured
+                    try:
+                        if self.config.get("SeleniumMonitoring", "enable_live_dashboard"):
+                            self.browser_automation_engine.start_live_dashboard_monitor(
+                                on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(url)
+                            )
+                        if self.config.get("SeleniumMonitoring", "enable_list_refresh"):
+                            interval_ms = self.config.getint("SeleniumMonitoring", "refresh_interval_ms")
+                            self.browser_automation_engine.start_jobs_page_refresher(
+                                on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(url),
+                                interval_sec=max(0.25, float(interval_ms) / 1000.0),
+                            )
+                    except Exception as e:
+                        self.logger.warning(f"Failed to start Selenium monitors: {e}")
+        except Exception as e:
+            self.logger.debug(f"Selenium login not initialized: {e}")
+
+        # Initialize job acceptance engine (pass browser engine for fallbacks)
+        self.job_acceptance_engine = JobAcceptanceEngine(
+            config, logger, self.captcha_solver, browser_engine=self.browser_automation_engine
+        )
+
+        # Initialize job cancellation manager
+        self.cancellation_manager = JobCancellationManager(config, logger)
+        self.cancellation_manager.load_job_state()
+        self._configure_cancellation_manager()
 
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
@@ -363,9 +434,31 @@ class GengoWatcher:
         except Exception as e:
             self.logger.warning(f"Failed to store job in state: {e}")
 
+        # Consider cancelling a current job if this one is better
+        try:
+            if self.cancellation_manager.cancellation_enabled and self.cancellation_manager.should_cancel_for_job(
+                float(job_data.get("reward", 0.0)), str(job_data.get("id"))
+            ):
+                self.logger.info(
+                    "Better opportunity detected - scheduling cancellation of current job before accepting new job"
+                )
+                threading.Thread(
+                    target=self._async_cancel_current_job_wrapper,
+                    args=(job_data,),
+                    daemon=True,
+                ).start()
+        except Exception as e:
+            self.logger.error(f"Error while evaluating job cancellation: {e}")
+
         # Check if job should be auto-accepted
         if self.job_acceptance_engine.is_job_eligible(job_data):
             self.logger.info(f"Job {job_id} meets auto-accept criteria, queuing for acceptance")
+            # Fire Selenium accept watcher immediately
+            try:
+                if hasattr(self, 'browser_automation_engine') and self.browser_automation_engine:
+                    self.browser_automation_engine.open_job_details_and_arm_accept(url)
+            except Exception as e:
+                self.logger.debug(f"Selenium accept watcher start failed: {e}")
             # Run job acceptance in a separate thread to avoid blocking
             threading.Thread(
                 target=self._async_job_acceptance_wrapper,
@@ -374,6 +467,10 @@ class GengoWatcher:
             ).start()
         elif hasattr(self.browser_automation_engine, 'is_job_eligible') and self.browser_automation_engine.is_job_eligible(job_data):
             self.logger.info(f"Job {job_id} meets browser automation criteria, queuing for acceptance")
+            try:
+                self.browser_automation_engine.open_job_details_and_arm_accept(url)
+            except Exception as e:
+                self.logger.debug(f"Selenium accept watcher start failed: {e}")
             # Run browser automation in a separate thread to avoid blocking
             threading.Thread(
                 target=self._async_browser_automation_wrapper,
@@ -392,18 +489,40 @@ class GengoWatcher:
         Args:
             job_data: Dictionary containing job information
         """
+        loop = asyncio.new_event_loop()
         try:
-            # Create a new event loop for this thread
-            loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
-            # Run the async job acceptance
-            loop.run_until_complete(self.job_acceptance_engine.accept_job(job_data))
-            
-            # Close the loop
-            loop.close()
+            success = loop.run_until_complete(self.job_acceptance_engine.accept_job(job_data))
+            if success:
+                self._on_job_accepted(job_data)
         except Exception as e:
             self.logger.error(f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}")
+        finally:
+            loop.close()
+
+    def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
+        """Wrapper to cancel the current job without blocking the main thread."""
+        previous_job_id = self.cancellation_manager.current_job_id
+        try:
+            success = self.cancel_current_job_sync()
+            if success:
+                self.logger.info(
+                    f"Current job {previous_job_id} cancelled. Preparing to accept {upcoming_job.get('id')}"
+                )
+            else:
+                self.logger.warning("Failed to cancel current job before processing new opportunity")
+        except Exception as e:
+            self.logger.error(f"Error during automatic job cancellation: {e}")
+
+    def _on_job_accepted(self, job_data: dict):
+        """Record that a job has been accepted for future cancellation decisions."""
+        try:
+            job_id = str(job_data.get("id"))
+            reward = float(job_data.get("reward", 0.0))
+            self.cancellation_manager.set_current_job(job_id, reward)
+            self.logger.debug(f"Tracking job {job_id} (${reward:.2f}) as current engagement")
+        except Exception as e:
+            self.logger.error(f"Failed to record accepted job for cancellation tracking: {e}")
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.
@@ -432,7 +551,9 @@ class GengoWatcher:
         self.logger.debug(f"Found {len(new_entries)} new RSS entries.")
         if not new_entries:
             return
-        self.state.last_seen_rss_link = new_entries[0].get("link")
+        latest_link = new_entries[0].get("link")
+        self.state.last_seen_rss_link = latest_link
+        self.state.last_seen_link = latest_link
         for entry in reversed(new_entries):
             title = entry.get("title", "No Title")
             url = entry.get("link")
@@ -676,13 +797,21 @@ class GengoWatcher:
     def _run_rss_monitor(self):
         self.logger.debug("Starting RSS monitor thread.")
         self.logger.info("RSS monitor thread started.")
-        if not self.state.last_seen_link:
-            self.rss_action = "Priming feed"
-            initial_feed = self.fetch_rss()
-            if initial_feed and initial_feed.entries:
-                self.state.last_seen_link = initial_feed.entries[0].get("link")
-                self.logger.info("Initial RSS feed primed successfully.")
-                self.state.save_state()
+        if not self.state.last_seen_rss_link:
+            if self.state.last_seen_link:
+                self.state.last_seen_rss_link = self.state.last_seen_link
+                self.logger.debug(
+                    "Migrated legacy last_seen_link value to last_seen_rss_link."
+                )
+            else:
+                self.rss_action = "Priming feed"
+                initial_feed = self.fetch_rss()
+                if initial_feed and initial_feed.entries:
+                    first_link = initial_feed.entries[0].get("link")
+                    self.state.last_seen_rss_link = first_link
+                    self.state.last_seen_link = first_link
+                    self.logger.info("Initial RSS feed primed successfully.")
+                    self.state.save_state()
 
         while not self.shutdown_event.is_set():
             is_paused = os.path.exists(self.PAUSE_FILE)
@@ -747,6 +876,8 @@ class GengoWatcher:
         self.config.set(section, option, value)
         self.config.save_config()
         self.logger.info(f"Config updated: [{section}] {option} = {value}")
+        if section.lower() == "cancellation":
+            self._configure_cancellation_manager()
 
     def get_config_value(self, section, option):
         value = self.config.get(section, option)
@@ -760,10 +891,56 @@ class GengoWatcher:
         self.logger.debug(f"Listing all config values: {config_dict}")
         return config_dict
 
+    def get_cancellation_stats(self):
+        """Expose cancellation statistics for external callers."""
+        try:
+            return self.cancellation_manager.get_stats()
+        except Exception as e:
+            self.logger.error(f"Failed to gather cancellation stats: {e}")
+            return None
+
+    async def cancel_current_job_async(self) -> bool:
+        """Asynchronously cancel the currently tracked job."""
+        return await self.cancellation_manager.cancel_current_job()
+
+    def cancel_current_job_sync(self) -> bool:
+        """Synchronously cancel the currently tracked job."""
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(self.cancellation_manager.cancel_current_job())
+        finally:
+            loop.close()
+
+    def _configure_cancellation_manager(self):
+        """Apply configuration settings to the cancellation manager."""
+        try:
+            settings = {
+                "cancellation_enabled": self.config.getboolean("Cancellation", "enabled", fallback=True),
+                "min_improvement_ratio": self.config.getfloat("Cancellation", "min_improvement_ratio", fallback=2.0),
+                "extreme_threshold": self.config.getfloat("Cancellation", "extreme_threshold", fallback=1000.0),
+            }
+            self.cancellation_manager.update_settings(**settings)
+        except Exception as e:
+            self.logger.error(f"Failed to configure cancellation manager: {e}")
+
     def prompt_for_config_values(self, required_fields=None):
         import getpass
 
         self.logger.debug("Prompting for config values interactively.")
+
+        # Check if this is a fresh config
+        config_file = Path(self.config.CONFIG_FILE)
+        is_new_config = config_file.stat().st_size < 1000  # Rough check for new/small config
+
+        if is_new_config:
+            print("\n" + "="*60)
+            print("🎉 Welcome to GengoWatcher!")
+            print("="*60)
+            print("A default configuration file has been created.")
+            print("Let's set up the essential settings to get you started.")
+            print("="*60 + "\n")
+
         if required_fields is None:
             required_fields = []
             for section in self.config._config_parser.sections():
@@ -774,31 +951,85 @@ class GengoWatcher:
                         "REPLACE_WITH_YOUR_SESSION_TOKEN",
                     ):
                         required_fields.append((section, option))
+
+        if not required_fields:
+            print("✅ All configuration values are set!")
+            return
+
+        print(f"\n📝 Please provide values for {len(required_fields)} required configuration settings:")
+        print("-" * 60)
+
+        # Group fields by section for better organization
+        fields_by_section = {}
         for section, option in required_fields:
-            current = self.config.get(section, option)
-            prompt = f"Enter value for [{section}] {option} (current: {current}): "
-            if "password" in option or "session" in option:
-                value = getpass.getpass(prompt)
-            else:
-                value = input(prompt)
-            if value:
-                self.set_config_value(section, option, value)
+            if section not in fields_by_section:
+                fields_by_section[section] = []
+            fields_by_section[section].append(option)
+
+        for section, options in fields_by_section.items():
+            print(f"\n[{section}] Section:")
+            for option in options:
+                current = self.config.get(section, option)
+                display_current = current if current != "REPLACE_WITH_YOUR_SESSION_TOKEN" else "(not set)"
+
+                # Provide helpful descriptions for common fields
+                descriptions = {
+                    "user_session": "Your Gengo session token (found in browser dev tools)",
+                    "user_id": "Your Gengo user ID number",
+                    "feed_url": "RSS feed URL for job monitoring",
+                    "min_reward": "Minimum job reward to monitor (USD)",
+                    "check_interval": "How often to check for new jobs (seconds)",
+                    "api_key": "CAPTCHA service API key",
+                    "browser_path": "Path to your preferred browser executable",
+                }
+
+                desc = descriptions.get(option, "")
+                desc_text = f" - {desc}" if desc else ""
+
+                prompt = f"  {option} (current: {display_current}){desc_text}: "
+
+                if "password" in option.lower() or "session" in option.lower() or "key" in option.lower():
+                    value = getpass.getpass(prompt)
+                else:
+                    value = input(prompt).strip()
+
+                if value:
+                    self.set_config_value(section, option, value)
+                    print(f"  ✅ Set {option} = {value}")
+                else:
+                    print(f"  ⚠️  Skipped {option} (keeping current value)")
+
+        print("\n" + "="*60)
+        print("✅ Configuration setup complete!")
+        print("You can always reconfigure later with: python -m gengowatcher.main --configure")
+        print("="*60 + "\n")
+
         self.logger.info("Config interactive prompt complete.")
 
     def is_config_complete(self, required_fields=None):
         self.logger.debug("Checking if config is complete.")
         if required_fields is None:
             required_fields = []
-            for section in self.config._config_parser.sections():
-                for option in self.config._config_parser.options(section):
+            # Only check sections that exist in our loaded config
+            for section in self.config.config.keys():
+                for option in self.config.config[section].keys():
                     required_fields.append((section, option))
+
         for section, option in required_fields:
-            val = self.config.get(section, option)
-            if val in (None, "", "REPLACE_WITH_YOUR_SESSION_TOKEN"):
+            try:
+                val = self.config.get(section, option)
+                if val in (None, "", "REPLACE_WITH_YOUR_SESSION_TOKEN"):
+                    self.logger.debug(
+                        f"Config incomplete: [{section}] {option} is unset or placeholder."
+                    )
+                    return False
+            except KeyError:
+                # Section or option doesn't exist in loaded config
                 self.logger.debug(
-                    f"Config incomplete: [{section}] {option} is unset or placeholder."
+                    f"Config incomplete: [{section}] {option} is missing from loaded config."
                 )
                 return False
+
         return True
 
     def get_captcha_stats(self):
@@ -867,5 +1098,71 @@ class GengoWatcher:
 
     def handle_exit(self):
         """Handle application exit"""
+        if getattr(self, "_shutdown_initiated", False):
+            return
+
+        self._shutdown_initiated = True
         self.logger.info("GengoWatcher shutting down...")
+        self.shutdown_event.set()
+        self.check_now_event.set()
+
+        def _run_coro_safely(coro, description):
+            try:
+                loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(coro)
+                finally:
+                    asyncio.set_event_loop(None)
+                    loop.close()
+            except Exception as error:
+                self.logger.exception("Failed to %s during shutdown: %s", description, error)
+
+        if getattr(self, "captcha_solver", None):
+            try:
+                self.captcha_solver.stop_monitoring()
+            except Exception as error:
+                self.logger.exception("Failed to stop CAPTCHA monitoring: %s", error)
+            try:
+                self.captcha_solver.close()
+            except Exception as error:
+                self.logger.exception("Failed to close CAPTCHA solver: %s", error)
+
+        if getattr(self, "job_acceptance_engine", None) and hasattr(
+            self.job_acceptance_engine, "close_session"
+        ):
+            _run_coro_safely(
+                self.job_acceptance_engine.close_session(),
+                "close job acceptance session",
+            )
+
+        if getattr(self, "cancellation_manager", None) and hasattr(
+            self.cancellation_manager, "close_session"
+        ):
+            _run_coro_safely(
+                self.cancellation_manager.close_session(),
+                "close cancellation session",
+            )
+
+        if getattr(self, "browser_automation_engine", None):
+            try:
+                self.browser_automation_engine.close()
+            except Exception as error:
+                self.logger.exception("Failed to close browser automation engine: %s", error)
+
+        if self._all_entries_log_file:
+            try:
+                self._all_entries_log_file.flush()
+                self._all_entries_log_file.close()
+            except Exception as error:
+                self.logger.exception("Failed to close CSV log file: %s", error)
+            finally:
+                self._all_entries_log_file = None
+                self._csv_writer = None
+
+        try:
+            self.state.save_state()
+        except Exception as error:
+            self.logger.exception("Failed to save state during shutdown: %s", error)
+
         self.logger.info("GengoWatcher shutdown complete")

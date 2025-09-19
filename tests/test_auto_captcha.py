@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch, AsyncMock
 from typing import Optional, Dict, Any
 
 from gengowatcher.job_acceptance import JobAcceptanceEngine
-from gengowatcher.captcha_solver import CaptchaSolution
+from gengowatcher.captcha_solver import CaptchaSolution, CaptchaTask, CaptchaType
 from gengowatcher.captcha_manager import CaptchaSolverManager
 from gengowatcher.rate_limiter import RateLimiter
 from gengowatcher.browser_automation.engine import BrowserAutomationEngine
@@ -885,3 +885,87 @@ def test_rate_limiter_current_rate():
     rate = limiter.get_current_rate()
     assert rate >= 0
     assert rate <= 10  # Should be within bounds
+
+
+def test_captcha_task_creation_from_user_data():
+    """Test creating a CaptchaTask from user-provided CAPTCHA data"""
+    # User provided data:
+    # "type": "recaptcha_v2",
+    # "site_key": "6Lc_aCMTAAAAABx7epKV5lXs3EB5gshht2s3i13M"
+
+    import time
+
+    # Create a CaptchaTask using the provided data
+    task = CaptchaTask(
+        task_id="user_provided_task_001",
+        captcha_type=CaptchaType.RECAPTCHA_V2,
+        site_key="6Lc_aCMTAAAAABx7epKV5lXs3EB5gshht2s3i13M",
+        page_url="https://gengo.com/t/jobs/details/test_job",
+        created_at=time.time()
+    )
+
+    # Verify the task was created correctly
+    assert task.task_id == "user_provided_task_001"
+    assert task.captcha_type == CaptchaType.RECAPTCHA_V2
+    assert task.site_key == "6Lc_aCMTAAAAABx7epKV5lXs3EB5gshht2s3i13M"
+    assert task.page_url == "https://gengo.com/t/jobs/details/test_job"
+    assert task.action is None  # Not provided for v2
+
+    # Test serialization
+    task_dict = task.to_dict()
+    assert task_dict["captcha_type"] == "recaptcha_v2"
+    assert task_dict["site_key"] == "6Lc_aCMTAAAAABx7epKV5lXs3EB5gshht2s3i13M"
+
+    # Test deserialization
+    task_from_dict = CaptchaTask.from_dict(task_dict)
+    assert task_from_dict.captcha_type == CaptchaType.RECAPTCHA_V2
+    assert task_from_dict.site_key == task.site_key
+
+
+def test_captcha_task_with_different_types():
+    """Test CaptchaTask creation with different CAPTCHA types"""
+    import time
+
+    base_time = time.time()
+
+    # Test reCAPTCHA v2
+    task_v2 = CaptchaTask(
+        task_id="task_v2",
+        captcha_type=CaptchaType.RECAPTCHA_V2,
+        site_key="6Lc_aCMTAAAAABx7epKV5lXs3EB5gshht2s3i13M",
+        page_url="https://example.com/page1",
+        created_at=base_time
+    )
+
+    # Test reCAPTCHA v3 with action
+    task_v3 = CaptchaTask(
+        task_id="task_v3",
+        captcha_type=CaptchaType.RECAPTCHA_V3,
+        site_key="6Lc6BAAAAAAAAAChqR2QwNcAAAAA",
+        page_url="https://example.com/page2",
+        created_at=base_time + 1,
+        action="job_acceptance"
+    )
+
+    # Test hCaptcha
+    task_hcaptcha = CaptchaTask(
+        task_id="task_hcaptcha",
+        captcha_type=CaptchaType.HCAPTCHA,
+        site_key="10000000-ffff-ffff-ffff-000000000001",
+        page_url="https://example.com/page3",
+        created_at=base_time + 2
+    )
+
+    # Verify all tasks
+    assert task_v2.captcha_type == CaptchaType.RECAPTCHA_V2
+    assert task_v3.captcha_type == CaptchaType.RECAPTCHA_V3
+    assert task_v3.action == "job_acceptance"
+    assert task_hcaptcha.captcha_type == CaptchaType.HCAPTCHA
+
+    # Test that all can be serialized/deserialized
+    for task in [task_v2, task_v3, task_hcaptcha]:
+        task_dict = task.to_dict()
+        restored_task = CaptchaTask.from_dict(task_dict)
+        assert restored_task.captcha_type == task.captcha_type
+        assert restored_task.site_key == task.site_key
+        assert restored_task.page_url == task.page_url

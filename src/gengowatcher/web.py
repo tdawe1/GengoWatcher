@@ -96,6 +96,7 @@ class WatcherStatus(BaseModel):
     next_check_time: float
     session_stats: Dict[str, Any]
     failure_count: int
+    cancellation_stats: Optional[Dict[str, Any]] = None
 
     @field_validator('websocket_status', 'rss_status')
     @classmethod
@@ -126,7 +127,7 @@ class CommandRequest(BaseModel):
     def validate_command(cls, v):
         if not isinstance(v, str) or not v.strip():
             raise ValueError('Command must be a non-empty string')
-        allowed_commands = ['check', 'pause', 'resume', 'ping', 'notify']
+        allowed_commands = ['check', 'pause', 'resume', 'ping', 'notify', 'cancel']
         if v.strip().lower() not in allowed_commands:
             raise ValueError(f'Command must be one of: {", ".join(allowed_commands)}')
         return v.strip().lower()
@@ -218,7 +219,12 @@ class WebAPI:
                     "uptime": time.time() - self.watcher.start_time,
                 },
                 failure_count=self.watcher.failure_count,
+                cancellation_stats=self.watcher.get_cancellation_stats(),
             )
+
+    async def cancel_current_job(self) -> bool:
+        """Cancel the currently tracked job via the watcher."""
+        return await self.watcher.cancel_current_job_async()
 
     def get_recent_jobs(self, limit: int = 50, page: int = 1) -> Dict[str, Any]:
         """Get recent jobs from state with pagination."""
@@ -508,6 +514,11 @@ class WebAPI:
                 except FileNotFoundError:
                     pass
                 return {"status": "success", "message": "Watcher resumed"}
+            elif command == "cancel":
+                success = self.watcher.cancel_current_job_sync()
+                if success:
+                    return {"status": "success", "message": "Current job cancelled"}
+                return {"status": "error", "message": "No active job to cancel or cancellation failed"}
             else:
                 return {"status": "error", "message": f"Unknown command: {command}"}
         except Exception as e:
@@ -699,6 +710,24 @@ async def accept_job(
     except Exception as e:
         api_instance.logger.exception(f"Error accepting job {job_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.post("/api/jobs/cancel")
+async def cancel_current_job(authenticated: bool = Depends(verify_auth)):
+    """Cancel the currently tracked job."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+
+    try:
+        success = await api_instance.cancel_current_job()
+        if success:
+            return {"status": "success", "message": "Current job cancelled"}
+        raise HTTPException(status_code=400, detail="No active job to cancel or cancellation failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        api_instance.logger.exception(f"Error cancelling current job: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/config", response_model=List[ConfigSection])
