@@ -167,6 +167,12 @@ class GengoWatcher:
             session_token = self.config.get("WebSocket", "user_session")
             if session_token and session_token != "REPLACE_WITH_YOUR_SESSION_TOKEN":
                 if self.browser_automation_engine.login_with_session(str(session_token)):
+                    # Prewarm critical targets to reduce first-accept latency
+                    try:
+                        self.browser_automation_engine.preload_page("https://gengo.com/t/jobs/status/available/realtime")
+                        self.browser_automation_engine.preload_page("https://gengo.com/t/jobs/status/available")
+                    except Exception as prewarm_error:
+                        self.logger.debug(f"Selenium prewarm skipped: {prewarm_error}")
                     # Start monitors if configured
                     try:
                         if self.config.get("SeleniumMonitoring", "enable_live_dashboard"):
@@ -181,6 +187,14 @@ class GengoWatcher:
                             )
                     except Exception as e:
                         self.logger.warning(f"Failed to start Selenium monitors: {e}")
+                    # Auto-trigger login assist if we are not yet logged in and configured to do so
+                    try:
+                        auto_assist = self.config.getboolean("SeleniumMonitoring", "auto_login_assist", fallback=True)
+                    except Exception:
+                        auto_assist = True
+                    if auto_assist and not self.browser_automation_engine.is_logged_in():
+                        self.logger.info("Auto Login Assist: no active session detected; launching login assist.")
+                        self.login_assist()
         except Exception as e:
             self.logger.debug(f"Selenium login not initialized: {e}")
 
@@ -1059,6 +1073,72 @@ class GengoWatcher:
                 'current_rate': 0.0,
                 'enabled': False
             }
+
+    def get_selenium_status(self):
+        """Get Selenium/monitoring status for UI display."""
+        try:
+            eng = getattr(self, 'browser_automation_engine', None)
+            if eng:
+                return eng.get_status()
+        except Exception as e:
+            self.logger.debug(f"Failed to get Selenium status: {e}")
+        return {
+            'driver_initialized': False,
+            'tabs': {'realtime': False, 'list': False},
+            'monitor_threads': 0,
+        }
+
+    def login_assist(self, timeout_sec: float = None) -> None:
+        """Open the Gengo auth form via Selenium and wait for manual login.
+
+        Non-blocking: runs in a thread and logs progress; when login succeeds,
+        pinned tabs are ensured automatically by the engine.
+        """
+        try:
+            if timeout_sec is None:
+                try:
+                    timeout_sec = float(self.config.getfloat("SeleniumMonitoring", "login_assist_timeout_sec", fallback=120.0))
+                except Exception:
+                    timeout_sec = 120.0
+        except Exception:
+            timeout_sec = 120.0
+
+        def worker():
+            try:
+                try:
+                    # Pause monitors to avoid refresh fighting during login
+                    self.browser_automation_engine.suspend_monitors()
+                except Exception:
+                    pass
+                ok = self.browser_automation_engine.open_login_assist(timeout_sec=timeout_sec)
+                if ok:
+                    self.logger.info("Login Assist: success; monitors and accept watchers remain active.")
+                else:
+                    self.logger.warning("Login Assist: did not detect login within timeout.")
+            except Exception as e:
+                self.logger.exception(f"Login Assist failed: {e}")
+            finally:
+                try:
+                    self.browser_automation_engine.resume_monitors()
+                except Exception:
+                    pass
+
+        threading.Thread(target=worker, name="LoginAssist", daemon=True).start()
+
+    def login_mark(self) -> None:
+        """Manually mark Selenium as logged in and resume monitors."""
+        try:
+            if hasattr(self, 'browser_automation_engine') and self.browser_automation_engine:
+                self.browser_automation_engine.set_manual_login_override(True)
+                self.browser_automation_engine.resume_monitors()
+                # Ensure tabs exist after override for continuity
+                try:
+                    self.browser_automation_engine.ensure_pinned_tabs()
+                except Exception:
+                    pass
+                self.logger.info("Manual login override active; monitors running.")
+        except Exception as e:
+            self.logger.exception(f"login_mark failed: {e}")
     
     def _simulate_new_job_notification(self):
         """Injects a fake job into the processing pipeline to test notifications."""

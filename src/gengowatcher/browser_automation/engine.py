@@ -3,6 +3,7 @@ Browser Automation Engine for GengoWatcher
 Handles automatic job acceptance through browser automation with CAPTCHA solving capabilities.
 """
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -17,8 +18,14 @@ from selenium.common.exceptions import WebDriverException
 
 try:
     from webdriver_manager.chrome import ChromeDriverManager
+    try:
+        # Newer webdriver-manager
+        from webdriver_manager.core.utils import ChromeType  # type: ignore
+    except Exception:  # pragma: no cover
+        ChromeType = None  # type: ignore
     _HAS_WDM = True
 except Exception:
+    ChromeType = None  # type: ignore
     _HAS_WDM = False
 
 
@@ -55,6 +62,9 @@ class BrowserAutomationEngine:
         self._seen_live_ids: Set[str] = set()
         self._seen_list_ids: Set[str] = set()
         self._accept_cancel_flags: Dict[str, threading.Event] = {}
+        self._tabs: Dict[str, str] = {}
+        self._suspend_event = threading.Event()
+        self._manual_login_override = False
         self.logger.info("BrowserAutomationEngine initialized")
 
     def _safe_submit_first_form(self, driver: webdriver.Chrome) -> bool:
@@ -208,7 +218,12 @@ class BrowserAutomationEngine:
         self._monitor_threads.add(t)
 
     def login_with_session(self, session_token: str) -> bool:
-        """Set session cookie and verify a protected page loads as logged in."""
+        """Set session cookie and verify a protected page loads as logged in.
+
+        Optimization: after setting the cookie, immediately visit the realtime
+        dashboard and the available-jobs list to warm caches and establish any
+        ancillary cookies used by the site.
+        """
         try:
             d = self._initialize_driver()
             d.get("https://gengo.com/")
@@ -219,12 +234,27 @@ class BrowserAutomationEngine:
             d.add_cookie({
                 'name': 'my_gengo_session',
                 'value': session_token,
-                'domain': 'gengo.com',
+                # Domain cookie so it applies to subdomains as well
+                'domain': '.gengo.com',
                 'path': '/',
                 'secure': True
             })
+            # Preflight realtime dashboard (websocket UI) then jobs list
+            d.get("https://gengo.com/t/jobs/status/available/realtime")
+            WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             d.get("https://gengo.com/t/jobs/status/available")
             WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            # Optionally pin tabs for realtime + list
+            pin_tabs = False
+            try:
+                pin_tabs = self.config.getboolean("SeleniumMonitoring", "pin_tabs", fallback=True)
+            except Exception:
+                pin_tabs = True
+            if pin_tabs:
+                try:
+                    self.ensure_pinned_tabs()
+                except Exception as _e:
+                    self.logger.debug(f"Pin tabs skipped: {_e}")
             self.logger.info("Selenium session cookie set; jobs page reachable.")
             return True
         except Exception as e:
@@ -236,11 +266,30 @@ class BrowserAutomationEngine:
         def worker():
             try:
                 d = self._initialize_driver()
-                d.get("https://gengo.com/t/jobs/status/available")
-                WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                # Use a dedicated tab if available
+                with self._driver_lock:
+                    handle = self._tabs.get("realtime")
+                    if handle and handle in d.window_handles:
+                        d.switch_to.window(handle)
+                    else:
+                        d.get("https://gengo.com/t/jobs/status/available/realtime")
+                        WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                        # Track this tab
+                        try:
+                            self._tabs["realtime"] = d.current_window_handle
+                        except Exception:
+                            pass
                 while True:
                     try:
-                        links = d.find_elements(By.CSS_SELECTOR, "a[href*='/t/jobs/details/']")
+                        if self._suspend_event.is_set():
+                            time.sleep(0.25)
+                            continue
+                        # Ensure we're in the correct tab
+                        with self._driver_lock:
+                            h = self._tabs.get("realtime")
+                            if h and h in d.window_handles:
+                                d.switch_to.window(h)
+                            links = d.find_elements(By.CSS_SELECTOR, "a[href*='/t/jobs/details/']")
                         for a in links:
                             href = a.get_attribute("href") or ""
                             if "/t/jobs/details/" in href:
@@ -262,11 +311,28 @@ class BrowserAutomationEngine:
         def worker():
             try:
                 d = self._initialize_driver()
-                d.get("https://gengo.com/t/jobs/status/available")
-                WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                with self._driver_lock:
+                    handle = self._tabs.get("list")
+                    if handle and handle in d.window_handles:
+                        d.switch_to.window(handle)
+                    else:
+                        d.get("https://gengo.com/t/jobs/status/available")
+                        WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                        try:
+                            self._tabs["list"] = d.current_window_handle
+                        except Exception:
+                            pass
                 while True:
                     try:
-                        links = d.find_elements(By.CSS_SELECTOR, "a[href*='/t/jobs/details/']")
+                        if self._suspend_event.is_set():
+                            time.sleep(0.25)
+                            continue
+                        # Ensure correct tab and probe links
+                        with self._driver_lock:
+                            h = self._tabs.get("list")
+                            if h and h in d.window_handles:
+                                d.switch_to.window(h)
+                            links = d.find_elements(By.CSS_SELECTOR, "a[href*='/t/jobs/details/']")
                         new_found = False
                         for a in links:
                             href = a.get_attribute("href") or ""
@@ -278,18 +344,161 @@ class BrowserAutomationEngine:
                                     new_found = True
                         time.sleep(interval_sec)
                         if not new_found:
-                            d.refresh()
+                            with self._driver_lock:
+                                d.refresh()
                     except Exception:
                         time.sleep(interval_sec)
-                        d.refresh()
+                        with self._driver_lock:
+                            d.refresh()
             except Exception as e:
                 self.logger.error(f"Jobs refresher error: {e}")
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         self._monitor_threads.add(t)
 
+    def ensure_pinned_tabs(self) -> bool:
+        """Open and remember dedicated tabs for realtime and list views.
+
+        Returns True if tabs exist or were created.
+        """
+        try:
+            d = self._initialize_driver()
+            with self._driver_lock:
+                # Realtime tab
+                handle = self._tabs.get("realtime")
+                if not (handle and handle in d.window_handles):
+                    d.execute_script("window.open('https://gengo.com/t/jobs/status/available/realtime','_blank');")
+                    self._tabs["realtime"] = d.window_handles[-1]
+                # List tab
+                handle = self._tabs.get("list")
+                if not (handle and handle in d.window_handles):
+                    d.execute_script("window.open('https://gengo.com/t/jobs/status/available','_blank');")
+                    self._tabs["list"] = d.window_handles[-1]
+            return True
+        except Exception as e:
+            self.logger.debug(f"ensure_pinned_tabs failed: {e}")
+            return False
+
+    def get_status(self) -> Dict[str, Any]:
+        """Return a snapshot of Selenium/monitoring status for UI display."""
+        status: Dict[str, Any] = {
+            "driver_initialized": bool(self.driver),
+            "tabs": {"realtime": False, "list": False},
+            "monitor_threads": 0,
+        }
+        try:
+            with self._driver_lock:
+                if self.driver:
+                    handles = set(self.driver.window_handles)
+                    status["tabs"]["realtime"] = (
+                        (self._tabs.get("realtime") or "") in handles
+                    )
+                    status["tabs"]["list"] = (
+                        (self._tabs.get("list") or "") in handles
+                    )
+        except Exception:
+            pass
+        try:
+            status["monitor_threads"] = sum(1 for t in self._monitor_threads if t.is_alive())
+        except Exception:
+            status["monitor_threads"] = 0
+        status["suspended"] = self._suspend_event.is_set()
+        return status
+
+    def _check_session_cookie(self) -> bool:
+        """Return True if my_gengo_session cookie exists and is non-empty for gengo.com."""
+        try:
+            with self._driver_lock:
+                d = self._initialize_driver()
+                # Must be on the correct domain to read cookie
+                d.get("https://gengo.com/")
+                WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                c = d.get_cookie("my_gengo_session")
+                return bool(c and c.get("value"))
+        except Exception:
+            return False
+
+    def is_logged_in(self) -> bool:
+        """Public helper to determine if Selenium currently has a valid session."""
+        if self._manual_login_override:
+            return True
+        return self._check_session_cookie()
+
+    def set_manual_login_override(self, value: bool = True) -> None:
+        self._manual_login_override = bool(value)
+        self.logger.info("Manual login override set to %s", self._manual_login_override)
+
+    def open_login_assist(self, timeout_sec: float = 120.0) -> bool:
+        """Open the jobs pages and wait until the user completes login.
+
+        - Opens both: 
+          • https://gengo.com/t/jobs/status/available
+          • https://gengo.com/t/jobs/status/available/realtime
+        - Waits up to timeout_sec for a valid session cookie
+        - On success, keeps tabs pinned and returns True
+        """
+        try:
+            with self._driver_lock:
+                d = self._initialize_driver()
+                self.logger.info("Login Assist: opening jobs list and realtime dashboard — complete login in the opened window(s).")
+                # Ensure pinned tabs to both targets
+                self.ensure_pinned_tabs()
+                # Focus list tab, ensure body loaded
+                handle = self._tabs.get("list")
+                if handle and handle in d.window_handles:
+                    d.switch_to.window(handle)
+                else:
+                    d.get("https://gengo.com/t/jobs/status/available")
+                WebDriverWait(d, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                # Also load realtime tab
+                handle_rt = self._tabs.get("realtime")
+                if handle_rt and handle_rt in d.window_handles:
+                    d.switch_to.window(handle_rt)
+                else:
+                    d.get("https://gengo.com/t/jobs/status/available/realtime")
+                WebDriverWait(d, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        except Exception as e:
+            self.logger.error(f"Login Assist: failed to open auth form: {e}")
+            return False
+
+        deadline = time.time() + max(5.0, float(timeout_sec))
+        last_ping = 0.0
+        while time.time() < deadline:
+            if self._check_session_cookie():
+                try:
+                    self.ensure_pinned_tabs()
+                except Exception:
+                    pass
+                self.logger.info("Login Assist: login detected; proceeding with monitors.")
+                return True
+            # Throttle status logging
+            now = time.time()
+            if now - last_ping > 5.0:
+                self.logger.info("Login Assist: waiting for login to complete...")
+                last_ping = now
+            time.sleep(0.5)
+
+        self.logger.warning("Login Assist: timed out waiting for login.")
+        return False
+
+    # Monitor control API
+    def suspend_monitors(self) -> None:
+        self._suspend_event.set()
+        self.logger.info("Selenium monitors suspended (waiting for manual login)")
+
+    def resume_monitors(self) -> None:
+        if self._suspend_event.is_set():
+            self._suspend_event.clear()
+            self.logger.info("Selenium monitors resumed")
+
     def _initialize_driver(self) -> webdriver.Chrome:
-        """Initialize Chrome WebDriver with appropriate options"""
+        """Initialize Chrome WebDriver with appropriate options
+
+        Honors these config options when available:
+        - [SeleniumMonitoring] headless: bool
+        - [SeleniumMonitoring] chrome_binary_path: str (binary path)
+        - [AutoAccept] browser_profile_path: str (existing Chrome user-data-dir for persisted login)
+        """
         if self.driver:
             return self.driver
             
@@ -307,6 +516,22 @@ class BrowserAutomationEngine:
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         
+        # Optional Chrome/Chromium binary path from config
+        try:
+            binary_path = self.config.get("SeleniumMonitoring", "chrome_binary_path")
+        except Exception:
+            binary_path = None
+        if not binary_path:
+            try:
+                candidate = self.config.get("Paths", "browser_path")
+                if candidate:
+                    binary_path = candidate
+            except Exception:
+                binary_path = None
+        if binary_path and Path(str(binary_path)).is_file():
+            chrome_options.binary_location = str(binary_path)
+            self.logger.info(f"Selenium Chrome binary set to: {binary_path}")
+        
         # Add user agent if configured
         user_agent = None
         if hasattr(self.config, "get"):
@@ -316,14 +541,54 @@ class BrowserAutomationEngine:
                 user_agent = None
         if user_agent:
             chrome_options.add_argument(f"--user-agent={user_agent}")
+        # Use basic password store to avoid keyring prompts; helps persist logins
+        try:
+            force_basic_pw = self.config.getboolean("SeleniumMonitoring", "force_basic_password_store", fallback=True)
+        except Exception:
+            force_basic_pw = True
+        if force_basic_pw:
+            chrome_options.add_argument("--password-store=basic")
+        
+        # Use existing Chrome user data dir to reuse login/cookies if configured
+        try:
+            profile_path = None
+            try:
+                profile_path = self.config.get("AutoAccept", "browser_profile_path")
+            except Exception:
+                profile_path = None
+            if profile_path:
+                pp = Path(str(profile_path))
+                if pp.exists():
+                    chrome_options.add_argument(f"--user-data-dir={pp}")
+                    self.logger.info(f"Using Chrome user-data-dir for Selenium: {pp}\n")
+        except Exception:
+            # Non-fatal; proceed without profile
+            pass
         
         try:
             if _HAS_WDM:
-                self.driver = webdriver.Chrome(
-                    service=Service(ChromeDriverManager().install()),
-                    options=chrome_options,
-                )
+                # Choose driver type based on binary path (Chromium vs Google Chrome)
+                mgr_kwargs = {}
+                try:
+                    if chrome_options.binary_location and 'chromium' in chrome_options.binary_location.lower() and ChromeType:
+                        mgr_kwargs = {"chrome_type": ChromeType.CHROMIUM}
+                except Exception:
+                    mgr_kwargs = {}
+                try:
+                    # First, try webdriver-manager install (may fail in restricted environments)
+                    install_path = ChromeDriverManager(**mgr_kwargs).install()
+                    self.driver = webdriver.Chrome(
+                        service=Service(install_path),
+                        options=chrome_options,
+                    )
+                except Exception as e:
+                    # Fallback to system chromedriver on PATH or Selenium-managed discovery
+                    self.logger.warning(
+                        f"WebDriverManager install failed ({e}); trying system ChromeDriver"
+                    )
+                    self.driver = webdriver.Chrome(options=chrome_options)
             else:
+                # No webdriver-manager; rely on system chromedriver
                 self.driver = webdriver.Chrome(options=chrome_options)
             self.logger.info("Chrome WebDriver initialized successfully")
             return self.driver

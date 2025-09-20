@@ -2,6 +2,7 @@ import configparser
 from pathlib import Path
 import sys
 import threading
+import os
 
 
 class AppConfig:
@@ -97,6 +98,10 @@ class AppConfig:
             "enable_list_refresh": True,
             "refresh_interval_ms": 1500,
             "headless": False,
+            "pin_tabs": True,
+            "auto_login_assist": True,
+            "login_assist_timeout_sec": 120,
+            "force_basic_password_store": True,
         },
     }
 
@@ -127,6 +132,22 @@ class AppConfig:
             f"Created default '{self.CONFIG_FILE}'. You can now configure it interactively."
         )
         # Don't exit - let the interactive config prompt handle it
+
+    @staticmethod
+    def _project_root() -> Path:
+        # src/gengowatcher/config.py -> repo root is parents[2]
+        here = Path(__file__).resolve()
+        root = here.parents[2]
+        return root
+
+    def _resolve_path(self, value: str) -> str:
+        if not value:
+            return value
+        p = Path(value)
+        if p.is_absolute():
+            return str(p)
+        base = self._project_root()
+        return str((base / p).resolve())
 
     def load_config(self):
         with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -163,12 +184,26 @@ class AppConfig:
                             print(f"Added missing config option: [{section}]{key} = {default_val}")
                             config_modified = True
 
+                # Normalize relative Paths to absolute project-root-based paths
+                try:
+                    paths = self.config.get("Paths", {})
+                    for key in ("log_file", "all_entries_log", "sound_file", "notification_icon_path", "browser_path"):
+                        val = paths.get(key)
+                        if isinstance(val, str) and val.strip():
+                            absval = self._resolve_path(val)
+                            self.config["Paths"][key] = absval
+                            # keep parser in sync for persistence
+                            self._config_parser.set("Paths", key, absval)
+                            config_modified = True
+                except Exception:
+                    pass
+
                 # Save config if it was modified
                 if config_modified:
                     try:
                         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                             self._config_parser.write(f)
-                        print(f"Config file updated with missing sections/options")
+                        print(f"Config file updated with missing/normalized paths")
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 

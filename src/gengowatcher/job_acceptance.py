@@ -133,8 +133,9 @@ class JobAcceptanceEngine:
         if not self.enabled:
             return False
             
-        # Check if job source is allowed
-        allowed_sources = {s.strip() for s in self.config.get("AutoAccept", "job_sources").split(",")}
+        # Check if job source is allowed (defensive default)
+        sources_str = self.config.get("AutoAccept", "job_sources") or "rss,websocket"
+        allowed_sources = {s.strip().lower() for s in sources_str.split(",")}
         if job_data.get("source", "").lower() not in allowed_sources:
             self.logger.debug(f"Job {job_data.get('id')} rejected: source {job_data.get('source')} not in {allowed_sources}")
             return False

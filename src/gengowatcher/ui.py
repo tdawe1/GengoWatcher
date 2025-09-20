@@ -146,6 +146,16 @@ class CommandLineInterface:
                 "handler": self._handle_accept_stats,
                 "help": "Display job acceptance statistics.",
             },
+            "loginassist": {
+                "handler": self._handle_login_assist,
+                "aliases": ["la"],
+                "help": "Open auth form in Selenium and wait for manual login.",
+            },
+            "loginmark": {
+                "handler": self._handle_login_mark,
+                "aliases": ["lm", "logindone", "loggedin"],
+                "help": "Manually mark Selenium as logged in (override)",
+            },
         }
         self.alias_map = {
             alias: cmd
@@ -202,6 +212,28 @@ class CommandLineInterface:
                 Text("Enabled", style="success")
                 if sound_enabled
                 else Text("Disabled", style="error")
+            ),
+        )
+        # Selenium status
+        try:
+            sel = self.watcher.get_selenium_status()
+        except Exception:
+            sel = {"driver_initialized": False, "tabs": {"realtime": False, "list": False}, "monitor_threads": 0, "suspended": False}
+        driver_ok = bool(sel.get("driver_initialized"))
+        tabs = sel.get("tabs", {})
+        rt_ok = bool(tabs.get("realtime"))
+        li_ok = bool(tabs.get("list"))
+        monitors = sel.get("monitor_threads", 0)
+        suspended = bool(sel.get("suspended", False))
+        config_table.add_row(
+            "Selenium Driver:",
+            Text("Ready", style="success") if driver_ok else Text("Not Ready", style="error"),
+        )
+        config_table.add_row(
+            "Pinned Tabs:",
+            Text(
+                f"Realtime {'✓' if rt_ok else '·'}  |  List {'✓' if li_ok else '·'}  |  Monitors {monitors}  |  {'SUSPENDED' if suspended else 'LIVE'}",
+                style=("warning" if suspended else ("success" if (rt_ok and li_ok) else "dim")),
             ),
         )
         return Panel(
@@ -615,3 +647,21 @@ class CommandLineInterface:
             self.watcher.logger.info(f"  Current Rate: {stats['current_rate']:.2f} requests/sec")
         except Exception as e:
             self.watcher.logger.exception(f"Error showing job acceptance stats: {e}")
+
+    def _handle_login_assist(self, args=None):
+        """Kick off manual login assist in Selenium."""
+        _ = args
+        try:
+            self.watcher.logger.info("Login Assist: launching auth flow; complete login in the opened browser window.")
+            self.watcher.login_assist()
+        except Exception as e:
+            self.watcher.logger.exception(f"Failed to start login assist: {e}")
+
+    def _handle_login_mark(self, args=None):
+        """Set manual login override and resume monitors."""
+        _ = args
+        try:
+            self.watcher.logger.info("Manually marking Selenium as logged in (override).")
+            self.watcher.login_mark()
+        except Exception as e:
+            self.watcher.logger.exception(f"Failed to mark as logged in: {e}")
