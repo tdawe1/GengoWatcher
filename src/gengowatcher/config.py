@@ -102,6 +102,8 @@ class AppConfig:
             "auto_login_assist": True,
             "login_assist_timeout_sec": 120,
             "force_basic_password_store": True,
+            "realtime_refresh_min_sec": 120,
+            "realtime_refresh_max_sec": 300,
         },
     }
 
