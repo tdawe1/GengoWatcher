@@ -4,6 +4,7 @@ Handles automatic job acceptance through browser automation with CAPTCHA solving
 """
 
 import os
+import random
 import threading
 import time
 from pathlib import Path
@@ -262,7 +263,11 @@ class BrowserAutomationEngine:
             return False
 
     def start_live_dashboard_monitor(self, on_new_job: Callable[[str, str], None], interval_sec: float = 0.75) -> None:
-        """Poll the realtime view for new job links and invoke callback(job_id, url)."""
+        """Monitor the realtime view for new job links and invoke callback(job_id, url).
+
+        Injects a MutationObserver into the page to collect newly-added job links
+        without refreshing the page. The worker polls a small in-page queue.
+        """
         def worker():
             try:
                 d = self._initialize_driver()
@@ -279,6 +284,60 @@ class BrowserAutomationEngine:
                             self._tabs["realtime"] = d.current_window_handle
                         except Exception:
                             pass
+                # Install observer and seed queue with existing links
+                try:
+                    with self._driver_lock:
+                        d.execute_script(
+                            """
+                            (function(){
+                              try {
+                                if (!window._GW) window._GW = {};
+                                if (!window._GW.newJobs) window._GW.newJobs = [];
+                                if (!window._GW._observerAttached) {
+                                  const pushJob = href => {
+                                    try { if (href && href.indexOf('/t/jobs/details/') !== -1) { window._GW.newJobs.push(href); } } catch(e){}
+                                  };
+                                  // Seed existing links
+                                  try { document.querySelectorAll("a[href*='/t/jobs/details/']").forEach(a => pushJob(a.href)); } catch(e){}
+                                  const obs = new MutationObserver(muts => {
+                                    muts.forEach(m => {
+                                      if (m.addedNodes) {
+                                        m.addedNodes.forEach(node => {
+                                          if (node && node.nodeType === 1) {
+                                            try { node.querySelectorAll("a[href*='/t/jobs/details/']").forEach(a => pushJob(a.href)); } catch(e){}
+                                          }
+                                        });
+                                      }
+                                    });
+                                  });
+                                  obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
+                                  window._GW._observerAttached = true;
+                                  window._GW._observer = obs;
+                                }
+                              } catch(e){}
+                            })();
+                            """
+                        )
+                except Exception:
+                    pass
+                # Humanized periodic refresh window (disabled if min<=0)
+                try:
+                    rr_min = int(self.config.getint("SeleniumMonitoring", "realtime_refresh_min_sec", fallback=120))
+                except Exception:
+                    rr_min = 120
+                try:
+                    rr_max = int(self.config.getint("SeleniumMonitoring", "realtime_refresh_max_sec", fallback=300))
+                except Exception:
+                    rr_max = 300
+                if rr_max < rr_min:
+                    rr_max = rr_min
+                def _next_refresh_from(now: float) -> float:
+                    if rr_min <= 0:
+                        return float('inf')
+                    return now + random.uniform(max(1.0, float(rr_min)), max(1.0, float(rr_max)))
+
+                next_refresh = _next_refresh_from(time.time())
+
                 while True:
                     try:
                         if self._suspend_event.is_set():
@@ -289,14 +348,60 @@ class BrowserAutomationEngine:
                             h = self._tabs.get("realtime")
                             if h and h in d.window_handles:
                                 d.switch_to.window(h)
-                            links = d.find_elements(By.CSS_SELECTOR, "a[href*='/t/jobs/details/']")
-                        for a in links:
-                            href = a.get_attribute("href") or ""
-                            if "/t/jobs/details/" in href:
-                                job_id = href.split("/details/")[-1].split("?")[0]
+                            # Pop queued links from the page
+                            try:
+                                links = d.execute_script(
+                                    "var q=(window._GW&&window._GW.newJobs)?window._GW.newJobs.slice():[]; if(window._GW) window._GW.newJobs=[]; return q;"
+                                ) or []
+                            except Exception:
+                                links = []
+                        # Process newly observed links
+                        for href in links:
+                            try:
+                                if not href or '/t/jobs/details/' not in href:
+                                    continue
+                                job_id = href.split('/details/')[-1].split('?')[0]
                                 if job_id and job_id not in self._seen_live_ids:
                                     self._seen_live_ids.add(job_id)
                                     on_new_job(job_id, href)
+                            except Exception:
+                                continue
+                        # Humanized occasional refresh of realtime page
+                        now = time.time()
+                        if now >= next_refresh:
+                            try:
+                                with self._driver_lock:
+                                    d.refresh()
+                                    # Reinstall observer after refresh
+                                    d.execute_script(
+                                        """
+                                        (function(){
+                                          try {
+                                            if (!window._GW) window._GW = {};
+                                            window._GW.newJobs = [];
+                                            const pushJob = href => { try { if (href && href.indexOf('/t/jobs/details/') !== -1) { window._GW.newJobs.push(href); } } catch(e){} };
+                                            try { document.querySelectorAll("a[href*='/t/jobs/details/']").forEach(a => pushJob(a.href)); } catch(e){}
+                                            const obs = new MutationObserver(muts => {
+                                              muts.forEach(m => {
+                                                if (m.addedNodes) {
+                                                  m.addedNodes.forEach(node => {
+                                                    if (node && node.nodeType === 1) {
+                                                      try { node.querySelectorAll("a[href*='/t/jobs/details/']").forEach(a => pushJob(a.href)); } catch(e){}
+                                                    }
+                                                  });
+                                                }
+                                              });
+                                            });
+                                            obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
+                                            window._GW._observerAttached = true;
+                                            window._GW._observer = obs;
+                                          } catch(e){}
+                                        })();
+                                        """
+                                    )
+                            except Exception:
+                                pass
+                            next_refresh = _next_refresh_from(now)
                     except Exception:
                         pass
                     time.sleep(interval_sec)
