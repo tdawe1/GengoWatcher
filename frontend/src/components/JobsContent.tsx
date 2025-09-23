@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import type { CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { FixedSizeList as List } from 'react-window';
 import {
   Box,
   Card,
@@ -13,17 +15,11 @@ import {
   InputLabel,
   Button,
   Chip,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   IconButton,
   Avatar,
   useTheme,
   InputAdornment,
+  useMediaQuery,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -33,10 +29,11 @@ import {
   Work as WorkIcon,
 } from '@mui/icons-material';
 import { apiClient } from '../lib/api';
-import type { Job } from '../lib/api';
+import { MobileJobCard } from './MobileJobCard';
 
 export function JobsContent() {
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(20);
   const [sourceFilter, setSourceFilter] = useState<'all' | 'websocket' | 'rss'>('all');
@@ -309,6 +306,108 @@ export function JobsContent() {
   const displayedJobs = jobsData?.data?.items || [];
   const paginationData = jobsData?.data;
 
+  // Memoize the job item renderer for performance
+  const JobRow = useMemo(() => ({ index, style }: { index: number; style: CSSProperties }) => {
+    const job = displayedJobs[index];
+    if (!job) return null;
+
+    return (
+      <Box
+        style={style}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          px: 3,
+          py: 2,
+          borderBottom: `1px solid ${theme.palette.divider}`,
+          '&:hover': {
+            bgcolor: theme.palette.action.hover,
+          },
+          transition: 'background-color 0.2s ease-in-out',
+        }}
+      >
+        {/* Job Details */}
+        <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 2, minWidth: 300 }}>
+          <Avatar
+            sx={{
+              bgcolor: theme.palette.primary.main,
+              width: 32,
+              height: 32,
+            }}
+          >
+            <WorkIcon sx={{ fontSize: 16 }} />
+          </Avatar>
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography variant="subtitle2" fontWeight="medium" color="text.primary" noWrap>
+              {job.title}
+            </Typography>
+            {job.description && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }} noWrap>
+                {job.description.length > 60
+                  ? `${job.description.substring(0, 60)}...`
+                  : job.description}
+              </Typography>
+            )}
+          </Box>
+        </Box>
+
+        {/* Reward */}
+        <Box sx={{ width: 120, textAlign: 'center' }}>
+          <Typography variant="subtitle1" fontWeight="bold" color="success.main">
+            ${job.reward}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {job.currency}
+          </Typography>
+        </Box>
+
+        {/* Source */}
+        <Box sx={{ width: 100, textAlign: 'center', display: { xs: 'none', sm: 'block' } }}>
+          <Chip
+            label={job.source}
+            size="small"
+            sx={{
+              bgcolor: getSourceColor(job.source),
+              color: 'white',
+              fontWeight: 500,
+            }}
+          />
+        </Box>
+
+        {/* Posted */}
+        <Box sx={{ width: 140, textAlign: 'center', display: { xs: 'none', md: 'block' } }}>
+          <Typography variant="body2" color="text.secondary">
+            {formatTimestamp(job.timestamp)}
+          </Typography>
+        </Box>
+
+        {/* Actions */}
+        <Box sx={{ width: 80, textAlign: 'center' }}>
+          <IconButton
+            onClick={() => window.open(job.url, '_blank')}
+            sx={{
+              color: theme.palette.primary.main,
+              minWidth: 44,
+              minHeight: 44,
+              '&:hover': {
+                bgcolor: theme.palette.primary.main,
+                color: 'white',
+              },
+              '&:focus-visible': {
+                outline: '2px solid',
+                outlineColor: theme.palette.primary.main,
+                outlineOffset: 2,
+              },
+            }}
+            aria-label={`View job: ${job.title}`}
+          >
+            <LaunchIcon />
+          </IconButton>
+        </Box>
+      </Box>
+    );
+  }, [displayedJobs, theme, getSourceColor, formatTimestamp]);
+
   return (
     <Box sx={{ p: 3 }}>
       {/* Header */}
@@ -452,166 +551,128 @@ export function JobsContent() {
         </CardContent>
       </Card>
 
-      {/* Jobs Table */}
-      <Card sx={{ borderRadius: 3 }}>
-        <TableContainer component={Paper} sx={{ borderRadius: 3 }}>
-          <Table sx={{ minWidth: 650 }} aria-label="jobs table">
-            <TableHead>
-              <TableRow sx={{ bgcolor: theme.palette.action.hover }}>
-                <TableCell sx={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
-                  Job Details
-                </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
-                  Reward
-                </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
-                  Source
-                </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
-                  Posted
-                </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
-                  Actions
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {displayedJobs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} sx={{ textAlign: 'center', py: 8 }}>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <WorkIcon sx={{ fontSize: 48, color: theme.palette.text.disabled, mb: 2 }} />
-                      <Typography variant="h6" color="text.secondary" gutterBottom>
-                        No jobs found
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Try adjusting your filters or check back later for new opportunities.
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                displayedJobs.map((job: Job) => (
-                  <TableRow
-                    key={job.id}
-                    sx={{
-                      '&:hover': {
-                        bgcolor: theme.palette.action.hover,
-                      },
-                      transition: 'background-color 0.2s ease-in-out',
-                    }}
-                  >
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <Avatar
-                          sx={{
-                            bgcolor: theme.palette.primary.main,
-                            width: 32,
-                            height: 32,
-                          }}
-                        >
-                          <WorkIcon sx={{ fontSize: 16 }} />
-                        </Avatar>
-                        <Box>
-                          <Typography variant="subtitle2" fontWeight="medium" color="text.primary">
-                            {job.title}
-                          </Typography>
-                          {job.description && (
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                              {job.description.length > 60
-                                ? `${job.description.substring(0, 60)}...`
-                                : job.description}
-                            </Typography>
-                          )}
-                        </Box>
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="subtitle1" fontWeight="bold" color="success.main">
-                        ${job.reward}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {job.currency}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={job.source}
-                        size="small"
-                        sx={{
-                          bgcolor: getSourceColor(job.source),
-                          color: 'white',
-                          fontWeight: 500,
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {formatTimestamp(job.timestamp)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <IconButton
-                        size="small"
-                        onClick={() => window.open(job.url, '_blank')}
-                        sx={{
-                          color: theme.palette.primary.main,
-                          '&:hover': {
-                            bgcolor: theme.palette.primary.main,
-                            color: 'white',
-                          },
-                        }}
-                        aria-label={`View job: ${job.title}`}
-                      >
-                        <LaunchIcon />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-
-        {/* Pagination */}
-        {paginationData && paginationData.total_pages > 1 && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3, gap: 1 }}>
-            <Button
-              variant="outlined"
-              onClick={() => handlePageChange(paginationData.page - 1)}
-              disabled={paginationData.page <= 1}
-              sx={{ borderRadius: 2 }}
-            >
-              Previous
-            </Button>
-
-            {[...Array(Math.min(5, paginationData.total_pages))].map((_, i) => {
-              const pageNum = Math.max(1, Math.min(paginationData.total_pages - 4, paginationData.page - 2)) + i;
-              if (pageNum > paginationData.total_pages) return null;
-
-              return (
-                <Button
-                  key={pageNum}
-                  variant={pageNum === paginationData.page ? "contained" : "outlined"}
-                  onClick={() => handlePageChange(pageNum)}
-                  sx={{ borderRadius: 2, minWidth: 40 }}
-                >
-                  {pageNum}
-                </Button>
-              );
-            })}
-
-            <Button
-              variant="outlined"
-              onClick={() => handlePageChange(paginationData.page + 1)}
-              disabled={paginationData.page >= paginationData.total_pages}
-              sx={{ borderRadius: 2 }}
-            >
-              Next
-            </Button>
+      {/* Jobs list: mobile cards vs virtualized rows */}
+      {isMobile ? (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {displayedJobs.length === 0 ? (
+            <Card sx={{ borderRadius: 3 }}>
+              <Box sx={{ textAlign: 'center', py: 8 }}>
+                <WorkIcon sx={{ fontSize: 48, color: theme.palette.text.disabled, mb: 2 }} />
+                <Typography variant="h6" color="text.secondary" gutterBottom>
+                  No jobs found
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Try adjusting your filters or check back later for new opportunities.
+                </Typography>
+              </Box>
+            </Card>
+          ) : (
+            displayedJobs.map((job) => <MobileJobCard key={job.id} job={job} />)
+          )}
+        </Box>
+      ) : (
+        <Card sx={{ borderRadius: 3 }}>
+          {/* Header Row */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              px: 3,
+              py: 2,
+              bgcolor: theme.palette.action.hover,
+              borderBottom: `1px solid ${theme.palette.divider}`,
+            }}
+          >
+            <Box sx={{ flex: 1, minWidth: 300 }}>
+              <Typography variant="body2" fontWeight="bold" color="text.primary">
+                Job Details
+              </Typography>
+            </Box>
+            <Box sx={{ width: 120, textAlign: 'center' }}>
+              <Typography variant="body2" fontWeight="bold" color="text.primary">
+                Reward
+              </Typography>
+            </Box>
+            <Box sx={{ width: 100, textAlign: 'center', display: { xs: 'none', sm: 'block' } }}>
+              <Typography variant="body2" fontWeight="bold" color="text.primary">
+                Source
+              </Typography>
+            </Box>
+            <Box sx={{ width: 140, textAlign: 'center', display: { xs: 'none', md: 'block' } }}>
+              <Typography variant="body2" fontWeight="bold" color="text.primary">
+                Posted
+              </Typography>
+            </Box>
+            <Box sx={{ width: 80, textAlign: 'center' }}>
+              <Typography variant="body2" fontWeight="bold" color="text.primary">
+                Actions
+              </Typography>
+            </Box>
           </Box>
-        )}
-      </Card>
+
+          {/* Virtualized List */}
+          {displayedJobs.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 8 }}>
+              <WorkIcon sx={{ fontSize: 48, color: theme.palette.text.disabled, mb: 2 }} />
+              <Typography variant="h6" color="text.secondary" gutterBottom>
+                No jobs found
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Try adjusting your filters or check back later for new opportunities.
+              </Typography>
+            </Box>
+          ) : (
+            <List
+              height={600}
+              width="100%"
+              itemCount={displayedJobs.length}
+              itemSize={80}
+              overscanCount={5}
+            >
+              {JobRow}
+            </List>
+          )}
+
+          {/* Pagination */}
+          {paginationData && paginationData.total_pages > 1 && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 3, gap: 1 }}>
+              <Button
+                variant="outlined"
+                onClick={() => handlePageChange(paginationData.page - 1)}
+                disabled={paginationData.page <= 1}
+                sx={{ borderRadius: 2 }}
+              >
+                Previous
+              </Button>
+
+              {[...Array(Math.min(5, paginationData.total_pages))].map((_, i) => {
+                const pageNum = Math.max(1, Math.min(paginationData.total_pages - 4, paginationData.page - 2)) + i;
+                if (pageNum > paginationData.total_pages) return null;
+
+                return (
+                  <Button
+                    key={pageNum}
+                    variant={pageNum === paginationData.page ? 'contained' : 'outlined'}
+                    onClick={() => handlePageChange(pageNum)}
+                    sx={{ borderRadius: 2, minWidth: 40 }}
+                  >
+                    {pageNum}
+                  </Button>
+                );
+              })}
+
+              <Button
+                variant="outlined"
+                onClick={() => handlePageChange(paginationData.page + 1)}
+                disabled={paginationData.page >= paginationData.total_pages}
+                sx={{ borderRadius: 2 }}
+              >
+                Next
+              </Button>
+            </Box>
+          )}
+        </Card>
+      )}
     </Box>
   );
 }

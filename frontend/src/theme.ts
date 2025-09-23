@@ -3,6 +3,64 @@ import { useMemo } from "react";
 import { useState } from "react";
 import { createContext } from "react";
 
+// Extend MUI theme to include custom palette keys
+declare module '@mui/material/styles' {
+  interface Palette {
+    gray: {
+      10: string;
+      20: string;
+      30: string;
+      40: string;
+      50: string;
+      60: string;
+      70: string;
+      80: string;
+      90: string;
+      100: string;
+    };
+    brand: {
+      5: string;
+      10: string;
+      20: string;
+      30: string;
+      40: string;
+      50: string;
+      60: string;
+      70: string;
+      80: string;
+      90: string;
+      100: string;
+    };
+  }
+  interface PaletteOptions {
+    gray?: {
+      10: string;
+      20: string;
+      30: string;
+      40: string;
+      50: string;
+      60: string;
+      70: string;
+      80: string;
+      90: string;
+      100: string;
+    };
+    brand?: {
+      5: string;
+      10: string;
+      20: string;
+      30: string;
+      40: string;
+      50: string;
+      60: string;
+      70: string;
+      80: string;
+      90: string;
+      100: string;
+    };
+  }
+}
+
 // Carbon Design System Color Palette - Kyros Branded
 export const tokens = (mode: "light" | "dark") => ({
   ...(mode === "dark"
@@ -22,6 +80,7 @@ export const tokens = (mode: "light" | "dark") => ({
         },
         // Kyros brand colors - Deep Purple/Indigo theme
         brand: {
+          5: "#fafaff",   // Added missing key
           10: "#f6f6ff",
           20: "#e6e6ff",
           30: "#d1d1ff",
@@ -115,6 +174,7 @@ export const tokens = (mode: "light" | "dark") => ({
         },
         // Kyros brand colors - Light theme
         brand: {
+          5: "#fafaff",   // Added missing key
           10: "#f6f6ff",
           20: "#e6e6ff",
           30: "#d1d1ff",
@@ -196,6 +256,9 @@ export const themeSettings = (mode: "light" | "dark") => {
   return {
     palette: {
       mode: mode,
+      // Add custom colors to palette
+      gray: colors.gray,
+      brand: colors.brand,
       ...(mode === "dark"
         ? {
             // Dark theme using Carbon colors

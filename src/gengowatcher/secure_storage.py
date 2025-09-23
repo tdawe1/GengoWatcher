@@ -9,11 +9,42 @@ from pathlib import Path
 from typing import Optional
 
 
+def _default_data_dir() -> Path:
+    """Resolve a stable data directory regardless of CWD.
+
+    Priority:
+    1. $GENGOWATCHER_DATA_DIR if set
+    2. Git repo root (parent of src), if detectable
+    3. XDG config home: ~/.config/GengoWatcher
+    """
+    # 1) explicit env override
+    env = os.getenv("GENGOWATCHER_DATA_DIR")
+    if env:
+        p = Path(env).expanduser()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    # 2) repo root (…/GengoWatcher)
+    here = Path(__file__).resolve()
+    # this file is .../src/gengowatcher/secure_storage.py -> parents[2] should be repo root
+    candidate = here.parents[2]
+    if candidate.joinpath('.git').exists() or candidate.joinpath('src').exists():
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+    # 3) XDG config
+    xdg = Path(os.getenv('XDG_CONFIG_HOME', Path.home() / '.config')) / 'GengoWatcher'
+    xdg.mkdir(parents=True, exist_ok=True)
+    return xdg
+
+
 class SecureKeyStorage:
     """Securely stores and retrieves API keys using encryption"""
     
     def __init__(self, storage_file: str = "captcha_keys.json", logger: logging.Logger = None):
-        self.storage_file = Path(storage_file)
+        # Resolve to a stable absolute path (repo root or XDG), not CWD
+        storage_path = Path(storage_file)
+        if not storage_path.is_absolute():
+            storage_path = _default_data_dir() / storage_path.name
+        self.storage_file = storage_path
         self.logger = logger or logging.getLogger(__name__)
         self._key = self._derive_key()
         self._cipher = Fernet(self._key)

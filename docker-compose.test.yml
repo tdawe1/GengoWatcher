@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  mock-gengo:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock
+    ports:
+      - "3000:3000"
+    environment:
+      - MOCK_SCENARIO=normal_flow
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - gengo-test
+
+  gengowatcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mock-gengo:
+        condition: service_healthy
+    environment:
+      - GENGOWATCHER_FEED_URL=http://mock-gengo:3000/rss/jobs
+      - GENGOWATCHER_WEBSOCKET_URL=ws://mock-gengo:3000/ws/jobs
+      - GENGOWATCHER_AUTO_ACCEPT_ENABLED=true
+      - GENGOWATCHER_CANCELLATION_ENABLED=true
+      - GENGOWATCHER_MIN_REWARD=5.0
+      - GENGOWATCHER_CANCELLATION_RATIO=2.0
+    volumes:
+      - ./logs:/app/logs
+      - ./state.json:/app/state.json
+    networks:
+      - gengo-test
+    command: ["python", "-m", "gengowatcher.main", "--no-tui"]
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      - mock-gengo
+      - gengowatcher
+    environment:
+      - MOCK_SERVER_URL=http://mock-gengo:3000
+    volumes:
+      - ./test_results:/app/test_results
+    networks:
+      - gengo-test
+    command: ["python", "scripts/test_integration_scenarios.py"]
+
+networks:
+  gengo-test:
+    driver: bridge</content>
+</xai:function_call"> <parameter name="filePath">docker-compose.test.yml

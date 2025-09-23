@@ -130,28 +130,148 @@ jobs:
           export PYTHONPATH=.
           pytest --cov=src/gengowatcher/captcha_solver --cov=src/gengowatcher/captcha_manager --cov=src/gengowatcher/secure_storage --cov=src/gengowatcher/captcha_cli --cov-report=term-missing --cov-fail-under=85
 
-  integration:
-    runs-on: ubuntu-latest
-    name: Integration Tests
-    needs: [test]
-    if: github.event_name == 'push'
+   integration:
+     runs-on: ubuntu-latest
+     name: Integration Tests
+     needs: [test]
+     if: github.event_name == 'push'
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+     steps:
+       - name: Checkout code
+         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+       - name: Set up Python
+         uses: actions/setup-python@v5
+         with:
+           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+       - name: Install dependencies
+         run: |
+           python -m pip install --upgrade pip
+           pip install -r requirements-dev.txt
 
-      - name: Run integration tests
-        run: |
-          export PYTHONPATH=.
-          pytest -m integration -v
-        continue-on-error: true
+       - name: Run integration tests
+         run: |
+           export PYTHONPATH=.
+           pytest -m integration -v
+         continue-on-error: true
+
+e2e:
+  runs-on: ubuntu-latest
+  name: E2E Tests
+  needs: [test]
+  if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+     steps:
+       - name: Checkout code
+         uses: actions/checkout@v4
+
+       - name: Set up Python
+         uses: actions/setup-python@v5
+         with:
+           python-version: '3.11'
+
+       - name: Set up Node.js
+         uses: actions/setup-node@v4
+         with:
+           node-version: '18'
+           cache: 'npm'
+           cache-dependency-path: frontend/package-lock.json
+
+       - name: Install Python dependencies
+         run: |
+           python -m pip install --upgrade pip
+           pip install -r requirements.txt
+           pip install -r requirements-dev.txt
+
+       - name: Install Node.js dependencies
+         run: |
+           cd frontend
+           npm ci
+
+       - name: Build frontend
+         run: |
+           cd frontend
+           npm run build
+
+       - name: Start backend service
+         run: |
+           export PYTHONPATH=.
+           python -m gengowatcher.web &
+           echo $! > backend.pid
+           timeout 30 bash -c 'until curl -f http://localhost:8001/api/health; do sleep 1; done' || true
+
+       - name: Start frontend dev server
+         run: |
+           cd frontend
+           export VITE_API_URL=http://localhost:8001
+           npm run dev &
+           echo $! > frontend.pid
+           timeout 30 bash -c 'until curl -f http://localhost:5173; do sleep 1; done' || true
+
+       - name: Run E2E tests
+         run: |
+           cd frontend
+           export CYPRESS_BASE_URL=http://localhost:5173
+           export CYPRESS_API_URL=http://localhost:8001
+           export CYPRESS_WEBSOCKET_URL=ws://localhost:8001
+           npm run test:e2e
+         continue-on-error: true
+
+       - name: Upload E2E test artifacts
+         uses: actions/upload-artifact@v4
+         if: always()
+         with:
+           name: e2e-artifacts-${{ github.run_number }}
+           path: |
+             frontend/cypress/screenshots/
+             frontend/cypress/videos/
+             frontend/cypress/results/
+           retention-days: 7
+
+       - name: Stop services
+         run: |
+           if [ -f backend.pid ]; then
+             kill $(cat backend.pid) || true
+             rm backend.pid
+           fi
+           if [ -f frontend.pid ]; then
+             kill $(cat frontend.pid) || true
+             rm frontend.pid
+           fi
+         if: always()
+
+   visual-regression:
+     runs-on: ubuntu-latest
+     name: Visual Regression Tests
+     needs: [e2e]
+     if: github.event_name == 'pull_request'
+
+     steps:
+       - name: Checkout code
+         uses: actions/checkout@v4
+
+       - name: Download E2E artifacts
+         uses: actions/download-artifact@v4
+         with:
+           name: e2e-artifacts-${{ github.run_number }}
+           path: frontend/cypress/screenshots/
+
+       - name: Install visual regression tools
+         run: |
+           cd frontend
+           npm install --save-dev pixelmatch pngjs
+
+       - name: Run visual regression comparison
+         run: |
+           cd frontend
+           node scripts/visual-regression-check.js
+         continue-on-error: true
+
+       - name: Upload visual regression results
+         uses: actions/upload-artifact@v4
+         if: always()
+         with:
+           name: visual-regression-results-${{ github.run_number }}
+           path: frontend/visual-regression-results/
+           retention-days: 7

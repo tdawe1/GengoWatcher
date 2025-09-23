@@ -15,7 +15,9 @@ import {
   Chip,
   IconButton,
   useTheme,
+  useMediaQuery,
 } from '@mui/material';
+import { Tooltip } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
   Work as WorkIcon,
@@ -23,11 +25,18 @@ import {
   Assessment as AssessmentIcon,
   Logout as LogoutIcon,
   Close as CloseIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
   TrendingUp as TrendingUpIcon,
 } from '@mui/icons-material';
 
 export function Sidebar() {
   const theme = useTheme();
+  const isMdDown = useMediaQuery(theme.breakpoints.down('md'));
+  const isLgDown = useMediaQuery(theme.breakpoints.down('lg'));
+  const { sidebarCompact, toggleSidebarCompact } = useUiState();
+  const sidebarWidth = isMdDown ? 60 : sidebarCompact ? 60 : isLgDown ? 240 : 288;
+  const compact = sidebarWidth <= 60;
   const { logout } = useAuth();
   const { sidebarOpen, activeTab, setActiveTab, toggleSidebar } = useUiState();
   const { status } = useAppState();
@@ -61,7 +70,7 @@ export function Sidebar() {
   ];
 
   const drawerContent = (
-    <Box sx={{ width: 288, height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ width: sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <Box
         sx={{
@@ -80,26 +89,40 @@ export function Sidebar() {
               bgcolor: 'rgba(255, 255, 255, 0.2)',
               width: 40,
               height: 40,
-              mr: 2,
+              mr: compact ? 0 : 2,
             }}
           >
             <TrendingUpIcon />
           </Avatar>
-          <Box>
-            <Typography variant="h6" fontWeight="bold">
-              GengoWatcher
-            </Typography>
-            <Typography variant="caption" sx={{ opacity: 0.8 }}>
-              Admin Dashboard
-            </Typography>
-          </Box>
+          {!compact && (
+            <Box sx={{ transition: 'opacity 200ms ease' }}>
+              <Typography variant="h6" fontWeight="bold">
+                GengoWatcher
+              </Typography>
+              <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                Admin Dashboard
+              </Typography>
+            </Box>
+          )}
         </Box>
-        <IconButton
-          onClick={toggleSidebar}
-          sx={{ color: 'white', display: { lg: 'none' } }}
-        >
-          <CloseIcon />
-        </IconButton>
+        <Box>
+          {/* Mobile close */}
+          <IconButton
+            onClick={toggleSidebar}
+            sx={{ color: 'white', display: { lg: 'none' } }}
+            aria-label="Close sidebar"
+          >
+            <CloseIcon />
+          </IconButton>
+          {/* Desktop compact toggle */}
+          <IconButton
+            onClick={toggleSidebarCompact}
+            sx={{ color: 'white', display: { xs: 'none', lg: 'inline-flex' } }}
+            aria-label={sidebarCompact ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCompact ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+          </IconButton>
+        </Box>
       </Box>
 
       {/* Status indicator */}
@@ -154,32 +177,41 @@ export function Sidebar() {
 
       {/* Navigation */}
       <List sx={{ flex: 1, p: 2 }}>
-        {navigation.map((item) => (
-          <ListItem key={item.key} disablePadding sx={{ mb: 1 }}>
+        {navigation.map((item) => {
+          const button = (
             <ListItemButton
               onClick={() => setActiveTab(item.key)}
               selected={activeTab === item.key}
               sx={{
                 borderRadius: 0,
+                minHeight: 44,
                 '&.Mui-selected': {
                   bgcolor: theme.palette.primary.main,
                   color: 'white',
-                  '&:hover': {
-                    bgcolor: theme.palette.primary.dark,
-                  },
-                  '& .MuiListItemIcon-root': {
-                    color: 'white',
-                  },
+                  '&:hover': { bgcolor: theme.palette.primary.dark },
+                  '& .MuiListItemIcon-root': { color: 'white' },
                 },
               }}
+              aria-label={compact ? item.name : undefined}
             >
-              <ListItemIcon sx={{ minWidth: 40 }}>
+              <ListItemIcon sx={{ minWidth: 40, justifyContent: 'center' }}>
                 <item.icon />
               </ListItemIcon>
-              <ListItemText primary={item.name} />
+              {!compact && <ListItemText primary={item.name} />}
             </ListItemButton>
-          </ListItem>
-        ))}
+          );
+          return (
+            <ListItem key={item.key} disablePadding sx={{ mb: 1 }}>
+              {compact ? (
+                <Tooltip title={item.name} placement="right">
+                  {button}
+                </Tooltip>
+              ) : (
+                button
+              )}
+            </ListItem>
+          );
+        })}
       </List>
 
       <Divider />
@@ -187,7 +219,9 @@ export function Sidebar() {
       {/* Footer */}
       <Box sx={{ p: 3, borderTop: `1px solid ${theme.palette.divider}` }}>
         <Box sx={{ mb: 3 }}>
-          <ThemeToggle />
+          <Tooltip title="Theme" placement="right">
+            <span><ThemeToggle /></span>
+          </Tooltip>
         </Box>
 
         {/* User info */}
@@ -222,22 +256,39 @@ export function Sidebar() {
           </Box>
         </Box>
 
-        <Button
-          onClick={logout}
-          fullWidth
-          startIcon={<LogoutIcon />}
-          sx={{
-            borderRadius: 0,
-            textTransform: 'none',
-            color: theme.palette.text.primary,
-            '&:hover': {
-              bgcolor: theme.palette.error.main,
-              color: 'white',
-            },
-          }}
-        >
-          Logout
-        </Button>
+        {compact ? (
+          <Tooltip title="Logout" placement="right">
+            <Button
+              onClick={logout}
+              fullWidth
+              startIcon={<LogoutIcon />}
+              sx={{
+                borderRadius: 0,
+                textTransform: 'none',
+                color: theme.palette.text.primary,
+                '&:hover': { bgcolor: theme.palette.error.main, color: 'white' },
+                minHeight: 44,
+              }}
+            >
+              Logout
+            </Button>
+          </Tooltip>
+        ) : (
+          <Button
+            onClick={logout}
+            fullWidth
+            startIcon={<LogoutIcon />}
+            sx={{
+              borderRadius: 0,
+              textTransform: 'none',
+              color: theme.palette.text.primary,
+              '&:hover': { bgcolor: theme.palette.error.main, color: 'white' },
+              minHeight: 44,
+            }}
+          >
+            Logout
+          </Button>
+        )}
       </Box>
     </Box>
   );
@@ -268,7 +319,12 @@ export function Sidebar() {
           display: { xs: 'none', lg: 'block' },
           '& .MuiDrawer-paper': {
             position: 'relative',
+            transition: (theme) => theme.transitions.create('width', { duration: theme.transitions.duration.standard }),
+            width: sidebarWidth,
             borderRight: `1px solid ${theme.palette.divider}`,
+            '@media (prefers-reduced-motion: reduce)': {
+              transition: 'none',
+            },
           },
         }}
       >
@@ -283,7 +339,11 @@ export function Sidebar() {
         sx={{
           display: { xs: 'block', lg: 'none' },
           '& .MuiDrawer-paper': {
-            width: 288,
+            width: sidebarWidth,
+            transition: (theme) => theme.transitions.create('width', { duration: theme.transitions.duration.standard }),
+            '@media (prefers-reduced-motion: reduce)': {
+              transition: 'none',
+            },
           },
         }}
         ModalProps={{
