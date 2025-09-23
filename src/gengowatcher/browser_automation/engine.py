@@ -1,7 +1,7 @@
 """
-Browser Automation Engine for GengoWatcher
-Handles automatic job acceptance through browser automation with CAPTCHA solving capabilities.
-"""
+ Browser Automation Engine for GengoWatcher
+ Handles automatic job acceptance through browser automation with CAPTCHA solving capabilities.
+ """
 
 import os
 import random
@@ -331,12 +331,12 @@ class BrowserAutomationEngine:
                     rr_max = 300
                 if rr_max < rr_min:
                     rr_max = rr_min
-                def _next_refresh_from(now: float) -> float:
+                def _calculate_next_refresh_time(now: float) -> float:
                     if rr_min <= 0:
                         return float('inf')
                     return now + random.uniform(max(1.0, float(rr_min)), max(1.0, float(rr_max)))
 
-                next_refresh = _next_refresh_from(time.time())
+                next_refresh = _calculate_next_refresh_time(time.time())
 
                 while True:
                     try:
@@ -401,7 +401,7 @@ class BrowserAutomationEngine:
                                     )
                             except Exception:
                                 pass
-                            next_refresh = _next_refresh_from(now)
+                            next_refresh = _calculate_next_refresh_time(now)
                     except Exception:
                         pass
                     time.sleep(interval_sec)
@@ -665,7 +665,7 @@ class BrowserAutomationEngine:
                 pp = Path(str(profile_path))
                 if pp.exists():
                     chrome_options.add_argument(f"--user-data-dir={pp}")
-                    self.logger.info(f"Using Chrome user-data-dir for Selenium: {pp}\n")
+                    self.logger.info(f"Using Chrome user-data-dir for Selenium: {pp}")
         except Exception:
             # Non-fatal; proceed without profile
             pass
