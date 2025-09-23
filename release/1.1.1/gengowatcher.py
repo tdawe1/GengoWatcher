@@ -78,7 +78,7 @@ class GengoWatcher:
 
         self._setup_logging()
         self._setup_signal_handlers()
-        self.last_error_message = "None"
+        self.last_error_message = None
 
         self.logger.info("-" * 40)
         self.logger.info("GengoWatcher Initialized with Settings:")
@@ -261,8 +261,7 @@ class GengoWatcher:
         # Simplified check for sound and vivaldi, relying on the config parsing setting Path objects
         sound_enabled = bool(self.config["Paths"]["sound_file"] and self.config["Paths"]["sound_file"].is_file())
         vivaldi_configured = bool(self.config["Paths"]["vivaldi_path"] and self.config["Paths"]["vivaldi_path"].is_file())
-        # url_opening_enabled = True # This line can be removed as it's always true currently
-        last_error = getattr(self, 'last_error_message', "None") # You're not setting this, see suggestion below
+        last_error = self.last_error_message or "None"
         uptime_seconds = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
         uptime_str = str(datetime.timedelta(seconds=uptime_seconds))
 
@@ -293,7 +292,10 @@ class GengoWatcher:
             if feed.bozo:
                 self.logger.warning(f"Malformed feed or parsing error: {feed.bozo_exception}")
                 if not hasattr(feed, 'entries') or not feed.entries:
+                    bozo_exception = getattr(feed, 'bozo_exception', 'Unknown parsing error')
+                    self.last_error_message = str(bozo_exception)
                     return None  # Treat as failure only if entries are truly missing
+            self.last_error_message = None
             return feed
         except Exception as e:
             self.logger.error(f"RSS fetch error: {e}")
