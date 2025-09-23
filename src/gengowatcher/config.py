@@ -189,14 +189,22 @@ class AppConfig:
                 # Normalize relative Paths to absolute project-root-based paths
                 try:
                     paths = self.config.get("Paths", {})
-                    for key in ("log_file", "all_entries_log", "sound_file", "notification_icon_path", "browser_path"):
+                    for key in (
+                        "log_file",
+                        "all_entries_log",
+                        "sound_file",
+                        "notification_icon_path",
+                        "browser_path",
+                    ):
                         val = paths.get(key)
                         if isinstance(val, str) and val.strip():
                             absval = self._resolve_path(val)
-                            self.config["Paths"][key] = absval
-                            # keep parser in sync for persistence
-                            self._config_parser.set("Paths", key, absval)
-                            config_modified = True
+                            if absval != val:
+                                self.config["Paths"][key] = absval
+                                # keep parser in sync for persistence
+                                self._config_parser.set("Paths", key, absval)
+                                config_modified = True
+                                normalized_paths = True
                 except Exception:
                     pass
 
@@ -205,7 +213,15 @@ class AppConfig:
                     try:
                         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                             self._config_parser.write(f)
-                        print(f"Config file updated with missing/normalized paths")
+                        if added_defaults and normalized_paths:
+                            message = "Config file updated with missing sections/options and normalized paths"
+                        elif added_defaults:
+                            message = "Config file updated with missing sections/options"
+                        elif normalized_paths:
+                            message = "Config file paths normalized to absolute locations"
+                        else:
+                            message = "Config file updated"
+                        print(message)
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 
