@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../lib/store';
 import { apiClient } from '../lib/api';
 import {
@@ -11,8 +11,8 @@ import {
   Alert,
   CircularProgress,
   Chip,
-  useTheme,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 
 interface LoginFormProps {
   error?: string | null;
@@ -26,7 +26,8 @@ export function LoginForm({ error }: LoginFormProps) {
   const [loginError, setLoginError] = useState<string | null>(error || null);
   const [isAutoLoading, setIsAutoLoading] = useState(true);
 
-  // Auto-login on component mount
+  // Auto-login on component mount (commented out for manual token entry)
+  /*
   useEffect(() => {
     const autoLogin = async () => {
       try {
@@ -53,6 +54,12 @@ export function LoginForm({ error }: LoginFormProps) {
 
     autoLogin();
   }, [login]);
+  */
+
+  // Skip auto-login - use manual token entry only
+  useEffect(() => {
+    setIsAutoLoading(false);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

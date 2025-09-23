@@ -190,7 +190,19 @@ export function DashboardContent() {
                 >
                   <RefreshIcon sx={{ fontSize: 24 }} />
                 </Box>
-                <IconButton size="small" sx={{ color: 'white' }}>
+                <IconButton
+                  size="small"
+                  sx={{
+                    color: 'white',
+                    minWidth: 44,
+                    minHeight: 44,
+                    '&:focus-visible': {
+                      outline: '2px solid',
+                      outlineColor: 'white',
+                      outlineOffset: 2,
+                    },
+                  }}
+                >
                   <TrendingUpIcon />
                 </IconButton>
               </Box>
@@ -373,9 +385,16 @@ export function DashboardContent() {
                     size="small"
                     sx={{
                       color: theme.palette.primary.main,
+                      minWidth: 44,
+                      minHeight: 44,
                       '&:hover': {
                         bgcolor: theme.palette.primary.main,
                         color: 'white',
+                      },
+                      '&:focus-visible': {
+                        outline: '2px solid',
+                        outlineColor: theme.palette.primary.main,
+                        outlineOffset: 2,
                       },
                     }}
                     onClick={() => window.open(job.url, '_blank')}

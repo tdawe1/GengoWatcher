@@ -1,0 +1,27 @@
+# Mock Gengo Server
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir fastapi uvicorn websockets
+
+# Copy mock server
+COPY scripts/mock_gengo_server.py .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Expose port
+EXPOSE 3000
+
+# Default command
+CMD ["python", "mock_gengo_server.py", "--host", "0.0.0.0", "--port", "3000"]</content>
+</xai:function_call"> <parameter name="filePath">Dockerfile.mock

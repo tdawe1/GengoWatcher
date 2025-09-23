@@ -17,8 +17,12 @@ class CaptchaServicePlugin(BaseCaptchaSolver):
     """Abstract base class for CAPTCHA service plugins"""
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger = None):
-        # Extract service identifier from class name or configuration
-        self.service_identifier = self.__class__.__name__.replace('SolverPlugin', '').replace('Solver', '').lower()
+        # Respect pre-set identifier from adapters; otherwise derive from class name
+        pre = getattr(self, 'service_identifier', None)
+        if isinstance(pre, str) and pre.strip():
+            self.service_identifier = pre.strip()
+        else:
+            self.service_identifier = self.__class__.__name__.replace('SolverPlugin', '').replace('Solver', '').lower()
         
         # Get API key from secure storage
         storage = SecureKeyStorage(logger=logger)

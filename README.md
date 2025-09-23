@@ -77,6 +77,60 @@ pip install -r requirements.txt
 
 ---
 
+## ⚙️ First-Time Setup & Configuration
+
+GengoWatcher includes an **interactive configuration system** that guides you through setting up the application for the first time.
+
+### 🚀 Quick Start (Recommended)
+
+1. **Run GengoWatcher for the first time:**
+   ```bash
+   python -m gengowatcher.main
+   ```
+
+2. **If this is your first run**, GengoWatcher will automatically create a default `config.ini` file and prompt you to configure essential settings interactively.
+
+3. **Follow the on-screen prompts** to set up:
+   - Your Gengo session token
+   - User ID
+   - Minimum job reward threshold
+   - Notification preferences
+   - CAPTCHA solver settings (if using auto-acceptance)
+
+### 🔧 Manual Configuration
+
+You can also configure GengoWatcher manually:
+
+```bash
+# Interactive configuration (recommended)
+python -m gengowatcher.main --configure
+
+# View current configuration
+python -m gengowatcher.main --list
+
+# Set individual config values
+python -m gengowatcher.main --set WebSocket user_session YOUR_SESSION_TOKEN
+```
+
+### 📝 What Gets Configured
+
+The interactive setup will prompt you for:
+
+- **WebSocket Settings**: Your Gengo session token and user ID
+- **Job Filtering**: Minimum reward threshold and check intervals
+- **Notifications**: Desktop alerts and sound preferences
+- **CAPTCHA Solving**: API keys for automated job acceptance
+- **Browser Settings**: Path to your preferred browser
+
+### 💡 Pro Tips
+
+- **Session Token**: Find this in your browser's developer tools (Network tab) when logged into Gengo
+- **User ID**: Your numeric Gengo user ID
+- **Reconfigure Later**: Use `--configure` anytime to change settings
+- **No More Crashes**: The app now guides you through setup instead of crashing on missing config
+
+---
+
 ## ⚙️ Usage
 
 **1. Launch the Application**
@@ -280,7 +334,7 @@ Type commands directly into the TUI and press `Enter` to execute them.
 This application uses a Text-Based User Interface (TUI) which draws and redraws itself rapidly. Older terminals (like the default `cmd.exe` or `powershell.exe` on Windows) may struggle to keep up, causing flickering or graphical glitches.
 
 **Solution**: Use a modern, hardware-accelerated terminal for the best experience.
--   **Windows**: [**Windows Terminal**](https://aka.ms/terminal) (recommended, available on the Microsoft Store)
+-   **Windows**: [**Windows Terminal**](https://aka.ms/terminal) 
 -   **macOS**: [**iTerm2**](https://iterm2.com/)
 -   **Linux/Cross-Platform**: [**Alacritty**](https://alacritty.org/), [**Kitty**](https://sw.kovidgoyal.net/kitty/)
 
@@ -299,6 +353,12 @@ If CAPTCHA solving isn't working:
 2. Check your service balance
 3. Ensure you haven't exceeded rate limits
 4. Try resetting with `captchareset`
+
+---
+
+## 🔐 Upcoming Enhancements
+
+- **Multi-user authentication**: Plan to layer FastAPI + PostgreSQL auth. We'll swap the current in-memory `HTTPBearer` gate for JWT-backed logins (email/password hashed with Argon2 in Postgres), reuse the React login flow against `/api/auth/login`, and pass the same bearer token during WebSocket upgrades. This aligns with the shared Postgres stack while keeping existing client behavior.
 
 ---
 

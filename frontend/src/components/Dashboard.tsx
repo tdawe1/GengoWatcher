@@ -1,13 +1,17 @@
-import { useEffect } from 'react';
+import { useEffect, Suspense, lazy } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth, useUiState, useAppState } from '../lib/store';
 import { apiClient, StatusWebSocket } from '../lib/api';
 import { Box } from '@mui/material';
 import { Sidebar } from './Sidebar';
-import { DashboardContent } from './DashboardContent';
-import { JobsContent } from './JobsContent';
-import { SettingsContent } from './SettingsContent';
-import { StatsContent } from './StatsContent';
+import { MobileBottomNav } from './MobileBottomNav';
+import { LoadingFallback } from './LoadingFallback';
+
+// Lazy load components for code splitting
+const DashboardContent = lazy(() => import('./DashboardContent').then(module => ({ default: module.DashboardContent })));
+const JobsContent = lazy(() => import('./JobsContent').then(module => ({ default: module.JobsContent })));
+const SettingsContent = lazy(() => import('./SettingsContent').then(module => ({ default: module.SettingsContent })));
+const StatsContent = lazy(() => import('./StatsContent').then(module => ({ default: module.StatsContent })));
 
 export function Dashboard() {
   const { token } = useAuth();
@@ -69,17 +73,38 @@ export function Dashboard() {
   }, [token, setStatus, setError]);
 
   const renderContent = () => {
+
     switch (activeTab) {
       case 'dashboard':
-        return <DashboardContent />;
+        return (
+          <Suspense fallback={<LoadingFallback />}>
+            <DashboardContent />
+          </Suspense>
+        );
       case 'jobs':
-        return <JobsContent />;
+        return (
+          <Suspense fallback={<LoadingFallback />}>
+            <JobsContent />
+          </Suspense>
+        );
       case 'settings':
-        return <SettingsContent />;
+        return (
+          <Suspense fallback={<LoadingFallback />}>
+            <SettingsContent />
+          </Suspense>
+        );
       case 'stats':
-        return <StatsContent />;
+        return (
+          <Suspense fallback={<LoadingFallback />}>
+            <StatsContent />
+          </Suspense>
+        );
       default:
-        return <DashboardContent />;
+        return (
+          <Suspense fallback={<LoadingFallback />}>
+            <DashboardContent />
+          </Suspense>
+        );
     }
   };
 
@@ -87,12 +112,13 @@ export function Dashboard() {
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <Box sx={{ display: 'flex' }}>
         <Sidebar />
-        <Box component="main" sx={{ flex: 1, overflow: 'auto' }}>
+        <Box component="main" sx={{ flex: 1, overflow: 'auto', pb: { xs: '72px', lg: 0 } }}>
           <Box sx={{ p: 3 }}>
             {renderContent()}
           </Box>
         </Box>
       </Box>
+      <MobileBottomNav />
     </Box>
   );
 }

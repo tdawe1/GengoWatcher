@@ -1,27 +1,8 @@
 {
-    "last_seen_rss_link": "https://gengo.com/t/jobs/details/33881856?referral=rss",
-    "last_seen_link": "https://gengo.com/t/jobs/details/33829948?referral=rss",
-    "total_new_entries_found": 717,
+    "last_seen_rss_link": "https://gengo.com/t/jobs/details/33884079?referral=rss",
+    "last_seen_link": "https://gengo.com/t/jobs/details/33884079?referral=rss",
+    "total_new_entries_found": 736,
     "seen_job_ids": [
-        33876795,
-        33876969,
-        33877087,
-        1757517673,
-        33877402,
-        33868641,
-        33877430,
-        33877431,
-        33877432,
-        33877433,
-        33877434,
-        33877435,
-        33877458,
-        33877459,
-        33877460,
-        33877461,
-        33877465,
-        33877469,
-        33877470,
         33877481,
         33878597,
         33878673,
@@ -52,9 +33,199 @@
         33879197,
         33879210,
         33881856,
-        33881869
+        33881869,
+        33883786,
+        33883801,
+        33883805,
+        33883821,
+        33883823,
+        33883828,
+        33883829,
+        33883846,
+        33883847,
+        33883858,
+        33883862,
+        33883903,
+        33883905,
+        33883937,
+        33883984,
+        33883992,
+        33883996,
+        33884079,
+        33884092
     ],
     "jobs": [
+        {
+            "id": "33884092",
+            "title": "ja > en",
+            "reward": 4.04,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33884092",
+            "timestamp": 1758285515.6280518,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33884079",
+            "title": "ja > en",
+            "reward": 8.11,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33884079",
+            "timestamp": 1758285163.1260521,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883996",
+            "title": "(Standard) | [[[The Movie: You and Idol Precure\u266a]]] \u304a | 170 chars | Reward: US$3.40 | Japanese/English",
+            "reward": 3.4,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883996?referral=rss",
+            "timestamp": 1758281377.9392102,
+            "source": "RSS"
+        },
+        {
+            "id": "33883992",
+            "title": "ja > en",
+            "reward": 1.1,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883992",
+            "timestamp": 1758280952.843977,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883984",
+            "title": "ja > en",
+            "reward": 4.46,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883984",
+            "timestamp": 1758280205.1420918,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883937",
+            "title": "(Standard) | [[[\uff1c\u540d\u524d\uff1e]]]\u8a95\u751f\u65e5\u304a\u3081\u3067\u3068\u3046[[[\uff01\ud83c\udf89]]]\n\u306a\u308b\u3082[[[\uff1c\u540d\u524d\uff1e]]] | 263 chars | Reward: US$5.26 | Japanese/English",
+            "reward": 5.26,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883937?referral=rss",
+            "timestamp": 1758279202.64355,
+            "source": "RSS"
+        },
+        {
+            "id": "33883905",
+            "title": "ja > en",
+            "reward": 102.29,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883905",
+            "timestamp": 1758274340.2283268,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883903",
+            "title": "ja > en",
+            "reward": 25.01,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883903",
+            "timestamp": 1758273285.9234142,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883862",
+            "title": "ja > en",
+            "reward": 49.92,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883862",
+            "timestamp": 1758271788.925728,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883858",
+            "title": "ja > en",
+            "reward": 6.8,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883858",
+            "timestamp": 1758270667.4442298,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883847",
+            "title": "ja > en",
+            "reward": 10.8,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883847",
+            "timestamp": 1758270269.96189,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883846",
+            "title": "ja > en",
+            "reward": 30.77,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883846",
+            "timestamp": 1758270149.9614167,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883829",
+            "title": "ja > en",
+            "reward": 17.5,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883829",
+            "timestamp": 1758268785.946992,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883828",
+            "title": "ja > en",
+            "reward": 26.35,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883828",
+            "timestamp": 1758268651.2351582,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883823",
+            "title": "ja > en",
+            "reward": 24.38,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883823",
+            "timestamp": 1758265757.4451106,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883821",
+            "title": "ja > en",
+            "reward": 8.02,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883821",
+            "timestamp": 1758265088.4647975,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883805",
+            "title": "ja > en",
+            "reward": 84.48,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883805",
+            "timestamp": 1758262501.966968,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33883801",
+            "title": "(Standard) | [[[auth_message]]]\n\u30c1\u30a7\u30c3\u30af\u30a2\u30a6\u30c8\u524d\u306b\u30b9\u30de\u30fc\u30c8\u30d5\u30a9\u30f3\u3067\u3054\u7cbe\u7b97\u3044 | 146 chars | Reward: US$2.92 | Japanese/English",
+            "reward": 2.92,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883801?referral=rss",
+            "timestamp": 1758259120.3636491,
+            "source": "RSS"
+        },
+        {
+            "id": "33883786",
+            "title": "ja > en",
+            "reward": 43.26,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33883786",
+            "timestamp": 1758252325.3595965,
+            "source": "WebSocket"
+        },
         {
             "id": "33881869",
             "title": "ja > en",

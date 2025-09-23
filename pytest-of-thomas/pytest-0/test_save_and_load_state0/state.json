@@ -1,0 +1,11 @@
+{
+    "last_seen_rss_link": null,
+    "last_seen_link": "http://example.com/job1",
+    "total_new_entries_found": 42,
+    "seen_job_ids": [
+        101,
+        102,
+        103
+    ],
+    "jobs": []
+}

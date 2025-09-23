@@ -1,0 +1,49 @@
+{
+    "last_seen_rss_link": "https://gengo.com/t/jobs/details/33884417?referral=rss",
+    "last_seen_link": "https://gengo.com/t/jobs/details/33884417?referral=rss",
+    "total_new_entries_found": 4,
+    "seen_job_ids": [
+        33882075,
+        33882088,
+        33882361,
+        33884417
+    ],
+    "jobs": [
+        {
+            "id": "33884417",
+            "title": "(Pro) | \u30ad\u30e3\u30c3\u30b7\u30e5\u30ec\u30b9\u652f\u6255\u3044\u9650\u5b9a\u30d0\u30b9 | 14 chars | Reward: US$0.67 | Japanese/English",
+            "reward": 0.67,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33884417?referral=rss",
+            "timestamp": 1758348459.762537,
+            "source": "RSS"
+        },
+        {
+            "id": "33882361",
+            "title": "(Pro) | Beautiful_struggle_JPtoCN.xlsx | 583 chars | Reward: US$27.98 | Japanese/English",
+            "reward": 27.98,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33882361?referral=rss",
+            "timestamp": 1758118398.4714046,
+            "source": "RSS"
+        },
+        {
+            "id": "33882088",
+            "title": "ja > en",
+            "reward": 2.4,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33882088",
+            "timestamp": 1758098474.1962986,
+            "source": "WebSocket"
+        },
+        {
+            "id": "33882075",
+            "title": "ja > en",
+            "reward": 2.78,
+            "currency": "USD",
+            "url": "https://gengo.com/t/jobs/details/33882075",
+            "timestamp": 1758096865.7038848,
+            "source": "WebSocket"
+        }
+    ]
+}

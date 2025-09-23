@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 
 // API Configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8001`;
+const API_BASE_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.host}`;
 
 // Create query client instance
 export const queryClient = new QueryClient({
@@ -39,6 +39,7 @@ export interface WatcherStatus {
     uptime: number;
   };
   failure_count: number;
+  cancellation_stats?: Record<string, unknown>;
 }
 
 
@@ -163,9 +164,8 @@ class ApiClient {
     option: string,
     value: string | number | boolean
   ): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request('/api/config', {
+    return this.request(`/api/config/${section}/${option}?value=${encodeURIComponent(String(value))}`, {
       method: 'PUT',
-      body: JSON.stringify({ section, option, value }),
     });
   }
 
@@ -216,7 +216,8 @@ export class StatusWebSocket {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/status`;
+    // Use same host as frontend (works in both dev and production)
+    const wsUrl = `${protocol}//${window.location.host}/ws/status?api_key=${this.token || ''}`;
 
     try {
       this.ws = new WebSocket(wsUrl);
@@ -225,17 +226,17 @@ export class StatusWebSocket {
         console.log('WebSocket connected');
         this.reconnectAttempts = 0;
         this.reconnectDelay = 1000;
-
-        // Send authentication if token is available
-        if (this.token) {
-          this.ws?.send(JSON.stringify({ token: this.token }));
-        }
+        // Authentication is now handled via query parameter in URL
       };
 
       this.ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data);
-          this.onMessage(data);
+          const message = JSON.parse(event.data);
+          // Server sends { type: 'status_update', data: WatcherStatus }
+          // Extract the actual status data
+          if (message.type === 'status_update' && message.data) {
+            this.onMessage(message.data);
+          }
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
         }
