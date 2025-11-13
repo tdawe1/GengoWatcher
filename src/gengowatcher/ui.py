@@ -340,7 +340,34 @@ class CommandLineInterface:
         autoaccept_status = "Enabled" if autoaccept_enabled else "Disabled"
         autoaccept_color = "success" if autoaccept_enabled else "dim"
 
+        # WebSocket heartbeat summary
+        hb = "—"
+        if ws_status == "Live":
+            now = time.time()
+            last_pong_age = None
+            next_ping_in = None
+            latency = None
+            try:
+                if getattr(self.watcher, "websocket_last_pong_ts", None):
+                    last_pong_age = max(0, int(now - self.watcher.websocket_last_pong_ts))
+                if getattr(self.watcher, "websocket_next_ping_ts", None):
+                    next_ping_in = max(0, int(self.watcher.websocket_next_ping_ts - now))
+                if getattr(self.watcher, "websocket_ping_latency_ms", None) is not None:
+                    latency = int(self.watcher.websocket_ping_latency_ms)
+            except Exception:
+                pass
+            parts = []
+            if latency is not None:
+                parts.append(f"{latency}ms")
+            if last_pong_age is not None:
+                parts.append(f"last {last_pong_age}s")
+            if next_ping_in is not None:
+                parts.append(f"next {next_ping_in}s")
+            hb = " | ".join(parts) if parts else "idle"
+
         table.add_row("WebSocket:", Text(ws_status, style=ws_color))
+        if ws_status == "Live":
+            table.add_row("WS Heartbeat:", Text(hb, style="cyan"))
         table.add_row("RSS Fallback:", Text(rss_status_text, style=rss_color))
         table.add_row("Auto-Accept:", Text(autoaccept_status, style=autoaccept_color))
 
