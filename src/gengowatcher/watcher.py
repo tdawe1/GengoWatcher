@@ -16,6 +16,11 @@ import re
 import csv
 import asyncio
 import websockets
+from websockets.exceptions import (
+    ConnectionClosed,
+    InvalidHandshake,
+    InvalidStatusCode,
+)
 import json
 from .config import AppConfig
 from .state import AppState
@@ -131,6 +136,10 @@ class GengoWatcher:
         self.session_new_entries = 0
         self.session_total_value = 0.0
         self.websocket_status = "Disabled"
+        # WebSocket heartbeat metrics (read by UI thread)
+        self.websocket_last_pong_ts = None  # float epoch seconds
+        self.websocket_ping_latency_ms = None  # float milliseconds
+        self.websocket_next_ping_ts = None  # float epoch seconds
         self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
@@ -604,7 +613,11 @@ class GengoWatcher:
             return None
 
     async def _websocket_logic(self):
-        """The core async logic for a single WebSocket connection attempt, with close code/reason logging and keepalive pings."""
+        """The core async logic for a single WebSocket connection attempt.
+
+        Adds an inactivity watchdog to catch "silent" stalls (no messages for a
+        prolonged period) and force a reconnect with a clear log line.
+        """
         ws_url = "wss://live-dashboard.gengo.com"
         self.websocket_status = "Connecting"
         self.logger.debug(f"Attempting WebSocket connection to {ws_url}")
@@ -615,9 +628,10 @@ class GengoWatcher:
                     f"my_gengo_session={self.config.get('WebSocket', 'user_session')}",
                 ),
                 ("Origin", "https://gengo.com"),
+                ("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8"),
                 (
                     "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
                 ),
             ]
             async with websockets.connect(
@@ -636,6 +650,27 @@ class GengoWatcher:
 
                 self.websocket_status = "Live"
                 self.logger.info("WebSocket connection is live and listening.")
+
+                # Heartbeat task: send periodic ping to measure latency and expose countdown to UI
+                HEARTBEAT_INTERVAL = 30  # seconds
+
+                async def heartbeat():
+                    while True:
+                        try:
+                            self.websocket_next_ping_ts = time.time() + HEARTBEAT_INTERVAL
+                            await asyncio.sleep(HEARTBEAT_INTERVAL)
+                            t0 = time.perf_counter()
+                            waiter = await websocket.ping()
+                            await asyncio.wait_for(waiter, timeout=5)
+                            self.websocket_last_pong_ts = time.time()
+                            self.websocket_ping_latency_ms = (time.perf_counter() - t0) * 1000.0
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:
+                            # Log and continue; the main loop will handle real disconnects
+                            self.logger.debug(f"WebSocket heartbeat error: {e}")
+
+                heartbeat_task = asyncio.create_task(heartbeat())
 
                 try:
                     first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
@@ -689,6 +724,7 @@ class GengoWatcher:
                 try:
                     async for message in websocket:
                         self.logger.debug(f"WebSocket: Message received: {message}")
+                        data = None
                         try:
                             data = json.loads(message)
                             self.logger.debug(f"WebSocket: Message JSON: {data}")
@@ -710,7 +746,7 @@ class GengoWatcher:
                                 self._process_new_job(
                                     job_id, title, reward, url, source="WebSocket"
                                 )
-                except websockets.exceptions.ConnectionClosed as e:
+                except ConnectionClosed as e:
                     self.logger.warning(
                         f"WebSocket: Disconnected: code={e.code}, reason={e.reason}"
                     )
@@ -718,12 +754,12 @@ class GengoWatcher:
                     self.logger.error(f"WebSocket: Error in main loop: {e}")
                 finally:
                     test_monitor_task.cancel()
+                    heartbeat_task.cancel()
                     try:
                         await test_monitor_task
+                        await heartbeat_task
                     except asyncio.CancelledError:
-                        self.logger.debug(
-                            "WebSocket: keepalive_task and test_monitor_task cancelled and awaited cleanly."
-                        )
+                        self.logger.debug("WebSocket: auxiliary tasks cancelled and awaited cleanly.")
                     except Exception as e:
                         self.logger.warning(
                             f"WebSocket: Exception while awaiting tasks: {e}"
@@ -734,18 +770,28 @@ class GengoWatcher:
                     self.logger.info(
                         f"WebSocket: Closed: code={getattr(websocket, 'close_code', None)}, reason={getattr(websocket, 'close_reason', None)}"
                     )
-        except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError) as e:
+        except (
+            ConnectionClosed,
+            InvalidStatusCode,
+            InvalidHandshake,
+            ConnectionRefusedError,
+        ) as e:
             code = getattr(e, "code", None)
             reason = getattr(e, "reason", None)
             self.logger.warning(
                 f"WebSocket: Outer disconnect: code={code}, reason={reason}, error={e}"
             )
+            self.websocket_status = "Offline"
         except Exception as e:
             self.logger.error(f"WebSocket: Outer error: {e}")
+            self.websocket_status = "Offline"
 
     def _run_websocket_monitor(self):
         """The main loop for the WebSocket connection, designed to run in a thread."""
         self.logger.debug("Starting WebSocket monitor thread.")
+        # Exponential backoff on reconnect to avoid hammering server
+        backoff = 5
+        max_backoff = int(self.config.get("Network", "max_backoff"))
         while not self.shutdown_event.is_set():
             if (
                 self.config.get("WebSocket", "user_session")
@@ -764,14 +810,16 @@ class GengoWatcher:
                     break
                 self.websocket_status = "Offline"
                 self.logger.info(
-                    "WebSocket connection closed. Reconnecting in 20 seconds..."
+                    f"WebSocket connection closed. Reconnecting in {backoff} seconds..."
                 )
-                if self.shutdown_event.wait(20):
+                if self.shutdown_event.wait(backoff):
                     break
+                backoff = min(backoff * 2, max_backoff)
             except Exception as e:
                 self.logger.error(f"Critical error in WebSocket runner: {e}")
-                if self.shutdown_event.wait(20):
+                if self.shutdown_event.wait(backoff):
                     break
+                backoff = min(backoff * 2, max_backoff)
         self.logger.info("WebSocket monitor thread stopped.")
         self.websocket_status = "Stopped"
 
