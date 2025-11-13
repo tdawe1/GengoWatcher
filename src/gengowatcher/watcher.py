@@ -136,6 +136,10 @@ class GengoWatcher:
         self.session_new_entries = 0
         self.session_total_value = 0.0
         self.websocket_status = "Disabled"
+        # WebSocket heartbeat metrics (read by UI thread)
+        self.websocket_last_pong_ts = None  # float epoch seconds
+        self.websocket_ping_latency_ms = None  # float milliseconds
+        self.websocket_next_ping_ts = None  # float epoch seconds
         self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
@@ -646,25 +650,27 @@ class GengoWatcher:
 
                 self.websocket_status = "Live"
                 self.logger.info("WebSocket connection is live and listening.")
-                last_message_ts = time.time()
 
-                # Inactivity watchdog: if no messages for N seconds, assume stall and reconnect
-                inactivity_timeout = 180  # seconds
+                # Heartbeat task: send periodic ping to measure latency and expose countdown to UI
+                HEARTBEAT_INTERVAL = 30  # seconds
 
-                async def inactivity_watchdog():
+                async def heartbeat():
                     while True:
-                        await asyncio.sleep(5)
-                        if time.time() - last_message_ts > inactivity_timeout:
-                            self.logger.warning(
-                                f"WebSocket: No messages for {inactivity_timeout}s; treating as stalled and reconnecting."
-                            )
-                            try:
-                                await websocket.close(code=4000, reason="inactivity_watchdog")
-                            except Exception:
-                                pass
-                            return
+                        try:
+                            self.websocket_next_ping_ts = time.time() + HEARTBEAT_INTERVAL
+                            await asyncio.sleep(HEARTBEAT_INTERVAL)
+                            t0 = time.perf_counter()
+                            waiter = await websocket.ping()
+                            await asyncio.wait_for(waiter, timeout=5)
+                            self.websocket_last_pong_ts = time.time()
+                            self.websocket_ping_latency_ms = (time.perf_counter() - t0) * 1000.0
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:
+                            # Log and continue; the main loop will handle real disconnects
+                            self.logger.debug(f"WebSocket heartbeat error: {e}")
 
-                watchdog_task = asyncio.create_task(inactivity_watchdog())
+                heartbeat_task = asyncio.create_task(heartbeat())
 
                 try:
                     first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
@@ -717,7 +723,6 @@ class GengoWatcher:
                 test_monitor_task = asyncio.create_task(monitor_test_request())
                 try:
                     async for message in websocket:
-                        last_message_ts = time.time()
                         self.logger.debug(f"WebSocket: Message received: {message}")
                         data = None
                         try:
@@ -749,14 +754,12 @@ class GengoWatcher:
                     self.logger.error(f"WebSocket: Error in main loop: {e}")
                 finally:
                     test_monitor_task.cancel()
-                    watchdog_task.cancel()
+                    heartbeat_task.cancel()
                     try:
                         await test_monitor_task
-                        await watchdog_task
+                        await heartbeat_task
                     except asyncio.CancelledError:
-                        self.logger.debug(
-                            "WebSocket: inactivity_watchdog and test_monitor_task cancelled and awaited cleanly."
-                        )
+                        self.logger.debug("WebSocket: auxiliary tasks cancelled and awaited cleanly.")
                     except Exception as e:
                         self.logger.warning(
                             f"WebSocket: Exception while awaiting tasks: {e}"
