@@ -509,6 +509,56 @@ class GengoWatcher:
         finally:
             loop.close()
 
+    def _async_browser_automation_wrapper(self, job_data: dict):
+        """Run browser-based acceptance in a background thread."""
+        try:
+            if not hasattr(self, "browser_automation_engine") or not self.browser_automation_engine:
+                return
+
+            try:
+                probe_ms = int(self.config.get("AutoAccept", "accept_click_probe_ms") or 75)
+            except Exception:
+                probe_ms = 75
+            try:
+                timeout_sec = float(self.config.get("AutoAccept", "selenium_attempt_timeout_sec") or 8.0)
+            except Exception:
+                timeout_sec = 8.0
+
+            cancel_event = threading.Event()
+            timings = {
+                "seen_ms": None,
+                "details_ms": None,
+                "token_ms": None,
+                "click_ms": None,
+                "redirect_ms": None,
+            }
+            start_monotonic = time.perf_counter()
+
+            result = self.browser_automation_engine.attempt_accept_via_browser(
+                job_data,
+                probe_ms,
+                timeout_sec,
+                cancel_event,
+                timings,
+                start_monotonic,
+            )
+
+            success = False
+            if isinstance(result, dict):
+                success = bool(result.get("success"))
+            elif hasattr(result, "success"):
+                try:
+                    success = bool(getattr(result, "success"))
+                except Exception:
+                    success = False
+
+            if success:
+                self._on_job_accepted(job_data)
+        except Exception as e:
+            self.logger.error(
+                f"Error in browser automation wrapper for job {job_data.get('id')}: {e}"
+            )
+
     def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
         """Wrapper to cancel the current job without blocking the main thread."""
         previous_job_id = self.cancellation_manager.current_job_id
