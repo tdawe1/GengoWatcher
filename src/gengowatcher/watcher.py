@@ -205,6 +205,21 @@ class GengoWatcher:
 
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
+    def _safe_parse_reward(self, value) -> float:
+        try:
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                m = re.search(r"(\d+\.?\d*)", value)
+                return float(m.group(1)) if m else 0.0
+            if isinstance(value, dict):
+                for k in ("amount", "value", "usd", "price"):
+                    if k in value:
+                        return self._safe_parse_reward(value[k])
+            return 0.0
+        except Exception:
+            return 0.0
+
     def start_captcha_monitoring(self, interval: int = 300):
         """Start monitoring CAPTCHA service health and performance"""
         self.captcha_solver.start_monitoring(interval)
@@ -337,7 +352,11 @@ class GengoWatcher:
                 self.logger.error(f"Notify Error: {e}")
         if play_sound and self.config.get("Watcher", "enable_sound"):
             threading.Thread(target=self.play_sound, daemon=True).start()
-        if open_link and url:
+        try:
+            allow_open = self.config.getboolean("Watcher", "open_links_on_new_job", fallback=True)
+        except Exception:
+            allow_open = True
+        if open_link and url and allow_open:
             self.open_in_browser(url)
 
 
@@ -403,9 +422,19 @@ class GengoWatcher:
             f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
         )
         with self._seen_jobs_lock:
+            # Maintain a bounded LRU to prevent unbounded growth
+            if not hasattr(self, "_seen_jobs_order"):
+                import collections
+                try:
+                    max_seen = int(self.config.get("Watcher", "seen_jobs_max") or 1000)
+                except Exception:
+                    max_seen = 1000
+                self._seen_jobs_order = collections.deque(maxlen=max_seen)
             if job_id in self._seen_jobs_session:
                 return
             self._seen_jobs_session.add(job_id)
+            self._seen_jobs_order.append(job_id)
+            # Mirror to persisted recent list (already bounded in AppState)
             self.state.seen_job_ids.append(job_id)
             min_reward = self.config.get("Watcher", "min_reward")
             if min_reward > 0.0 and reward < min_reward:
@@ -508,6 +537,44 @@ class GengoWatcher:
             self.logger.error(f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}")
         finally:
             loop.close()
+
+    def _async_browser_automation_wrapper(self, job_data: dict):
+        """Run browser automation accept attempt in a background thread."""
+        try:
+            if not hasattr(self, 'browser_automation_engine') or not self.browser_automation_engine:
+                return
+            try:
+                probe_ms = int(self.config.get("AutoAccept", "accept_click_probe_ms") or 75)
+            except Exception:
+                probe_ms = 75
+            try:
+                per_attempt_timeout = float(self.config.get("AutoAccept", "selenium_attempt_timeout_sec") or 8.0)
+            except Exception:
+                per_attempt_timeout = 8.0
+            cancel_event = threading.Event()
+            timings = {"seen_ms": None, "details_ms": None, "token_ms": None, "click_ms": None, "redirect_ms": None}
+            start_monotonic = time.perf_counter()
+            result = self.browser_automation_engine.attempt_accept_via_browser(
+                job_data,
+                probe_ms,
+                per_attempt_timeout,
+                cancel_event,
+                timings,
+                start_monotonic,
+            )
+            success = False
+            if isinstance(result, dict):
+                success = bool(result.get("success"))
+            try:
+                # AcceptResult-like
+                if hasattr(result, "success"):
+                    success = bool(getattr(result, "success"))
+            except Exception:
+                pass
+            if success:
+                self._on_job_accepted(job_data)
+        except Exception as e:
+            self.logger.error(f"Error in browser automation wrapper for job {job_data.get('id')}: {e}")
 
     def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
         """Wrapper to cancel the current job without blocking the main thread."""
@@ -740,7 +807,7 @@ class GengoWatcher:
                             job_id = job.get("id")
                             self.logger.debug(f"WebSocket: Job data: {job}")
                             if job_id:
-                                reward = float(job.get("rewards", 0.0))
+                                reward = self._safe_parse_reward(job.get("rewards", 0.0))
                                 title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
                                 url = f"https://gengo.com/t/jobs/details/{job_id}"
                                 self._process_new_job(
