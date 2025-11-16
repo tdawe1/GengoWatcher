@@ -340,8 +340,9 @@ class CommandLineInterface:
         autoaccept_status = "Enabled" if autoaccept_enabled else "Disabled"
         autoaccept_color = "success" if autoaccept_enabled else "dim"
 
-        # WebSocket heartbeat summary
-        hb = "—"
+        # WebSocket status + heartbeat in a single row
+        value_text = Text()
+        value_text.append(ws_status, style=ws_color)
         if ws_status == "Live":
             now = time.time()
             last_pong_age = None
@@ -363,11 +364,11 @@ class CommandLineInterface:
                 parts.append(f"last {last_pong_age}s")
             if next_ping_in is not None:
                 parts.append(f"next {next_ping_in}s")
-            hb = " | ".join(parts) if parts else "idle"
+            if parts:
+                value_text.append("  ")
+                value_text.append(" | ".join(parts), style="cyan")
 
-        table.add_row("WebSocket:", Text(ws_status, style=ws_color))
-        if ws_status == "Live":
-            table.add_row("WS Heartbeat:", Text(hb, style="cyan"))
+        table.add_row("WebSocket:", value_text)
         table.add_row("RSS Fallback:", Text(rss_status_text, style=rss_color))
         table.add_row("Auto-Accept:", Text(autoaccept_status, style=autoaccept_color))
 

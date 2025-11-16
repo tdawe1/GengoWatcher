@@ -38,3 +38,11 @@ MagicMock/
 pyproject.toml
 gengowatcher.egg-info/
 release todolist.md
+
+# Python bytecode caches
+__pycache__/
+**/__pycache__/
+
+# Local runtime state
+state.json
+src/state.json

@@ -55,6 +55,19 @@ class APIAuthenticator:
 # Global authenticator instance
 authenticator = APIAuthenticator()
 
+# Optional external components passed in by the TUI so we don't spawn a second watcher
+_external_components: Optional[dict] = None
+
+def attach_external_components(config: AppConfig, state: AppState, watcher: GengoWatcher, logger: logging.Logger) -> None:
+    """Attach already-initialized components (from the CLI) for reuse by the web server."""
+    global _external_components
+    _external_components = {
+        "config": config,
+        "state": state,
+        "watcher": watcher,
+        "logger": logger,
+    }
+
 
 # Pydantic models for API responses
 class JobEntry(BaseModel):
@@ -162,7 +175,7 @@ class PaginationParams(BaseModel):
 class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
-    def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
+    def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger, watcher: Optional[GengoWatcher] = None):
         """Initialize the WebAPI instance.
 
         Creates a separate GengoWatcher instance for the web API to avoid conflicts
@@ -177,9 +190,14 @@ class WebAPI:
         self.state = state
         self.logger = logger
 
-        # Create a separate watcher instance for web API
-        # This allows web UI to run alongside TUI without conflicts
-        self.watcher = GengoWatcher(config, state, logger)
+        # Use provided watcher if available; otherwise create a dedicated one
+        if watcher is not None:
+            self.watcher = watcher
+            self.logger.info("WebAPI reusing existing watcher instance")
+        else:
+            # Create a separate watcher instance for web API
+            # This allows web UI to run alongside TUI without conflicts
+            self.watcher = GengoWatcher(config, state, logger)
 
         # Thread safety for shared state access
         self._status_lock = threading.RLock()  # Reentrant lock for better safety
@@ -187,11 +205,13 @@ class WebAPI:
         self._connections_lock = threading.RLock()
         self._jobs_lock = threading.RLock()
 
-        # Start the watcher in a separate thread
-        self.watcher_thread = threading.Thread(
-            target=self.watcher.run, daemon=True, name="WebWatcherThread"
-        )
-        self.watcher_thread.start()
+        # Start the watcher in a separate thread if we created it here
+        self.watcher_thread = None
+        if watcher is None:
+            self.watcher_thread = threading.Thread(
+                target=self.watcher.run, daemon=True, name="WebWatcherThread"
+            )
+            self.watcher_thread.start()
 
         self.logger.info("WebAPI initialized and watcher thread started")
 
@@ -547,7 +567,9 @@ class WebAPI:
     def shutdown(self):
         """Shutdown the web API and watcher."""
         self.logger.info("Shutting down WebAPI")
-        self.watcher.handle_exit()
+        # Only shut down watcher we own
+        if self.watcher_thread is not None:
+            self.watcher.handle_exit()
 
 
 # Global API instance
@@ -575,18 +597,33 @@ async def lifespan(app: FastAPI):
                 config.write(f)
             logger.info("Default config created. Please review config.ini before using the web API.")
 
-        config = AppConfig()
-        state = AppState(logger=logger)
+        # If external components are attached, reuse them to avoid duplicate watcher
+        if _external_components:
+            config = _external_components["config"]
+            state = _external_components["state"]
+            watcher = _external_components["watcher"]
+            logger = _external_components["logger"]
+        else:
+            config = AppConfig()
+            state = AppState(logger=logger)
 
         # Initialize authenticator with config token
-        try:
-            api_token = config.get("WebServer", "auth_token")
-        except:
-            api_token = "gengo-token-demo"
+        # Initialize authenticator with config token; generate if missing
+        api_token = config.get("WebServer", "auth_token")
+        if not api_token or not str(api_token).strip():
+            # Generate a secure token and persist it
+            api_token = secrets.token_urlsafe(32)
+            try:
+                config.set("WebServer", "auth_token", api_token)
+                config.save_config()
+                logger.info("Generated Web API auth_token and saved to config.ini")
+            except Exception as e:
+                logger.warning(f"Failed to save generated auth_token: {e}")
         global authenticator
         authenticator = APIAuthenticator(api_token)
 
-        api_instance = WebAPI(config, state, logger)
+        # If reusing an external watcher, pass it into WebAPI
+        api_instance = WebAPI(config, state, logger, watcher=_external_components.get("watcher") if _external_components else None)
         logger.info("WebAPI started successfully")
     except Exception as e:
         logger.exception(f"Failed to start WebAPI: {e}")
@@ -956,12 +993,14 @@ async def serve_react_app(path: str):
 
 def run_web_server(host: str = "127.0.0.1", port: int = 8000):
     """Run the web server."""
+    # Use the already-imported app instance directly to stay in the same module context,
+    # which preserves any externally attached components.
     uvicorn.run(
-        "gengowatcher.web:app",
+        app,
         host=host,
         port=port,
         reload=False,
-        log_level="info"
+        log_level="info",
     )
 
 

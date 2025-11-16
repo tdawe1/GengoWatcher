@@ -158,6 +158,12 @@ def main():
 
             def start_web_server():
                 print(f"Starting web server on http://127.0.0.1:{args.web_port}")
+                try:
+                    # Attach existing components so the web layer reuses this watcher instance
+                    from .web import attach_external_components
+                    attach_external_components(config, state, watcher, log)
+                except Exception as e:
+                    log.warning(f"Could not attach external components to web layer: {e}")
                 run_web_server(host="127.0.0.1", port=args.web_port)
 
             web_thread = threading.Thread(

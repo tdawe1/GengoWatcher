@@ -13,6 +13,7 @@ class AppConfig:
             "min_reward": 0.0,
             "enable_notifications": True,
             "enable_sound": True,
+            "open_links_on_new_job": True,
             "use_custom_user_agent": False,
         },
         "WebSocket": {
