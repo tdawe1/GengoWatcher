@@ -206,6 +206,17 @@ class GengoWatcher:
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
     def _safe_parse_reward(self, value) -> float:
+        """
+        Convert various reward representations into a numeric reward amount.
+        
+        Accepts a number, a string containing a numeric value, or a dict containing one of the keys "amount", "value", "usd" or "price" (whose values are parsed recursively). Non-parsable inputs yield 0.0.
+        
+        Parameters:
+            value: The reward representation to parse — may be an int/float, a string (e.g. "£3.50"), or a dict with numeric fields.
+        
+        Returns:
+            float: The parsed reward amount, or 0.0 if the value cannot be interpreted as a number.
+        """
         try:
             if isinstance(value, (int, float)):
                 return float(value)
@@ -221,7 +232,12 @@ class GengoWatcher:
             return 0.0
 
     def start_captcha_monitoring(self, interval: int = 300):
-        """Start monitoring CAPTCHA service health and performance"""
+        """
+        Begin periodic health and performance checks for the configured CAPTCHA solver.
+        
+        Parameters:
+            interval (int): Time in seconds between monitoring probes.
+        """
         self.captcha_solver.start_monitoring(interval)
     
     def stop_captcha_monitoring(self):
@@ -321,20 +337,19 @@ class GengoWatcher:
     def show_notification(
         self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None
     ):
-        """Show a desktop notification with optional sound and browser opening.
-
-        Displays a notification using the plyer library if notifications are enabled.
-        Can optionally play a sound and/or open a URL in the browser.
-
-        Args:
-            message: The notification message text.
-            title: The notification title (default: "GengoWatcher").
-            play_sound: Whether to play a notification sound (default: False).
-            open_link: Whether to open the provided URL in browser (default: False).
-            url: The URL to open if open_link is True (default: None).
-
-        Raises:
-            Exception: If there's an error displaying the notification.
+        """
+        Display a desktop notification and optionally play a sound or open a URL.
+        
+        The notification is shown only if notifications are enabled in the configuration.
+        Playing a sound and opening the provided URL are each gated by their respective
+        configuration options (`enable_sound` and `open_links_on_new_job`).
+        
+        Parameters:
+            message (str): Notification message text.
+            title (str): Notification title (default: "GengoWatcher").
+            play_sound (bool): If true, play the configured notification sound (default: False).
+            open_link (bool): If true, attempt to open `url` in the browser (default: False).
+            url (str | None): URL to open when `open_link` is true and opening links is permitted.
         """
         self.logger.debug(f"Showing notification: {title} - {message}")
         if self.config.get("Watcher", "enable_notifications"):
@@ -406,17 +421,17 @@ class GengoWatcher:
         self._all_entries_log_file.flush()
 
     def _process_new_job(self, job_id, title, reward, url, source):
-        """Process a newly discovered job from RSS or WebSocket sources.
-
-        Handles job filtering, notification, storage, and auto-acceptance logic.
-        Updates session statistics and ensures thread-safe access to shared state.
-
-        Args:
+        """
+        Process a newly discovered job and take appropriate actions based on configuration and internal state.
+        
+        May notify the user, persist the job to state, update session and aggregate counters, schedule cancellation of the currently tracked job if a better opportunity is detected, and queue the job for auto-acceptance (via the job acceptance engine or browser automation) when eligible.
+        
+        Parameters:
             job_id: Unique identifier for the job.
-            title: Job title/description.
-            reward: Job reward amount in USD.
-            url: URL to access the job.
-            source: Source of the job discovery ("RSS" or "WebSocket").
+            title: Job title or short description as provided by the source.
+            reward: Reward amount in USD (used for filtering, statistics and cancellation/acceptance decisions).
+            url: URL that leads to the job details page.
+            source: Origin of the discovery, typically "RSS" or "WebSocket".
         """
         self.logger.debug(
             f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
@@ -522,10 +537,12 @@ class GengoWatcher:
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
-        Wrapper to run async job acceptance in a separate thread.
+        Attempt to accept the given job via the job acceptance engine and record acceptance on success.
         
-        Args:
-            job_data: Dictionary containing job information
+        On a successful acceptance this will invoke self._on_job_accepted(job_data). Errors are logged; the function does not raise.
+        
+        Parameters:
+            job_data (dict): Job metadata (should include an `id` for logging and any fields required by the acceptance engine).
         """
         loop = asyncio.new_event_loop()
         try:
@@ -539,7 +556,14 @@ class GengoWatcher:
             loop.close()
 
     def _async_browser_automation_wrapper(self, job_data: dict):
-        """Run browser automation accept attempt in a background thread."""
+        """
+        Start a background browser-based acceptance attempt for the given job.
+        
+        Initiates a browser automation attempt using configured probe and timeout settings; if the attempt reports success, records the accepted job by calling _on_job_accepted. Any exceptions raised during the attempt are caught and logged.
+        
+        Parameters:
+            job_data (dict): Dictionary containing the job's details (for example `id`, `url`, reward fields) used by the browser automation engine.
+        """
         try:
             if not hasattr(self, 'browser_automation_engine') or not self.browser_automation_engine:
                 return
@@ -577,7 +601,14 @@ class GengoWatcher:
             self.logger.error(f"Error in browser automation wrapper for job {job_data.get('id')}: {e}")
 
     def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
-        """Wrapper to cancel the current job without blocking the main thread."""
+        """
+        Cancel the currently tracked job and log the outcome in the context of an upcoming job.
+        
+        Calls the synchronous cancellation path, logs whether cancellation succeeded or failed, and records any exception raised. The `upcoming_job` is used only for contextual logging.
+        
+        Parameters:
+            upcoming_job (dict): Mapping representing the incoming job; its `'id'` may be included in log messages.
+        """
         previous_job_id = self.cancellation_manager.current_job_id
         try:
             success = self.cancel_current_job_sync()
