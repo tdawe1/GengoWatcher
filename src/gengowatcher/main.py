@@ -154,10 +154,13 @@ def main():
     web_thread = None
     if args.web or args.web_only:
         try:
-            from .web import run_web_server
+            from .web import run_web_server, attach_external_components
 
             def start_web_server():
                 print(f"Starting web server on http://127.0.0.1:{args.web_port}")
+                # Reuse the existing watcher so the web layer and TUI
+                # share a single monitoring instance.
+                attach_external_components(config, state, watcher, log)
                 run_web_server(host="127.0.0.1", port=args.web_port)
 
             web_thread = threading.Thread(
