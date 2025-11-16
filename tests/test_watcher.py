@@ -119,3 +119,32 @@ def test_process_new_job_deduplication(watcher_instance):
     assert mock_state.save_state.call_count == 2
     assert 456 in mock_state.seen_job_ids
     assert mock_state.total_new_entries_found == 2
+
+
+def test_seen_jobs_lru_bounds_set_size(watcher_instance):
+    """Ensure the internal seen-jobs tracking does not grow unbounded."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    # Pretend config exposes a small max size for the LRU
+    def fake_get(section, key, **kwargs):
+        if (section, key) == ("Watcher", "seen_jobs_max"):
+            return 10
+        if (section, key) == ("Watcher", "min_reward"):
+            return 0.0
+        if (section, key) == ("AutoAccept", "job_sources"):
+            return "rss,websocket"
+        # Defer to original config for anything else
+        return watcher_instance.config.config.get(section, {}).get(key)
+
+    w.config.get.side_effect = fake_get
+
+    for i in range(50):
+        w._process_new_job(i, f"Job {i}", 1.0, f"http://example.com/{i}", "Test")
+
+    # The external deque remains bounded by its own maxlen
+    assert len(w.state.seen_job_ids) <= 50
+    # The internal session set should not exceed the configured max
+    assert len(w._seen_jobs_session) <= 10
