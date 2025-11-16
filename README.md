@@ -164,8 +164,11 @@ rate_limit = 60
 enabled = false
 port = 8000
 host = localhost
-enable_auth = false
-api_key =
+; When enabled, the web API requires a Bearer token.
+; The token is stored as auth_token. If left blank,
+; GengoWatcher will generate a secure random token on
+; first web-server startup and persist it to config.ini.
+auth_token =
 ```
 
 ---
@@ -185,6 +188,15 @@ GengoWatcher can automatically accept jobs that meet your configured criteria:
 - `browser_profile_path`: Path to browser profile for job acceptance (if needed)
 - `notification_on_accept`: Show notification when a job is accepted
 - `log_acceptance`: Log accepted jobs to a file
+
+Additional watcher options:
+
+- `open_links_on_new_job`: When true (default), opening a new job triggers
+  the browser to open the job details page. Set this to false if you want
+  notifications/sounds without automatic browser popups.
+- `seen_jobs_max`: Optional cap for how many job IDs are kept in the
+  in-memory "seen" set for the current session (defaults to 1000). This
+  protects long-running sessions from unbounded memory growth.
 
 ### Rate Limiting & Error Handling
 
