@@ -337,7 +337,11 @@ class GengoWatcher:
                 self.logger.error(f"Notify Error: {e}")
         if play_sound and self.config.get("Watcher", "enable_sound"):
             threading.Thread(target=self.play_sound, daemon=True).start()
-        if open_link and url:
+        try:
+            allow_open = self.config.get("Watcher", "open_links_on_new_job")
+        except Exception:
+            allow_open = True
+        if open_link and url and allow_open:
             self.open_in_browser(url)
 
 
