@@ -56,6 +56,13 @@ class UILoggingHandler(logging.Handler):
 
 
 def main():
+    """
+    Entry point for the GengoWatcher application: parse command-line arguments, configure logging and components, and start the requested UI and background services.
+    
+    Parses CLI options to perform one-off configuration actions (--set, --get, --list, --configure) or to start the interactive TUI and/or the optional web UI (--web, --web-only, --web-port). Initialises application configuration, state and the GengoWatcher instance, attaches logging handlers (including an optional rotating file handler), and when requested launches a FastAPI/uvicorn web server reusing the same watcher instance. Runs the command-line interface loop and the watcher in background threads, coordinates shutdown and cleanup, and prints helpful messages on exit.
+    
+    Note: this function may call sys.exit for CLI actions or on fatal initialisation or when running in --web-only mode.
+    """
     parser = argparse.ArgumentParser(description="GengoWatcher CLI")
     parser.add_argument(
         "--set",
@@ -157,6 +164,11 @@ def main():
             from .web import run_web_server
 
             def start_web_server():
+                """
+                Start the web server and attach the application's components to the web layer.
+                
+                Prints a start message with the HTTP URL, attempts to attach the existing config, state, watcher and logger to the web module (logging a warning if attachment fails), then launches the web server on 127.0.0.1 using the configured port.
+                """
                 print(f"Starting web server on http://127.0.0.1:{args.web_port}")
                 try:
                     # Attach existing components so the web layer reuses this watcher instance

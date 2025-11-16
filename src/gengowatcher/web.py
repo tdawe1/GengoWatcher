@@ -59,7 +59,15 @@ authenticator = APIAuthenticator()
 _external_components: Optional[dict] = None
 
 def attach_external_components(config: AppConfig, state: AppState, watcher: GengoWatcher, logger: logging.Logger) -> None:
-    """Attach already-initialized components (from the CLI) for reuse by the web server."""
+    """
+    Register pre-initialised application components so the web server reuses them instead of creating new instances.
+    
+    Parameters:
+        config (AppConfig): Application configuration to be reused by the web server.
+        state (AppState): Shared application state to be reused by the web server.
+        watcher (GengoWatcher): Existing watcher instance to be reused (prevents spawning a duplicate watcher).
+        logger (logging.Logger): Logger instance to be used by the web server.
+    """
     global _external_components
     _external_components = {
         "config": config,
@@ -176,15 +184,16 @@ class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
     def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger, watcher: Optional[GengoWatcher] = None):
-        """Initialize the WebAPI instance.
-
-        Creates a separate GengoWatcher instance for the web API to avoid conflicts
-        with the TUI. Sets up thread safety mechanisms and starts the watcher thread.
-
-        Args:
-            config: Application configuration object.
-            state: Application state object for data persistence.
-            logger: Logger instance for recording events.
+        """
+        Initialise the WebAPI wrapper for the watcher and prepare thread-safe resources for REST and WebSocket access.
+        
+        If a `watcher` is provided it will be reused; otherwise a dedicated GengoWatcher is created and started in a background thread. Locks for status, connections and jobs are created and an active connections list is initialised.
+        
+        Parameters:
+            config (AppConfig): Application configuration object.
+            state (AppState): Application state object for data persistence.
+            logger (logging.Logger): Logger instance for recording events.
+            watcher (Optional[GengoWatcher]): Existing watcher to reuse; if omitted a new watcher will be created and run.
         """
         self.config = config
         self.state = state
@@ -565,7 +574,11 @@ class WebAPI:
                 self._active_connections.remove(conn)
 
     def shutdown(self):
-        """Shutdown the web API and watcher."""
+        """
+        Shut down the WebAPI instance and, if owned, its watcher.
+        
+        If this WebAPI created and is running a watcher thread, instruct the watcher to perform its exit/cleanup; external watchers (not owned by this instance) are left running.
+        """
         self.logger.info("Shutting down WebAPI")
         # Only shut down watcher we own
         if self.watcher_thread is not None:
@@ -578,7 +591,11 @@ api_instance: Optional[WebAPI] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan context manager."""
+    """
+    Manage application startup and shutdown for the FastAPI app, initialising configuration, authentication and the WebAPI instance.
+    
+    On startup this context manager ensures a default config.ini exists, reuses externally attached components when present or creates AppConfig and AppState, generates and persists an API token if missing, initialises the APIAuthenticator and creates the global WebAPI instance. On shutdown it calls the WebAPI.shutdown() method if the instance was created.
+    """
     global api_instance
 
     # Startup
@@ -992,7 +1009,11 @@ async def serve_react_app(path: str):
 
 
 def run_web_server(host: str = "127.0.0.1", port: int = 8000):
-    """Run the web server."""
+    """
+    Start the web API server and block until it stops.
+    
+    Launches a Uvicorn server serving the module's FastAPI `app` instance on the specified host and port, preserving any externally attached components. The call blocks the current thread until the server terminates.
+    """
     # Use the already-imported app instance directly to stay in the same module context,
     # which preserves any externally attached components.
     uvicorn.run(
