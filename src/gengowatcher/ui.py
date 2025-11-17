@@ -276,6 +276,18 @@ class CommandLineInterface:
             self.input_buffer += char
 
     def _get_runtime_status_panel(self) -> Panel:
+        """
+        Builds a Rich Panel showing runtime metrics and service statuses.
+        
+        The panel contains a grid of runtime information including uptime, jobs per hour,
+        session and total job counts, session value and average reward, WebSocket status
+        (with inline heartbeat details when live: latency, last pong age, next ping),
+        RSS fallback/status with remaining seconds or paused state, Auto-Accept status,
+        and CAPTCHA solver status.
+        
+        Returns:
+            Panel: A Rich Panel containing the assembled runtime status table.
+        """
         table = Table.grid(expand=True, padding=(0, 1))
         table.add_column(style="label", justify="right", width=16)
         table.add_column(style="value", justify="left", width=14)
