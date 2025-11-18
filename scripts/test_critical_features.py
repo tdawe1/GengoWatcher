@@ -196,15 +196,6 @@ class TestAutoAcceptWithCaptcha:
         """Test rate limiting for job acceptance."""
         engine = JobAcceptanceEngine(config, logger)
 
-        # Test rate limiter prevents excessive requests
-        job = {
-            "id": "test_job_123",
-            "url": "https://gengo.com/t/jobs/details/test_job_123",
-            "source": "rss",
-            "reward": 10.0,
-            "title": "Test translation job"
-        }
-
         # First request should succeed
         assert engine.rate_limiter.acquire() is True
 
@@ -246,9 +237,6 @@ class TestWebSocketConnectivity:
     async def test_websocket_message_handling(self, config, logger):
         """Test WebSocket message processing."""
         watcher = GengoWatcher(config, logger)
-
-        # Mock WebSocket and message
-        mock_ws = AsyncMock()
 
         # Test job message
         job_message = json.dumps({
@@ -379,7 +367,7 @@ class TestRateLimitingAndPerformance:
 
         # Test concurrent acceptance attempts
         async def attempt_acceptance(job):
-            return await engine.is_job_eligible(job)
+            return await asyncio.to_thread(engine.is_job_eligible, job)
 
         # Run all concurrently
         results = await asyncio.gather(*[

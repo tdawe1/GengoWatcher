@@ -5,7 +5,6 @@ Run this to start only the web interface without the TUI.
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add src to path so we can import gengowatcher

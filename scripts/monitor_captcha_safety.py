@@ -9,7 +9,7 @@ import logging
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, List, Any
+from typing import Dict, Any
 import threading
 
 

@@ -101,7 +101,7 @@ async def test_high_value_manager():
 
         # Test stats
         stats = manager.get_stats()
-        print(f"\n📊 Current Stats:")
+        print("\n📊 Current Stats:")
         print(f"   High-value threshold: ${stats['thresholds']['high']}")
         print(f"   Max per day: {config.get('HighValue', 'max_per_day')}")
         print(f"   Min interval: {config.get('HighValue', 'min_interval_seconds')} seconds")
@@ -158,7 +158,6 @@ def main():
 
     if config_ok:
         # Test manager
-        import asyncio
         manager_ok = asyncio.run(test_high_value_manager())
 
         if manager_ok:

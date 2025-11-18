@@ -6,11 +6,10 @@ This integrates the high-value job manager with cancellation capabilities.
 import asyncio
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from .config import AppConfig
 from .high_value_job_manager import HighValueJobManager
 from .captcha_manager import CaptchaSolverManager
-from .job_cancellation_manager import JobCancellationManager
 
 
 class WatcherWithCancellation:
