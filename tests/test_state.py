@@ -1,7 +1,6 @@
 import pytest
 from gengowatcher import state
 import logging
-import os
 import collections
 
 

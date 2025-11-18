@@ -5,7 +5,7 @@ Adapter for integrating existing CAPTCHA solvers with the plugin architecture
 import logging
 from typing import Dict, Any
 from .captcha_plugin import CaptchaServicePlugin
-from .captcha_solver import TwoCaptchaSolver, AntiCaptchaSolver, CaptchaSolution, CaptchaTask
+from .captcha_solver import TwoCaptchaSolver, AntiCaptchaSolver, CaptchaSolution
 
 
 class TwoCaptchaSolverPluginAdapter(CaptchaServicePlugin):

@@ -206,7 +206,7 @@ class CommandLineInterface:
         )
         return Panel(
             config_table,
-            title=f"[title]Welcome to GengoWatcher[/]",
+            title="[title]Welcome to GengoWatcher[/]",
             subtitle=f"v{__version__}",
             subtitle_align="center",
             border_style="panel_border",
@@ -527,7 +527,7 @@ class CommandLineInterface:
         # Update the job acceptance engine if it exists
         if hasattr(self.watcher, 'job_acceptance_engine'):
             self.watcher.job_acceptance_engine.enabled = not current_state
-            self.watcher.logger.info(f"Job acceptance engine updated.")
+            self.watcher.logger.info("Job acceptance engine updated.")
 
     def _handle_captchatoggle(self, args=None):
         _ = args
