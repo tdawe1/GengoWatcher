@@ -13,7 +13,7 @@ import csv
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Depends, Query
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -581,7 +581,7 @@ async def lifespan(app: FastAPI):
         # Initialize authenticator with config token
         try:
             api_token = config.get("WebServer", "auth_token")
-        except:
+        except Exception:
             api_token = "gengo-token-demo"
         global authenticator
         authenticator = APIAuthenticator(api_token)

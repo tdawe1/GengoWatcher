@@ -168,7 +168,7 @@ class AppConfig:
                     try:
                         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                             self._config_parser.write(f)
-                        print(f"Config file updated with missing sections/options")
+                        print("Config file updated with missing sections/options")
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 
