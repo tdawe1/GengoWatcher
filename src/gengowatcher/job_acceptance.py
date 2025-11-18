@@ -11,9 +11,8 @@ import aiohttp
 import asyncio
 import threading
 import re
-from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 from urllib.parse import urljoin
 from pathlib import Path
 

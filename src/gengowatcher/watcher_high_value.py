@@ -3,10 +3,8 @@ Enhanced GengoWatcher with High-Value Job Management
 This file contains patches to integrate the HighValueJobManager.
 """
 
-import time
 import threading
 import asyncio
-import logging
 from typing import Dict, Any
 
 from .high_value_job_manager import HighValueJobManager

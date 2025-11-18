@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from gengowatcher.config import AppConfig
 from gengowatcher.watcher import GengoWatcher
 from gengowatcher.state import AppState
-from gengowatcher.job_acceptance import JobAcceptanceEngine
 
 
 def setup_logging():
