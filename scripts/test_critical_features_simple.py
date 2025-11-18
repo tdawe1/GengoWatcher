@@ -205,6 +205,10 @@ async def test_websocket_simulation():
 
             # Test connection
             watcher = GengoWatcher(config, state, logger)
+            
+            if watcher is None:
+                print("❌ GengoWatcher instantiation failed")
+                return False
 
             # This would normally connect to WebSocket
             # For test, we just verify the mock is called
