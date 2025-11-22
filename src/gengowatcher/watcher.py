@@ -1,99 +1,46 @@
 __version__ = "2.1.5"
 __release_date__ = "2025-06-22"
 
-import feedparser
-import time
-import webbrowser
-from plyer import notification
+import asyncio
+import csv
+import datetime
+import json
+import logging
 import os
+import re
+import subprocess
 import sys
 import threading
-import logging
+import time
+import webbrowser
 from pathlib import Path
-import datetime
-import subprocess
-import re
-import csv
-import asyncio
+
+import feedparser
 import websockets
-from websockets.exceptions import (
-    ConnectionClosed,
-    InvalidHandshake,
-    InvalidStatusCode,
-)
-import json
-from .config import AppConfig
-from .state import AppState
+from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatusCode
+
 from .captcha_manager import CaptchaSolverManager
+from .config import AppConfig
+from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
+from .state import AppState
+
 try:
     from .browser_automation import BrowserAutomationEngine
 except ImportError:
-    # Placeholder for BrowserAutomationEngine if import fails
-    class BrowserAutomationEngine:
+    # Provide a no-op fallback so the watcher can still load if browser deps are missing.
+    class BrowserAutomationEngine:  # type: ignore
         def __init__(self, *args, **kwargs):
             pass
 
-try:
-    from .job_acceptance import JobAcceptanceEngine
-    _JOB_ACCEPTANCE_IMPORT_ERROR = None
-except ImportError as import_error:
-    _JOB_ACCEPTANCE_IMPORT_ERROR = import_error
+from . import notifier
 
-    class JobAcceptanceEngine:
-        """Fallback job acceptance engine used when dependencies are missing."""
-
-        def __init__(self, config, logger, captcha_solver=None):
-            self.config = config
-            self.logger = logger or logging.getLogger(__name__)
-            self.captcha_solver = captcha_solver
-            self._enabled = False
-            self.logger.warning(
-                "Auto-accept disabled: failed to import job_acceptance module (%s). "
-                "Install required dependencies such as aiohttp and beautifulsoup4 to enable auto-accept.",
-                import_error,
-            )
-
-        @property
-        def enabled(self):
-            return self._enabled
-
-        @enabled.setter
-        def enabled(self, value):
-            if value:
-                self.logger.warning(
-                    "Cannot enable auto-accept because required dependencies are missing."
-                )
-                self._enabled = False
-            else:
-                self._enabled = False
-
-        def is_job_eligible(self, job_data):
-            return False
-
-        async def accept_job(self, job_data):
-            return False
-
-        async def close_session(self):
-            return
-
-        def get_stats(self):
-            return {
-                "accepted_jobs": 0,
-                "failed_acceptances": 0,
-                "rate_limited": 0,
-                "current_rate": 0.0,
-                "enabled": self._enabled,
-            }
-
-if sys.platform == "win32":
-    try:
-        import winsound
-
-        SOUND_PLAYER = "winsound"
-    except ImportError:
-        SOUND_PLAYER = "none"
-
+PLACEHOLDER_CONFIG_VALUES = {
+    None,
+    "",
+    "REPLACE_WITH_YOUR_SESSION_TOKEN",
+    "REPLACE_WITH_YOUR_USER_KEY",
+}
 
 class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
@@ -178,7 +125,7 @@ class GengoWatcher:
                 if self.browser_automation_engine.login_with_session(str(session_token)):
                     # Start monitors if configured
                     try:
-                        if self.config.get("SeleniumMonitoring", "enable_live_dashboard"):
+                        if False and self.config.get("SeleniumMonitoring", "enable_live_dashboard"):
                             self.browser_automation_engine.start_live_dashboard_monitor(
                                 on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(url)
                             )
@@ -248,33 +195,20 @@ class GengoWatcher:
             self._all_entries_log_file = None
             self._csv_writer = None
     
-    def play_sound(self):
-        """Play notification sound using paplay.
-
-        Attempts to play the configured sound file using the paplay command.
-        Logs warnings if the sound file is not found or if paplay is not available.
-
-        Raises:
-            FileNotFoundError: If paplay command is not found in system PATH.
-            Exception: For other errors during sound playback.
+    def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
         """
-        sound_file_path = self.config.get("Paths", "sound_file")
-        self.logger.debug(f"Attempting to play sound with paplay: {sound_file_path}")
+        Shows a desktop notification and optionally plays a sound.
+        """
+        if self.config.get("Watcher", "enable_notifications"):
+            icon_path = self.config.get("Paths", "notification_icon_path")
+            notifier.send_notification(title, message, icon_path)
 
-        if not Path(sound_file_path).is_file():
-            self.logger.warning(f"Sound file not found at: {sound_file_path}")
-            return
+        if play_sound and self.config.get("Watcher", "enable_sound"):
+            sound_file = self.config.get("Paths", "sound_file")
+            notifier.play_sound(sound_file)
 
-        try:
-            subprocess.Popen(
-                ['paplay', sound_file_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except FileNotFoundError:
-            self.logger.error("`paplay` command not found. Please install `libpulse` (sudo pacman -S libpulse).")
-        except Exception as e:
-            self.logger.error(f"Error playing sound with paplay: {e}")
+        if open_link and url:
+            self.open_in_browser(url)
 
 
     def open_in_browser(self, url):
@@ -302,43 +236,6 @@ class GengoWatcher:
                 subprocess.Popen([str(browser_path_str)] + args)
         except Exception as e:
             self.logger.error(f"Browser Error: {e}")
-
-    def show_notification(
-        self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None
-    ):
-        """Show a desktop notification with optional sound and browser opening.
-
-        Displays a notification using the plyer library if notifications are enabled.
-        Can optionally play a sound and/or open a URL in the browser.
-
-        Args:
-            message: The notification message text.
-            title: The notification title (default: "GengoWatcher").
-            play_sound: Whether to play a notification sound (default: False).
-            open_link: Whether to open the provided URL in browser (default: False).
-            url: The URL to open if open_link is True (default: None).
-
-        Raises:
-            Exception: If there's an error displaying the notification.
-        """
-        self.logger.debug(f"Showing notification: {title} - {message}")
-        if self.config.get("Watcher", "enable_notifications"):
-            try:
-                icon_path = self.config.get("Paths", "notification_icon_path")
-                app_icon = str(icon_path) if Path(icon_path).is_file() else None
-                notification.notify(
-                    title=title,
-                    message=message,
-                    app_name="GengoWatcher",
-                    app_icon=app_icon,
-                    timeout=8,
-                )
-            except Exception as e:
-                self.logger.error(f"Notify Error: {e}")
-        if play_sound and self.config.get("Watcher", "enable_sound"):
-            threading.Thread(target=self.play_sound, daemon=True).start()
-        if open_link and url:
-            self.open_in_browser(url)
 
 
     def _extract_reward(self, entry) -> float:
@@ -618,158 +515,234 @@ class GengoWatcher:
         Adds an inactivity watchdog to catch "silent" stalls (no messages for a
         prolonged period) and force a reconnect with a clear log line.
         """
-        ws_url = "wss://live-dashboard.gengo.com"
+        ws_url = self.config.get("WebSocket", "wss_url") or "wss://live-dashboard.gengo.com"
         self.websocket_status = "Connecting"
-        self.logger.debug(f"Attempting WebSocket connection to {ws_url}")
+        self.logger.info(f"WebSocket: Initializing connection to {ws_url}")
+        
         try:
+            # Determine User-Agent
+            user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            custom_ua = self.config.get("Network", "browser_user_agent")
+            if custom_ua:
+                user_agent = custom_ua
+                self.logger.info(f"WebSocket: Using configured browser User-Agent: {user_agent[:30]}...")
+            else:
+                self.logger.debug(f"WebSocket: Using default User-Agent: {user_agent[:30]}...")
+
+            session_token = self.config.get('WebSocket', 'user_session')
+            user_key = self.config.get('WebSocket', 'user_key')
+            masked_token = (
+                f"{session_token[:4]}...{session_token[-4:]}"
+                if session_token and len(session_token) > 8
+                else "NOT_SET"
+            )
+            masked_user_key = (
+                f"{user_key[:4]}...{user_key[-4:]}"
+                if user_key and len(user_key) > 8
+                else "NOT_SET"
+            )
+
             extra_headers = [
                 (
                     "Cookie",
-                    f"my_gengo_session={self.config.get('WebSocket', 'user_session')}",
+                    f"my_gengo_session={session_token}",
                 ),
-                ("Origin", "https://gengo.com"),
-                ("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8"),
-                (
-                    "User-Agent",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-                ),
+                # ("Origin", "https://gengo.com"),
+                # ("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8"),
+                # ("Cache-Control", "no-cache"),
+                # ("Pragma", "no-cache"),
+                # ("User-Agent", user_agent),
             ]
-            async with websockets.connect(
-                    ws_url,
-                    extra_headers=extra_headers,
-                    ping_interval=20,
-                    ping_timeout=10,
-            ) as websocket:
-                self.websocket_status = "Authenticating"
-                auth_payload = {
-                    "user_id": self.config.get("WebSocket", "user_id"),
-                    "user_session": self.config.get("WebSocket", "user_session"),
-                }
-                self.logger.debug(f"WebSocket: Sending auth payload: {auth_payload}")
-                await websocket.send(json.dumps(auth_payload))
 
-                self.websocket_status = "Live"
-                self.logger.info("WebSocket connection is live and listening.")
+            # Log headers (masking sensitive info)
+            safe_headers = []
+            for k, v in extra_headers:
+                if k == "Cookie":
+                    safe_headers.append((k, f"my_gengo_session={masked_token}"))
+                else:
+                    safe_headers.append((k, v))
+            self.logger.debug(f"WebSocket: Preparing headers: {safe_headers}")
 
-                # Heartbeat task: send periodic ping to measure latency and expose countdown to UI
-                HEARTBEAT_INTERVAL = 30  # seconds
+            # websockets 12+ renamed extra_headers -> additional_headers.
+            ws_header_key = (
+                "additional_headers"
+                if int(str(getattr(websockets, "__version__", "0").split(".")[0])) >= 12
+                else "extra_headers"
+            )
 
-                async def heartbeat():
-                    while True:
-                        try:
-                            self.websocket_next_ping_ts = time.time() + HEARTBEAT_INTERVAL
-                            await asyncio.sleep(HEARTBEAT_INTERVAL)
-                            t0 = time.perf_counter()
-                            waiter = await websocket.ping()
-                            await asyncio.wait_for(waiter, timeout=5)
-                            self.websocket_last_pong_ts = time.time()
-                            self.websocket_ping_latency_ms = (time.perf_counter() - t0) * 1000.0
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as e:
-                            # Log and continue; the main loop will handle real disconnects
-                            self.logger.debug(f"WebSocket heartbeat error: {e}")
-
-                heartbeat_task = asyncio.create_task(heartbeat())
-
-                try:
-                    first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
+            async def run_session(headers):
+                header_desc = "with custom headers" if headers else "with no custom headers"
+                self.websocket_status = "Connecting"
+                self.logger.debug(
+                    f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
+                )
+                async with websockets.connect(
+                        ws_url,
+                        **{ws_header_key: headers},
+                        ping_interval=20,
+                        ping_timeout=10,
+                        compression=None,
+                ) as websocket:
+                    self.websocket_status = "Authenticating"
+                    user_id = self.config.get("WebSocket", "user_id")
+                    
+                    auth_payload = {
+                        "user_id": user_id,
+                        "user_session": session_token,
+                    }
+                    if user_key:
+                        auth_payload["user_key"] = user_key
+                    # Log auth attempt safely
                     self.logger.debug(
-                        f"WebSocket: First message after auth: {first_message}"
+                        "WebSocket: Sending auth payload for user_id=%s (user_key=%s)",
+                        user_id,
+                        masked_user_key,
                     )
-                    try:
-                        data = json.loads(first_message)
-                        self.logger.debug(f"WebSocket: First message JSON: {data}")
-                    except Exception as e:
-                        self.logger.warning(
-                            f"WebSocket: Could not parse first message as JSON: {e}"
-                        )
-                except asyncio.TimeoutError:
-                    self.logger.debug(
-                        "WebSocket: No message received immediately after authentication."
-                    )
-                except Exception as e:
-                    self.logger.warning(
-                        f"WebSocket: Error receiving first message: {e}"
-                    )
+                    
+                    await websocket.send(json.dumps(auth_payload))
 
-                async def monitor_test_request():
-                    """Monitors for a manual test request from the UI."""
-                    self.logger.debug("WebSocket: Test command monitor started.")
-                    while True:
-                        command = None
-                        with self._test_command_lock:
-                            if self._test_command:
-                                command = self._test_command
-                                self._test_command = None
-                        if command == "ping":
-                            self.logger.info("WebSocket: PING test initiated by user.")
+                    self.websocket_status = "Live"
+                    self.logger.info("WebSocket: Connection established and authenticated.")
+
+                    # Heartbeat task: send periodic ping to measure latency and expose countdown to UI
+                    HEARTBEAT_INTERVAL = 30  # seconds
+
+                    async def heartbeat():
+                        while True:
                             try:
-                                pong_waiter = await websocket.ping()
-                                await asyncio.wait_for(pong_waiter, timeout=5)
-                                self.logger.info(
-                                    "[bold green]WebSocket: PING test successful. Connection is live.[/bold green]"
-                                )
-                            except asyncio.TimeoutError:
-                                self.logger.warning(
-                                    "[bold red]WebSocket: PING test failed (timeout). Connection may be stalled.[/bold red]"
-                                )
+                                self.websocket_next_ping_ts = time.time() + HEARTBEAT_INTERVAL
+                                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                                t0 = time.perf_counter()
+                                self.logger.debug("WebSocket: Sending heartbeat ping...")
+                                waiter = await websocket.ping()
+                                await asyncio.wait_for(waiter, timeout=5)
+                                latency = (time.perf_counter() - t0) * 1000.0
+                                self.websocket_last_pong_ts = time.time()
+                                self.websocket_ping_latency_ms = latency
+                                self.logger.debug(f"WebSocket: Heartbeat pong received. Latency: {latency:.2f}ms")
+                            except asyncio.CancelledError:
+                                raise
                             except Exception as e:
-                                self.logger.error(f"WebSocket: PING test failed: {e}")
-                        elif command == "notify":
-                            self._simulate_new_job_notification()
-                        await asyncio.sleep(0.2)
+                                # Log and continue; the main loop will handle real disconnects
+                                self.logger.warning(f"WebSocket: Heartbeat failed: {e}")
 
-                test_monitor_task = asyncio.create_task(monitor_test_request())
-                try:
-                    async for message in websocket:
-                        self.logger.debug(f"WebSocket: Message received: {message}")
-                        data = None
+                    heartbeat_task = asyncio.create_task(heartbeat())
+
+                    try:
+                        self.logger.debug("WebSocket: Waiting for first message...")
+                        first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
+                        self.logger.debug(f"WebSocket: First message received: {first_message[:100]}...")
                         try:
-                            data = json.loads(message)
-                            self.logger.debug(f"WebSocket: Message JSON: {data}")
+                            data = json.loads(first_message)
+                            self.logger.debug(f"WebSocket: First message type: {data.get('type', 'unknown')}")
                         except Exception as e:
                             self.logger.warning(
-                                f"WebSocket: Could not parse message as JSON: {e}"
+                                f"WebSocket: Could not parse first message as JSON: {e}. Raw: {first_message[:100]}..."
                             )
-                        if (
-                            isinstance(data, dict)
-                            and data.get("type") == "available_collection"
-                        ):
-                            job = data.get("collection", {})
-                            job_id = job.get("id")
-                            self.logger.debug(f"WebSocket: Job data: {job}")
-                            if job_id:
-                                reward = float(job.get("rewards", 0.0))
-                                title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
-                                url = f"https://gengo.com/t/jobs/details/{job_id}"
-                                self._process_new_job(
-                                    job_id, title, reward, url, source="WebSocket"
-                                )
-                except ConnectionClosed as e:
-                    self.logger.warning(
-                        f"WebSocket: Disconnected: code={e.code}, reason={e.reason}"
-                    )
-                except Exception as e:
-                    self.logger.error(f"WebSocket: Error in main loop: {e}")
-                finally:
-                    test_monitor_task.cancel()
-                    heartbeat_task.cancel()
-                    try:
-                        await test_monitor_task
-                        await heartbeat_task
-                    except asyncio.CancelledError:
-                        self.logger.debug("WebSocket: auxiliary tasks cancelled and awaited cleanly.")
+                    except asyncio.TimeoutError:
+                        self.logger.debug(
+                            "WebSocket: No message received immediately after authentication (this is normal)."
+                        )
                     except Exception as e:
                         self.logger.warning(
-                            f"WebSocket: Exception while awaiting tasks: {e}"
+                            f"WebSocket: Error receiving first message: {e}"
                         )
-                if hasattr(websocket, "close_code") or hasattr(
-                    websocket, "close_reason"
-                ):
-                    self.logger.info(
-                        f"WebSocket: Closed: code={getattr(websocket, 'close_code', None)}, reason={getattr(websocket, 'close_reason', None)}"
+
+                    async def monitor_test_request():
+                        """Monitors for a manual test request from the UI."""
+                        self.logger.debug("WebSocket: Test command monitor started.")
+                        while True:
+                            command = None
+                            with self._test_command_lock:
+                                if self._test_command:
+                                    command = self._test_command
+                                    self._test_command = None
+                            if command == "ping":
+                                self.logger.info("WebSocket: PING test initiated by user.")
+                                try:
+                                    pong_waiter = await websocket.ping()
+                                    await asyncio.wait_for(pong_waiter, timeout=5)
+                                    self.logger.info(
+                                        "[bold green]WebSocket: PING test successful. Connection is live.[/bold green]"
+                                    )
+                                except asyncio.TimeoutError:
+                                    self.logger.warning(
+                                        "[bold red]WebSocket: PING test failed (timeout). Connection may be stalled.[/bold red]"
+                                    )
+                                except Exception as e:
+                                    self.logger.error(f"WebSocket: PING test failed: {e}")
+                            elif command == "notify":
+                                self._simulate_new_job_notification()
+                            await asyncio.sleep(0.2)
+
+                    test_monitor_task = asyncio.create_task(monitor_test_request())
+                    try:
+                        async for message in websocket:
+                            self.logger.debug(f"WebSocket: Message received (len={len(message)})")
+                            data = None
+                            try:
+                                data = json.loads(message)
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"WebSocket: Could not parse message as JSON: {e}"
+                                )
+                                continue
+                                
+                            if isinstance(data, dict):
+                                msg_type = data.get("type")
+                                if msg_type == "available_collection":
+                                    job = data.get("collection", {})
+                                    job_id = job.get("id")
+                                    self.logger.info(f"WebSocket: 'available_collection' event for job ID {job_id}")
+                                    if job_id:
+                                        reward = float(job.get("rewards", 0.0))
+                                        title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
+                                        url = f"https://gengo.com/t/jobs/details/{job_id}"
+                                        self._process_new_job(
+                                            job_id, title, reward, url, source="WebSocket"
+                                        )
+                                else:
+                                    self.logger.debug(f"WebSocket: Ignoring message type '{msg_type}'")
+                            else:
+                                self.logger.debug(f"WebSocket: Ignoring non-dict message: {str(data)[:50]}...")
+                                
+                    except ConnectionClosed as e:
+                        self.logger.warning(
+                            f"WebSocket: Disconnected by server: code={e.code}, reason={e.reason}"
+                        )
+                    except Exception as e:
+                        self.logger.error(f"WebSocket: Error in main message loop: {e}")
+                    finally:
+                        test_monitor_task.cancel()
+                        heartbeat_task.cancel()
+                        try:
+                            await test_monitor_task
+                            await heartbeat_task
+                        except asyncio.CancelledError:
+                            self.logger.debug("WebSocket: Auxiliary tasks cancelled cleanly.")
+                        except Exception as e:
+                            self.logger.warning(
+                                f"WebSocket: Exception while awaiting tasks cleanup: {e}"
+                            )
+                    if hasattr(websocket, "close_code") or hasattr(
+                        websocket, "close_reason"
+                    ):
+                        self.logger.info(
+                            f"WebSocket: Socket Closed: code={getattr(websocket, 'close_code', None)}, reason={getattr(websocket, 'close_reason', None)}"
+                        )
+
+            try:
+                await run_session(extra_headers)
+            except (InvalidStatusCode, InvalidHandshake) as e:
+                # Some load balancers/proxies reject any custom headers; retry without them.
+                message = str(e).lower()
+                if "extra headers" in message or "extra header" in message:
+                    self.logger.warning(
+                        "WebSocket handshake rejected due to extra headers; retrying without custom headers."
                     )
+                    await run_session(None)
+                else:
+                    raise
         except (
             ConnectionClosed,
             InvalidStatusCode,
@@ -779,11 +752,11 @@ class GengoWatcher:
             code = getattr(e, "code", None)
             reason = getattr(e, "reason", None)
             self.logger.warning(
-                f"WebSocket: Outer disconnect: code={code}, reason={reason}, error={e}"
+                f"WebSocket: Connection failed: code={code}, reason={reason}, error={e}"
             )
             self.websocket_status = "Offline"
         except Exception as e:
-            self.logger.error(f"WebSocket: Outer error: {e}")
+            self.logger.error(f"WebSocket: Unexpected error: {e}", exc_info=True)
             self.websocket_status = "Offline"
 
     def _run_websocket_monitor(self):
@@ -792,13 +765,21 @@ class GengoWatcher:
         # Exponential backoff on reconnect to avoid hammering server
         backoff = 5
         max_backoff = int(self.config.get("Network", "max_backoff"))
+        session_placeholder = "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
         while not self.shutdown_event.is_set():
-            if (
-                self.config.get("WebSocket", "user_session")
-                == "REPLACE_WITH_YOUR_SESSION_TOKEN"
-            ):
+            session_token = self.config.get("WebSocket", "user_session")
+            user_key = self.config.get("WebSocket", "user_key")
+            if not session_token or session_token == session_placeholder:
                 self.logger.warning(
                     "WebSocket disabled: Please set 'user_session' in config.ini."
+                )
+                self.websocket_status = "Disabled"
+                self.shutdown_event.wait()
+                break
+            if not user_key or user_key == key_placeholder:
+                self.logger.warning(
+                    "WebSocket disabled: Please set 'user_key' (copy from logged-in browser) in config.ini."
                 )
                 self.websocket_status = "Disabled"
                 self.shutdown_event.wait()
@@ -993,11 +974,7 @@ class GengoWatcher:
             required_fields = []
             for section in self.config._config_parser.sections():
                 for option in self.config._config_parser.options(section):
-                    if self.config.get(section, option) in (
-                        None,
-                        "",
-                        "REPLACE_WITH_YOUR_SESSION_TOKEN",
-                    ):
+                    if self.config.get(section, option) in PLACEHOLDER_CONFIG_VALUES:
                         required_fields.append((section, option))
 
         if not required_fields:
@@ -1018,7 +995,11 @@ class GengoWatcher:
             print(f"\n[{section}] Section:")
             for option in options:
                 current = self.config.get(section, option)
-                display_current = current if current != "REPLACE_WITH_YOUR_SESSION_TOKEN" else "(not set)"
+                display_current = (
+                    current
+                    if current not in PLACEHOLDER_CONFIG_VALUES
+                    else "(not set)"
+                )
 
                 # Provide helpful descriptions for common fields
                 descriptions = {
@@ -1066,7 +1047,7 @@ class GengoWatcher:
         for section, option in required_fields:
             try:
                 val = self.config.get(section, option)
-                if val in (None, "", "REPLACE_WITH_YOUR_SESSION_TOKEN"):
+                if val in PLACEHOLDER_CONFIG_VALUES:
                     self.logger.debug(
                         f"Config incomplete: [{section}] {option} is unset or placeholder."
                     )

@@ -38,3 +38,6 @@ MagicMock/
 pyproject.toml
 gengowatcher.egg-info/
 release todolist.md
+
+.gemini/
+gha-creds-*.json

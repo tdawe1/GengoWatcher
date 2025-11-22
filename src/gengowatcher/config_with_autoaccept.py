@@ -21,8 +21,10 @@ class AppConfig:
         },
         "WebSocket": {
             "enable_websocket": True,
+            "wss_url": "wss://live-dashboard.gengo.com",
             "user_id": 0,
             "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
+            "user_key": "REPLACE_WITH_YOUR_USER_KEY",
         },
         "Paths": {
             "sound_file": "C:\\Windows\\Media\\chimes.wav",
@@ -38,7 +40,14 @@ class AppConfig:
             "log_main_enabled": True,
             "log_all_entries_enabled": True,
         },
-        "Network": {"max_backoff": 300, "user_agent_email": "your_email@example.com"},
+        "Network": {
+            "max_backoff": 300,
+            "user_agent_email": "",
+            "browser_user_agent": "",
+        },
+        "RateLimit": {
+            "max_acceptances_per_hour": 30,
+        },
         "AutoAccept": {
             "enabled": False,
             "min_reward": 0.0,
@@ -92,12 +101,22 @@ class AppConfig:
             self._config_parser.read_file(f)
         with self._lock:
             try:
+                # Initialize config dict with ALL sections from parser
+                self.config = {}
+                for section in self._config_parser.sections():
+                    self.config[section] = {}
+                    for key, value in self._config_parser.items(section):
+                        self.config[section][key] = value
+
                 for section, defaults in self.DEFAULT_CONFIG.items():
                     # Add missing sections
                     if not self._config_parser.has_section(section):
                         self._config_parser.add_section(section)
                         print(f"Added missing config section: [{section}]")
-                    self.config[section] = {}
+                    
+                    if section not in self.config:
+                        self.config[section] = {}
+
                     for key, default_val in defaults.items():
                         if isinstance(default_val, bool):
                             method = self._config_parser.getboolean
@@ -107,10 +126,21 @@ class AppConfig:
                             method = self._config_parser.getfloat
                         else:
                             method = self._config_parser.get
-                        self.config[section][key] = method(
-                            section, key, fallback=default_val
-                        )
-                
+                        
+                        # Only set if not already loaded from file (although defaults loop logic handles missing options)
+                        if key not in self.config[section]:
+                             self.config[section][key] = method(
+                                section, key, fallback=default_val
+                            )
+                        else:
+                             # ensure typed values for existing keys that match defaults
+                            try:
+                                self.config[section][key] = method(
+                                    section, key, fallback=default_val
+                                )
+                            except:
+                                pass # Keep string value if type conversion fails
+
                 # Validate auto-accept configuration
                 self._validate_auto_accept_config()
                 
@@ -143,6 +173,8 @@ class AppConfig:
 
     def set(self, section, key, value):
         with self._lock:
+            if section not in self.config:
+                self.config[section] = {}
             self.config[section][key] = value
 
     def _validate_auto_accept_config(self):

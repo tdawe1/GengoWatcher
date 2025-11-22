@@ -52,6 +52,7 @@ class WebSocketWorker:
                 auth_payload = {
                     "user_id": self.config.get("WebSocket", "user_id"),
                     "user_session": self.config.get("WebSocket", "user_session"),
+                    "user_key": self.config.get("WebSocket", "user_key"),
                 }
 
                 await websocket.send(json.dumps(auth_payload))
