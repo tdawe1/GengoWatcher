@@ -20,6 +20,7 @@ def watcher_instance():
         "WebSocket": {
             "user_id": 12345,
             "user_session": "fake_session_token",
+            "user_key": "fake_browser_user_key",
             "enable_websocket": True,
         },
         "Logging": {"log_all_entries_enabled": False},
@@ -81,16 +82,19 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
 
     await w._websocket_logic()
 
-    mock_connect.assert_called_once_with(
-        "wss://live-dashboard.gengo.com",
-        extra_headers=ANY,
-        ping_interval=20,
-        ping_timeout=10,
-    )
+    kwargs = mock_connect.call_args.kwargs
+    assert mock_connect.call_args.args[0] == "wss://live-dashboard.gengo.com"
+    header_key = "additional_headers" if kwargs.get("additional_headers") is not None else "extra_headers"
+    assert kwargs[header_key] is not None
+    assert kwargs["ping_interval"] == 20
+    assert kwargs["ping_timeout"] == 10
     mock_ws_client.send.assert_awaited_once()
     auth_call = mock_ws_client.send.await_args[0][0]
     assert '"user_id": 12345' in auth_call
     assert '"user_session": "fake_session_token"' in auth_call
+    assert '"user_key": "fake_browser_user_key"' in auth_call
+    assert '"user_session": "fake_session_token"' in auth_call
+    assert '"user_key": "fake_browser_user_key"' in auth_call
     w._process_new_job.assert_called_once_with(
         9876,
         "English > Japanese",
@@ -123,12 +127,12 @@ async def test_websocket_logic_processes_job(mock_connect, watcher_instance):
 
     await w._websocket_logic()
 
-    mock_connect.assert_called_once_with(
-        "wss://live-dashboard.gengo.com",
-        extra_headers=ANY,
-        ping_interval=20,
-        ping_timeout=10,
-    )
+    kwargs = mock_connect.call_args.kwargs
+    assert mock_connect.call_args.args[0] == "wss://live-dashboard.gengo.com"
+    header_key = "additional_headers" if kwargs.get("additional_headers") is not None else "extra_headers"
+    assert kwargs[header_key] is not None
+    assert kwargs["ping_interval"] == 20
+    assert kwargs["ping_timeout"] == 10
     mock_ws_client.send.assert_awaited_once()
     auth_call = mock_ws_client.send.await_args[0][0]
     assert '"user_id": 12345' in auth_call

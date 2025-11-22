@@ -74,10 +74,18 @@ class JobAcceptanceEngine:
             self.logger.info("Job Acceptance Engine initialized")
             
         # Rate limiter to prevent exceeding API limits
+        # Read from config if available, otherwise default to 30/min
+        max_hourly = config.getint("RateLimit", "max_acceptances_per_hour", fallback=1800)
+        # RateLimiter uses a time_window (seconds) and max_requests.
+        # We'll stick to a 60s window and scale the requests accordingly.
+        # If user wants 15/hour, that's 0.25/min which RateLimiter (int) can't handle directly with 60s window.
+        # So we set window to 3600 (1 hour) and max_requests to max_hourly.
+        
         self.rate_limiter = RateLimiter(
-            max_requests=30,  # Max 30 job acceptances per minute
-            time_window=60    # 1 minute window
+            max_requests=max_hourly,
+            time_window=3600
         )
+        self.logger.debug(f"RateLimiter configured: {max_hourly} requests per 3600s")
         
         # Session for HTTP requests
         self.session: Optional[aiohttp.ClientSession] = None

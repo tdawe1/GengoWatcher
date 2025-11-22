@@ -54,7 +54,8 @@ TEST_CONFIG = {
         "enabled": "true",
         "url": "wss://test.gengo.com/ws",
         "user_session": "test_session_token",
-        "user_id": "test_user_id"
+        "user_id": "test_user_id",
+        "user_key": "test_browser_user_key"
     }
 }
 

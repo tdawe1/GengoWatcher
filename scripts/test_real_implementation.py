@@ -60,9 +60,14 @@ async def test_job_acceptance():
         
         # Check for required credentials
         user_session = config.get("WebSocket", "user_session")
+        user_key = config.get("WebSocket", "user_key")
         if not user_session or user_session == "REPLACE_WITH_YOUR_SESSION_TOKEN":
             logger.error("Gengo user session token not configured")
             print("Please configure your Gengo user session token in config.ini")
+            return False
+        if not user_key or user_key == "REPLACE_WITH_YOUR_USER_KEY":
+            logger.error("Gengo browser user key not configured")
+            print("Please configure your user_key (DevTools → Application → Local Storage → userKey) in config.ini")
             return False
             
         user_id = config.get("WebSocket", "user_id")
