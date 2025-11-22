@@ -124,6 +124,7 @@ use_custom_user_agent = false
 enable_websocket = true
 user_id = 12345
 user_session = your_long_session_token_here
+user_key = your_browser_user_key
 
 [Paths]
 sound_file = C:\Windows\Media\chimes.wav
@@ -170,6 +171,8 @@ host = localhost
 ; first web-server startup and persist it to config.ini.
 auth_token =
 ```
+
+> **Tip:** The WebSocket `user_key` must come from the same logged-in browser profile (e.g., Vivaldi). In DevTools go to **Application → Local Storage → https://gengo.com → userKey** and copy the value into `config.ini`.
 
 ---
 
@@ -299,7 +302,7 @@ This application uses a Text-Based User Interface (TUI) which draws and redraws 
 #### WebSocket Connection Issues
 
 If you're experiencing WebSocket connection problems:
-1. Verify your user_id and user_session are correct
+1. Verify your user_id, user_session, and user_key match the values from your logged-in browser
 2. Check network connectivity
 3. Use `wstest` to diagnose connection issues
 4. Ensure your WebSocket headers match the expected format

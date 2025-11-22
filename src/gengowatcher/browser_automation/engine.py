@@ -311,11 +311,16 @@ class BrowserAutomationEngine:
         user_agent = None
         if hasattr(self.config, "get"):
             try:
-                user_agent = self.config.get("Watcher", "user_agent")
+                # Try the new standard location first
+                user_agent = self.config.get("Network", "browser_user_agent")
+                # Fallback to legacy location
+                if not user_agent:
+                    user_agent = self.config.get("Watcher", "user_agent")
             except Exception:
                 user_agent = None
         if user_agent:
             chrome_options.add_argument(f"--user-agent={user_agent}")
+            self.logger.debug(f"Browser automation using configured User-Agent: {user_agent[:30]}...")
         
         try:
             if _HAS_WDM:

@@ -17,8 +17,10 @@ class AppConfig:
         },
         "WebSocket": {
             "enable_websocket": True,
+            "wss_url": "wss://live-dashboard.gengo.com",
             "user_id": 0,
             "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
+            "user_key": "REPLACE_WITH_YOUR_USER_KEY",
         },
         "Paths": {
             "sound_file": "C:\\Windows\\Media\\chimes.wav",
@@ -34,12 +36,20 @@ class AppConfig:
             "log_main_enabled": True,
             "log_all_entries_enabled": True,
         },
-        "Network": {"max_backoff": 300, "user_agent_email": "your_email@example.com"},
+        "Network": {
+            "max_backoff": 300,
+            "user_agent_email": "",
+            "browser_user_agent": "",
+        },
+        "RateLimit": {
+            "max_acceptances_per_hour": 30,
+        },
         "WebServer": {
             "enabled": False,
             "host": "127.0.0.1",
             "port": 8000,
             "cors_origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+            "auth_token": "REPLACE_WITH_YOUR_WEB_API_TOKEN",
         },
         "AutoAccept": {
             "enabled": False,
@@ -134,6 +144,15 @@ class AppConfig:
         with self._lock:
             try:
                 config_modified = False
+                
+                # First, populate self.config with everything from the parser
+                # This ensures user-defined sections are available
+                for section in self._config_parser.sections():
+                    self.config[section] = {}
+                    for key, value in self._config_parser.items(section):
+                        self.config[section][key] = value
+
+                # Then, ensure all defaults are present and typed correctly where possible
                 for section, defaults in self.DEFAULT_CONFIG.items():
                     # Add missing sections
                     if not self._config_parser.has_section(section):
@@ -141,7 +160,9 @@ class AppConfig:
                         print(f"Added missing config section: [{section}]")
                         config_modified = True
 
-                    self.config[section] = {}
+                    if section not in self.config:
+                        self.config[section] = {}
+
                     for key, default_val in defaults.items():
                         if isinstance(default_val, bool):
                             method = self._config_parser.getboolean
@@ -270,6 +291,8 @@ class AppConfig:
 
     def set(self, section, key, value):
         with self._lock:
+            if section not in self.config:
+                self.config[section] = {}
             self.config[section][key] = value
 
     def _validate_auto_accept_config(self):

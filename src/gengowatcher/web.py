@@ -579,10 +579,15 @@ async def lifespan(app: FastAPI):
         state = AppState(logger=logger)
 
         # Initialize authenticator with config token
-        try:
-            api_token = config.get("WebServer", "auth_token")
-        except:
-            api_token = "gengo-token-demo"
+        api_token = config.get("WebServer", "auth_token")
+
+        if not api_token or api_token == "REPLACE_WITH_YOUR_WEB_API_TOKEN":
+            api_token = secrets.token_urlsafe(32)
+            config.set("WebServer", "auth_token", api_token)
+            config.save_config()
+            logger.warning("No WebServer auth_token found or it was a placeholder. Generated a new one.")
+            logger.warning(f"Please add this to your frontend client or config: WebServer.auth_token = {api_token}")
+        
         global authenticator
         authenticator = APIAuthenticator(api_token)
 

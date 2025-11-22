@@ -1,0 +1,40 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+- Python app lives in `src/gengowatcher` (entrypoint: `python -m gengowatcher.main`).
+- Tests: `tests/` (primary) and `src/tests/` (module‑specific helpers).
+- Web UI: `frontend/` (Vite + React + TS).
+- Utilities: `scripts/` (diagnostics and examples).
+- Docs and assets: `docs/`, `assets/`; runtime data: `logs/`, `state.json`, config: `config.ini`.
+
+## Build, Test, and Development Commands
+- Backend/TUI
+  - `pip install -r requirements.txt` – install deps (use a venv).
+  - `make test` – run pytest.
+  - `make coverage` – pytest with coverage.
+  - `make lint` – flake8 linting.
+  - `make format` – format with Black.
+  - Run app: `python -m gengowatcher.main [--web|--web-only] [--web-port 8000]`.
+- Frontend (optional UI)
+  - `cd frontend && npm install`
+  - `npm run dev` – start Vite dev server.
+  - `npm run build` – production build to `frontend/dist`.
+  - `npm test` / `npm run test:coverage` – Vitest.
+
+## Coding Style & Naming Conventions
+- Python: 4‑space indent, max line length 88; format with Black; lint with Flake8 (ignores E203, W503 per `.flake8`).
+- Naming: modules/functions `snake_case`, classes `PascalCase`, constants `UPPER_SNAKE`.
+- Keep modules cohesive; prefer small, testable functions under `src/gengowatcher/`.
+
+## Testing Guidelines
+- Framework: pytest (with `pytest-asyncio` available for async tests).
+- Place tests under `tests/` mirroring package paths; name files `test_*.py`.
+- Quick filters: `pytest -k "keyword" -q`. Coverage: `make coverage` (see `.coveragerc` omits).
+
+## Commit & Pull Request Guidelines
+- Use Conventional Commits where possible: `feat(scope): summary`, `fix: …`, `chore: …`, `test: …` (see git history examples).
+- PRs must include: clear description (what/why/how), linked issues (`Closes #123`), steps to test, and screenshots/GIFs for UI or TUI output when relevant.
+
+## Security & Configuration Tips
+- Do not commit real API keys, session tokens, or personal feed URLs. Keep secrets local (the app encrypts stored keys via `secure_storage`).
+- Avoid checking in generated artifacts (`logs/`, `frontend/dist/`, virtualenvs). Update `README.md` if you change CLI flags or config keys.
