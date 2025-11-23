@@ -87,6 +87,8 @@ class GengoWatcher:
         self.websocket_last_pong_ts = None  # float epoch seconds
         self.websocket_ping_latency_ms = None  # float milliseconds
         self.websocket_next_ping_ts = None  # float epoch seconds
+        self.websocket_last_close_code = None
+        self.websocket_last_close_reason = None
         self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
@@ -707,8 +709,15 @@ class GengoWatcher:
                                 self.logger.debug(f"WebSocket: Ignoring non-dict message: {str(data)[:50]}...")
                                 
                     except ConnectionClosed as e:
-                        self.logger.warning(
-                            f"WebSocket: Disconnected by server: code={e.code}, reason={e.reason}"
+                        self.websocket_last_close_code = getattr(e, "code", None)
+                        self.websocket_last_close_reason = getattr(e, "reason", None)
+                        log_method = (
+                            self.logger.info
+                            if getattr(e, "code", None) == 1000
+                            else self.logger.warning
+                        )
+                        log_method(
+                            f"WebSocket: Disconnected by server: code={getattr(e, 'code', None)}, reason={getattr(e, 'reason', None)}"
                         )
                     except Exception as e:
                         self.logger.error(f"WebSocket: Error in main message loop: {e}")
@@ -727,8 +736,12 @@ class GengoWatcher:
                     if hasattr(websocket, "close_code") or hasattr(
                         websocket, "close_reason"
                     ):
+                        close_code = getattr(websocket, "close_code", None)
+                        close_reason = getattr(websocket, "close_reason", None)
+                        self.websocket_last_close_code = close_code
+                        self.websocket_last_close_reason = close_reason
                         self.logger.info(
-                            f"WebSocket: Socket Closed: code={getattr(websocket, 'close_code', None)}, reason={getattr(websocket, 'close_reason', None)}"
+                            f"WebSocket: Socket Closed: code={close_code}, reason={close_reason}"
                         )
 
             try:
@@ -763,7 +776,8 @@ class GengoWatcher:
         """The main loop for the WebSocket connection, designed to run in a thread."""
         self.logger.debug("Starting WebSocket monitor thread.")
         # Exponential backoff on reconnect to avoid hammering server
-        backoff = 5
+        base_backoff = 5
+        backoff = base_backoff
         max_backoff = int(self.config.get("Network", "max_backoff"))
         session_placeholder = "REPLACE_WITH_YOUR_SESSION_TOKEN"
         key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
@@ -786,16 +800,29 @@ class GengoWatcher:
                 break
             try:
                 self.logger.debug("Running websocket logic (asyncio.run)")
+                self.websocket_last_close_code = None
+                self.websocket_last_close_reason = None
                 asyncio.run(self._websocket_logic())
                 if self.shutdown_event.is_set():
                     break
                 self.websocket_status = "Offline"
-                self.logger.info(
-                    f"WebSocket connection closed. Reconnecting in {backoff} seconds..."
-                )
-                if self.shutdown_event.wait(backoff):
+                close_code = self.websocket_last_close_code
+                close_reason = self.websocket_last_close_reason
+                normal_close = close_code in (1000, 1001)
+                if normal_close:
+                    wait_time = base_backoff
+                    backoff = base_backoff
+                    self.logger.info(
+                        f"WebSocket connection closed cleanly (code={close_code}, reason={close_reason}). Reconnecting in {wait_time} seconds..."
+                    )
+                else:
+                    wait_time = backoff
+                    self.logger.info(
+                        f"WebSocket connection closed. Reconnecting in {wait_time} seconds..."
+                    )
+                    backoff = min(backoff * 2, max_backoff)
+                if self.shutdown_event.wait(wait_time):
                     break
-                backoff = min(backoff * 2, max_backoff)
             except Exception as e:
                 self.logger.error(f"Critical error in WebSocket runner: {e}")
                 if self.shutdown_event.wait(backoff):
