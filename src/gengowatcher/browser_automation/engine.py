@@ -289,7 +289,18 @@ class BrowserAutomationEngine:
         self._monitor_threads.add(t)
 
     def _initialize_driver(self) -> webdriver.Chrome:
-        """Initialize Chrome WebDriver with appropriate options"""
+        """
+        Create and configure a Chrome WebDriver instance using the engine's configuration.
+        
+        Initialises and returns the existing driver if already created; otherwise builds Chrome options
+        (from headless and user-agent settings) and constructs a new webdriver.Chrome instance.
+        
+        Returns:
+            The configured Chrome WebDriver instance.
+        
+        Raises:
+            Exception: If the WebDriver cannot be initialised.
+        """
         if self.driver:
             return self.driver
             

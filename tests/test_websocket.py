@@ -12,6 +12,14 @@ import logging
 
 @pytest.fixture
 def watcher_instance():
+    """
+    Create and return a GengoWatcher instance preconfigured with mocked AppConfig and AppState for tests.
+    
+    The returned watcher uses a test logger, a mocked configuration exposing WebSocket credentials (user_id, user_session, user_key) and logging settings, and a mocked state whose seen_job_ids is a bounded deque. Its _process_new_job method is replaced with a MagicMock to observe invocations during tests.
+    
+    Returns:
+        GengoWatcher: A watcher instance ready for unit tests with config/state mocks applied.
+    """
     logger = logging.getLogger("test_ws")
     mock_config = MagicMock(spec=AppConfig)
     mock_state = MagicMock(spec=AppState)
@@ -108,7 +116,9 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
 @patch("gengowatcher.watcher.websockets.connect")
 async def test_websocket_logic_processes_job(mock_connect, watcher_instance):
     """
-    Tests the _websocket_logic async method directly.
+    Verify that the watcher's WebSocket logic authenticates, receives a job message and invokes job processing.
+    
+    This test connects the watcher to a mocked WebSocket, ensures the client is opened with the live-dashboard URL and the expected ping parameters, accepts either `additional_headers` or `extra_headers`, sends a single authentication payload containing the configured `user_id`, and processes an incoming `available_collection` message by calling `_process_new_job` with the job id, a "Source > Target" translation label, the numeric reward, the job detail URL and `source="WebSocket"`.
     """
     w = watcher_instance
     job_payload = {

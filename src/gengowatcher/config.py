@@ -139,6 +139,11 @@ class AppConfig:
         # Don't exit - let the interactive config prompt handle it
 
     def load_config(self):
+        """
+        Load configuration from disk into the in-memory configuration, apply defaults and repair missing sections/options.
+        
+        Reads the CONFIG_FILE into the internal parser, populates self.config with existing user-defined values, ensures every section and option from DEFAULT_CONFIG exists (adding any missing entries), and persists the updated config file when modifications are made. After loading and repair, calls _validate_auto_accept_config to enforce AutoAccept invariants. On parsing or value errors the function prints a critical message and exits the process.
+        """
         with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
             self._config_parser.read_file(f)
         with self._lock:
@@ -290,13 +295,25 @@ class AppConfig:
                 return None
 
     def set(self, section, key, value):
+        """
+        Set a configuration value in the in-memory config, creating the section if it does not exist.
+        
+        Parameters:
+            section (str): Name of the configuration section to update or create.
+            key (str): Configuration option name to set.
+            value (Any): Value to assign to the given key in the section.
+        """
         with self._lock:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
 
     def _validate_auto_accept_config(self):
-        """Validate auto-accept configuration values"""
+        """
+        Validate and sanitise the AutoAccept section of the in-memory configuration.
+        
+        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
+        """
         auto_accept = self.config["AutoAccept"]
         
         # Validate reward range
