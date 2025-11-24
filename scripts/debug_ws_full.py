@@ -13,10 +13,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ws_debug")
 
-USER_ID = 789487
-USER_SESSION = "562953786fad3abf8fe747a863a8a73b4332c588"
-USER_KEY = "REPLACE_WITH_BROWSER_USER_KEY"
-WS_URL = "wss://live-dashboard.gengo.com"
+import os
+
+USER_ID = int(os.getenv("GENGO_USER_ID", "0"))
+USER_SESSION = os.getenv("GENGO_USER_SESSION", "")
+USER_KEY = os.getenv("GENGO_USER_KEY", "")
+WS_URL = os.getenv("GENGO_WS_URL", "wss://live-dashboard.gengo.com")
+
+if not all([USER_ID, USER_SESSION, USER_KEY]):
+    logger.error("Missing required environment variables: GENGO_USER_ID, GENGO_USER_SESSION, GENGO_USER_KEY")
+    sys.exit(1)
 
 # Headers to test
 HEADERS_SETS = {
