@@ -31,6 +31,11 @@ except ImportError:
     # Provide a no-op fallback so the watcher can still load if browser deps are missing.
     class BrowserAutomationEngine:  # type: ignore
         def __init__(self, *args, **kwargs):
+            """
+            Initialise a GengoWatcher instance and configure its runtime subsystems.
+            
+            Initialises core attributes and runtime state, sets up CSV logging (if enabled), CAPTCHA monitoring, browser automation (with a no-op fallback if unavailable), job acceptance and cancellation managers, and synchronisation primitives used by RSS and WebSocket monitors. Attempts to restore any cached browser session and, depending on configuration, starts background monitors such as the live dashboard and refresh monitors. Logs diagnostic information about the environment and records watcher version on successful initialisation.
+            """
             pass
 
 from . import notifier
@@ -46,16 +51,10 @@ class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
 
     def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
-        """Initialize the GengoWatcher instance.
-
-        Sets up the watcher with configuration, state management, logging, and initializes
-        various components including CAPTCHA solver, job acceptance engine, and browser
-        automation engine.
-
-        Args:
-            config: Application configuration object containing all settings.
-            state: Application state object for managing persistent data.
-            logger: Logger instance for recording application events.
+        """
+        Initialises the GengoWatcher and configures its core subsystems.
+        
+        Initial setup includes wiring configuration and persistent state, preparing logging (CSV entry logging when enabled), and initialising the CAPTCHA solver, browser automation engine, job acceptance engine and job cancellation manager. Also initialises thread/async coordination primitives and WebSocket heartbeat/diagnostic fields used by monitoring and UI components.
         """
         logger.info(
             f"[DIAG] websockets module path: {getattr(websockets, '__file__', 'unknown')}"
@@ -171,13 +170,10 @@ class GengoWatcher:
         self.captcha_solver.monitor.log_performance_metrics()
 
     def _setup_csv_logging(self):
-        """Set up CSV logging for recording all RSS feed entries.
-
-        Creates the log directory if it doesn't exist and initializes the CSV writer
-        with appropriate headers if the file is empty.
-
-        Raises:
-            IOError: If the log file cannot be opened or created.
+        """
+        Initialise CSV logging for recording RSS feed entries.
+        
+        Creates the configured log directory if missing, opens the log file for appending and initialises a CSV writer. If the file is empty a header row ("timestamp", "title", "reward", "link", "summary") is written. If the file cannot be opened, CSV logging is disabled and an error is logged.
         """
         self.logger.debug("Setting up CSV logging.")
         try:
@@ -199,7 +195,14 @@ class GengoWatcher:
     
     def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
         """
-        Shows a desktop notification and optionally plays a sound.
+        Send a desktop notification and optionally play a sound or open a URL.
+        
+        Parameters:
+            message (str): Notification message body.
+            title (str): Notification title; defaults to "GengoWatcher".
+            play_sound (bool): If True and sound is enabled in configuration, play the configured sound.
+            open_link (bool): If True and `url` is provided, open the URL in the configured browser.
+            url (str | None): URL to open when `open_link` is True; ignored if not provided.
         """
         if self.config.get("Watcher", "enable_notifications"):
             icon_path = self.config.get("Paths", "notification_icon_path")
@@ -214,16 +217,11 @@ class GengoWatcher:
 
 
     def open_in_browser(self, url):
-        """Open a URL in the configured browser.
-
-        Uses the configured browser path and arguments if available, otherwise
-        falls back to the system default browser.
-
-        Args:
-            url: The URL to open in the browser.
-
-        Raises:
-            Exception: If there's an error opening the browser.
+        """
+        Open the given URL using the configured browser if available, otherwise use the system default browser.
+        
+        Parameters:
+            url (str): The URL to open. If the configured `browser_args` include formatting placeholders (for example `{url}`), they will be formatted with this URL.
         """
         self.logger.debug(f"Opening URL in browser: {url}")
         try:
@@ -241,16 +239,16 @@ class GengoWatcher:
 
 
     def _extract_reward(self, entry) -> float:
-        """Extract the reward amount from an RSS feed entry.
-
-        Parses the title and summary of an RSS entry to find reward information
-        using a regular expression pattern.
-
-        Args:
-            entry: Dictionary containing RSS entry data with 'title' and 'summary' keys.
-
+        """
+        Extracts the numeric reward value from an RSS entry.
+        
+        Searches the entry's title and summary for a "Reward:" label followed by an optional currency symbol and returns the parsed value.
+        
+        Parameters:
+            entry (Mapping): RSS entry containing at least 'title' and 'summary' strings.
+        
         Returns:
-            float: The extracted reward amount, or 0.0 if not found or invalid.
+            float: Reward amount as a float, or 0.0 if no valid reward is found.
         """
         text = entry.get("title", "") + " | " + entry.get("summary", "")
         self.logger.debug(f"Extracting reward from entry: {text}")
@@ -512,10 +510,10 @@ class GengoWatcher:
             return None
 
     async def _websocket_logic(self):
-        """The core async logic for a single WebSocket connection attempt.
-
-        Adds an inactivity watchdog to catch "silent" stalls (no messages for a
-        prolonged period) and force a reconnect with a clear log line.
+        """
+        Manage a single WebSocket connection: establish, authenticate, maintain heartbeat, receive events and handle clean disconnects.
+        
+        Establishes a connection to the configured WebSocket URL, sends authentication payload (user/session and optional key), and updates connection state. Maintains a periodic heartbeat to measure latency and detect stalls, monitors for manual test commands, and listens for incoming messages; when an "available_collection" event is received it extracts job details and delegates handling to the watcher. Records socket close codes and reasons, performs a retry without custom headers when handshakes fail due to header restrictions, and sets websocket_status to reflect connection state or offline on failure.
         """
         ws_url = self.config.get("WebSocket", "wss_url") or "wss://live-dashboard.gengo.com"
         self.websocket_status = "Connecting"
@@ -573,6 +571,19 @@ class GengoWatcher:
             )
 
             async def run_session(headers):
+                """
+                Run a single WebSocket session: connect, authenticate, monitor heartbeat and test commands, and process incoming messages.
+                
+                Parameters:
+                    headers (dict | None): Optional extra HTTP headers to include in the WebSocket handshake; pass None to omit custom headers.
+                
+                Detailed behaviour:
+                    - Connects to the configured WebSocket URL and sends an authentication payload containing the configured `user_id`, the stored session token and, if present, the `user_key`.
+                    - Starts a heartbeat task that measures ping/pong latency and updates connection timing/state attributes.
+                    - Starts a test-monitor task that responds to manual UI test commands (e.g. ping, notify).
+                    - Listens for incoming messages and invokes the watcher's message handling for recognised events (notably `available_collection` events, which are forwarded to `_process_new_job`).
+                    - Records the socket close code and reason on disconnect, cancels auxiliary tasks and performs orderly cleanup while logging notable conditions and errors.
+                """
                 header_desc = "with custom headers" if headers else "with no custom headers"
                 self.websocket_status = "Connecting"
                 self.logger.debug(
@@ -610,6 +621,11 @@ class GengoWatcher:
                     HEARTBEAT_INTERVAL = 30  # seconds
 
                     async def heartbeat():
+                        """
+                        Periodically sends WebSocket pings to measure connectivity and update heartbeat metrics.
+                        
+                        This coroutine runs an infinite loop that sends a ping at the configured heartbeat interval, measures round-trip latency, and updates the instance attributes used for uptime/diagnostics (next scheduled ping timestamp, last pong timestamp and last measured ping latency in milliseconds). It will propagate asyncio.CancelledError when cancelled; other exceptions are caught and logged so the outer connection loop can handle disconnects.
+                        """
                         while True:
                             try:
                                 self.websocket_next_ping_ts = time.time() + HEARTBEAT_INTERVAL
@@ -651,7 +667,15 @@ class GengoWatcher:
                         )
 
                     async def monitor_test_request():
-                        """Monitors for a manual test request from the UI."""
+                        """
+                        Monitor the UI for manual test commands and execute the corresponding test actions.
+                        
+                        This coroutine runs continuously until cancelled. When a pending test command is detected it:
+                        - Executes "ping": sends a WebSocket ping, awaits a pong and logs success or timeout/failure.
+                        - Executes "notify": triggers a simulated new-job notification via _simulate_new_job_notification().
+                        
+                        No parameters or return value.
+                        """
                         self.logger.debug("WebSocket: Test command monitor started.")
                         while True:
                             command = None
@@ -773,7 +797,17 @@ class GengoWatcher:
             self.websocket_status = "Offline"
 
     def _run_websocket_monitor(self):
-        """The main loop for the WebSocket connection, designed to run in a thread."""
+        """
+        Manage the persistent WebSocket connection lifecycle, including configuration validation, connection attempts, reconnection with exponential backoff, and orderly shutdown.
+        
+        On each loop iteration this method:
+        - Verifies required WebSocket credentials are configured; if missing, marks the WebSocket as disabled and waits for shutdown.
+        - Runs the asynchronous connection logic and records the last close code and reason.
+        - Distinguishes clean closes (codes 1000/1001) from abnormal closes and applies exponential backoff (bounded by the configured `Network.max_backoff`) before reconnecting.
+        - Observes `shutdown_event` to exit promptly and updates `websocket_status` to reflect current state.
+        
+        This method does not return a value.
+        """
         self.logger.debug("Starting WebSocket monitor thread.")
         # Exponential backoff on reconnect to avoid hammering server
         base_backoff = 5
@@ -981,6 +1015,19 @@ class GengoWatcher:
             self.logger.error(f"Failed to configure cancellation manager: {e}")
 
     def prompt_for_config_values(self, required_fields=None):
+        """
+        Interactively prompt the user to supply missing configuration values.
+        
+        If `required_fields` is not provided, the method scans the current configuration for values that match
+        module-level placeholder markers and prompts for each missing item. For a fresh or small config file a
+        welcome message is printed. Prompts are grouped by section and sensitive fields (containing "password",
+        "session" or "key") are read without echo. Provided values are saved via set_config_value; skipped entries
+        leave existing values unchanged. Progress and completion messages are printed and the action is logged.
+        
+        Parameters:
+            required_fields (iterable[(str, str)], optional): Iterable of (section, option) pairs to prompt.
+                If omitted or None, missing values are auto-detected from placeholder constants.
+        """
         import getpass
 
         self.logger.debug("Prompting for config values interactively.")
@@ -1063,6 +1110,17 @@ class GengoWatcher:
         self.logger.info("Config interactive prompt complete.")
 
     def is_config_complete(self, required_fields=None):
+        """
+        Determine whether required configuration fields are set to non-placeholder values.
+        
+        If `required_fields` is omitted, every section/option present in the loaded config is validated against the module's placeholder sentinel values.
+        
+        Parameters:
+            required_fields (list[tuple[str, str]]|None): Optional iterable of (section, option) pairs to validate. If `None`, all loaded config options are checked.
+        
+        Returns:
+            bool: `True` if all specified fields are set to values other than the placeholder sentinels, `False` otherwise.
+        """
         self.logger.debug("Checking if config is complete.")
         if required_fields is None:
             required_fields = []

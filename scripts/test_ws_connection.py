@@ -19,6 +19,11 @@ USER_KEY = "REPLACE_WITH_BROWSER_USER_KEY"
 WS_URL = "wss://live-dashboard.gengo.com"
 
 async def test_connection():
+    """
+    Test a WebSocket connection to the configured WS_URL, authenticate and maintain the session.
+    
+    Opens a WebSocket connection to the module-level WS_URL, sends an authentication payload containing the module-level USER_ID, USER_SESSION and USER_KEY, then continuously receives messages. If no message arrives within 10 seconds the function sends a ping and waits up to 5 seconds for a pong to keep the connection alive. Connection closure and other errors are logged; the function exits only when the connection is closed or an exception occurs.
+    """
     logger.info(f"Testing WebSocket connection to {WS_URL}")
     
     # Headers as in watcher.py (Updated)

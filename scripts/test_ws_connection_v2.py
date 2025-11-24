@@ -21,6 +21,16 @@ WS_URL = "https://live-dashboard.gengo.com"
 UA_CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 async def run_test(name, user_id, headers):
+    """
+    Run a WebSocket connection test that authenticates with the server and awaits a single response.
+    
+    Establishes a WebSocket connection to the module-level WS_URL using the supplied handshake headers, sends an authentication payload containing `user_id`, `USER_SESSION` and `USER_KEY`, and waits up to 5 seconds for a reply. Connection closures and other errors are handled internally and not raised to the caller.
+    
+    Parameters:
+    	name (str): Identifier used in logs to label this test.
+    	user_id (int | str): User identifier to include in the authentication payload.
+    	headers (Mapping[str, str]): HTTP headers to include in the WebSocket handshake (e.g. Cookie, Origin, User-Agent).
+    """
     logger.info(f"--- Starting Test: {name} ---")
     try:
         # Handle websockets version difference
@@ -51,6 +61,14 @@ async def run_test(name, user_id, headers):
     logger.info(f"--- End Test: {name} ---\n")
 
 async def main():
+    """
+    Run three WebSocket authentication tests using predefined header and credential combinations.
+    
+    Each test invokes run_test with:
+    - an integer user ID and a Chrome User-Agent,
+    - a string user ID and a Chrome User-Agent,
+    - an integer user ID with no User-Agent header.
+    """
     base_headers = {
         "Cookie": f"my_gengo_session={USER_SESSION}",
         "Origin": "https://gengo.com",
