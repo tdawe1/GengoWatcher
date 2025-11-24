@@ -16,7 +16,14 @@ from gengowatcher.high_value_job_manager import HighValueJobManager
 
 
 def test_configuration():
-    """Test if high-value configuration is properly set."""
+    """
+    Verify that the high-value job configuration file exists and contains valid settings.
+    
+    Checks for the presence of config_high_value.ini, loads it via AppConfig and validates the RSS feed URL, WebSocket credentials (user_id, user_session, user_key), high-value thresholds and CAPTCHA configuration. Status messages are printed to stdout for each check.
+    
+    Returns:
+        bool: `True` if the configuration file exists and all validations complete without error, `False` otherwise.
+    """
     print("Testing High-Value Job Configuration...\n")
 
     # Check if high-value config exists
@@ -124,7 +131,11 @@ async def test_high_value_manager():
 
 
 def show_setup_instructions():
-    """Show setup instructions."""
+    """
+    Print the setup and configuration instructions required to configure high-value job monitoring.
+    
+    The printed message covers required configuration file edits and keys, RSS feed details, WebSocket credentials (user ID, session cookie and user key), running instructions, recommended safety limits and notification/logging locations.
+    """
     print("\n" + "="*60)
     print("HIGH-VALUE JOB SETUP INSTRUCTIONS")
     print("="*60)
