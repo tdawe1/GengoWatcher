@@ -127,7 +127,7 @@ class GengoWatcher:
                 if self.browser_automation_engine.login_with_session(str(session_token)):
                     # Start monitors if configured
                     try:
-                        if False and self.config.get("SeleniumMonitoring", "enable_live_dashboard"):
+                        if self.config.getboolean("SeleniumMonitoring", "enable_live_dashboard"):
                             self.browser_automation_engine.start_live_dashboard_monitor(
                                 on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(url)
                             )
