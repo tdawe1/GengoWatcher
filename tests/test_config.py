@@ -24,7 +24,8 @@ def test_config_creates_default_file(test_dir):
     with patch("sys.exit") as mock_exit:
         AppConfig()
         assert config_file.is_file()
-        mock_exit.assert_called_once_with(0)
+        # We no longer exit in _create_default_config, we just print a message
+        # mock_exit.assert_called_once_with(0)
 
 
 def test_config_loads_default_values(test_dir):

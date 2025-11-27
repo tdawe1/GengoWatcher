@@ -1,0 +1,12 @@
+{
+  "current_job_id": null,
+  "current_job_reward": 0.0,
+  "job_start_time": null,
+  "stats": {
+    "cancellations_count": 0,
+    "total_lost_rewards": 0.0,
+    "successful_cancellations": 0,
+    "failed_cancellations": 0,
+    "jobs_saved": []
+  }
+}

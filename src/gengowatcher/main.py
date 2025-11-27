@@ -147,7 +147,9 @@ def main():
 
     if not watcher.is_config_complete():
         print("\n⚠️  Configuration is incomplete or contains placeholder values.")
-        print("The following settings need to be configured for GengoWatcher to work properly:")
+        print(
+            "The following settings need to be configured for GengoWatcher to work properly:"
+        )
         watcher.prompt_for_config_values()
 
     # Start web server if requested
@@ -170,6 +172,7 @@ def main():
 
             # Give web server time to start
             import time
+
             time.sleep(1)
 
         except ImportError as e:
@@ -204,11 +207,11 @@ def main():
             watcher.handle_exit()
 
     # Print helpful exit message
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("👋 GengoWatcher has shut down.")
     print("💡 Tip: Run with --configure to change settings later")
     print("   Example: python -m gengowatcher.main --configure")
-    print("="*60)
+    print("=" * 60)
 
     try:
         watcher_thread.join(timeout=2)

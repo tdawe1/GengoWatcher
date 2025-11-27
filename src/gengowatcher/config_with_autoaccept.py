@@ -110,13 +110,13 @@ class AppConfig:
                         self.config[section][key] = method(
                             section, key, fallback=default_val
                         )
-                
+
                 # Validate auto-accept configuration
                 self._validate_auto_accept_config()
-                
+
                 # Validate CAPTCHA configuration
                 self._validate_captcha_config()
-                
+
             except (configparser.Error, ValueError) as e:
                 print(
                     f"CRITICAL: Error reading '{self.CONFIG_FILE}': {e}. "
@@ -148,50 +148,64 @@ class AppConfig:
     def _validate_auto_accept_config(self):
         """Validate auto-accept configuration values"""
         auto_accept = self.config["AutoAccept"]
-        
+
         # Validate reward range
         if auto_accept["min_reward"] > auto_accept["max_reward"]:
-            print("Warning: min_reward > max_reward in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["min_reward"], self.config["AutoAccept"]["max_reward"] = \
-                auto_accept["max_reward"], auto_accept["min_reward"]
-        
+            print(
+                "Warning: min_reward > max_reward in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["min_reward"],
+                self.config["AutoAccept"]["max_reward"],
+            ) = (auto_accept["max_reward"], auto_accept["min_reward"])
+
         # Validate delay range
         if auto_accept["accept_delay_min"] > auto_accept["accept_delay_max"]:
-            print("Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["accept_delay_min"], self.config["AutoAccept"]["accept_delay_max"] = \
-                auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
-        
+            print(
+                "Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["accept_delay_min"],
+                self.config["AutoAccept"]["accept_delay_max"],
+            ) = (auto_accept["accept_delay_max"], auto_accept["accept_delay_min"])
+
         # Validate job sources
         valid_sources = {"rss", "websocket"}
         sources = {s.strip() for s in auto_accept["job_sources"].split(",")}
         if not sources.issubset(valid_sources):
             invalid = sources - valid_sources
-            print(f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only.")
+            print(
+                f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only."
+            )
             valid_sources_in_config = sources & valid_sources
-            self.config["AutoAccept"]["job_sources"] = ",".join(valid_sources_in_config) if valid_sources_in_config else "rss,websocket"
-        
+            self.config["AutoAccept"]["job_sources"] = (
+                ",".join(valid_sources_in_config)
+                if valid_sources_in_config
+                else "rss,websocket"
+            )
+
         # Ensure delay values are reasonable
         if auto_accept["accept_delay_min"] < 0:
             self.config["AutoAccept"]["accept_delay_min"] = 0
         if auto_accept["accept_delay_max"] > 300:  # 5 minutes max
             self.config["AutoAccept"]["accept_delay_max"] = 300
-    
+
     def _validate_captcha_config(self):
         """Validate CAPTCHA configuration values"""
         captcha = self.config["Captcha"]
-        
+
         # Ensure rate limit is reasonable
         if captcha["rate_limit"] <= 0:
             self.config["Captcha"]["rate_limit"] = 60
         elif captcha["rate_limit"] > 1000:  # 1000 requests per minute max
             self.config["Captcha"]["rate_limit"] = 1000
-            
+
         # Ensure retry settings are reasonable
         if captcha["max_retries"] < 0:
             self.config["Captcha"]["max_retries"] = 0
         elif captcha["max_retries"] > 10:
             self.config["Captcha"]["max_retries"] = 10
-            
+
         if captcha["retry_delay"] < 1:
             self.config["Captcha"]["retry_delay"] = 1
         elif captcha["retry_delay"] > 60:

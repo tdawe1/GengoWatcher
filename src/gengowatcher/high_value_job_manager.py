@@ -22,6 +22,7 @@ from .job_cancellation_manager import JobCancellationManager
 @dataclass
 class JobStats:
     """Statistics for tracking job patterns."""
+
     total_seen: int = 0
     high_value_seen: int = 0
     high_value_accepted: int = 0
@@ -37,16 +38,24 @@ class JobStats:
 class HighValueJobManager:
     """Specialized manager for high-value jobs - OPTIMIZED FOR SPEED."""
 
-    def __init__(self, config: AppConfig, logger: logging.Logger,
-                 captcha_solver: Optional[CaptchaSolverManager] = None):
+    def __init__(
+        self,
+        config: AppConfig,
+        logger: logging.Logger,
+        captcha_solver: Optional[CaptchaSolverManager] = None,
+    ):
         self.config = config
         self.logger = logger
         self.captcha_solver = captcha_solver
 
         # High-value thresholds
         self.high_value_threshold = float(config.get("HighValue", "threshold"))
-        self.very_high_value_threshold = float(config.get("HighValue", "very_high_threshold"))
-        self.extreme_value_threshold = float(config.get("HighValue", "extreme_threshold"))
+        self.very_high_value_threshold = float(
+            config.get("HighValue", "very_high_threshold")
+        )
+        self.extreme_value_threshold = float(
+            config.get("HighValue", "extreme_threshold")
+        )
 
         # SPEED SETTINGS - MINIMUM DELAYS
         self.immediate_response = True  # No waiting for high-value jobs
@@ -54,7 +63,9 @@ class HighValueJobManager:
 
         # Safety limits (set high or disable)
         self.max_high_value_per_day = int(config.get("HighValue", "max_per_day"))
-        self.min_interval_between = int(config.get("HighValue", "min_interval_seconds"))  # 1 second minimum
+        self.min_interval_between = int(
+            config.get("HighValue", "min_interval_seconds")
+        )  # 1 second minimum
 
         # Statistics
         self.stats = JobStats()
@@ -72,8 +83,10 @@ class HighValueJobManager:
         # Update settings from config
         self.cancellation_manager.update_settings(
             cancellation_enabled=config.get("Cancellation", "enabled"),
-            min_improvement_ratio=float(config.get("Cancellation", "min_improvement_ratio")),
-            extreme_threshold=float(config.get("Cancellation", "extreme_threshold"))
+            min_improvement_ratio=float(
+                config.get("Cancellation", "min_improvement_ratio")
+            ),
+            extreme_threshold=float(config.get("Cancellation", "extreme_threshold")),
         )
         # Load any existing job state
         self.cancellation_manager.load_job_state()
@@ -83,22 +96,24 @@ class HighValueJobManager:
         self._load_job_history()
 
         self.logger.info("⚡ HIGH-SPEED High-Value Job Manager initialized")
-        self.logger.info(f"Thresholds: High=${self.high_value_threshold}, "
-                        f"Very High=${self.very_high_value_threshold}, "
-                        f"Extreme=${self.extreme_value_threshold}")
+        self.logger.info(
+            f"Thresholds: High=${self.high_value_threshold}, "
+            f"Very High=${self.very_high_value_threshold}, "
+            f"Extreme=${self.extreme_value_threshold}"
+        )
         self.logger.info("⚠️  MAXIMUM SPEED MODE ENABLED - No artificial delays")
 
     def _load_job_history(self):
         """Load historical high-value job data."""
         if self.job_history_file.exists():
             try:
-                with open(self.job_history_file, 'r') as f:
+                with open(self.job_history_file, "r") as f:
                     data = json.load(f)
-                    self.daily_acceptances = data.get('daily_acceptances', [])
-                    self.stats.total_seen = data.get('total_seen', 0)
-                    self.stats.high_value_seen = data.get('high_value_seen', 0)
-                    self.stats.high_value_accepted = data.get('high_value_accepted', 0)
-                    self.stats.high_value_missed = data.get('high_value_missed', 0)
+                    self.daily_acceptances = data.get("daily_acceptances", [])
+                    self.stats.total_seen = data.get("total_seen", 0)
+                    self.stats.high_value_seen = data.get("high_value_seen", 0)
+                    self.stats.high_value_accepted = data.get("high_value_accepted", 0)
+                    self.stats.high_value_missed = data.get("high_value_missed", 0)
             except Exception as e:
                 self.logger.error(f"Failed to load job history: {e}")
 
@@ -107,14 +122,14 @@ class HighValueJobManager:
         try:
             self.job_history_file.parent.mkdir(parents=True, exist_ok=True)
             data = {
-                'daily_acceptances': self.daily_acceptances[-30:],
-                'total_seen': self.stats.total_seen,
-                'high_value_seen': self.stats.high_value_seen,
-                'high_value_accepted': self.stats.high_value_accepted,
-                'high_value_missed': self.stats.high_value_missed,
-                'last_updated': datetime.now().isoformat()
+                "daily_acceptances": self.daily_acceptances[-30:],
+                "total_seen": self.stats.total_seen,
+                "high_value_seen": self.stats.high_value_seen,
+                "high_value_accepted": self.stats.high_value_accepted,
+                "high_value_missed": self.stats.high_value_missed,
+                "last_updated": datetime.now().isoformat(),
             }
-            with open(self.job_history_file, 'w') as f:
+            with open(self.job_history_file, "w") as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             self.logger.error(f"Failed to save job history: {e}")
@@ -139,7 +154,9 @@ class HighValueJobManager:
 
         # Minimal checks for other high-value jobs
         if current_time - self.last_acceptance_time < self.min_interval_between:
-            wait_time = self.min_interval_between - (current_time - self.last_acceptance_time)
+            wait_time = self.min_interval_between - (
+                current_time - self.last_acceptance_time
+            )
             return False, f"Minimum interval not met (wait {wait_time:.3f}s)"
 
         return True, "ACCEPT"
@@ -167,9 +184,13 @@ class HighValueJobManager:
             # Attempt cancellation
             cancel_success = await self.cancellation_manager.cancel_current_job()
             if cancel_success:
-                self.logger.info(f"✅ Current job cancelled, now accepting {job_id} (${reward:.2f})")
+                self.logger.info(
+                    f"✅ Current job cancelled, now accepting {job_id} (${reward:.2f})"
+                )
             else:
-                self.logger.error(f"❌ Failed to cancel current job - may not be able to accept {job_id}")
+                self.logger.error(
+                    f"❌ Failed to cancel current job - may not be able to accept {job_id}"
+                )
                 # Continue anyway - might still be able to accept
 
         # Check if it's high-value
@@ -178,7 +199,9 @@ class HighValueJobManager:
             return False
 
         self.stats.high_value_seen += 1
-        self.logger.info(f"🚀 HIGH-VALUE JOB! Job {job_id}, Reward: ${reward:.2f} ({category})")
+        self.logger.info(
+            f"🚀 HIGH-VALUE JOB! Job {job_id}, Reward: ${reward:.2f} ({category})"
+        )
         self.logger.info("⚡ INITIATING INSTANT ACCEPTANCE SEQUENCE")
 
         # Check if we can accept
@@ -210,16 +233,20 @@ class HighValueJobManager:
             self.cancellation_manager.set_current_job(job_id, reward)
 
             # Record in daily log
-            self.daily_acceptances.append({
-                'job_id': job_id,
-                'reward': reward,
-                'category': category,
-                'time': datetime.now().isoformat(),
-                'response_time': response_time,
-                'acceptance_time': acceptance_time
-            })
+            self.daily_acceptances.append(
+                {
+                    "job_id": job_id,
+                    "reward": reward,
+                    "category": category,
+                    "time": datetime.now().isoformat(),
+                    "response_time": response_time,
+                    "acceptance_time": acceptance_time,
+                }
+            )
 
-            self.logger.info(f"✅ ACCEPTED HIGH-VALUE JOB {job_id} in {acceptance_time:.3f}s!")
+            self.logger.info(
+                f"✅ ACCEPTED HIGH-VALUE JOB {job_id} in {acceptance_time:.3f}s!"
+            )
             self._notify_success(job_data, category, response_time, acceptance_time)
         else:
             self.stats.high_value_missed += 1
@@ -231,35 +258,58 @@ class HighValueJobManager:
 
         return success
 
-    def _notify_success(self, job_data: Dict[str, Any], category: str,
-                       response_time: float, acceptance_time: float):
+    def _notify_success(
+        self,
+        job_data: Dict[str, Any],
+        category: str,
+        response_time: float,
+        acceptance_time: float,
+    ):
         """Send notification for successful high-value job acceptance."""
         # Play sound if enabled
         if self.config.get("Paths", "enable_sound"):
             from .ui import play_sound
+
             play_sound(self.config.get("Paths", "sound_file"))
 
         # Send desktop notification
         if self.config.get("HighValue", "desktop_notifications"):
             try:
                 import subprocess
+
                 title = "🎉 HIGH-VALUE JOB ACCEPTED!"
-                message = (f"${job_data.get('reward', 0):.2f} - {category}\n"
-                          f"Acceptance time: {acceptance_time:.3f}s")
+                message = (
+                    f"${job_data.get('reward', 0):.2f} - {category}\n"
+                    f"Acceptance time: {acceptance_time:.3f}s"
+                )
 
                 # Try different notification methods
-                if subprocess.run(['which', 'notify-send'], capture_output=True).returncode == 0:
-                    subprocess.run(['notify-send', '-u', 'critical', title, message])
-                elif subprocess.run(['which', 'osascript'], capture_output=True).returncode == 0:
+                if (
+                    subprocess.run(
+                        ["which", "notify-send"], capture_output=True
+                    ).returncode
+                    == 0
+                ):
+                    subprocess.run(["notify-send", "-u", "critical", title, message])
+                elif (
+                    subprocess.run(
+                        ["which", "osascript"], capture_output=True
+                    ).returncode
+                    == 0
+                ):
                     script = f'display notification "{message}" with title "{title}" sound name "Glass"'
-                    subprocess.run(['osascript', '-e', script])
+                    subprocess.run(["osascript", "-e", script])
             except Exception as e:
                 self.logger.error(f"Failed to send desktop notification: {e}")
 
-    def _notify_missed_opportunity(self, job_data: Dict[str, Any], category: str, reason: str):
+    def _notify_missed_opportunity(
+        self, job_data: Dict[str, Any], category: str, reason: str
+    ):
         """Notify about missed high-value opportunities."""
         if self.config.get("HighValue", "notify_on_missed"):
-            self.logger.warning(f"💔 MISSED HIGH-VALUE: ${job_data.get('reward', 0):.2f} - {reason}")
+            self.logger.warning(
+                f"💔 MISSED HIGH-VALUE: ${job_data.get('reward', 0):.2f} - {reason}"
+            )
 
     def _notify_failure(self, job_data: Dict[str, Any], category: str):
         """Notify about failed acceptance attempts."""
@@ -273,33 +323,46 @@ class HighValueJobManager:
         """Get comprehensive statistics."""
         success_rate = 0
         if self.stats.high_value_seen > 0:
-            success_rate = (self.stats.high_value_accepted / self.stats.high_value_seen) * 100
+            success_rate = (
+                self.stats.high_value_accepted / self.stats.high_value_seen
+            ) * 100
 
         avg_response_time = 0
         if self.stats.acceptance_times:
-            avg_response_time = sum(self.stats.acceptance_times) / len(self.stats.acceptance_times)
+            avg_response_time = sum(self.stats.acceptance_times) / len(
+                self.stats.acceptance_times
+            )
 
         # Today's stats
         today = datetime.now().date()
-        today_count = len([a for a in self.daily_acceptances
-                          if datetime.fromisoformat(a['time']).date() == today])
+        today_count = len(
+            [
+                a
+                for a in self.daily_acceptances
+                if datetime.fromisoformat(a["time"]).date() == today
+            ]
+        )
 
         return {
-            'total_jobs_seen': self.stats.total_seen,
-            'high_value_seen': self.stats.high_value_seen,
-            'high_value_accepted': self.stats.high_value_accepted,
-            'high_value_missed': self.stats.high_value_missed,
-            'success_rate': success_rate,
-            'average_response_time': avg_response_time,
-            'today_accepted': today_count,
-            'last_high_value': self.stats.last_high_value.isoformat() if self.stats.last_high_value else None,
-            'thresholds': {
-                'high': self.high_value_threshold,
-                'very_high': self.very_high_value_threshold,
-                'extreme': self.extreme_value_threshold
+            "total_jobs_seen": self.stats.total_seen,
+            "high_value_seen": self.stats.high_value_seen,
+            "high_value_accepted": self.stats.high_value_accepted,
+            "high_value_missed": self.stats.high_value_missed,
+            "success_rate": success_rate,
+            "average_response_time": avg_response_time,
+            "today_accepted": today_count,
+            "last_high_value": (
+                self.stats.last_high_value.isoformat()
+                if self.stats.last_high_value
+                else None
+            ),
+            "thresholds": {
+                "high": self.high_value_threshold,
+                "very_high": self.very_high_value_threshold,
+                "extreme": self.extreme_value_threshold,
             },
-            'speed_mode': 'MAXIMUM - No artificial delays',
-            'cancellation': self.cancellation_manager.get_stats()
+            "speed_mode": "MAXIMUM - No artificial delays",
+            "cancellation": self.cancellation_manager.get_stats(),
         }
 
     def should_auto_accept(self, job_data: Dict[str, Any]) -> bool:

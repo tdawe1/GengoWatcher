@@ -50,9 +50,13 @@ class AppState:
                         with self._jobs_lock:
                             self._jobs = stored_jobs
                             # Sort by timestamp descending (newest first)
-                            self._jobs.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+                            self._jobs.sort(
+                                key=lambda x: x.get("timestamp", 0), reverse=True
+                            )
         except (json.JSONDecodeError, IOError) as e:
-            self.logger.exception(f"Could not load state file. Starting fresh. Error: {e}")
+            self.logger.exception(
+                f"Could not load state file. Starting fresh. Error: {e}"
+            )
 
     def save_state(self):
         try:
@@ -88,7 +92,7 @@ class AppState:
 
             # Maintain maximum size
             if len(self._jobs) > self.MAX_STORED_JOBS:
-                self._jobs = self._jobs[:self.MAX_STORED_JOBS]
+                self._jobs = self._jobs[: self.MAX_STORED_JOBS]
 
             self.logger.debug(f"Added job {job_data.get('id')} to storage")
 
@@ -96,4 +100,3 @@ class AppState:
         """Get total number of stored jobs."""
         with self._jobs_lock:
             return len(self._jobs)
-

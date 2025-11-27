@@ -25,29 +25,30 @@ class WatcherWithCancellation:
         self.logger = logging.getLogger("WatcherWithCancellation")
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         )
 
         # Initialize components
         self.captcha_solver = None
-        if self.config.get("Captcha", "enabled") and self.config.get("Captcha", "service"):
+        if self.config.get("Captcha", "enabled") and self.config.get(
+            "Captcha", "service"
+        ):
             self.captcha_solver = CaptchaSolverManager(
-                self.config.config["Captcha"],
-                self.logger
+                self.config.config["Captcha"], self.logger
             )
 
         # High-value job manager with cancellation
         self.hv_manager = HighValueJobManager(
-            self.config,
-            self.logger,
-            self.captcha_solver
+            self.config, self.logger, self.captcha_solver
         )
 
         # Track if we have a current job
         self.has_current_job = False
 
         self.logger.info("🔄 Enhanced Watcher with Cancellation initialized")
-        self.logger.info("Ready to accept high-value jobs and cancel for better opportunities")
+        self.logger.info(
+            "Ready to accept high-value jobs and cancel for better opportunities"
+        )
 
     async def process_job_opportunity(self, job_data: Dict[str, Any]) -> bool:
         """
@@ -90,22 +91,24 @@ class WatcherWithCancellation:
     def get_status(self) -> Dict[str, Any]:
         """Get current status and statistics."""
         hv_stats = self.hv_manager.get_stats()
-        cancel_stats = hv_stats.get('cancellation', {})
+        cancel_stats = hv_stats.get("cancellation", {})
 
         return {
-            'has_current_job': self.has_current_job,
-            'current_job': cancel_stats.get('current_job', {}),
-            'high_value_stats': {
-                'total_seen': hv_stats.get('total_jobs_seen', 0),
-                'high_value_seen': hv_stats.get('high_value_seen', 0),
-                'high_value_accepted': hv_stats.get('high_value_accepted', 0),
-                'success_rate': hv_stats.get('success_rate', 0),
+            "has_current_job": self.has_current_job,
+            "current_job": cancel_stats.get("current_job", {}),
+            "high_value_stats": {
+                "total_seen": hv_stats.get("total_jobs_seen", 0),
+                "high_value_seen": hv_stats.get("high_value_seen", 0),
+                "high_value_accepted": hv_stats.get("high_value_accepted", 0),
+                "success_rate": hv_stats.get("success_rate", 0),
             },
-            'cancellation_stats': {
-                'total_cancellations': cancel_stats.get('cancellations_count', 0),
-                'successful_cancellations': cancel_stats.get('successful_cancellations', 0),
-                'total_forfeited': cancel_stats.get('total_lost_rewards', 0),
-            }
+            "cancellation_stats": {
+                "total_cancellations": cancel_stats.get("cancellations_count", 0),
+                "successful_cancellations": cancel_stats.get(
+                    "successful_cancellations", 0
+                ),
+                "total_forfeited": cancel_stats.get("total_lost_rewards", 0),
+            },
         }
 
     async def test_cancellation_scenario(self):
@@ -116,7 +119,7 @@ class WatcherWithCancellation:
         test_job = {
             "id": "test_current_123",
             "reward": 150.0,
-            "url": "https://gengo.com/t/jobs/details/test_current_123"
+            "url": "https://gengo.com/t/jobs/details/test_current_123",
         }
 
         # Process it (this will set it as current job)
@@ -127,7 +130,7 @@ class WatcherWithCancellation:
         better_job = {
             "id": "test_better_456",
             "reward": 450.0,  # 3x better
-            "url": "https://gengo.com/t/jobs/details/test_better_456"
+            "url": "https://gengo.com/t/jobs/details/test_better_456",
         }
 
         self.logger.info("🚀 A better job opportunity appears!")
@@ -137,7 +140,9 @@ class WatcherWithCancellation:
         status = self.get_status()
         self.logger.info("📊 Current Status:")
         self.logger.info(f"   Has current job: {status['has_current_job']}")
-        self.logger.info(f"   Cancellations: {status['cancellation_stats']['total_cancellations']}")
+        self.logger.info(
+            f"   Cancellations: {status['cancellation_stats']['total_cancellations']}"
+        )
 
 
 # Example usage

@@ -55,6 +55,8 @@ class DummyConfig:
         """Get boolean config value."""
         try:
             value = self.get(section, key)
+            if value is None and fallback is not None:
+                return fallback
             if isinstance(value, bool):
                 return value
             if isinstance(value, str):
@@ -67,6 +69,8 @@ class DummyConfig:
         """Get integer config value."""
         try:
             value = self.get(section, key)
+            if value is None and fallback is not None:
+                return fallback
             return int(value)
         except (TypeError, ValueError):
             return fallback if fallback is not None else 0
@@ -75,6 +79,8 @@ class DummyConfig:
         """Get float config value."""
         try:
             value = self.get(section, key)
+            if value is None and fallback is not None:
+                return fallback
             return float(value)
         except (TypeError, ValueError):
             return fallback if fallback is not None else 0.0
@@ -104,8 +110,11 @@ class FakeSession:
     async def close(self):
         self.closed = True
 
-    # Only post is used by _handle_captcha_challenge
+    # _handle_captcha_challenge uses post, but accept_job uses get and post
     def post(self, url: str, headers: Optional[Dict] = None, data: Optional[Dict] = None, timeout: int = 30):
+        return FakeResponse(status=self.status, body=self.body)
+
+    def get(self, url: str, headers: Optional[Dict] = None, params: Optional[Dict] = None, timeout: int = 30):
         return FakeResponse(status=self.status, body=self.body)
 
 
@@ -526,6 +535,8 @@ async def test_timeout_error_handling(caplog):
     mock_response.status = 200
     mock_response.text = AsyncMock(side_effect=asyncio.TimeoutError("Request timeout"))
     mock_session.get.return_value.__aenter__.return_value = mock_response
+    # Mock post to raise TimeoutError to ensure both get/post paths are covered if needed
+    mock_session.post.side_effect = asyncio.TimeoutError("Request timeout")
     mock_session.post.return_value.__aenter__.return_value = mock_response
     engine.session = mock_session
 
@@ -546,21 +557,36 @@ async def test_retry_logic_on_failure(caplog):
 
     # Mock session to fail first two attempts, succeed on third
     call_count = 0
-    async def mock_post(*args, **kwargs):
+
+    # We need to return an async context manager for "async with"
+    class MockContextManager:
+        def __init__(self, status, text):
+            self.status = status
+            self._text = text
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            pass
+
+        async def text(self):
+            return self._text
+
+    def mock_post(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        mock_response = AsyncMock()
         if call_count < 3:
-            mock_response.status = 500
-            mock_response.text = AsyncMock(return_value="Server error")
+            return MockContextManager(500, "Server error")
         else:
-            mock_response.status = 200
-            mock_response.text = AsyncMock(return_value="accepted")
-        return mock_response
+            return MockContextManager(200, "accepted")
 
     mock_session = AsyncMock()
-    mock_session.post = mock_post
+    mock_session.post = Mock(side_effect=mock_post)
     mock_session.get.return_value.__aenter__.return_value.status = 200
+    mock_session.get.return_value.__aenter__.return_value.text.return_value = "form page"
+    # Ensure get() also returns a context manager to avoid AttributeError
+    mock_session.get = Mock(return_value=MockContextManager(200, "form page"))
     engine.session = mock_session
 
     job_data = {"id": "test123", "source": "rss", "reward": 1.0}
@@ -662,10 +688,10 @@ async def test_job_acceptance_logging(caplog):
     logger = logging.getLogger("test")
 
     class ConfigWithLogging(DummyConfig):
-        def getboolean(self, section: str, key: str):
+        def getboolean(self, section: str, key: str, fallback=None):
             if section == "AutoAccept" and key == "log_acceptance":
                 return True
-            return super().getboolean(section, key)
+            return super().getboolean(section, key, fallback)
 
     config = ConfigWithLogging(enabled=True)
     engine = JobAcceptanceEngine(config=config, logger=logger)
@@ -693,10 +719,10 @@ async def test_notification_on_acceptance(caplog):
     logger = logging.getLogger("test")
 
     class ConfigWithNotifications(DummyConfig):
-        def getboolean(self, section: str, key: str):
+        def getboolean(self, section: str, key: str, fallback=None):
             if section == "AutoAccept" and key == "notification_on_accept":
                 return True
-            return super().getboolean(section, key)
+            return super().getboolean(section, key, fallback)
 
     config = ConfigWithNotifications(enabled=True)
     engine = JobAcceptanceEngine(config=config, logger=logger)
@@ -725,22 +751,23 @@ async def test_recaptcha_v3_site_key_extraction():
     assert key1 == "TEST_SITE_KEY_123"
 
     # Test extraction from script with grecaptcha.execute
+    # Note: Site key must be at least 25 chars due to regex pattern
     html2 = """<html><head><script>
-        grecaptcha.execute('ANOTHER_SITE_KEY_456', {action: 'test'});
+        grecaptcha.execute('ANOTHER_SITE_KEY_456_EXTENDED_LENGTH_FOR_REGEX', {action: 'test'});
     </script></head></html>"""
     soup2 = BeautifulSoup(html2, 'html.parser')
     key2 = engine._extract_recaptcha_v3_site_key(soup2)
-    assert key2 == "ANOTHER_SITE_KEY_456"
+    assert key2 == "ANOTHER_SITE_KEY_456_EXTENDED_LENGTH_FOR_REGEX"
 
     # Test extraction from script with ready function
     html3 = """<html><head><script>
         grecaptcha.ready(function() {
-            grecaptcha.execute('READY_SITE_KEY_789', {action: 'verify'});
+            grecaptcha.execute('READY_SITE_KEY_789_EXTENDED_LENGTH_FOR_REGEX', {action: 'verify'});
         });
     </script></head></html>"""
     soup3 = BeautifulSoup(html3, 'html.parser')
     key3 = engine._extract_recaptcha_v3_site_key(soup3)
-    assert key3 == "READY_SITE_KEY_789"
+    assert key3 == "READY_SITE_KEY_789_EXTENDED_LENGTH_FOR_REGEX"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ def enhance_watcher_class():
 
     # Store the original __init__ method
     from .watcher import GengoWatcher
+
     original_init = GengoWatcher.__init__
 
     def enhanced_init(self, config, state, logger):
@@ -23,8 +24,11 @@ def enhance_watcher_class():
 
         # Initialize high-value job manager
         from .captcha_manager import CaptchaSolverManager
+
         self.captcha_solver = CaptchaSolverManager(config, logger)
-        self.high_value_manager = HighValueJobManager(config, logger, self.captcha_solver)
+        self.high_value_manager = HighValueJobManager(
+            config, logger, self.captcha_solver
+        )
 
         logger.info("Enhanced GengoWatcher with High-Value Job Manager initialized")
 
@@ -43,20 +47,22 @@ def enhance_watcher_class():
             "title": str(title),
             "reward": float(reward),
             "url": str(url),
-            "source": source
+            "source": source,
         }
 
         # Check if this is a high-value job
         is_hv, category = self.high_value_manager.is_high_value(reward)
 
         if is_hv:
-            self.logger.info(f"🔥 HIGH-VALUE JOB DETECTED via {source}: {title} (${reward:.2f}) - {category}")
+            self.logger.info(
+                f"🔥 HIGH-VALUE JOB DETECTED via {source}: {title} (${reward:.2f}) - {category}"
+            )
 
             # Process high-value job asynchronously
             threading.Thread(
                 target=self._async_high_value_acceptance_wrapper,
                 args=(job_data,),
-                daemon=True
+                daemon=True,
             ).start()
 
         # Call original processing for all jobs
@@ -77,7 +83,9 @@ def enhance_watcher_class():
         finally:
             loop.close()
 
-    GengoWatcher._async_high_value_acceptance_wrapper = _async_high_value_acceptance_wrapper
+    GengoWatcher._async_high_value_acceptance_wrapper = (
+        _async_high_value_acceptance_wrapper
+    )
 
     # Add method to get high-value stats
     def get_high_value_stats(self):
@@ -101,4 +109,5 @@ def create_enhanced_watcher(config, state, logger):
 
     # Import and create the enhanced watcher
     from .watcher import GengoWatcher
+
     return GengoWatcher(config, state, logger)

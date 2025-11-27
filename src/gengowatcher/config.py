@@ -157,11 +157,16 @@ class AppConfig:
                             self.config[section][key] = method(
                                 section, key, fallback=default_val
                             )
-                        except (configparser.NoSectionError, configparser.NoOptionError):
+                        except (
+                            configparser.NoSectionError,
+                            configparser.NoOptionError,
+                        ):
                             # Add missing option with default value
                             self._config_parser.set(section, key, str(default_val))
                             self.config[section][key] = default_val
-                            print(f"Added missing config option: [{section}]{key} = {default_val}")
+                            print(
+                                f"Added missing config option: [{section}]{key} = {default_val}"
+                            )
                             config_modified = True
 
                 # Save config if it was modified
@@ -212,9 +217,9 @@ class AppConfig:
                 value = self._config_parser.get(section, key)
                 # Case-insensitive boolean parsing
                 value_lower = value.lower().strip()
-                if value_lower in ('true', '1', 'yes', 'on', 'enabled'):
+                if value_lower in ("true", "1", "yes", "on", "enabled"):
                     return True
-                elif value_lower in ('false', '0', 'no', 'off', 'disabled'):
+                elif value_lower in ("false", "0", "no", "off", "disabled"):
                     return False
                 else:
                     raise ValueError(f"Invalid boolean value: {value}")
@@ -276,28 +281,42 @@ class AppConfig:
     def _validate_auto_accept_config(self):
         """Validate auto-accept configuration values"""
         auto_accept = self.config["AutoAccept"]
-        
+
         # Validate reward range
         if auto_accept["min_reward"] > auto_accept["max_reward"]:
-            print("Warning: min_reward > max_reward in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["min_reward"], self.config["AutoAccept"]["max_reward"] = \
-                auto_accept["max_reward"], auto_accept["min_reward"]
-        
+            print(
+                "Warning: min_reward > max_reward in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["min_reward"],
+                self.config["AutoAccept"]["max_reward"],
+            ) = (auto_accept["max_reward"], auto_accept["min_reward"])
+
         # Validate delay range
         if auto_accept["accept_delay_min"] > auto_accept["accept_delay_max"]:
-            print("Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["accept_delay_min"], self.config["AutoAccept"]["accept_delay_max"] = \
-                auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
-        
+            print(
+                "Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["accept_delay_min"],
+                self.config["AutoAccept"]["accept_delay_max"],
+            ) = (auto_accept["accept_delay_max"], auto_accept["accept_delay_min"])
+
         # Validate job sources
         valid_sources = {"rss", "websocket"}
         sources = {s.strip() for s in auto_accept["job_sources"].split(",")}
         if not sources.issubset(valid_sources):
             invalid = sources - valid_sources
-            print(f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only.")
+            print(
+                f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only."
+            )
             valid_sources_in_config = sources & valid_sources
-            self.config["AutoAccept"]["job_sources"] = ",".join(valid_sources_in_config) if valid_sources_in_config else "rss,websocket"
-        
+            self.config["AutoAccept"]["job_sources"] = (
+                ",".join(valid_sources_in_config)
+                if valid_sources_in_config
+                else "rss,websocket"
+            )
+
         # Ensure delay values are reasonable
         if auto_accept["accept_delay_min"] < 0:
             self.config["AutoAccept"]["accept_delay_min"] = 0
