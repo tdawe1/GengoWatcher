@@ -9,7 +9,7 @@ import logging
 import json
 import random
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,7 +82,7 @@ class HighValueJobManager:
         self.job_history_file = Path("logs/high_value_jobs.json")
         self._load_job_history()
 
-        self.logger.info(f"⚡ HIGH-SPEED High-Value Job Manager initialized")
+        self.logger.info("⚡ HIGH-SPEED High-Value Job Manager initialized")
         self.logger.info(f"Thresholds: High=${self.high_value_threshold}, "
                         f"Very High=${self.very_high_value_threshold}, "
                         f"Extreme=${self.extreme_value_threshold}")
@@ -162,7 +162,7 @@ class HighValueJobManager:
 
         # Check if we should cancel current job for this one
         if self.cancellation_manager.should_cancel_for_job(reward, job_id):
-            self.logger.warning(f"🔄 CANCELLING CURRENT JOB FOR BETTER OPPORTUNITY!")
+            self.logger.warning("🔄 CANCELLING CURRENT JOB FOR BETTER OPPORTUNITY!")
 
             # Attempt cancellation
             cancel_success = await self.cancellation_manager.cancel_current_job()
@@ -243,7 +243,7 @@ class HighValueJobManager:
         if self.config.get("HighValue", "desktop_notifications"):
             try:
                 import subprocess
-                title = f"🎉 HIGH-VALUE JOB ACCEPTED!"
+                title = "🎉 HIGH-VALUE JOB ACCEPTED!"
                 message = (f"${job_data.get('reward', 0):.2f} - {category}\n"
                           f"Acceptance time: {acceptance_time:.3f}s")
 

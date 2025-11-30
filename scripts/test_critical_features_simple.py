@@ -4,7 +4,6 @@ Simple test script for critical features without pytest dependency.
 """
 
 import asyncio
-import json
 import logging
 import time
 import sys
@@ -205,7 +204,11 @@ async def test_websocket_simulation():
             mock_connect.return_value = mock_ws
 
             # Test connection
-            watcher = GengoWatcher(config, logger, state)
+            watcher = GengoWatcher(config, state, logger)
+            
+            if watcher is None:
+                print("❌ GengoWatcher instantiation failed")
+                return False
 
             # This would normally connect to WebSocket
             # For test, we just verify the mock is called

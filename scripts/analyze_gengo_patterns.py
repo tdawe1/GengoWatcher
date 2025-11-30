@@ -10,14 +10,11 @@ import asyncio
 import logging
 import statistics
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
 from collections import defaultdict, deque
 import websockets
-import aiohttp
 from pathlib import Path
 
 from src.gengowatcher.config import AppConfig
-from src.gengowatcher.state import AppState
 
 
 class GengoAnalyzer:
@@ -150,7 +147,7 @@ class GengoAnalyzer:
             min_interval = min(self.job_intervals)
             max_interval = max(self.job_intervals)
 
-            self.logger.info(f"\nTime between jobs:")
+            self.logger.info("\nTime between jobs:")
             self.logger.info(f"  Average: {avg_interval:.2f} seconds")
             self.logger.info(f"  Median: {median_interval:.2f} seconds")
             self.logger.info(f"  Shortest: {min_interval:.2f} seconds")
@@ -167,14 +164,14 @@ class GengoAnalyzer:
             min_reward = min(self.reward_distribution)
             max_reward = max(self.reward_distribution)
 
-            self.logger.info(f"\nReward distribution:")
+            self.logger.info("\nReward distribution:")
             self.logger.info(f"  Average: ${avg_reward:.2f}")
             self.logger.info(f"  Median: ${median_reward:.2f}")
             self.logger.info(f"  Range: ${min_reward:.2f} - ${max_reward:.2f}")
 
         # Hourly patterns
         if len(self.hourly_job_counts) > 1:
-            self.logger.info(f"\nHourly distribution:")
+            self.logger.info("\nHourly distribution:")
             for hour, count in sorted(self.hourly_job_counts.items())[-10:]:  # Show last 10 hours
                 self.logger.info(f"  {hour}: {count} jobs")
 
@@ -279,7 +276,6 @@ async def main():
     logger = logging.getLogger('GengoAnalyzer')
 
     config = AppConfig()
-    state = AppState()
 
     analyzer = GengoAnalyzer(config, logger)
 

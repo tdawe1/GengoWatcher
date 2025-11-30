@@ -1,10 +1,10 @@
+import aiohttp
 import asyncio
 import time
 import logging
 import pytest
-import json
 from unittest.mock import Mock, patch, AsyncMock
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 from gengowatcher.job_acceptance import JobAcceptanceEngine
 from gengowatcher.captcha_solver import CaptchaSolution, CaptchaTask, CaptchaType
@@ -60,7 +60,7 @@ class DummyConfig:
             if isinstance(value, str):
                 return value.lower() in ("true", "1", "yes", "on")
             return bool(value)
-        except:
+        except (TypeError, ValueError):
             return fallback if fallback is not None else False
 
     def getint(self, section: str, key: str, fallback=None):
@@ -68,7 +68,7 @@ class DummyConfig:
         try:
             value = self.get(section, key)
             return int(value)
-        except:
+        except (TypeError, ValueError):
             return fallback if fallback is not None else 0
 
     def getfloat(self, section: str, key: str, fallback=None):
@@ -76,7 +76,7 @@ class DummyConfig:
         try:
             value = self.get(section, key)
             return float(value)
-        except:
+        except (TypeError, ValueError):
             return fallback if fallback is not None else 0.0
 
 
