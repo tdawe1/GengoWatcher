@@ -13,7 +13,7 @@ import csv
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Depends, Query
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -54,6 +54,27 @@ class APIAuthenticator:
 
 # Global authenticator instance
 authenticator = APIAuthenticator()
+
+# Optional external components supplied by the TUI so we can
+# reuse an existing watcher instance instead of starting a
+# second one inside the web process.
+_external_components: Optional[dict] = None
+
+
+def attach_external_components(config: AppConfig, state: AppState, watcher: GengoWatcher, logger: logging.Logger) -> None:
+    """Attach pre-initialized components for reuse by the web API.
+
+    When the TUI starts the web server, it can pass its existing
+    config/state/watcher/logger so the web layer does not spawn
+    a second independent watcher.
+    """
+    global _external_components
+    _external_components = {
+        "config": config,
+        "state": state,
+        "watcher": watcher,
+        "logger": logger,
+    }
 
 
 # Pydantic models for API responses
@@ -162,7 +183,7 @@ class PaginationParams(BaseModel):
 class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
-    def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
+    def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger, watcher: Optional[GengoWatcher] = None):
         """Initialize the WebAPI instance.
 
         Creates a separate GengoWatcher instance for the web API to avoid conflicts
@@ -177,9 +198,14 @@ class WebAPI:
         self.state = state
         self.logger = logger
 
-        # Create a separate watcher instance for web API
-        # This allows web UI to run alongside TUI without conflicts
-        self.watcher = GengoWatcher(config, state, logger)
+        # Use provided watcher if available; otherwise create our own
+        if watcher is not None:
+            self.watcher = watcher
+            self.logger.info("WebAPI reusing existing watcher instance")
+        else:
+            # Create a separate watcher instance for web API
+            # This allows web UI to run alongside TUI without conflicts
+            self.watcher = GengoWatcher(config, state, logger)
 
         # Thread safety for shared state access
         self._status_lock = threading.RLock()  # Reentrant lock for better safety
@@ -187,13 +213,16 @@ class WebAPI:
         self._connections_lock = threading.RLock()
         self._jobs_lock = threading.RLock()
 
-        # Start the watcher in a separate thread
-        self.watcher_thread = threading.Thread(
-            target=self.watcher.run, daemon=True, name="WebWatcherThread"
-        )
-        self.watcher_thread.start()
-
-        self.logger.info("WebAPI initialized and watcher thread started")
+        # Start the watcher in a separate thread only if we own it
+        self.watcher_thread = None
+        if watcher is None:
+            self.watcher_thread = threading.Thread(
+                target=self.watcher.run, daemon=True, name="WebWatcherThread"
+            )
+            self.watcher_thread.start()
+            self.logger.info("WebAPI initialized and watcher thread started")
+        else:
+            self.logger.info("WebAPI attached to existing watcher thread")
 
     def get_status(self) -> WatcherStatus:
         """Get current watcher status."""
@@ -547,7 +576,9 @@ class WebAPI:
     def shutdown(self):
         """Shutdown the web API and watcher."""
         self.logger.info("Shutting down WebAPI")
-        self.watcher.handle_exit()
+        # Only shut down watcher we created here
+        if self.watcher_thread is not None:
+            self.watcher.handle_exit()
 
 
 # Global API instance
@@ -575,8 +606,16 @@ async def lifespan(app: FastAPI):
                 config.write(f)
             logger.info("Default config created. Please review config.ini before using the web API.")
 
-        config = AppConfig()
-        state = AppState(logger=logger)
+        # If external components have been attached (from the TUI),
+        # reuse them so that we share a single watcher instance.
+        if _external_components:
+            config = _external_components["config"]
+            state = _external_components["state"]
+            watcher = _external_components["watcher"]
+            logger = _external_components["logger"]
+        else:
+            config = AppConfig()
+            state = AppState(logger=logger)
 
         # Initialize authenticator with config token; generate and persist if missing
         api_token = config.get("WebServer", "auth_token")
@@ -592,7 +631,7 @@ async def lifespan(app: FastAPI):
         global authenticator
         authenticator = APIAuthenticator(str(api_token))
 
-        api_instance = WebAPI(config, state, logger)
+        api_instance = WebAPI(config, state, logger, watcher=_external_components["watcher"] if _external_components else None)
         logger.info("WebAPI started successfully")
     except Exception as e:
         logger.exception(f"Failed to start WebAPI: {e}")

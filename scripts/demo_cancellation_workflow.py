@@ -5,9 +5,6 @@ Demo script showing the complete job cancellation workflow.
 
 import sys
 import os
-import asyncio
-import json
-from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from gengowatcher.config import AppConfig
@@ -52,27 +49,27 @@ def demo_workflow():
     # Scenario 1: Accept a moderate job
     print("\n1️⃣ Current situation: Working on a $100 job")
     manager.cancellation_manager.set_current_job("job_123", 100.0)
-    print(f"   ✓ Tracking current job: job_123 ($100.00)")
+    print("   ✓ Tracking current job: job_123 ($100.00)")
 
     # Scenario 2: A slightly better job appears
     print("\n2️⃣ New job appears: $150 (1.5x improvement)")
     should_cancel = manager.cancellation_manager.should_cancel_for_job(150.0, "job_456")
     print(f"   → Decision: {'Cancel' if should_cancel else 'Keep current'}")
-    print(f"   📝 Rationale: 1.5x < 2.0x minimum threshold")
+    print("   📝 Rationale: 1.5x < 2.0x minimum threshold")
 
     # Scenario 3: A much better job appears
     print("\n3️⃣ New job appears: $300 (3.0x improvement)")
     should_cancel = manager.cancellation_manager.should_cancel_for_job(300.0, "job_789")
     print(f"   → Decision: {'Cancel' if should_cancel else 'Keep current'}")
-    print(f"   📝 Rationale: 3.0x ≥ 2.0x minimum threshold")
-    print(f"   💡 System would automatically cancel $100 job for $300 job")
+    print("   📝 Rationale: 3.0x ≥ 2.0x minimum threshold")
+    print("   💡 System would automatically cancel $100 job for $300 job")
 
     # Scenario 4: An extreme value job appears
     print("\n4️⃣ EXTREME VALUE job appears: $5,000")
     should_cancel = manager.cancellation_manager.should_cancel_for_job(5000.0, "job_extreme")
     print(f"   → Decision: {'Cancel' if should_cancel else 'Keep current'}")
-    print(f"   📝 Rationale: Always cancel for jobs > $1,000")
-    print(f"   🚨 SYSTEM WOULD IMMEDIATELY CANCEL CURRENT JOB!")
+    print("   📝 Rationale: Always cancel for jobs > $1,000")
+    print("   🚨 SYSTEM WOULD IMMEDIATELY CANCEL CURRENT JOB!")
 
     # Show statistics
     print("\n📊 Cancellation Statistics:")

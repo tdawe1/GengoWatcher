@@ -5,7 +5,7 @@ import threading
 import requests
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 class CaptchaServiceType(Enum):
