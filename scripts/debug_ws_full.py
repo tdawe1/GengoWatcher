@@ -57,6 +57,17 @@ PAYLOADS = [
 ]
 
 async def test_config(header_name, headers, payload_name, payload):
+    """
+    Test a WebSocket connection using the given headers and payload and log connection results.
+    
+    Attempts to connect to the module-level WS_URL with the provided headers, sends the payload as JSON, waits up to 5 seconds for a single response, and logs connection, send, receive, timeout and error conditions (including handshake failures and connection closures).
+    
+    Parameters:
+        header_name (str): Human-readable name for the header set being tested, used for logging.
+        headers (Mapping[str, str]): HTTP/WebSocket headers to include in the handshake.
+        payload_name (str): Human-readable name for the payload being sent, used for logging.
+        payload (Mapping | Sequence | str | int | None): JSON-serialisable payload to send after connecting.
+    """
     logger.info(f"Testing Headers: {header_name} | Payload: {payload_name}")
     try:
         # Handle websockets version difference
@@ -103,6 +114,12 @@ async def test_config(header_name, headers, payload_name, payload):
 
 async def main():
     # 1. Test Headers (using Standard Payload)
+    """
+    Orchestrates WebSocket connection tests across header sets and payloads.
+    
+    Phase 1: iterate over each header set in HEADERS_SETS and test the `Standard_Auth` payload once per header.
+    Phase 2: run all other PAYLOADS (those not named `Standard_Auth`) using the `Full_Chrome` header set for additional coverage.
+    """
     for name, headers in HEADERS_SETS.items():
         await test_config(name, headers, "Standard_Auth", PAYLOADS[0]["data"])
     

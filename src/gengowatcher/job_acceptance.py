@@ -56,13 +56,15 @@ class JobAcceptanceEngine:
         browser_engine=None,
     ):
         """
-        Initialize the JobAcceptanceEngine.
-
-        Args:
-            config (AppConfig): The application configuration object.
-            logger (logging.Logger): Logger instance for logging messages.
-            captcha_solver (Optional[CaptchaSolverManager]): Optional captcha solver manager.
-            browser_engine: Optional browser automation engine for fallback submissions.
+        Initialise the JobAcceptanceEngine with configuration, logging and optional helpers.
+        
+        Initialises internal state including enabled flag, an hourly rate limiter (configured from the RateLimit.max_acceptances_per_hour setting, default 1800), HTTP session placeholder, retry policy and runtime counters.
+        
+        Parameters:
+            config (AppConfig): Application configuration; used to read AutoAccept.enabled and RateLimit.max_acceptances_per_hour.
+            logger (logging.Logger): Logger for informational and debug messages.
+            captcha_solver (Optional[CaptchaSolverManager]): Optional manager for solving CAPTCHAs during acceptance.
+            browser_engine: Optional browser automation engine used as a fallback for submissions.
         """
         self.config = config
         self.logger = logger

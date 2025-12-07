@@ -43,7 +43,14 @@ class GengoAnalyzer:
         self.session_jobs = set()
 
     async def monitor_websocket_traffic(self, duration_hours: int = 24):
-        """Monitor WebSocket traffic to understand job posting patterns."""
+        """
+        Monitor the Gengo live WebSocket feed, record messages and job postings, and run pattern analysis.
+        
+        Connects to the live-dashboard WebSocket, authenticates with configured credentials, records incoming messages, extracts and records new job postings (including reward, language pair, word count and timestamps), computes inter-job intervals and hourly counts, and stops when the specified duration elapses; after monitoring completes, triggers analysis of the collected data. JSON decode errors are ignored and unexpected connection errors are logged.
+        
+        Parameters:
+            duration_hours (int): Number of hours to monitor the WebSocket feed.
+        """
         self.logger.info(f"Starting WebSocket monitoring for {duration_hours} hours")
 
         ws_url = "wss://live-dashboard.gengo.com"
@@ -272,7 +279,11 @@ class GengoAnalyzer:
 
 
 async def main():
-    """Run the Gengo analysis."""
+    """
+    Initialise logging, validate required WebSocket credentials in config, run the Gengo analysis sequence, and emit final recommendations.
+    
+    This coroutine sets up the logger, ensures a valid WebSocket session token and browser user key are present in the configuration (exits early if missing), and then executes the analyzer workflow: monitor WebSocket traffic, run acceptance-limit tests, and analyse CAPTCHA patterns. It logs a short set of post-run recommendations.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
