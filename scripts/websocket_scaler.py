@@ -6,7 +6,6 @@ Allows running multiple WebSocket connections for load distribution
 
 import asyncio
 import logging
-import threading
 import time
 from typing import List, Dict, Any
 import json

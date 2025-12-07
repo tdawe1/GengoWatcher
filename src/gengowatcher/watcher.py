@@ -51,7 +51,7 @@ except ImportError as import_error:
             self.logger.warning(
                 "Auto-accept disabled: failed to import job_acceptance module (%s). "
                 "Install required dependencies such as aiohttp and beautifulsoup4 to enable auto-accept.",
-                import_error,
+                _JOB_ACCEPTANCE_IMPORT_ERROR,
             )
 
         @property
@@ -85,15 +85,6 @@ except ImportError as import_error:
                 "current_rate": 0.0,
                 "enabled": self._enabled,
             }
-
-if sys.platform == "win32":
-    try:
-        import winsound
-
-        SOUND_PLAYER = "winsound"
-    except ImportError:
-        SOUND_PLAYER = "none"
-
 
 class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
@@ -357,7 +348,11 @@ class GengoWatcher:
                 self.logger.error(f"Notify Error: {e}")
         if play_sound and self.config.get("Watcher", "enable_sound"):
             threading.Thread(target=self.play_sound, daemon=True).start()
-        if open_link and url:
+        try:
+            allow_open = self.config.get("Watcher", "open_links_on_new_job")
+        except Exception:
+            allow_open = True
+        if open_link and url and allow_open:
             self.open_in_browser(url)
 
 
@@ -423,9 +418,19 @@ class GengoWatcher:
             f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
         )
         with self._seen_jobs_lock:
+            # Maintain a bounded LRU to avoid unbounded growth
+            if not hasattr(self, "_seen_jobs_order"):
+                import collections
+                try:
+                    max_seen = int(self.config.get("Watcher", "seen_jobs_max") or 1000)
+                except Exception:
+                    max_seen = 1000
+                self._seen_jobs_order = collections.deque(maxlen=max_seen)
             if job_id in self._seen_jobs_session:
                 return
             self._seen_jobs_session.add(job_id)
+            self._seen_jobs_order.append(job_id)
+            # Persist to recent IDs (AppState already bounds this deque)
             self.state.seen_job_ids.append(job_id)
             min_reward = self.config.get("Watcher", "min_reward")
             if min_reward > 0.0 and reward < min_reward:

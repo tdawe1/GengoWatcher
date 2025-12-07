@@ -4,7 +4,6 @@ import pathlib
 from typing import Union, List, Dict, Any
 import logging
 import collections
-import time
 
 
 class AppState:

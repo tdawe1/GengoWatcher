@@ -1,7 +1,5 @@
 import feedparser
 import time
-import webbrowser
-import os
 import winsound
 from win10toast import ToastNotifier
 import signal
