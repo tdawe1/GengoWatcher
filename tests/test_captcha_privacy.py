@@ -4,8 +4,7 @@ Verifies that no sensitive data (API keys, solution tokens) is logged.
 """
 
 import logging
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from gengowatcher.captcha_manager import CaptchaSolverManager
 from gengowatcher.captcha_solver import TwoCaptchaSolver, CaptchaSolution
 
@@ -190,7 +189,7 @@ class TestCaptchaPrivacy:
 
         # Try to solve and trigger error
         with caplog.at_level(logging.DEBUG):
-            solution = solver_manager.solve_recaptcha_v2("test_site_key", "https://example.com")
+            _ = solver_manager.solve_recaptcha_v2("test_site_key", "https://example.com")
 
             # Check error logs don't contain sensitive data
             for record in caplog.records:

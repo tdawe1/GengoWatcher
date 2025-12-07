@@ -4,16 +4,16 @@ A more advanced local CAPTCHA solver using TensorFlow and convolutional neural n
 """
 
 import logging
-import threading
 from typing import Optional, Dict, Any
 import numpy as np
 try:
-    import tensorflow as tf
+    import tensorflow as tf  # type: ignore
     TENSORFLOW_AVAILABLE = True
 except ImportError:
+    tf = None  # type: ignore
     TENSORFLOW_AVAILABLE = False
 
-from .local_captcha_solver import BaseLocalCaptchaSolver, LocalCaptchaModelInfo, CaptchaSolution, CaptchaSolverError
+from .local_captcha_solver import BaseLocalCaptchaSolver, LocalCaptchaModelInfo
 
 
 class TensorFlowCaptchaSolver(BaseLocalCaptchaSolver):
@@ -44,11 +44,16 @@ class TensorFlowCaptchaSolver(BaseLocalCaptchaSolver):
         if not TENSORFLOW_AVAILABLE:
             self.logger.error("TensorFlow not available for local CAPTCHA solver")
             return False
-            
+
         with self._lock:
             if not self._is_initialized:
                 try:
                     self.logger.info("Loading TensorFlow CAPTCHA model...")
+                    if tf is not None:
+                        self.logger.debug(
+                            "Using TensorFlow version %s",
+                            getattr(tf, "__version__", "unknown"),
+                        )
                     # In a real implementation, this would load the actual model
                     # self.model = tf.keras.models.load_model(self.model_path)
                     self.logger.info("TensorFlow CAPTCHA model loaded successfully")
@@ -79,6 +84,7 @@ class TensorFlowCaptchaSolver(BaseLocalCaptchaSolver):
         try:
             # Preprocess the image
             processed_image = self._preprocess_image(image_path)
+            self.logger.debug("Processed image shape: %s", getattr(processed_image, "shape", "unknown"))
             
             # Make prediction
             # prediction = self.model.predict(processed_image)
