@@ -4,12 +4,8 @@ Provides command-line interface for CAPTCHA solver configuration and testing.
 """
 
 import getpass
-import sys
-import logging
-from typing import Dict, Any
 from .captcha_manager import CaptchaSolverManager
 from .secure_storage import SecureKeyStorage
-from .captcha_solver import CaptchaServiceType
 
 
 def setup_captcha_solver(watcher):
@@ -50,7 +46,7 @@ def setup_captcha_solver(watcher):
         if service == "local":
             # Update config
             watcher.set_config_value("Captcha", "service", service)
-            print(f"\nLocal CAPTCHA solver configured successfully!")
+            print("\nLocal CAPTCHA solver configured successfully!")
         else:
             api_key = getpass.getpass(f"Enter your {service} API key: ").strip()
             
@@ -147,7 +143,7 @@ def show_captcha_stats(watcher):
     
     # Show performance statistics
     if stats['solve_times']:
-        print(f"\nOverall Performance:")
+        print("\nOverall Performance:")
         print(f"  Avg Solve Time: {stats['avg_solve_time']:.2f}s")
         print(f"  Min Solve Time: {stats['min_solve_time']:.2f}s")
         print(f"  Max Solve Time: {stats['max_solve_time']:.2f}s")

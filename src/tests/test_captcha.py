@@ -1,8 +1,6 @@
-import pytest
 import os
 import tempfile
-from unittest.mock import Mock, patch
-from gengowatcher.captcha_solver import CaptchaServiceType
+from unittest.mock import Mock
 from gengowatcher.captcha_manager import CaptchaSolverManager
 from gengowatcher.secure_storage import SecureKeyStorage
 
@@ -15,8 +13,8 @@ class TestCaptchaManager:
         logger = Mock()
         
         manager = CaptchaSolverManager(config, logger)
-        
-        assert manager.is_configured() == False
+
+        assert not manager.is_configured()
         assert manager.get_balance() == 0.0
     
     def test_rate_limiter_basic_functionality(self):
@@ -27,17 +25,17 @@ class TestCaptchaManager:
         limiter = RateLimiter(max_requests=3, time_window=1)
         
         # First 3 requests should be allowed
-        assert limiter.acquire() == True
-        assert limiter.acquire() == True
-        assert limiter.acquire() == True
-        
+        assert limiter.acquire()
+        assert limiter.acquire()
+        assert limiter.acquire()
+
         # 4th request should be denied
-        assert limiter.acquire() == False
+        assert not limiter.acquire()
         
         # Wait and try again
         import time
         time.sleep(1.1)
-        assert limiter.acquire() == True
+        assert limiter.acquire()
 
 class TestSecureStorage:
     """Test secure storage functionality"""
@@ -56,20 +54,20 @@ class TestSecureStorage:
             service = "2captcha"
             api_key = "test_api_key_12345"
             
-            assert storage.store_api_key(service, api_key) == True
+            assert storage.store_api_key(service, api_key)
             
             # Retrieve the API key
             retrieved_key = storage.retrieve_api_key(service)
             assert retrieved_key == api_key
             
             # Try to retrieve non-existent key
-            assert storage.retrieve_api_key("nonexistent") == None
+            assert storage.retrieve_api_key("nonexistent") is None
             
             # Delete the key
-            assert storage.delete_api_key(service) == True
+            assert storage.delete_api_key(service)
             
             # Try to retrieve deleted key
-            assert storage.retrieve_api_key(service) == None
+            assert storage.retrieve_api_key(service) is None
         finally:
             # Clean up
             if os.path.exists(storage_file):
@@ -84,7 +82,7 @@ class TestSecureStorage:
             storage = SecureKeyStorage(storage_file=storage_file)
             
             # Delete non-existent key should return True
-            assert storage.delete_api_key("nonexistent") == True
+            assert storage.delete_api_key("nonexistent")
         finally:
             if os.path.exists(storage_file):
                 os.unlink(storage_file)

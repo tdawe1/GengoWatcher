@@ -126,7 +126,6 @@ class JobCancellationManager:
 
             # Get authentication credentials
             user_session = self.config.config["WebSocket"]["user_session"]
-            user_id = self.config.config["WebSocket"]["user_id"]
 
             if not user_session or user_session == "REPLACE_WITH_YOUR_SESSION_TOKEN":
                 self.logger.error("User session token not configured for job cancellation")
@@ -205,7 +204,7 @@ class JobCancellationManager:
 
                         return True
                     else:
-                        self.logger.error(f"Cancellation may have failed - unexpected response")
+                        self.logger.error("Cancellation may have failed - unexpected response")
                         self.stats['failed_cancellations'] += 1
                         return False
 

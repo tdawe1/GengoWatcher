@@ -51,7 +51,7 @@ except ImportError as import_error:
             self.logger.warning(
                 "Auto-accept disabled: failed to import job_acceptance module (%s). "
                 "Install required dependencies such as aiohttp and beautifulsoup4 to enable auto-accept.",
-                import_error,
+                _JOB_ACCEPTANCE_IMPORT_ERROR,
             )
 
         @property
@@ -85,15 +85,6 @@ except ImportError as import_error:
                 "current_rate": 0.0,
                 "enabled": self._enabled,
             }
-
-if sys.platform == "win32":
-    try:
-        import winsound
-
-        SOUND_PLAYER = "winsound"
-    except ImportError:
-        SOUND_PLAYER = "none"
-
 
 class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
@@ -337,7 +328,11 @@ class GengoWatcher:
                 self.logger.error(f"Notify Error: {e}")
         if play_sound and self.config.get("Watcher", "enable_sound"):
             threading.Thread(target=self.play_sound, daemon=True).start()
-        if open_link and url:
+        try:
+            allow_open = self.config.get("Watcher", "open_links_on_new_job")
+        except Exception:
+            allow_open = True
+        if open_link and url and allow_open:
             self.open_in_browser(url)
 
 

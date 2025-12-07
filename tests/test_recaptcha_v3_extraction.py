@@ -3,7 +3,7 @@ Unit tests for reCAPTCHA v3 site key and action extraction
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from bs4 import BeautifulSoup
 import sys
 from pathlib import Path
@@ -12,7 +12,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from gengowatcher.job_acceptance import JobAcceptanceEngine
-from gengowatcher.config import AppConfig
 
 
 class TestRecaptchaV3Extraction:

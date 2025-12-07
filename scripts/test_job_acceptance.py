@@ -3,7 +3,6 @@ Test script for the job acceptance engine
 """
 
 import sys
-import os
 import logging
 from pathlib import Path
 

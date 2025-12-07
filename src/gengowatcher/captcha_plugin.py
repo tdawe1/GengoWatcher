@@ -8,7 +8,7 @@ import logging
 from typing import Dict, Any, Optional
 from .captcha_solver import (
     BaseCaptchaSolver, CaptchaSolution, CaptchaTask, CaptchaType,
-    CaptchaSolverError, CaptchaSolverBalanceError, CaptchaSolverTimeoutError
+    CaptchaSolverError
 )
 from .secure_storage import SecureKeyStorage
 
@@ -53,7 +53,7 @@ class CaptchaServicePlugin(BaseCaptchaSolver):
         """Check if the service is properly configured"""
         try:
             return self.api_key is not None and len(self.api_key) > 0
-        except:
+        except Exception:
             return False
     
     def solve_captcha(self, task: CaptchaTask) -> CaptchaSolution:
@@ -165,8 +165,14 @@ class AntiCaptchaSolverPlugin(CaptchaServicePlugin):
         pass
 
 
-# Register the built-in plugins
-from .captcha_plugin_adapter import TwoCaptchaSolverPluginAdapter, AntiCaptchaSolverPluginAdapter
+def _register_builtin_plugins() -> None:
+    from .captcha_plugin_adapter import (
+        TwoCaptchaSolverPluginAdapter,
+        AntiCaptchaSolverPluginAdapter,
+    )
 
-CaptchaServicePluginFactory.register_plugin("2captcha", TwoCaptchaSolverPluginAdapter)
-CaptchaServicePluginFactory.register_plugin("anti-captcha", AntiCaptchaSolverPluginAdapter)
+    CaptchaServicePluginFactory.register_plugin("2captcha", TwoCaptchaSolverPluginAdapter)
+    CaptchaServicePluginFactory.register_plugin("anti-captcha", AntiCaptchaSolverPluginAdapter)
+
+
+_register_builtin_plugins()
