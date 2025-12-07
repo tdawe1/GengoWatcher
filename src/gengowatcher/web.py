@@ -617,13 +617,19 @@ async def lifespan(app: FastAPI):
             config = AppConfig()
             state = AppState(logger=logger)
 
-        # Initialize authenticator with config token
-        try:
-            api_token = config.get("WebServer", "auth_token")
-        except Exception:
-            api_token = "gengo-token-demo"
+        # Initialize authenticator with config token; generate and persist if missing
+        api_token = config.get("WebServer", "auth_token")
+        if not api_token or not str(api_token).strip():
+            api_token = secrets.token_urlsafe(32)
+            logger.info("Generated new WebServer.auth_token for API authentication")
+            try:
+                config.set("WebServer", "auth_token", api_token)
+                config.save_config()
+            except Exception as e:
+                logger.warning(f"Failed to persist generated auth_token to config.ini: {e}")
+
         global authenticator
-        authenticator = APIAuthenticator(api_token)
+        authenticator = APIAuthenticator(str(api_token))
 
         api_instance = WebAPI(config, state, logger, watcher=_external_components["watcher"] if _external_components else None)
         logger.info("WebAPI started successfully")
