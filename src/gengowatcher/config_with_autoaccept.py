@@ -97,6 +97,11 @@ class AppConfig:
         sys.exit(0)
 
     def load_config(self):
+        """
+        Load configuration from CONFIG_FILE into the instance config, applying defaults, performing type-aware conversion, and running post-load validation.
+        
+        This reads the INI file into the internal parser and populates self.config with all sections and keys. For every key defined in DEFAULT_CONFIG, a fallback default is applied and an attempt is made to convert file values to the default's type; values that cannot be converted are left as strings. Missing sections are added to the parser (a notice is printed). After loading, AutoAccept and Captcha settings are validated and adjusted if necessary. If the file cannot be parsed or a value conversion raises a ValueError, a critical message is printed and the process exits with status 1.
+        """
         with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
             self._config_parser.read_file(f)
         with self._lock:
@@ -172,13 +177,32 @@ class AppConfig:
             return self.config[section][key]
 
     def set(self, section, key, value):
+        """
+        Set a configuration value in the in-memory configuration, creating the section if it does not exist.
+        
+        Parameters:
+            section (str): Name of the configuration section.
+            key (str): Configuration key within the section.
+            value: Value to store for the given key; stored as-is (no type conversion).
+        
+        Notes:
+            Operation is performed in a thread-safe manner.
+        """
         with self._lock:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
 
     def _validate_auto_accept_config(self):
-        """Validate auto-accept configuration values"""
+        """
+        Ensure AutoAccept settings in self.config are valid and adjust them in place.
+        
+        Performs the following corrections:
+        - Swap `min_reward` and `max_reward` if `min_reward` is greater than `max_reward`.
+        - Swap `accept_delay_min` and `accept_delay_max` if `accept_delay_min` is greater than `accept_delay_max`.
+        - Sanitise `job_sources` to contain only `"rss"` and `"websocket"`; if no valid sources remain, set to `"rss,websocket"`.
+        - Clamp `accept_delay_min` to a minimum of 0 and `accept_delay_max` to a maximum of 300.
+        """
         auto_accept = self.config["AutoAccept"]
         
         # Validate reward range
