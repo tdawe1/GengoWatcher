@@ -8,9 +8,6 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict, Counter
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 
 class LogAnalyzer:
@@ -239,7 +236,7 @@ class LogAnalyzer:
                 acceptances_per_hour = len(self.acceptance_events) / (duration.total_seconds() / 3600)
                 captchas_per_hour = len(self.captcha_events) / (duration.total_seconds() / 3600)
 
-                print(f"\nHourly averages:")
+                print("\nHourly averages:")
                 print(f"  Jobs detected: {jobs_per_hour:.2f}/hour")
                 print(f"  Jobs accepted: {acceptances_per_hour:.2f}/hour")
                 print(f"  CAPTCHAs: {captchas_per_hour:.2f}/hour")

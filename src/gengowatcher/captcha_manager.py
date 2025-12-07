@@ -4,8 +4,7 @@ import time
 from typing import Optional, Dict, Any
 from .captcha_plugin import CaptchaServicePluginFactory
 from .captcha_solver import (
-    BaseCaptchaSolver, 
-    CaptchaServiceType,
+    BaseCaptchaSolver,
     CaptchaSolution,
     CaptchaSolverError,
     CaptchaSolverBalanceError,
