@@ -196,6 +196,26 @@ class GengoWatcher:
 
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
 
+    def _safe_parse_reward(self, value) -> float:
+        """Best-effort conversion of mixed reward payloads to a float.
+
+        Handles ints/floats, strings containing a number, and simple dict
+        structures like {"amount": ...} without raising.
+        """
+        try:
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                match = re.search(r"(\d+\.?\d*)", value)
+                return float(match.group(1)) if match else 0.0
+            if isinstance(value, dict):
+                for key in ("amount", "value", "usd", "price"):
+                    if key in value:
+                        return self._safe_parse_reward(value[key])
+            return 0.0
+        except Exception:
+            return 0.0
+
     def start_captcha_monitoring(self, interval: int = 300):
         """Start monitoring CAPTCHA service health and performance"""
         self.captcha_solver.start_monitoring(interval)
@@ -745,7 +765,7 @@ class GengoWatcher:
                             job_id = job.get("id")
                             self.logger.debug(f"WebSocket: Job data: {job}")
                             if job_id:
-                                reward = float(job.get("rewards", 0.0))
+                                reward = self._safe_parse_reward(job.get("rewards", 0.0))
                                 title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
                                 url = f"https://gengo.com/t/jobs/details/{job_id}"
                                 self._process_new_job(
