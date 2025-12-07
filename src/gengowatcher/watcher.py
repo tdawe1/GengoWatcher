@@ -398,9 +398,19 @@ class GengoWatcher:
             f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
         )
         with self._seen_jobs_lock:
+            # Maintain a bounded LRU to avoid unbounded growth
+            if not hasattr(self, "_seen_jobs_order"):
+                import collections
+                try:
+                    max_seen = int(self.config.get("Watcher", "seen_jobs_max") or 1000)
+                except Exception:
+                    max_seen = 1000
+                self._seen_jobs_order = collections.deque(maxlen=max_seen)
             if job_id in self._seen_jobs_session:
                 return
             self._seen_jobs_session.add(job_id)
+            self._seen_jobs_order.append(job_id)
+            # Persist to recent IDs (AppState already bounds this deque)
             self.state.seen_job_ids.append(job_id)
             min_reward = self.config.get("Watcher", "min_reward")
             if min_reward > 0.0 and reward < min_reward:
