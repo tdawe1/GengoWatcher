@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import random
 import subprocess
 import sys
 import threading
@@ -38,6 +39,7 @@ except ImportError:
             """
             pass
 
+
 from . import notifier
 
 PLACEHOLDER_CONFIG_VALUES = {
@@ -46,6 +48,7 @@ PLACEHOLDER_CONFIG_VALUES = {
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
 }
+
 
 class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
@@ -106,34 +109,48 @@ class GengoWatcher:
         def captcha_alert_callback(service_name: str, level: str, message: str):
             """Handle CAPTCHA service alerts"""
             # Log the alert
-            getattr(self.logger, level.lower(), self.logger.info)(f"CAPTCHA Alert [{service_name}]: {message}")
+            getattr(self.logger, level.lower(), self.logger.info)(
+                f"CAPTCHA Alert [{service_name}]: {message}"
+            )
 
             # Show notification for critical alerts
             if level in ["ERROR", "CRITICAL"]:
                 self.show_notification(
                     message,
                     title=f"CAPTCHA Service Alert ({service_name})",
-                    play_sound=True
+                    play_sound=True,
                 )
 
         self.captcha_solver.monitor.add_alert_callback(captcha_alert_callback)
 
         # Initialize browser automation engine
-        self.browser_automation_engine = BrowserAutomationEngine(config, logger, self.captcha_solver)
+        self.browser_automation_engine = BrowserAutomationEngine(
+            config, logger, self.captcha_solver
+        )
         try:
             session_token = self.config.get("WebSocket", "user_session")
             if session_token and session_token != "REPLACE_WITH_YOUR_SESSION_TOKEN":
-                if self.browser_automation_engine.login_with_session(str(session_token)):
+                if self.browser_automation_engine.login_with_session(
+                    str(session_token)
+                ):
                     # Start monitors if configured
                     try:
-                        if self.config.getboolean("SeleniumMonitoring", "enable_live_dashboard"):
+                        if self.config.getboolean(
+                            "SeleniumMonitoring", "enable_live_dashboard"
+                        ):
                             self.browser_automation_engine.start_live_dashboard_monitor(
-                                on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(url)
+                                on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(
+                                    url
+                                )
                             )
                         if self.config.get("SeleniumMonitoring", "enable_list_refresh"):
-                            interval_ms = self.config.getint("SeleniumMonitoring", "refresh_interval_ms")
+                            interval_ms = self.config.getint(
+                                "SeleniumMonitoring", "refresh_interval_ms"
+                            )
                             self.browser_automation_engine.start_jobs_page_refresher(
-                                on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(url),
+                                on_new_job=lambda jid, url: self.browser_automation_engine.open_job_details_and_arm_accept(
+                                    url
+                                ),
                                 interval_sec=max(0.25, float(interval_ms) / 1000.0),
                             )
                     except Exception as e:
@@ -143,7 +160,10 @@ class GengoWatcher:
 
         # Initialize job acceptance engine (pass browser engine for fallbacks)
         self.job_acceptance_engine = JobAcceptanceEngine(
-            config, logger, self.captcha_solver, browser_engine=self.browser_automation_engine
+            config,
+            logger,
+            self.captcha_solver,
+            browser_engine=self.browser_automation_engine,
         )
 
         # Initialize job cancellation manager
@@ -156,15 +176,15 @@ class GengoWatcher:
     def start_captcha_monitoring(self, interval: int = 300):
         """Start monitoring CAPTCHA service health and performance"""
         self.captcha_solver.start_monitoring(interval)
-    
+
     def stop_captcha_monitoring(self):
         """Stop monitoring CAPTCHA service health and performance"""
         self.captcha_solver.stop_monitoring()
-    
+
     def show_captcha_health_status(self):
         """Show current CAPTCHA service health status"""
         self.captcha_solver.monitor.log_health_status()
-    
+
     def show_captcha_performance_metrics(self):
         """Show CAPTCHA service performance metrics"""
         self.captcha_solver.monitor.log_performance_metrics()
@@ -192,8 +212,10 @@ class GengoWatcher:
             self.logger.error(f"Could not open all_entries_log file: {e}")
             self._all_entries_log_file = None
             self._csv_writer = None
-    
-    def show_notification(self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None):
+
+    def show_notification(
+        self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None
+    ):
         """
         Send a desktop notification and optionally play a sound or open a URL.
         
@@ -215,7 +237,6 @@ class GengoWatcher:
         if open_link and url:
             self.open_in_browser(url)
 
-
     def open_in_browser(self, url):
         """
         Open the given URL using the configured browser if available, otherwise use the system default browser.
@@ -236,7 +257,6 @@ class GengoWatcher:
                 subprocess.Popen([str(browser_path_str)] + args)
         except Exception as e:
             self.logger.error(f"Browser Error: {e}")
-
 
     def _extract_reward(self, entry) -> float:
         """
@@ -334,7 +354,7 @@ class GengoWatcher:
                 "currency": "USD",
                 "url": url,
                 "timestamp": time.time(),
-                "source": source
+                "source": source,
             }
             self.state.add_job(job_data)
         except Exception as e:
@@ -342,8 +362,11 @@ class GengoWatcher:
 
         # Consider cancelling a current job if this one is better
         try:
-            if self.cancellation_manager.cancellation_enabled and self.cancellation_manager.should_cancel_for_job(
-                float(job_data.get("reward", 0.0)), str(job_data.get("id"))
+            if (
+                self.cancellation_manager.cancellation_enabled
+                and self.cancellation_manager.should_cancel_for_job(
+                    float(job_data.get("reward", 0.0)), str(job_data.get("id"))
+                )
             ):
                 self.logger.info(
                     "Better opportunity detected - scheduling cancellation of current job before accepting new job"
@@ -358,21 +381,28 @@ class GengoWatcher:
 
         # Check if job should be auto-accepted
         if self.job_acceptance_engine.is_job_eligible(job_data):
-            self.logger.info(f"Job {job_id} meets auto-accept criteria, queuing for acceptance")
+            self.logger.info(
+                f"Job {job_id} meets auto-accept criteria, queuing for acceptance"
+            )
             # Fire Selenium accept watcher immediately
             try:
-                if hasattr(self, 'browser_automation_engine') and self.browser_automation_engine:
+                if (
+                    hasattr(self, "browser_automation_engine")
+                    and self.browser_automation_engine
+                ):
                     self.browser_automation_engine.open_job_details_and_arm_accept(url)
             except Exception as e:
                 self.logger.debug(f"Selenium accept watcher start failed: {e}")
             # Run job acceptance in a separate thread to avoid blocking
             threading.Thread(
-                target=self._async_job_acceptance_wrapper,
-                args=(job_data,),
-                daemon=True
+                target=self._async_job_acceptance_wrapper, args=(job_data,), daemon=True
             ).start()
-        elif hasattr(self.browser_automation_engine, 'is_job_eligible') and self.browser_automation_engine.is_job_eligible(job_data):
-            self.logger.info(f"Job {job_id} meets browser automation criteria, queuing for acceptance")
+        elif hasattr(
+            self.browser_automation_engine, "is_job_eligible"
+        ) and self.browser_automation_engine.is_job_eligible(job_data):
+            self.logger.info(
+                f"Job {job_id} meets browser automation criteria, queuing for acceptance"
+            )
             try:
                 self.browser_automation_engine.open_job_details_and_arm_accept(url)
             except Exception as e:
@@ -381,7 +411,7 @@ class GengoWatcher:
             threading.Thread(
                 target=self._async_browser_automation_wrapper,
                 args=(job_data,),
-                daemon=True
+                daemon=True,
             ).start()
         else:
             self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
@@ -391,18 +421,22 @@ class GengoWatcher:
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
         Wrapper to run async job acceptance in a separate thread.
-        
+
         Args:
             job_data: Dictionary containing job information
         """
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
-            success = loop.run_until_complete(self.job_acceptance_engine.accept_job(job_data))
+            success = loop.run_until_complete(
+                self.job_acceptance_engine.accept_job(job_data)
+            )
             if success:
                 self._on_job_accepted(job_data)
         except Exception as e:
-            self.logger.error(f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}")
+            self.logger.error(
+                f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}"
+            )
         finally:
             loop.close()
 
@@ -416,7 +450,9 @@ class GengoWatcher:
                     f"Current job {previous_job_id} cancelled. Preparing to accept {upcoming_job.get('id')}"
                 )
             else:
-                self.logger.warning("Failed to cancel current job before processing new opportunity")
+                self.logger.warning(
+                    "Failed to cancel current job before processing new opportunity"
+                )
         except Exception as e:
             self.logger.error(f"Error during automatic job cancellation: {e}")
 
@@ -426,9 +462,13 @@ class GengoWatcher:
             job_id = str(job_data.get("id"))
             reward = float(job_data.get("reward", 0.0))
             self.cancellation_manager.set_current_job(job_id, reward)
-            self.logger.debug(f"Tracking job {job_id} (${reward:.2f}) as current engagement")
+            self.logger.debug(
+                f"Tracking job {job_id} (${reward:.2f}) as current engagement"
+            )
         except Exception as e:
-            self.logger.error(f"Failed to record accepted job for cancellation tracking: {e}")
+            self.logger.error(
+                f"Failed to record accepted job for cancellation tracking: {e}"
+            )
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.
@@ -465,7 +505,7 @@ class GengoWatcher:
             url = entry.get("link")
             self.logger.debug(f"Processing new RSS entry: {title} {url}")
             try:
-                match = re.search(r"/jobs/(?:details/)?(\d+)", url)
+                match = re.search(r"/jobs/details/(\d+)", url)
                 if not match:
                     self.logger.warning(f"Could not parse job ID from RSS link: {url}")
                     continue
@@ -515,22 +555,28 @@ class GengoWatcher:
         
         Establishes a connection to the configured WebSocket URL, sends authentication payload (user/session and optional key), and updates connection state. Maintains a periodic heartbeat to measure latency and detect stalls, monitors for manual test commands, and listens for incoming messages; when an "available_collection" event is received it extracts job details and delegates handling to the watcher. Records socket close codes and reasons, performs a retry without custom headers when handshakes fail due to header restrictions, and sets websocket_status to reflect connection state or offline on failure.
         """
-        ws_url = self.config.get("WebSocket", "wss_url") or "wss://live-dashboard.gengo.com"
+        ws_url = (
+            self.config.get("WebSocket", "wss_url") or "wss://live-dashboard.gengo.com"
+        )
         self.websocket_status = "Connecting"
         self.logger.info(f"WebSocket: Initializing connection to {ws_url}")
-        
+
         try:
             # Determine User-Agent
-            user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
             custom_ua = self.config.get("Network", "browser_user_agent")
             if custom_ua:
                 user_agent = custom_ua
-                self.logger.info(f"WebSocket: Using configured browser User-Agent: {user_agent[:30]}...")
+                self.logger.info(
+                    f"WebSocket: Using configured browser User-Agent: {user_agent[:30]}..."
+                )
             else:
-                self.logger.debug(f"WebSocket: Using default User-Agent: {user_agent[:30]}...")
+                self.logger.debug(
+                    f"WebSocket: Using default User-Agent: {user_agent[:30]}..."
+                )
 
-            session_token = self.config.get('WebSocket', 'user_session')
-            user_key = self.config.get('WebSocket', 'user_key')
+            session_token = self.config.get("WebSocket", "user_session")
+            user_key = self.config.get("WebSocket", "user_key")
             masked_token = (
                 f"{session_token[:4]}...{session_token[-4:]}"
                 if session_token and len(session_token) > 8
@@ -545,13 +591,14 @@ class GengoWatcher:
             extra_headers = [
                 (
                     "Cookie",
-                    f"my_gengo_session={session_token}",
+                    f"myG_myGSession_={session_token}; myG_rdsessID={session_token}",
                 ),
-                # ("Origin", "https://gengo.com"),
-                # ("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8"),
-                # ("Cache-Control", "no-cache"),
-                # ("Pragma", "no-cache"),
-                # ("User-Agent", user_agent),
+                ("Origin", "https://gengo.com"),
+                ("Pragma", "no-cache"),
+                ("Cache-Control", "no-cache"),
+                ("User-Agent", user_agent),
+                ("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8"),
+                ("Accept-Encoding", "gzip, deflate, br, zstd"),
             ]
 
             # Log headers (masking sensitive info)
@@ -573,10 +620,10 @@ class GengoWatcher:
             async def run_session(headers):
                 """
                 Run a single WebSocket session: connect, authenticate, monitor heartbeat and test commands, and process incoming messages.
-                
+
                 Parameters:
                     headers (dict | None): Optional extra HTTP headers to include in the WebSocket handshake; pass None to omit custom headers.
-                
+
                 Detailed behaviour:
                     - Connects to the configured WebSocket URL and sends an authentication payload containing the configured `user_id`, the stored session token and, if present, the `user_key`.
                     - Starts a heartbeat task that measures ping/pong latency and updates connection timing/state attributes.
@@ -584,41 +631,43 @@ class GengoWatcher:
                     - Listens for incoming messages and invokes the watcher's message handling for recognised events (notably `available_collection` events, which are forwarded to `_process_new_job`).
                     - Records the socket close code and reason on disconnect, cancels auxiliary tasks and performs orderly cleanup while logging notable conditions and errors.
                 """
-                header_desc = "with custom headers" if headers else "with no custom headers"
+                header_desc = (
+                    "with custom headers" if headers else "with no custom headers"
+                )
                 self.websocket_status = "Connecting"
                 self.logger.debug(
                     f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
                 )
                 async with websockets.connect(
-                        ws_url,
-                        **{ws_header_key: headers},
-                        ping_interval=20,
-                        ping_timeout=10,
-                        compression=None,
+                    ws_url,
+                    **{ws_header_key: headers},
+                    ping_interval=20,
+                    ping_timeout=10,
+                    compression=None,
                 ) as websocket:
                     self.websocket_status = "Authenticating"
                     user_id = self.config.get("WebSocket", "user_id")
-                    
+
                     auth_payload = {
                         "user_id": user_id,
                         "user_session": session_token,
                     }
-                    if user_key:
-                        auth_payload["user_key"] = user_key
                     # Log auth attempt safely
                     self.logger.debug(
                         "WebSocket: Sending auth payload for user_id=%s (user_key=%s)",
                         user_id,
                         masked_user_key,
                     )
-                    
+
                     await websocket.send(json.dumps(auth_payload))
 
                     self.websocket_status = "Live"
-                    self.logger.info("WebSocket: Connection established and authenticated.")
+                    self.logger.info(
+                        "WebSocket: Connection established and authenticated."
+                    )
 
                     # Heartbeat task: send periodic ping to measure latency and expose countdown to UI
-                    HEARTBEAT_INTERVAL = 30  # seconds
+                    HEARTBEAT_INTERVAL = 5  # seconds
 
                     async def heartbeat():
                         """
@@ -628,16 +677,22 @@ class GengoWatcher:
                         """
                         while True:
                             try:
-                                self.websocket_next_ping_ts = time.time() + HEARTBEAT_INTERVAL
+                                self.websocket_next_ping_ts = (
+                                    time.time() + HEARTBEAT_INTERVAL
+                                )
                                 await asyncio.sleep(HEARTBEAT_INTERVAL)
                                 t0 = time.perf_counter()
-                                self.logger.debug("WebSocket: Sending heartbeat ping...")
+                                self.logger.debug(
+                                    "WebSocket: Sending heartbeat ping..."
+                                )
                                 waiter = await websocket.ping()
                                 await asyncio.wait_for(waiter, timeout=5)
                                 latency = (time.perf_counter() - t0) * 1000.0
                                 self.websocket_last_pong_ts = time.time()
                                 self.websocket_ping_latency_ms = latency
-                                self.logger.debug(f"WebSocket: Heartbeat pong received. Latency: {latency:.2f}ms")
+                                self.logger.debug(
+                                    f"WebSocket: Heartbeat pong received. Latency: {latency:.2f}ms"
+                                )
                             except asyncio.CancelledError:
                                 raise
                             except Exception as e:
@@ -648,11 +703,17 @@ class GengoWatcher:
 
                     try:
                         self.logger.debug("WebSocket: Waiting for first message...")
-                        first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
-                        self.logger.debug(f"WebSocket: First message received: {first_message[:100]}...")
+                        first_message = await asyncio.wait_for(
+                            websocket.recv(), timeout=5
+                        )
+                        self.logger.debug(
+                            f"WebSocket: First message received: {first_message[:100]}..."
+                        )
                         try:
                             data = json.loads(first_message)
-                            self.logger.debug(f"WebSocket: First message type: {data.get('type', 'unknown')}")
+                            self.logger.debug(
+                                f"WebSocket: First message type: {data.get('type', 'unknown')}"
+                            )
                         except Exception as e:
                             self.logger.warning(
                                 f"WebSocket: Could not parse first message as JSON: {e}. Raw: {first_message[:100]}..."
@@ -684,7 +745,9 @@ class GengoWatcher:
                                     command = self._test_command
                                     self._test_command = None
                             if command == "ping":
-                                self.logger.info("WebSocket: PING test initiated by user.")
+                                self.logger.info(
+                                    "WebSocket: PING test initiated by user."
+                                )
                                 try:
                                     pong_waiter = await websocket.ping()
                                     await asyncio.wait_for(pong_waiter, timeout=5)
@@ -696,7 +759,9 @@ class GengoWatcher:
                                         "[bold red]WebSocket: PING test failed (timeout). Connection may be stalled.[/bold red]"
                                     )
                                 except Exception as e:
-                                    self.logger.error(f"WebSocket: PING test failed: {e}")
+                                    self.logger.error(
+                                        f"WebSocket: PING test failed: {e}"
+                                    )
                             elif command == "notify":
                                 self._simulate_new_job_notification()
                             await asyncio.sleep(0.2)
@@ -704,7 +769,9 @@ class GengoWatcher:
                     test_monitor_task = asyncio.create_task(monitor_test_request())
                     try:
                         async for message in websocket:
-                            self.logger.debug(f"WebSocket: Message received (len={len(message)})")
+                            self.logger.debug(
+                                f"WebSocket: Message received (len={len(message)})"
+                            )
                             data = None
                             try:
                                 data = json.loads(message)
@@ -713,25 +780,39 @@ class GengoWatcher:
                                     f"WebSocket: Could not parse message as JSON: {e}"
                                 )
                                 continue
-                                
+
                             if isinstance(data, dict):
                                 msg_type = data.get("type")
                                 if msg_type == "available_collection":
                                     job = data.get("collection", {})
                                     job_id = job.get("id")
-                                    self.logger.info(f"WebSocket: 'available_collection' event for job ID {job_id}")
+                                    self.logger.info(
+                                        f"WebSocket: 'available_collection' event for job ID {job_id}"
+                                    )
                                     if job_id:
                                         reward = float(job.get("rewards", 0.0))
-                                        title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
-                                        url = f"https://gengo.com/t/jobs/details/{job_id}"
+                                        title = (
+                                            f"{job.get('lc_src')} > {job.get('lc_tgt')}"
+                                        )
+                                        url = (
+                                            f"https://gengo.com/t/jobs/details/{job_id}"
+                                        )
                                         self._process_new_job(
-                                            job_id, title, reward, url, source="WebSocket"
+                                            job_id,
+                                            title,
+                                            reward,
+                                            url,
+                                            source="WebSocket",
                                         )
                                 else:
-                                    self.logger.debug(f"WebSocket: Ignoring message type '{msg_type}'")
+                                    self.logger.debug(
+                                        f"WebSocket: Ignoring message type '{msg_type}'"
+                                    )
                             else:
-                                self.logger.debug(f"WebSocket: Ignoring non-dict message: {str(data)[:50]}...")
-                                
+                                self.logger.debug(
+                                    f"WebSocket: Ignoring non-dict message: {str(data)[:50]}..."
+                                )
+
                     except ConnectionClosed as e:
                         self.websocket_last_close_code = getattr(e, "code", None)
                         self.websocket_last_close_reason = getattr(e, "reason", None)
@@ -752,7 +833,9 @@ class GengoWatcher:
                             await test_monitor_task
                             await heartbeat_task
                         except asyncio.CancelledError:
-                            self.logger.debug("WebSocket: Auxiliary tasks cancelled cleanly.")
+                            self.logger.debug(
+                                "WebSocket: Auxiliary tasks cancelled cleanly."
+                            )
                         except Exception as e:
                             self.logger.warning(
                                 f"WebSocket: Exception while awaiting tasks cleanup: {e}"
@@ -813,11 +896,22 @@ class GengoWatcher:
         base_backoff = 5
         backoff = base_backoff
         max_backoff = int(self.config.get("Network", "max_backoff"))
+        clean_close_backoff_min = self.config.getint(
+            "Network", "clean_close_backoff_min", fallback=20
+        )
+        clean_close_backoff_max = self.config.getint(
+            "Network", "clean_close_backoff_max", fallback=45
+        )
+        reconnect_jitter_max = self.config.getint(
+            "Network", "reconnect_jitter_max", fallback=5
+        )
         session_placeholder = "REPLACE_WITH_YOUR_SESSION_TOKEN"
         key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
         while not self.shutdown_event.is_set():
             session_token = self.config.get("WebSocket", "user_session")
             user_key = self.config.get("WebSocket", "user_key")
+
+            # Validate session token (required)
             if not session_token or session_token == session_placeholder:
                 self.logger.warning(
                     "WebSocket disabled: Please set 'user_session' in config.ini."
@@ -825,18 +919,21 @@ class GengoWatcher:
                 self.websocket_status = "Disabled"
                 self.shutdown_event.wait()
                 break
-            if not user_key or user_key == key_placeholder:
-                self.logger.warning(
-                    "WebSocket disabled: Please set 'user_key' (copy from logged-in browser) in config.ini."
+
+            # Validate user_key (optional but recommended)
+            if user_key == key_placeholder:
+                self.logger.info(
+                    "WebSocket: user_key is set to placeholder value. "
+                    "Authentication will rely only on session token."
                 )
-                self.websocket_status = "Disabled"
-                self.shutdown_event.wait()
-                break
+
             try:
                 self.logger.debug("Running websocket logic (asyncio.run)")
                 self.websocket_last_close_code = None
                 self.websocket_last_close_reason = None
+                session_started_at = time.time()
                 asyncio.run(self._websocket_logic())
+                session_duration = time.time() - session_started_at
                 if self.shutdown_event.is_set():
                     break
                 self.websocket_status = "Offline"
@@ -844,22 +941,46 @@ class GengoWatcher:
                 close_reason = self.websocket_last_close_reason
                 normal_close = close_code in (1000, 1001)
                 if normal_close:
-                    wait_time = base_backoff
-                    backoff = base_backoff
-                    self.logger.info(
-                        f"WebSocket connection closed cleanly (code={close_code}, reason={close_reason}). Reconnecting in {wait_time} seconds..."
+                    wait_time = min(
+                        max_backoff,
+                        random.uniform(
+                            clean_close_backoff_min, clean_close_backoff_max
+                        ),
                     )
+                    # If we churn quickly, extend the delay to avoid hammering the endpoint.
+                    if session_duration < 10:
+                        wait_time = max(wait_time, clean_close_backoff_max)
+                        self.logger.warning(
+                            "WebSocket connection closed cleanly after %.1fs. "
+                            "Backing off to %.1fs before reconnecting.",
+                            session_duration,
+                            wait_time,
+                        )
+                    else:
+                        self.logger.info(
+                            "WebSocket connection closed cleanly (code=%s, reason=%s). "
+                            "Reconnecting in %.1f seconds...",
+                            close_code,
+                            close_reason,
+                            wait_time,
+                        )
+                    backoff = base_backoff
                 else:
-                    wait_time = backoff
+                    wait_time = min(
+                        max_backoff, backoff + random.uniform(0, reconnect_jitter_max)
+                    )
                     self.logger.info(
-                        f"WebSocket connection closed. Reconnecting in {wait_time} seconds..."
+                        f"WebSocket connection closed. Reconnecting in {wait_time:.1f} seconds..."
                     )
                     backoff = min(backoff * 2, max_backoff)
                 if self.shutdown_event.wait(wait_time):
                     break
             except Exception as e:
                 self.logger.error(f"Critical error in WebSocket runner: {e}")
-                if self.shutdown_event.wait(backoff):
+                wait_time = min(
+                    max_backoff, backoff + random.uniform(0, reconnect_jitter_max)
+                )
+                if self.shutdown_event.wait(wait_time):
                     break
                 backoff = min(backoff * 2, max_backoff)
         self.logger.info("WebSocket monitor thread stopped.")
@@ -998,7 +1119,9 @@ class GengoWatcher:
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
-            return loop.run_until_complete(self.cancellation_manager.cancel_current_job())
+            return loop.run_until_complete(
+                self.cancellation_manager.cancel_current_job()
+            )
         finally:
             loop.close()
 
@@ -1006,9 +1129,15 @@ class GengoWatcher:
         """Apply configuration settings to the cancellation manager."""
         try:
             settings = {
-                "cancellation_enabled": self.config.getboolean("Cancellation", "enabled", fallback=True),
-                "min_improvement_ratio": self.config.getfloat("Cancellation", "min_improvement_ratio", fallback=2.0),
-                "extreme_threshold": self.config.getfloat("Cancellation", "extreme_threshold", fallback=1000.0),
+                "cancellation_enabled": self.config.getboolean(
+                    "Cancellation", "enabled", fallback=True
+                ),
+                "min_improvement_ratio": self.config.getfloat(
+                    "Cancellation", "min_improvement_ratio", fallback=2.0
+                ),
+                "extreme_threshold": self.config.getfloat(
+                    "Cancellation", "extreme_threshold", fallback=1000.0
+                ),
             }
             self.cancellation_manager.update_settings(**settings)
         except Exception as e:
@@ -1034,15 +1163,17 @@ class GengoWatcher:
 
         # Check if this is a fresh config
         config_file = Path(self.config.CONFIG_FILE)
-        is_new_config = config_file.stat().st_size < 1000  # Rough check for new/small config
+        is_new_config = (
+            config_file.stat().st_size < 1000
+        )  # Rough check for new/small config
 
         if is_new_config:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("🎉 Welcome to GengoWatcher!")
-            print("="*60)
+            print("=" * 60)
             print("A default configuration file has been created.")
             print("Let's set up the essential settings to get you started.")
-            print("="*60 + "\n")
+            print("=" * 60 + "\n")
 
         if required_fields is None:
             required_fields = []
@@ -1055,7 +1186,9 @@ class GengoWatcher:
             print("✅ All configuration values are set!")
             return
 
-        print(f"\n📝 Please provide values for {len(required_fields)} required configuration settings:")
+        print(
+            f"\n📝 Please provide values for {len(required_fields)} required configuration settings:"
+        )
         print("-" * 60)
 
         # Group fields by section for better organization
@@ -1070,9 +1203,7 @@ class GengoWatcher:
             for option in options:
                 current = self.config.get(section, option)
                 display_current = (
-                    current
-                    if current not in PLACEHOLDER_CONFIG_VALUES
-                    else "(not set)"
+                    current if current not in PLACEHOLDER_CONFIG_VALUES else "(not set)"
                 )
 
                 # Provide helpful descriptions for common fields
@@ -1091,7 +1222,11 @@ class GengoWatcher:
 
                 prompt = f"  {option} (current: {display_current}){desc_text}: "
 
-                if "password" in option.lower() or "session" in option.lower() or "key" in option.lower():
+                if (
+                    "password" in option.lower()
+                    or "session" in option.lower()
+                    or "key" in option.lower()
+                ):
                     value = getpass.getpass(prompt)
                 else:
                     value = input(prompt).strip()
@@ -1102,10 +1237,12 @@ class GengoWatcher:
                 else:
                     print(f"  ⚠️  Skipped {option} (keeping current value)")
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("✅ Configuration setup complete!")
-        print("You can always reconfigure later with: python -m gengowatcher.main --configure")
-        print("="*60 + "\n")
+        print(
+            "You can always reconfigure later with: python -m gengowatcher.main --configure"
+        )
+        print("=" * 60 + "\n")
 
         self.logger.info("Config interactive prompt complete.")
 
@@ -1150,30 +1287,26 @@ class GengoWatcher:
         """Get CAPTCHA solver statistics"""
         if self.captcha_solver.is_configured():
             return {
-                'configured': True,
-                'balance': self.captcha_solver.get_balance(),
-                'stats': self.captcha_solver.get_stats()
+                "configured": True,
+                "balance": self.captcha_solver.get_balance(),
+                "stats": self.captcha_solver.get_stats(),
             }
         else:
-            return {
-                'configured': False,
-                'balance': 0.0,
-                'stats': {}
-            }
-    
+            return {"configured": False, "balance": 0.0, "stats": {}}
+
     def get_job_acceptance_stats(self):
         """Get job acceptance engine statistics"""
-        if hasattr(self, 'job_acceptance_engine'):
+        if hasattr(self, "job_acceptance_engine"):
             return self.job_acceptance_engine.get_stats()
         else:
             return {
-                'accepted_jobs': 0,
-                'failed_acceptances': 0,
-                'rate_limited': 0,
-                'current_rate': 0.0,
-                'enabled': False
+                "accepted_jobs": 0,
+                "failed_acceptances": 0,
+                "rate_limited": 0,
+                "current_rate": 0.0,
+                "enabled": False,
             }
-    
+
     def _simulate_new_job_notification(self):
         """Injects a fake job into the processing pipeline to test notifications."""
         self.logger.info("Simulating a new job notification...")
@@ -1187,27 +1320,33 @@ class GengoWatcher:
         self.logger.info(
             "[bold green]Test job notification sent. Please check your system notifications.[/bold green]"
         )
-    
+
     def handle_job_rejection(self, job_data: dict):
         """Handle job rejection that might require CAPTCHA solving"""
         self.logger.info(f"Handling job rejection for job ID: {job_data.get('id')}")
-        
+
         # Check if CAPTCHA solver is configured
         if not self.captcha_solver.is_configured():
-            self.logger.warning("CAPTCHA solver not configured, cannot handle job rejection")
+            self.logger.warning(
+                "CAPTCHA solver not configured, cannot handle job rejection"
+            )
             return False
-        
+
         # Let the CAPTCHA manager handle the rejection
         success = self.captcha_solver.handle_job_rejection(job_data)
-        
+
         if success:
-            self.logger.info(f"Successfully handled CAPTCHA for rejected job {job_data.get('id')}")
+            self.logger.info(
+                f"Successfully handled CAPTCHA for rejected job {job_data.get('id')}"
+            )
             # Here you would implement logic to resubmit the job or notify the user
             # For example:
             # self._resubmit_job(job_data)
         else:
-            self.logger.error(f"Failed to handle CAPTCHA for rejected job {job_data.get('id')}")
-            
+            self.logger.error(
+                f"Failed to handle CAPTCHA for rejected job {job_data.get('id')}"
+            )
+
         return success
 
     def handle_exit(self):
@@ -1230,7 +1369,9 @@ class GengoWatcher:
                     asyncio.set_event_loop(None)
                     loop.close()
             except Exception as error:
-                self.logger.exception("Failed to %s during shutdown: %s", description, error)
+                self.logger.exception(
+                    "Failed to %s during shutdown: %s", description, error
+                )
 
         if getattr(self, "captcha_solver", None):
             try:
@@ -1262,7 +1403,9 @@ class GengoWatcher:
             try:
                 self.browser_automation_engine.close()
             except Exception as error:
-                self.logger.exception("Failed to close browser automation engine: %s", error)
+                self.logger.exception(
+                    "Failed to close browser automation engine: %s", error
+                )
 
         if self._all_entries_log_file:
             try:
