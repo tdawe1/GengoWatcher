@@ -8,33 +8,43 @@ logger = logging.getLogger(__name__)
 
 def play_sound(sound_file_path: str):
     """
-    Play a sound file in the background without blocking the caller.
-    
-    Attempts to play the file at `sound_file_path` using the `playsound` library; if the file is missing or the playback dependency is not available the function logs a warning and returns silently. Playback errors are logged as errors.
-    
-    Parameters:
-        sound_file_path (str): Filesystem path to the sound file to play. The path should point to an existing file; if it does not, a warning will be logged and no playback will be attempted.
+    Plays a sound file using system audio players.
+    Tries paplay (PulseAudio/PipeWire), then aplay (ALSA) as fallback.
+    This runs in a separate thread to avoid blocking.
     """
     def _play():
-        """
-        Attempt to play the configured sound file and log success or failure.
-        
-        Checks whether the file at the closed-over `sound_file_path` exists and, if so, attempts playback using `playsound`. Logs a warning if the file is missing, a warning if the `playsound` package is not installed, and an error if playback fails for any other reason. Logs a debug message on successful playback.
-        """
+        if not Path(sound_file_path).is_file():
+            logger.warning(f"Sound file not found: {sound_file_path}")
+            return
+
+        # Try paplay first (PulseAudio/PipeWire - common on modern Linux including Arch)
         try:
-            from playsound import playsound
-            
-            if not Path(sound_file_path).is_file():
-                logger.warning(f"Sound file not found: {sound_file_path}")
-                return
+            subprocess.run(
+                ['paplay', sound_file_path],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            logger.debug(f"Successfully played sound with paplay: {sound_file_path}")
+            return
+        except FileNotFoundError:
+            logger.debug("paplay not found, trying aplay...")
+        except subprocess.CalledProcessError as e:
+            logger.debug(f"paplay failed: {e}, trying aplay...")
 
-            playsound(sound_file_path)
-            logger.debug(f"Successfully played sound: {sound_file_path}")
-
-        except ImportError:
-            logger.warning("playsound is not installed. Please install it with 'pip install playsound'")
-        except Exception as e:
-            # Catching a generic exception from playsound as it can vary
+        # Fallback to aplay (ALSA - works on most Linux distros)
+        try:
+            subprocess.run(
+                ['aplay', '-q', sound_file_path],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            logger.debug(f"Successfully played sound with aplay: {sound_file_path}")
+            return
+        except FileNotFoundError:
+            logger.warning("Neither paplay nor aplay found. Cannot play sound.")
+        except subprocess.CalledProcessError as e:
             logger.error(f"Error playing sound {sound_file_path}: {e}")
 
     # Run in a separate thread to be non-blocking

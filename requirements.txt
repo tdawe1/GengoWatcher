@@ -1,7 +1,6 @@
 aiohttp>=3.8.0
 feedparser
 rich
-playsound==1.2.2
 pytest
 websockets==11.0.3
 fastapi
