@@ -16,6 +16,45 @@ from .state import AppState
 from .watcher import GengoWatcher
 from .ui import CommandLineInterface
 
+DEBUG_CATEGORIES = ["websocket", "rss", "job", "captcha", "browser", "config", "system"]
+
+CATEGORY_KEYWORDS = {
+    "websocket": ["websocket", "ws ", "pong", "ping", "heartbeat", "wss://"],
+    "rss": ["rss", "feed", "entries", "fetching", "parsing"],
+    "job": ["job", "acceptance", "accept", "reward", "translation", "cancellation"],
+    "captcha": ["captcha", "recaptcha", "2captcha", "anti-captcha", "solver"],
+    "browser": ["browser", "playwright", "selenium", "page", "click", "navigation"],
+    "config": ["config", "setting", "reload", "configuration"],
+    "system": [
+        "starting",
+        "stopping",
+        "shutdown",
+        "initialized",
+        "error",
+        "critical",
+        "exception",
+    ],
+}
+
+
+class CategoryFilter(logging.Filter):
+    def __init__(self, config: AppConfig):
+        super().__init__()
+        self.config = config
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+
+        msg_lower = record.getMessage().lower()
+
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            if any(kw in msg_lower for kw in keywords):
+                return self.config.get("DebugCategories", category)
+
+        return self.config.get("DebugCategories", "system")
+
+
 APP_THEME = Theme(
     {
         "info": "cyan",
@@ -98,6 +137,9 @@ def main():
 
     try:
         config = AppConfig()
+        category_filter = CategoryFilter(config)
+        log.addFilter(category_filter)
+        ui_handler.addFilter(category_filter)
         if config.get("Logging", "log_main_enabled"):
             try:
                 log_file = Path(config.get("Paths", "log_file"))
@@ -147,7 +189,9 @@ def main():
 
     if not watcher.is_config_complete():
         print("\n⚠️  Configuration is incomplete or contains placeholder values.")
-        print("The following settings need to be configured for GengoWatcher to work properly:")
+        print(
+            "The following settings need to be configured for GengoWatcher to work properly:"
+        )
         watcher.prompt_for_config_values()
 
     # Start web server if requested
@@ -167,6 +211,7 @@ def main():
 
             # Give web server time to start
             import time
+
             time.sleep(1)
 
         except ImportError as e:
@@ -201,11 +246,11 @@ def main():
             watcher.handle_exit()
 
     # Print helpful exit message
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("👋 GengoWatcher has shut down.")
     print("💡 Tip: Run with --configure to change settings later")
     print("   Example: python -m gengowatcher.main --configure")
-    print("="*60)
+    print("=" * 60)
 
     try:
         watcher_thread.join(timeout=2)

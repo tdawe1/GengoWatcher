@@ -36,6 +36,15 @@ class AppConfig:
             "log_main_enabled": True,
             "log_all_entries_enabled": True,
         },
+        "DebugCategories": {
+            "websocket": False,  # WebSocket connection, heartbeat, messages
+            "rss": False,  # RSS feed checking, parsing
+            "job": True,  # Job processing, acceptance, cancellation
+            "captcha": True,  # CAPTCHA solving
+            "browser": False,  # Browser automation
+            "config": False,  # Configuration changes
+            "system": True,  # Initialization, shutdown, general
+        },
         "Network": {
             "max_backoff": 300,
             "user_agent_email": "",
@@ -144,7 +153,7 @@ class AppConfig:
     def load_config(self):
         """
         Load configuration from disk into the in-memory configuration, apply defaults and repair missing sections/options.
-        
+
         Reads the CONFIG_FILE into the internal parser, populates self.config with existing user-defined values, ensures every section and option from DEFAULT_CONFIG exists (adding any missing entries), and persists the updated config file when modifications are made. After loading and repair, calls _validate_auto_accept_config to enforce AutoAccept invariants. On parsing or value errors the function prints a critical message and exits the process.
         """
         with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -152,7 +161,7 @@ class AppConfig:
         with self._lock:
             try:
                 config_modified = False
-                
+
                 # First, populate self.config with everything from the parser
                 # This ensures user-defined sections are available
                 for section in self._config_parser.sections():
@@ -185,11 +194,16 @@ class AppConfig:
                             self.config[section][key] = method(
                                 section, key, fallback=default_val
                             )
-                        except (configparser.NoSectionError, configparser.NoOptionError):
+                        except (
+                            configparser.NoSectionError,
+                            configparser.NoOptionError,
+                        ):
                             # Add missing option with default value
                             self._config_parser.set(section, key, str(default_val))
                             self.config[section][key] = default_val
-                            print(f"Added missing config option: [{section}]{key} = {default_val}")
+                            print(
+                                f"Added missing config option: [{section}]{key} = {default_val}"
+                            )
                             config_modified = True
 
                 # Save config if it was modified
@@ -240,9 +254,9 @@ class AppConfig:
                 value = self._config_parser.get(section, key)
                 # Case-insensitive boolean parsing
                 value_lower = value.lower().strip()
-                if value_lower in ('true', '1', 'yes', 'on', 'enabled'):
+                if value_lower in ("true", "1", "yes", "on", "enabled"):
                     return True
-                elif value_lower in ('false', '0', 'no', 'off', 'disabled'):
+                elif value_lower in ("false", "0", "no", "off", "disabled"):
                     return False
                 else:
                     raise ValueError(f"Invalid boolean value: {value}")
@@ -300,7 +314,7 @@ class AppConfig:
     def set(self, section, key, value):
         """
         Set a configuration value in the in-memory config, creating the section if it does not exist.
-        
+
         Parameters:
             section (str): Name of the configuration section to update or create.
             key (str): Configuration option name to set.
@@ -314,32 +328,46 @@ class AppConfig:
     def _validate_auto_accept_config(self):
         """
         Validate and sanitise the AutoAccept section of the in-memory configuration.
-        
+
         Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
         """
         auto_accept = self.config["AutoAccept"]
-        
+
         # Validate reward range
         if auto_accept["min_reward"] > auto_accept["max_reward"]:
-            print("Warning: min_reward > max_reward in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["min_reward"], self.config["AutoAccept"]["max_reward"] = \
-                auto_accept["max_reward"], auto_accept["min_reward"]
-        
+            print(
+                "Warning: min_reward > max_reward in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["min_reward"],
+                self.config["AutoAccept"]["max_reward"],
+            ) = auto_accept["max_reward"], auto_accept["min_reward"]
+
         # Validate delay range
         if auto_accept["accept_delay_min"] > auto_accept["accept_delay_max"]:
-            print("Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["accept_delay_min"], self.config["AutoAccept"]["accept_delay_max"] = \
-                auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
-        
+            print(
+                "Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["accept_delay_min"],
+                self.config["AutoAccept"]["accept_delay_max"],
+            ) = auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
+
         # Validate job sources
         valid_sources = {"rss", "websocket"}
         sources = {s.strip() for s in auto_accept["job_sources"].split(",")}
         if not sources.issubset(valid_sources):
             invalid = sources - valid_sources
-            print(f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only.")
+            print(
+                f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only."
+            )
             valid_sources_in_config = sources & valid_sources
-            self.config["AutoAccept"]["job_sources"] = ",".join(valid_sources_in_config) if valid_sources_in_config else "rss,websocket"
-        
+            self.config["AutoAccept"]["job_sources"] = (
+                ",".join(valid_sources_in_config)
+                if valid_sources_in_config
+                else "rss,websocket"
+            )
+
         # Ensure delay values are reasonable
         if auto_accept["accept_delay_min"] < 0:
             self.config["AutoAccept"]["accept_delay_min"] = 0

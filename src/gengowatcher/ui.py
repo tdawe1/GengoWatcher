@@ -146,6 +146,11 @@ class CommandLineInterface:
                 "handler": self._handle_accept_stats,
                 "help": "Display job acceptance statistics.",
             },
+            "debug": {
+                "handler": self._handle_debug,
+                "aliases": ["d"],
+                "help": "Toggle debug category. Usage: d <category> or d list. Categories: websocket, rss, job, captcha, browser, config, system.",
+            },
         }
         self.alias_map = {
             alias: cmd
@@ -225,7 +230,9 @@ class CommandLineInterface:
             auto_refresh=False,
             vertical_overflow="visible",
         ) as live:
-            while not (self.exit_event.is_set() or self.watcher.shutdown_event.is_set()):
+            while not (
+                self.exit_event.is_set() or self.watcher.shutdown_event.is_set()
+            ):
                 self.layout["header"].update(self._get_header_panel())
                 self.layout["runtime_status"].update(self._get_runtime_status_panel())
                 self.layout["recent_activity"].update(self._get_recent_activity_panel())
@@ -349,9 +356,13 @@ class CommandLineInterface:
             latency = None
             try:
                 if getattr(self.watcher, "websocket_last_pong_ts", None):
-                    last_pong_age = max(0, int(now - self.watcher.websocket_last_pong_ts))
+                    last_pong_age = max(
+                        0, int(now - self.watcher.websocket_last_pong_ts)
+                    )
                 if getattr(self.watcher, "websocket_next_ping_ts", None):
-                    next_ping_in = max(0, int(self.watcher.websocket_next_ping_ts - now))
+                    next_ping_in = max(
+                        0, int(self.watcher.websocket_next_ping_ts - now)
+                    )
                 if getattr(self.watcher, "websocket_ping_latency_ms", None) is not None:
                     latency = int(self.watcher.websocket_ping_latency_ms)
             except Exception:
@@ -453,7 +464,10 @@ class CommandLineInterface:
         table.add_column(style="value")
         for cmd, info in self.commands.items():
             aliases = ", ".join(info.get("aliases", []))
-            table.add_row(f"[header]{cmd}[/] ({aliases})" if aliases else f"[header]{cmd}[/]", info["help"])
+            table.add_row(
+                f"[header]{cmd}[/] ({aliases})" if aliases else f"[header]{cmd}[/]",
+                info["help"],
+            )
         return Panel(table, title="[title]Commands[/]", border_style="panel_border")
 
     def _handle_exit(self, *args):
@@ -525,7 +539,7 @@ class CommandLineInterface:
         self.watcher.logger.info(f"Auto-accept has been {new_state_text}.")
 
         # Update the job acceptance engine if it exists
-        if hasattr(self.watcher, 'job_acceptance_engine'):
+        if hasattr(self.watcher, "job_acceptance_engine"):
             self.watcher.job_acceptance_engine.enabled = not current_state
             self.watcher.logger.info(f"Job acceptance engine updated.")
 
@@ -538,7 +552,7 @@ class CommandLineInterface:
         self.watcher.logger.info(f"CAPTCHA solving has been {new_state_text}.")
 
         # Update the CAPTCHA solver if it exists
-        if hasattr(self.watcher, 'captcha_solver'):
+        if hasattr(self.watcher, "captcha_solver"):
             try:
                 self.watcher.captcha_solver.reinitialize()
                 status_text = (
@@ -592,38 +606,42 @@ class CommandLineInterface:
             elif command == "notify":
                 self.watcher.logger.info("Triggering test job notification...")
                 self.watcher._test_command = "notify"
-    
+
     def _handle_captcha_setup(self, args=None):
         """Handle CAPTCHA setup command"""
         _ = args
         from .captcha_cli import setup_captcha_solver
+
         try:
             setup_captcha_solver(self.watcher)
         except Exception as e:
             self.watcher.logger.exception(f"Error setting up CAPTCHA solver: {e}")
-    
+
     def _handle_captcha_test(self, args=None):
         """Handle CAPTCHA test command"""
         _ = args
         from .captcha_cli import test_captcha_solver
+
         try:
             test_captcha_solver(self.watcher)
         except Exception as e:
             self.watcher.logger.exception(f"Error testing CAPTCHA solver: {e}")
-    
+
     def _handle_captcha_stats(self, args=None):
         """Handle CAPTCHA stats command"""
         _ = args
         from .captcha_cli import show_captcha_stats
+
         try:
             show_captcha_stats(self.watcher)
         except Exception as e:
             self.watcher.logger.exception(f"Error showing CAPTCHA stats: {e}")
-    
+
     def _handle_captcha_reset(self, args=None):
         """Handle CAPTCHA reset command"""
         _ = args
         from .captcha_cli import reset_captcha_config
+
         try:
             reset_captcha_config(self.watcher)
         except Exception as e:
@@ -637,8 +655,66 @@ class CommandLineInterface:
             self.watcher.logger.info("Job Acceptance Statistics:")
             self.watcher.logger.info(f"  Enabled: {stats['enabled']}")
             self.watcher.logger.info(f"  Accepted Jobs: {stats['accepted_jobs']}")
-            self.watcher.logger.info(f"  Failed Acceptances: {stats['failed_acceptances']}")
+            self.watcher.logger.info(
+                f"  Failed Acceptances: {stats['failed_acceptances']}"
+            )
             self.watcher.logger.info(f"  Rate Limited: {stats['rate_limited']}")
-            self.watcher.logger.info(f"  Current Rate: {stats['current_rate']:.2f} requests/sec")
+            self.watcher.logger.info(
+                f"  Current Rate: {stats['current_rate']:.2f} requests/sec"
+            )
         except Exception as e:
             self.watcher.logger.exception(f"Error showing job acceptance stats: {e}")
+
+    def _handle_debug(self, args=None):
+        categories = [
+            "websocket",
+            "rss",
+            "job",
+            "captcha",
+            "browser",
+            "config",
+            "system",
+        ]
+
+        if not args:
+            self._show_debug_status(categories)
+            return
+
+        arg = args.lower().strip()
+
+        if arg == "list":
+            self._show_debug_status(categories)
+            return
+
+        if arg == "all":
+            for cat in categories:
+                self.config.set("DebugCategories", cat, True)
+            self.config.save_config()
+            self.watcher.logger.info("All debug categories enabled")
+            return
+
+        if arg == "none":
+            for cat in categories:
+                self.config.set("DebugCategories", cat, False)
+            self.config.save_config()
+            self.watcher.logger.info("All debug categories disabled")
+            return
+
+        if arg not in categories:
+            self.watcher.logger.warning(
+                f"Unknown category: {arg}. Valid: {', '.join(categories)}"
+            )
+            return
+
+        current = self.config.get("DebugCategories", arg)
+        self.config.set("DebugCategories", arg, not current)
+        self.config.save_config()
+        status = "enabled" if not current else "disabled"
+        self.watcher.logger.info(f"Debug category '{arg}' {status}")
+
+    def _show_debug_status(self, categories):
+        self.watcher.logger.info("Debug Categories:")
+        for cat in categories:
+            enabled = self.config.get("DebugCategories", cat)
+            status = "ON" if enabled else "OFF"
+            self.watcher.logger.info(f"  {cat}: {status}")
