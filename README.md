@@ -36,6 +36,8 @@ It features an interactive text-based user interface (TUI) that runs directly in
 - [⚙️ Usage](#️-usage)
   - [📝 Example `config.ini`](#-example-configini)
 - [🤖 Auto Job Acceptance](#-auto-job-acceptance)
+- [📧 Email Monitoring](#-email-monitoring)
+- [🌐 Website Monitoring](#-website-monitoring)
 - [🔐 CAPTCHA Solver Setup](#-captcha-solver-setup)
 - [⌨️ Commands](#️-commands)
 - [🐛 Troubleshooting](#-troubleshooting)
@@ -270,6 +272,80 @@ rate_limit = 60              # Requests per minute
 
 ---
 
+## 📧 Email Monitoring
+
+GengoWatcher can monitor your Gmail inbox for new job notifications, extracting job IDs directly from the emails. This is often the fastest way to detect jobs that are not yet visible via RSS.
+
+### What it does
+- **Gmail IMAP with OAuth2**: Securely connects to your Gmail account using Google OAuth2.
+- **IDLE Push + Polling Fallback**: Uses IMAP IDLE for real-time "push" notifications of new emails, with a configurable polling fallback.
+- **Automated Extraction**: Scans incoming Gengo emails for tracking links and follows them (using your session cookie) to find the job ID.
+
+### Setup Instructions
+To enable email monitoring, you must first configure Gmail OAuth:
+1. Run the interactive setup wizard:
+   ```bash
+   python -m gengowatcher.main --setup-email
+   ```
+2. Follow the prompts to create a Google Cloud Project and authorize GengoWatcher.
+3. Enable the monitor in your `config.ini` by setting `enabled = true` under `[EmailMonitor]`.
+
+### Configuration Options
+```ini
+[EmailMonitor]
+enabled = true                  # Enable/disable email monitoring
+email = your-email@gmail.com    # Your Gmail address
+folder = INBOX                  # IMAP folder to monitor
+from_filter = no-reply@gengo.com # Only process emails from this sender
+poll_fallback_interval = 60      # Seconds between polls if IDLE fails
+```
+
+### Troubleshooting
+- **OAuth Errors**: If you encounter authentication errors, try running `python -m gengowatcher.main --setup-email` again to refresh your credentials.
+- **Token Refresh**: GengoWatcher handles token refresh automatically, but you may need to re-authorize if the refresh token expires.
+- **Tracking Links**: Tracking links require a valid Gengo session. Ensure your `session_cookie` is up to date in the `[WebsiteMonitor]` or `[WebSocket]` section.
+
+---
+
+## 🌐 Website Monitoring
+
+The Website Monitor uses browser automation to scrape the Gengo jobs page directly, providing a fallback when WebSocket or RSS updates are delayed.
+
+### What it does
+- **Playwright Stealth Scraper**: Uses Playwright with stealth plugins to avoid detection by Gengo's anti-bot measures.
+- **Human-like Behavior**: Simulates realistic browsing patterns, including randomized mouse movements, scrolling, and timing delays.
+- **Direct Scraping**: Periodically visits the jobs list page and extracts job IDs from the page source.
+
+### Setup Instructions
+1. Install Playwright dependencies:
+   ```bash
+   pip install playwright
+   playwright install chromium
+   ```
+2. Extract your `_gengo_session` cookie from your browser (DevTools -> Application -> Cookies -> gengo.com) and add it to `config.ini`:
+   ```ini
+   [WebsiteMonitor]
+   enabled = true
+   session_cookie = your_long_session_cookie_here
+   ```
+
+### Configuration Options
+```ini
+[WebsiteMonitor]
+enabled = false                 # Enable/disable website monitoring
+jobs_url = https://gengo.com/t/jobs/
+check_interval_min = 120        # Minimum seconds between checks
+check_interval_max = 300        # Maximum seconds between checks
+headless = true                 # Run browser in headless mode
+session_cookie =                # Your _gengo_session cookie value
+```
+
+### Troubleshooting
+- **Detection**: If you are being blocked, try increasing the check intervals or running with `headless = false` to debug.
+- **Cookie Expiry**: The `_gengo_session` cookie eventually expires. If the monitor redirects to the login page, you must update the cookie in your configuration.
+
+---
+
 ## ⌨️ Commands
 
 Type commands directly into the TUI and press `Enter` to execute them.
@@ -293,9 +369,12 @@ Type commands directly into the TUI and press `Enter` to execute them.
 | `restart`             |              | Restart the entire script.                                  |
 | `resume`              | `r`          | Resume feed checks by deleting the pause file.              |
 | `setminreward <amt>`  | `smr <amt>`  | Set a minimum reward value (e.g., `smr 5.50`).              |
+| `setup-email`         |              | Configure Gmail OAuth for email monitoring.                 |
 | `toggleautoaccept`    | `taa`        | Toggle auto job acceptance on/off.                          |
+| `toggleemail`         | `te`         | Toggle email monitor on/off.                                |
 | `togglenotifications` | `tn`         | Toggle desktop notifications on or off.                     |
 | `togglesound`         | `ts`         | Toggle sound alerts on or off.                              |
+| `togglewebsite`       | `tweb`       | Toggle website monitor on/off.                              |
 | `togglewebsocket`     | `tw`         | Toggle WebSocket monitoring (requires restart).             |
 | `wstest [mode]`       | `wt`         | Test the watcher. `wt` checks the WebSocket connection. `wt notify` sends a test job. |
 
