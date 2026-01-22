@@ -1,4 +1,5 @@
 config.ini
+config_high_value.ini
 gengo_rss_log.txt
 rss_check_log.txt
 gengowatcher.pause
@@ -325,3 +326,11 @@ archives/
 
 # IDE-specific directories
 .claude/
+
+# Runtime logs and state files
+logs/
+src/logs/
+*.log
+*.log.*
+job_cancellation_state.json
+all_entries.csv
