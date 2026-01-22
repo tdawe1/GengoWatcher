@@ -1,0 +1,250 @@
+/* Global Theme - Tokyo Night Palette */
+$surface: #1a1b26;
+$panel-bg: #24283b;
+$primary: #7aa2f7;
+$primary-darken-2: #5d79c6;
+$secondary: #bb9af7;
+$accent: #7dcfff;
+$success: #9ece6a;
+$warning: #e0af68;
+$error: #f7768e;
+$text: #c0caf5;
+$text-muted: #565f89;
+$surface-darken-1: #16161e;
+$surface-lighten-1: #292e42;
+$surface-lighten-2: #414868;
+
+Screen {
+    layout: vertical;
+    background: $surface;
+    color: $text;
+}
+
+/* Top Application Header */
+#app-header {
+    dock: top;
+    height: 1;
+    background: $primary;
+    color: $surface-darken-1;
+    text-align: center;
+    text-style: bold;
+}
+
+/* Main Content Area */
+#main-container {
+    layout: vertical;
+    height: 1fr;
+    background: $surface;
+}
+
+/* Panels */
+#header-panel, #runtime-panel {
+    background: $panel-bg;
+    border: round $primary;
+    border-title-color: $accent;
+    padding: 0 1;
+    margin-bottom: 1;
+    width: 100%;
+}
+
+#header-panel {
+    border: round $secondary;
+    border-title-color: $secondary;
+    height: auto;
+}
+
+#runtime-panel {
+    layout: grid;
+    grid-size: 4;
+    grid-columns: auto 1fr auto 1fr;
+    grid-gutter: 1 2;
+    height: auto;
+}
+
+/* Logs */
+#activity-log, #output-log {
+    background: $surface-darken-1;
+    border: round $surface-lighten-2;
+    border-title-color: $text-muted;
+    height: 1fr;
+    scrollbar-background: $surface;
+    scrollbar-color: $primary;
+}
+
+#activity-log { border: round $success; border-title-color: $success; }
+#output-log { border: round $warning; border-title-color: $warning; }
+
+/* Bottom Area Container - Fixed height to prevent overlap */
+#bottom-area {
+    height: 4;
+    dock: bottom;
+    background: $surface;
+}
+
+/* Bottom Status Bar */
+#status-bar {
+    height: 1;
+    background: $surface-lighten-1;
+    color: $text;
+    padding: 0 1;
+    text-style: bold;
+}
+
+/* Command Input */
+Input {
+    height: 3;
+    border: round $surface-lighten-2;
+    background: $surface-darken-1;
+    color: $text;
+}
+Input:focus {
+    border: round $accent;
+}
+Input > .input--placeholder {
+    color: $text-muted;
+}
+
+/* TabbedContent Styling */
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    padding: 0;
+    background: $surface;
+}
+
+/* Tab Headers */
+Tabs {
+    background: $surface-darken-1;
+    dock: top;
+    height: 1;
+}
+
+Tab {
+    height: 1;
+    padding: 0 2;
+    color: $text-muted;
+    background: $surface-darken-1;
+}
+
+Tab:hover {
+    color: $text;
+    background: $surface-lighten-1;
+}
+
+Tab.-active {
+    color: $surface;
+    background: $accent;
+    text-style: bold;
+}
+
+/* DataTable Styling */
+DataTable {
+    background: $surface-darken-1;
+    height: 1fr;
+    border: none;
+}
+DataTable > .datatable--header {
+    background: $primary-darken-2;
+    color: $surface;
+    text-style: bold;
+}
+DataTable > .datatable--cursor {
+    background: $primary;
+    color: $surface;
+}
+DataTable > .datatable--hover {
+    background: $surface-lighten-1;
+}
+
+/* Modal Styling */
+ModalScreen {
+    align: center middle;
+    background: $surface 50%;
+}
+
+HelpScreen {
+    align: center middle;
+}
+
+#help-container {
+    width: 80;
+    height: auto;
+    max-height: 80%;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+#help-title {
+    text-style: bold;
+    text-align: center;
+    border-bottom: solid $secondary;
+    margin-bottom: 1;
+    width: 100%;
+}
+
+#help-list {
+    height: auto;
+    max-height: 1fr;
+}
+
+.help-footer {
+    text-align: center;
+    margin-top: 1;
+    color: $text-muted;
+}
+
+/* ScrollBar Styling */
+ScrollBar {
+    background: $surface;
+    width: 1;
+}
+ScrollBar > .scrollbar--thumb {
+    background: $primary;
+}
+
+/* Runtime Status Panel internals */
+.status-label {
+    color: $text-muted;
+    text-style: bold;
+    padding-right: 1;
+}
+
+.status-value {
+    color: $text;
+    text-style: bold;
+}
+
+.span-2 { column-span: 2; }
+.span-3 { column-span: 3; }
+.span-4 { column-span: 4; }
+
+.sparkline-label {
+    margin-top: 1;
+    text-style: bold;
+    color: $accent;
+}
+
+#sparkline {
+    height: 1;
+    color: $accent;
+}
+
+/* Status indicator classes (Badges) */
+.status-badge {
+    background: $surface-lighten-1;
+    color: $text;
+    padding: 0 1;
+    text-align: center;
+}
+
+.status-live { color: $success; }
+.status-connecting { color: $warning; }
+.status-offline { color: $error; }
+
+.status-text-green { color: $success; }
+.status-text-orange { color: $warning; }
+.status-text-cyan { color: $accent; }
+.status-text-dim { color: $text-muted; }

@@ -14,9 +14,19 @@ from rich.theme import Theme
 from .config import AppConfig
 from .state import AppState
 from .watcher import GengoWatcher
-from .ui import CommandLineInterface
+from .ui_textual import GengoWatcherApp
 
-DEBUG_CATEGORIES = ["websocket", "rss", "job", "captcha", "browser", "config", "system"]
+DEBUG_CATEGORIES = [
+    "websocket",
+    "rss",
+    "job",
+    "captcha",
+    "browser",
+    "config",
+    "system",
+    "email",
+    "website",
+]
 
 CATEGORY_KEYWORDS = {
     "websocket": ["websocket", "ws ", "pong", "ping", "heartbeat", "wss://"],
@@ -34,6 +44,8 @@ CATEGORY_KEYWORDS = {
         "critical",
         "exception",
     ],
+    "email": ["email", "imap", "gmail", "oauth", "inbox", "mail"],
+    "website": ["website", "scrape", "viewport", "mouse", "scroll", "stealth"],
 }
 
 
@@ -43,10 +55,15 @@ class CategoryFilter(logging.Filter):
         self.config = config
 
     def filter(self, record: logging.LogRecord) -> bool:
+        formatted_msg = record.getMessage()
+        sanitized_msg = formatted_msg.replace("\r", "\\r").replace("\n", "\\n")
+        record.msg = sanitized_msg
+        record.args = ()
+
         if record.levelno >= logging.WARNING:
             return True
 
-        msg_lower = record.getMessage().lower()
+        msg_lower = sanitized_msg.lower()
 
         for category, keywords in CATEGORY_KEYWORDS.items():
             if any(kw in msg_lower for kw in keywords):
@@ -77,16 +94,16 @@ APP_THEME = Theme(
 class UILoggingHandler(logging.Handler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.log_queue = collections.deque(maxlen=10)
+        self.log_queue = collections.deque(maxlen=100)
 
     def emit(self, record):
         level_style_map = {
-            logging.INFO: "info",
-            logging.WARNING: "warning",
-            logging.ERROR: "error",
-            logging.CRITICAL: "bold red",
+            logging.INFO: "cyan",
+            logging.WARNING: "yellow",
+            logging.ERROR: "bold red",
+            logging.CRITICAL: "bold white on red",
         }
-        style = level_style_map.get(record.levelno, "default")
+        style = level_style_map.get(record.levelno, "white")
         message = (
             f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - "
             f"{record.getMessage()}"
@@ -127,6 +144,11 @@ def main():
         default=8000,
         help="Port for web server (default: 8000)",
     )
+    parser.add_argument(
+        "--setup-email",
+        action="store_true",
+        help="Configure Gmail OAuth for email monitoring (interactive)",
+    )
     args, unknown = parser.parse_known_args()
 
     console = Console(theme=APP_THEME)
@@ -144,10 +166,14 @@ def main():
             try:
                 log_file = Path(config.get("Paths", "log_file"))
                 log_file.parent.mkdir(parents=True, exist_ok=True)
+                # Validate log_max_bytes to prevent handler crash
+                log_max_bytes = config.get("Logging", "log_max_bytes") or 0
+                if log_max_bytes < 1024:  # Minimum 1KB
+                    log_max_bytes = 10485760  # Default 10MB
                 file_handler = RotatingFileHandler(
                     log_file,
-                    maxBytes=config.get("Logging", "log_max_bytes"),
-                    backupCount=config.get("Logging", "log_backup_count"),
+                    maxBytes=log_max_bytes,
+                    backupCount=config.get("Logging", "log_backup_count") or 5,
                 )
                 file_handler.setFormatter(
                     logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -186,6 +212,20 @@ def main():
     if args.configure:
         watcher.prompt_for_config_values()
         sys.exit(0)
+
+    if args.setup_email:
+        try:
+            from .oauth_setup import run_setup_sync
+
+            success = run_setup_sync(config)
+            sys.exit(0 if success else 1)
+        except ImportError as e:
+            console.print(f"[error]OAuth setup dependencies missing: {e}[/]")
+            console.print("[info]Install with: pip install google-auth-oauthlib[/]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[error]Email setup error: {e}[/]")
+            sys.exit(1)
 
     if not watcher.is_config_complete():
         print("\n⚠️  Configuration is incomplete or contains placeholder values.")
@@ -228,8 +268,12 @@ def main():
             console.print("[info]Web server shutting down...[/]")
         sys.exit(0)
 
-    cli = CommandLineInterface(
-        watcher, config, state, console, log_queue=ui_handler.log_queue
+    # Start the Textual TUI
+    app = GengoWatcherApp(
+        watcher=watcher,
+        config=config,
+        state=state,
+        log_queue=ui_handler.log_queue,
     )
 
     watcher_thread = threading.Thread(
@@ -238,7 +282,7 @@ def main():
     watcher_thread.start()
 
     try:
-        cli.run()
+        app.run()
     except Exception as e:
         log.error(f"UI loop crashed: {e}")
     finally:

@@ -1,4 +1,5 @@
 import configparser
+import json
 from pathlib import Path
 import sys
 import threading
@@ -37,13 +38,15 @@ class AppConfig:
             "log_all_entries_enabled": True,
         },
         "DebugCategories": {
-            "websocket": False,  # WebSocket connection, heartbeat, messages
-            "rss": False,  # RSS feed checking, parsing
-            "job": True,  # Job processing, acceptance, cancellation
-            "captcha": True,  # CAPTCHA solving
-            "browser": False,  # Browser automation
-            "config": False,  # Configuration changes
-            "system": True,  # Initialization, shutdown, general
+            "websocket": False,
+            "rss": False,
+            "job": True,
+            "captcha": True,
+            "browser": False,
+            "config": False,
+            "system": True,
+            "email": True,
+            "website": False,
         },
         "Network": {
             "max_backoff": 300,
@@ -113,6 +116,26 @@ class AppConfig:
             "min_improvement_ratio": 2.0,
             "extreme_threshold": 1000.0,
             "auto_cancel_extreme_value": True,
+        },
+        "EmailMonitor": {
+            "enabled": False,
+            "email": "",
+            "client_id": "",
+            "client_secret": "",
+            "refresh_token": "",
+            "access_token": "",
+            "token_expiry": 0,
+            "folder": "INBOX",
+            "from_filter": "no-reply@gengo.com",
+            "poll_fallback_interval": 60,
+        },
+        "WebsiteMonitor": {
+            "enabled": False,
+            "jobs_url": "https://gengo.com/t/jobs/",
+            "check_interval_min": 120,
+            "check_interval_max": 300,
+            "headless": True,
+            "session_cookie": "",
         },
         "SeleniumMonitoring": {
             "enable_live_dashboard": True,
@@ -187,13 +210,27 @@ class AppConfig:
                             method = self._config_parser.getint
                         elif isinstance(default_val, float):
                             method = self._config_parser.getfloat
+                        elif isinstance(default_val, list):
+                            method = None
                         else:
                             method = self._config_parser.get
 
                         try:
-                            self.config[section][key] = method(
-                                section, key, fallback=default_val
-                            )
+                            if method is None:
+                                raw_val = self._config_parser.get(
+                                    section, key, fallback=None
+                                )
+                                if raw_val is not None:
+                                    try:
+                                        self.config[section][key] = json.loads(raw_val)
+                                    except json.JSONDecodeError:
+                                        self.config[section][key] = default_val
+                                else:
+                                    self.config[section][key] = default_val
+                            else:
+                                self.config[section][key] = method(
+                                    section, key, fallback=default_val
+                                )
                         except (
                             configparser.NoSectionError,
                             configparser.NoOptionError,
@@ -231,7 +268,12 @@ class AppConfig:
                 if not self._config_parser.has_section(section):
                     self._config_parser.add_section(section)
                 for key, value in settings.items():
-                    self._config_parser.set(section, key, str(value))
+                    # Serialize lists as JSON to preserve them on reload
+                    if isinstance(value, list):
+                        serialized = json.dumps(value)
+                    else:
+                        serialized = str(value)
+                    self._config_parser.set(section, key, serialized)
             try:
                 with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                     self._config_parser.write(f)
@@ -354,7 +396,7 @@ class AppConfig:
             ) = auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
 
         # Validate job sources
-        valid_sources = {"rss", "websocket"}
+        valid_sources = {"rss", "websocket", "email", "website"}
         sources = {s.strip() for s in auto_accept["job_sources"].split(",")}
         if not sources.issubset(valid_sources):
             invalid = sources - valid_sources
