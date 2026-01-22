@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//home/thomas/GengoWatcher/**)"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}
