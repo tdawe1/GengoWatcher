@@ -322,3 +322,6 @@ zsdoc/data
 
 # Archived content (logs, frontend, etc.)
 archives/
+
+# IDE-specific directories
+.claude/
