@@ -1,14 +1,14 @@
 test:
-	pytest
+	.venv/bin/pytest
 
 coverage:
-	pytest --cov=.
+	.venv/bin/pytest --cov=.
 
 lint:
-	flake8 .
+	.venv/bin/flake8 .
 
 format:
-	black .
+	.venv/bin/black .
 
 run:
 	PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main

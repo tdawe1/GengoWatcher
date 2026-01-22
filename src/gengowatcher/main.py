@@ -149,6 +149,11 @@ def main():
         action="store_true",
         help="Configure Gmail OAuth for email monitoring (interactive)",
     )
+    parser.add_argument(
+        "--setup-website",
+        action="store_true",
+        help="Configure WebsiteMonitor for browser-based job scraping (interactive)",
+    )
     args, unknown = parser.parse_known_args()
 
     console = Console(theme=APP_THEME)
@@ -225,6 +230,19 @@ def main():
             sys.exit(1)
         except Exception as e:
             console.print(f"[error]Email setup error: {e}[/]")
+            sys.exit(1)
+
+    if args.setup_website:
+        try:
+            from .website_setup import setup_website_interactive
+
+            success = setup_website_interactive(config)
+            sys.exit(0 if success else 1)
+        except ImportError as e:
+            console.print(f"[error]Website setup dependencies missing: {e}[/]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[error]Website setup error: {e}[/]")
             sys.exit(1)
 
     if not watcher.is_config_complete():
