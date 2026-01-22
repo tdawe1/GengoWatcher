@@ -13,8 +13,10 @@ logging.basicConfig(
 logger = logging.getLogger("ws_test")
 
 # Configuration from config_high_value.ini (hardcoded for reproduction)
-USER_ID = "789487"
-USER_SESSION = "REPLACE_WITH_YOUR_SESSION_TOKEN"
+import os
+
+USER_ID = os.getenv("GENGO_USER_ID", "0")
+USER_SESSION = os.getenv("GENGO_USER_SESSION", "")
 USER_KEY = "REPLACE_WITH_BROWSER_USER_KEY"
 WS_URL = "wss://live-dashboard.gengo.com"
 
