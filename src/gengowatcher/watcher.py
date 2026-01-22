@@ -42,6 +42,16 @@ except ImportError:
 
 from . import notifier
 
+try:
+    from .email_monitor import EmailMonitor
+except ImportError:
+    EmailMonitor = None
+
+try:
+    from .website_monitor import WebsiteMonitor
+except ImportError:
+    WebsiteMonitor = None
+
 PLACEHOLDER_CONFIG_VALUES = {
     None,
     "",
@@ -73,6 +83,15 @@ class GengoWatcher:
         self.logger = logger
         self.config = config
         self.state = state
+
+        # Validate critical config values to prevent infinite loops or crashes
+        check_interval = config.get("Watcher", "check_interval")
+        if check_interval is not None and check_interval < 1:
+            logger.warning(
+                f"check_interval={check_interval} is too low, using minimum of 5 seconds"
+            )
+            config.set("Watcher", "check_interval", 5)
+
         self.shutdown_event = threading.Event()
         self.check_now_event = threading.Event()
         self._test_command = None
@@ -96,6 +115,8 @@ class GengoWatcher:
         self._all_entries_log_file = None
         self._csv_writer = None
         self._shutdown_initiated = False
+        # Thread references for health monitoring
+        self._monitor_threads = {}  # name -> threading.Thread
         self.logger.debug(
             f"Initializing GengoWatcher with config: {self.config.config}"
         )
@@ -123,42 +144,57 @@ class GengoWatcher:
 
         self.captcha_solver.monitor.add_alert_callback(captcha_alert_callback)
 
-        # Initialize browser automation engine
-        self.browser_automation_engine = BrowserAutomationEngine(
-            config, logger, self.captcha_solver
-        )
+        # Initialize browser automation engine (Selenium - deprecated, prefer Playwright)
+        # Only initialize if explicitly enabled via SeleniumMonitoring section
+        selenium_enabled = False
         try:
-            session_token = self.config.get("WebSocket", "user_session")
-            if session_token and session_token != "REPLACE_WITH_YOUR_SESSION_TOKEN":
-                if self.browser_automation_engine.login_with_session(
-                    str(session_token)
-                ):
-                    # Start monitors if configured
-                    try:
-                        if self.config.getboolean(
-                            "SeleniumMonitoring", "enable_live_dashboard"
-                        ):
-                            self.browser_automation_engine.start_live_dashboard_monitor(
-                                on_new_job=lambda jid,
-                                url: self.browser_automation_engine.open_job_details_and_arm_accept(
-                                    url
+            selenium_enabled = self.config.getboolean(
+                "SeleniumMonitoring", "enable_live_dashboard"
+            ) or self.config.getboolean("SeleniumMonitoring", "enable_list_refresh")
+        except Exception:
+            pass
+
+        self.browser_automation_engine = None
+        if selenium_enabled:
+            self.browser_automation_engine = BrowserAutomationEngine(
+                config, logger, self.captcha_solver
+            )
+            try:
+                session_token = self.config.get("WebSocket", "user_session")
+                if session_token and session_token != "REPLACE_WITH_YOUR_SESSION_TOKEN":
+                    if self.browser_automation_engine.login_with_session(
+                        str(session_token)
+                    ):
+                        # Start monitors if configured
+                        try:
+                            if self.config.getboolean(
+                                "SeleniumMonitoring", "enable_live_dashboard"
+                            ):
+                                self.browser_automation_engine.start_live_dashboard_monitor(
+                                    on_new_job=lambda jid,
+                                    url: self.browser_automation_engine.open_job_details_and_arm_accept(
+                                        url
+                                    )
                                 )
+                            if self.config.get(
+                                "SeleniumMonitoring", "enable_list_refresh"
+                            ):
+                                interval_ms = self.config.getint(
+                                    "SeleniumMonitoring", "refresh_interval_ms"
+                                )
+                                self.browser_automation_engine.start_jobs_page_refresher(
+                                    on_new_job=lambda jid,
+                                    url: self.browser_automation_engine.open_job_details_and_arm_accept(
+                                        url
+                                    ),
+                                    interval_sec=max(0.25, float(interval_ms) / 1000.0),
+                                )
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Failed to start Selenium monitors: {e}"
                             )
-                        if self.config.get("SeleniumMonitoring", "enable_list_refresh"):
-                            interval_ms = self.config.getint(
-                                "SeleniumMonitoring", "refresh_interval_ms"
-                            )
-                            self.browser_automation_engine.start_jobs_page_refresher(
-                                on_new_job=lambda jid,
-                                url: self.browser_automation_engine.open_job_details_and_arm_accept(
-                                    url
-                                ),
-                                interval_sec=max(0.25, float(interval_ms) / 1000.0),
-                            )
-                    except Exception as e:
-                        self.logger.warning(f"Failed to start Selenium monitors: {e}")
-        except Exception as e:
-            self.logger.debug(f"Selenium login not initialized: {e}")
+            except Exception as e:
+                self.logger.debug(f"Selenium login not initialized: {e}")
 
         # Initialize job acceptance engine (pass browser engine for fallbacks)
         self.job_acceptance_engine = JobAcceptanceEngine(
@@ -190,6 +226,24 @@ class GengoWatcher:
     def show_captcha_performance_metrics(self):
         """Show CAPTCHA service performance metrics"""
         self.captcha_solver.monitor.log_performance_metrics()
+
+    def get_monitor_status(self) -> dict:
+        """
+        Check health of all monitor threads.
+
+        Returns:
+            dict: Mapping of monitor name to status ("alive", "dead", "disabled")
+        """
+        status = {}
+        for name in ["rss", "websocket", "email", "website"]:
+            thread = self._monitor_threads.get(name)
+            if thread is None:
+                status[name] = "disabled"
+            elif thread.is_alive():
+                status[name] = "alive"
+            else:
+                status[name] = "dead"
+        return status
 
     def _setup_csv_logging(self):
         """
@@ -994,15 +1048,31 @@ class GengoWatcher:
 
         rss_thread = threading.Thread(target=self._run_rss_monitor, daemon=True)
         rss_thread.start()
+        self._monitor_threads["rss"] = rss_thread
 
         if self.config.get("WebSocket", "enable_websocket"):
             ws_thread = threading.Thread(
                 target=self._run_websocket_monitor, daemon=True
             )
             ws_thread.start()
+            self._monitor_threads["websocket"] = ws_thread
             self.websocket_status = "Enabled"
         else:
             self.websocket_status = "Disabled"
+
+        if self.config.get("EmailMonitor", "enabled"):
+            email_thread = threading.Thread(target=self._run_email_monitor, daemon=True)
+            email_thread.start()
+            self._monitor_threads["email"] = email_thread
+            self.logger.info("Email monitor thread started")
+
+        if self.config.get("WebsiteMonitor", "enabled"):
+            website_thread = threading.Thread(
+                target=self._run_website_monitor, daemon=True
+            )
+            website_thread.start()
+            self._monitor_threads["website"] = website_thread
+            self.logger.info("Website monitor thread started")
 
         self.shutdown_event.wait()
         self.logger.info("Watcher parent thread shutting down.")
@@ -1181,7 +1251,11 @@ class GengoWatcher:
             required_fields = []
             for section in self.config._config_parser.sections():
                 for option in self.config._config_parser.options(section):
-                    if self.config.get(section, option) in PLACEHOLDER_CONFIG_VALUES:
+                    value = self.config.get(section, option)
+                    # Skip lists (like cors_origins) - they can't be placeholder values
+                    if isinstance(value, list):
+                        continue
+                    if value in PLACEHOLDER_CONFIG_VALUES:
                         required_fields.append((section, option))
 
         if not required_fields:
@@ -1425,3 +1499,77 @@ class GengoWatcher:
             self.logger.exception("Failed to save state during shutdown: %s", error)
 
         self.logger.info("GengoWatcher shutdown complete")
+
+    def _run_email_monitor(self):
+        """Run email monitor in a dedicated thread with its own event loop."""
+        if EmailMonitor is None:
+            self.logger.error("Email monitor dependencies not installed")
+            return
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def job_callback(job_id, title, reward, url, source):
+            await asyncio.to_thread(
+                self._process_new_job, job_id, title, reward, url, source
+            )
+
+        self.email_monitor = EmailMonitor(
+            config=self.config,
+            logger=self.logger,
+            job_callback=job_callback,
+            shutdown_event=asyncio.Event(),
+        )
+
+        def check_shutdown():
+            while not self.shutdown_event.is_set():
+                time.sleep(1)
+            if self.email_monitor:
+                loop.call_soon_threadsafe(self.email_monitor.shutdown_event.set)
+
+        shutdown_thread = threading.Thread(target=check_shutdown, daemon=True)
+        shutdown_thread.start()
+
+        try:
+            loop.run_until_complete(self.email_monitor.start())
+        except Exception as e:
+            self.logger.error(f"Email monitor error: {e}")
+        finally:
+            loop.close()
+
+    def _run_website_monitor(self):
+        """Run website monitor in a dedicated thread with its own event loop."""
+        if WebsiteMonitor is None:
+            self.logger.error("Website monitor dependencies not installed (playwright)")
+            return
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def job_callback(job_id, title, reward, url, source):
+            await asyncio.to_thread(
+                self._process_new_job, job_id, title, reward, url, source
+            )
+
+        self.website_monitor = WebsiteMonitor(
+            config=self.config,
+            logger=self.logger,
+            job_callback=job_callback,
+            shutdown_event=asyncio.Event(),
+        )
+
+        def check_shutdown():
+            while not self.shutdown_event.is_set():
+                time.sleep(1)
+            if self.website_monitor:
+                loop.call_soon_threadsafe(self.website_monitor.shutdown_event.set)
+
+        shutdown_thread = threading.Thread(target=check_shutdown, daemon=True)
+        shutdown_thread.start()
+
+        try:
+            loop.run_until_complete(self.website_monitor.start())
+        except Exception as e:
+            self.logger.error(f"Website monitor error: {e}")
+        finally:
+            loop.close()

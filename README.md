@@ -81,10 +81,23 @@ pip install -r requirements.txt
 
 **1. Launch the Application**
 
-From your terminal, run:
+The easiest way to run GengoWatcher is using the included `Makefile`, which automatically handles the virtual environment and `PYTHONPATH`:
 
 ```bash
-python -m gengowatcher.main
+# Start the TUI (Textual interface)
+make run
+
+# Start the TUI with the web server enabled
+make run-web
+
+# Start only the web server (no TUI)
+make run-web-only
+```
+
+Alternatively, you can run it directly using the virtual environment:
+
+```bash
+PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main
 ```
 
 **Optional Command-Line Arguments:**

@@ -40,6 +40,7 @@ class CommandLineInterface:
         self.state = state
         self.console = console
         self.log_queue = log_queue
+        self._log_queue_lock = threading.Lock()  # Lock for thread-safe deque access
         self.input_buffer = ""
         self.command_output = collections.deque(maxlen=20)
         self._init_commands()
@@ -149,7 +150,22 @@ class CommandLineInterface:
             "debug": {
                 "handler": self._handle_debug,
                 "aliases": ["d"],
-                "help": "Toggle debug category. Usage: d <category> or d list. Categories: websocket, rss, job, captcha, browser, config, system.",
+                "help": "Toggle debug category. Usage: d <category> or d list. Categories: websocket, rss, job, captcha, browser, config, system, email, website.",
+            },
+            "setup-email": {
+                "handler": self._handle_setup_email,
+                "aliases": ["se"],
+                "help": "Configure Gmail OAuth for email monitoring.",
+            },
+            "toggleemail": {
+                "handler": self._handle_toggle_email,
+                "aliases": ["te"],
+                "help": "Toggle email monitor on/off.",
+            },
+            "togglewebsite": {
+                "handler": self._handle_toggle_website,
+                "aliases": ["tweb"],
+                "help": "Toggle website monitor on/off.",
             },
         }
         self.alias_map = {
@@ -219,44 +235,51 @@ class CommandLineInterface:
 
     def run(self):
         """The main loop for the command-line interface."""
+        old_settings = None
         if sys.platform != "win32":
             old_settings = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
 
-        with Live(
-            self.layout,
-            console=self.console,
-            screen=True,
-            auto_refresh=False,
-            vertical_overflow="visible",
-        ) as live:
-            while not (
-                self.exit_event.is_set() or self.watcher.shutdown_event.is_set()
-            ):
-                self.layout["header"].update(self._get_header_panel())
-                self.layout["runtime_status"].update(self._get_runtime_status_panel())
-                self.layout["recent_activity"].update(self._get_recent_activity_panel())
-                self.layout["right"].update(self._get_output_panel())
-                self.layout["footer"].update(self._get_status_bar())
-                self.layout["input"].update(
-                    Text(f"> {self.input_buffer}", no_wrap=True)
-                )
-                live.refresh()
+        try:
+            with Live(
+                self.layout,
+                console=self.console,
+                screen=True,
+                auto_refresh=False,
+                vertical_overflow="visible",
+            ) as live:
+                while not (
+                    self.exit_event.is_set() or self.watcher.shutdown_event.is_set()
+                ):
+                    self.layout["header"].update(self._get_header_panel())
+                    self.layout["runtime_status"].update(
+                        self._get_runtime_status_panel()
+                    )
+                    self.layout["recent_activity"].update(
+                        self._get_recent_activity_panel()
+                    )
+                    self.layout["right"].update(self._get_output_panel())
+                    self.layout["footer"].update(self._get_status_bar())
+                    self.layout["input"].update(
+                        Text(f"> {self.input_buffer}", no_wrap=True)
+                    )
+                    live.refresh()
 
-                try:
-                    if sys.platform == "win32":
-                        if msvcrt.kbhit():
-                            self._process_char(msvcrt.getch())
-                        time.sleep(0.1)
-                    else:
-                        rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
-                        if rlist:
-                            self._process_char(sys.stdin.read(1))
-                except (OSError, IOError):
-                    time.sleep(0.5)
-
-        if sys.platform != "win32":
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                    try:
+                        if sys.platform == "win32":
+                            if msvcrt.kbhit():
+                                self._process_char(msvcrt.getch())
+                            time.sleep(0.1)
+                        else:
+                            rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
+                            if rlist:
+                                self._process_char(sys.stdin.read(1))
+                    except (OSError, IOError):
+                        time.sleep(0.5)
+        finally:
+            # Always restore terminal settings, even on crash
+            if sys.platform != "win32" and old_settings is not None:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
     def _process_char(self, char):
         if isinstance(char, bytes):
@@ -392,15 +415,25 @@ class CommandLineInterface:
         return Panel(table, title="[title]Runtime Status[/]", title_align="center")
 
     def _get_recent_activity_panel(self) -> Panel:
+        # Thread-safe copy of log queue to prevent RuntimeError during iteration
+        with self._log_queue_lock:
+            log_items = list(self.log_queue)
+        # Show only the most recent items that fit (approximate based on typical terminal)
+        # Most terminals show ~20-30 lines in this panel; show last 25 to ensure visibility
+        visible_items = log_items[-25:] if len(log_items) > 25 else log_items
         return Panel(
-            Group(*self.log_queue),
-            title="[title]Recent Activity[/]",
+            Group(*visible_items),
+            title=f"[title]Recent Activity[/] ({len(log_items)} total)",
             title_align="center",
         )
 
     def _get_output_panel(self) -> Panel:
+        output_items = list(self.command_output)
+        visible_items = output_items[-25:] if len(output_items) > 25 else output_items
         return Panel(
-            Group(*self.command_output), title="[title]Output[/]", title_align="center"
+            Group(*visible_items),
+            title=f"[title]Output[/] ({len(output_items)} total)",
+            title_align="center",
         )
 
     def _get_status_bar(self) -> Panel:
@@ -409,6 +442,14 @@ class CommandLineInterface:
             status, color = ("Stopped", "error")
         elif os.path.exists(self.watcher.PAUSE_FILE):
             status, color = ("Paused", "warning")
+
+        # Check for dead monitor threads
+        monitor_status = self.watcher.get_monitor_status()
+        dead_monitors = [
+            name for name, state in monitor_status.items() if state == "dead"
+        ]
+        if dead_monitors and status == "Running":
+            status, color = ("Degraded", "warning")
 
         ws_status_text, ws_status_color = {
             "Live": ("Live", "success"),
@@ -419,20 +460,65 @@ class CommandLineInterface:
             "Stopped": ("Stopped", "error"),
         }.get(self.watcher.websocket_status, (self.watcher.websocket_status, "error"))
 
-        return Panel(
-            Text.assemble(
-                ("Status: ", "default"),
-                (status, color),
-                (" | ", "dim"),
-                ("WebSocket: ", "default"),
-                (ws_status_text, ws_status_color),
-                (" | ", "dim"),
-                ("RSS: ", "default"),
-                (self.watcher.rss_action, "cyan"),
+        # Override WS status if thread is dead but status wasn't updated
+        if monitor_status.get("websocket") == "dead" and ws_status_text not in (
+            "Disabled",
+            "Stopped",
+        ):
+            ws_status_text, ws_status_color = ("Dead", "error")
+
+        # Build RSS status
+        rss_status = self.watcher.rss_action
+        rss_color = "cyan"
+        if monitor_status.get("rss") == "dead":
+            rss_status, rss_color = ("Dead", "error")
+
+        status_parts = [
+            ("Status: ", "default"),
+            (status, color),
+            (" | ", "dim"),
+            ("WebSocket: ", "default"),
+            (ws_status_text, ws_status_color),
+            (" | ", "dim"),
+            ("RSS: ", "default"),
+            (rss_status, rss_color),
+        ]
+
+        # Add Email/Website status if enabled
+        if monitor_status.get("email") != "disabled":
+            email_state = monitor_status.get("email")
+            email_color = "success" if email_state == "alive" else "error"
+            email_text = "OK" if email_state == "alive" else "Dead"
+            status_parts.extend(
+                [
+                    (" | ", "dim"),
+                    ("Email: ", "default"),
+                    (email_text, email_color),
+                ]
+            )
+
+        if monitor_status.get("website") != "disabled":
+            website_state = monitor_status.get("website")
+            website_color = "success" if website_state == "alive" else "error"
+            website_text = "OK" if website_state == "alive" else "Dead"
+            status_parts.extend(
+                [
+                    (" | ", "dim"),
+                    ("Web: ", "default"),
+                    (website_text, website_color),
+                ]
+            )
+
+        status_parts.extend(
+            [
                 (" | ", "dim"),
                 ("Found (Total): ", "default"),
                 (str(self.state.total_new_entries_found), "green"),
-            ),
+            ]
+        )
+
+        return Panel(
+            Text.assemble(*status_parts),
             border_style="dim",
         )
 
@@ -674,13 +760,16 @@ class CommandLineInterface:
             "browser",
             "config",
             "system",
+            "email",
+            "website",
         ]
 
         if not args:
             self._show_debug_status(categories)
             return
 
-        arg = args.lower().strip()
+        # args is a list, get first element
+        arg = args[0].lower().strip() if args else ""
 
         if arg == "list":
             self._show_debug_status(categories)
@@ -718,3 +807,24 @@ class CommandLineInterface:
             enabled = self.config.get("DebugCategories", cat)
             status = "ON" if enabled else "OFF"
             self.watcher.logger.info(f"  {cat}: {status}")
+
+    def _handle_setup_email(self, args=None):
+        _ = args
+        self.watcher.logger.info("To configure Gmail OAuth, exit and run:")
+        self.watcher.logger.info("  python -m gengowatcher.main --setup-email")
+
+    def _handle_toggle_email(self, args=None):
+        _ = args
+        current = self.config.get("EmailMonitor", "enabled")
+        self.config.set("EmailMonitor", "enabled", not current)
+        self.config.save_config()
+        status = "enabled" if not current else "disabled"
+        self.watcher.logger.info(f"Email monitor {status}. Restart to apply.")
+
+    def _handle_toggle_website(self, args=None):
+        _ = args
+        current = self.config.get("WebsiteMonitor", "enabled")
+        self.config.set("WebsiteMonitor", "enabled", not current)
+        self.config.save_config()
+        status = "enabled" if not current else "disabled"
+        self.watcher.logger.info(f"Website monitor {status}. Restart to apply.")
