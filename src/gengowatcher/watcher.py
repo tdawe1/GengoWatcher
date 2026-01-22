@@ -26,20 +26,6 @@ from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
 
-try:
-    from .browser_automation import BrowserAutomationEngine
-except ImportError:
-    # Provide a no-op fallback so the watcher can still load if browser deps are missing.
-    class BrowserAutomationEngine:  # type: ignore
-        def __init__(self, *args, **kwargs):
-            """
-            Initialise a GengoWatcher instance and configure its runtime subsystems.
-
-            Initialises core attributes and runtime state, sets up CSV logging (if enabled), CAPTCHA monitoring, browser automation (with a no-op fallback if unavailable), job acceptance and cancellation managers, and synchronisation primitives used by RSS and WebSocket monitors. Attempts to restore any cached browser session and, depending on configuration, starts background monitors such as the live dashboard and refresh monitors. Logs diagnostic information about the environment and records watcher version on successful initialisation.
-            """
-            pass
-
-
 from . import notifier
 
 try:
@@ -144,64 +130,11 @@ class GengoWatcher:
 
         self.captcha_solver.monitor.add_alert_callback(captcha_alert_callback)
 
-        # Initialize browser automation engine (Selenium - deprecated, prefer Playwright)
-        # Only initialize if explicitly enabled via SeleniumMonitoring section
-        selenium_enabled = False
-        try:
-            selenium_enabled = self.config.getboolean(
-                "SeleniumMonitoring", "enable_live_dashboard"
-            ) or self.config.getboolean("SeleniumMonitoring", "enable_list_refresh")
-        except Exception:
-            pass
-
-        self.browser_automation_engine = None
-        if selenium_enabled:
-            self.browser_automation_engine = BrowserAutomationEngine(
-                config, logger, self.captcha_solver
-            )
-            try:
-                session_token = self.config.get("WebSocket", "user_session")
-                if session_token and session_token != "REPLACE_WITH_YOUR_SESSION_TOKEN":
-                    if self.browser_automation_engine.login_with_session(
-                        str(session_token)
-                    ):
-                        # Start monitors if configured
-                        try:
-                            if self.config.getboolean(
-                                "SeleniumMonitoring", "enable_live_dashboard"
-                            ):
-                                self.browser_automation_engine.start_live_dashboard_monitor(
-                                    on_new_job=lambda jid,
-                                    url: self.browser_automation_engine.open_job_details_and_arm_accept(
-                                        url
-                                    )
-                                )
-                            if self.config.get(
-                                "SeleniumMonitoring", "enable_list_refresh"
-                            ):
-                                interval_ms = self.config.getint(
-                                    "SeleniumMonitoring", "refresh_interval_ms"
-                                )
-                                self.browser_automation_engine.start_jobs_page_refresher(
-                                    on_new_job=lambda jid,
-                                    url: self.browser_automation_engine.open_job_details_and_arm_accept(
-                                        url
-                                    ),
-                                    interval_sec=max(0.25, float(interval_ms) / 1000.0),
-                                )
-                        except Exception as e:
-                            self.logger.warning(
-                                f"Failed to start Selenium monitors: {e}"
-                            )
-            except Exception as e:
-                self.logger.debug(f"Selenium login not initialized: {e}")
-
-        # Initialize job acceptance engine (pass browser engine for fallbacks)
+        # Initialize job acceptance engine
         self.job_acceptance_engine = JobAcceptanceEngine(
             config,
             logger,
             self.captcha_solver,
-            browser_engine=self.browser_automation_engine,
         )
 
         # Initialize job cancellation manager
@@ -440,34 +373,8 @@ class GengoWatcher:
             self.logger.info(
                 f"Job {job_id} meets auto-accept criteria, queuing for acceptance"
             )
-            # Fire Selenium accept watcher immediately
-            try:
-                if (
-                    hasattr(self, "browser_automation_engine")
-                    and self.browser_automation_engine
-                ):
-                    self.browser_automation_engine.open_job_details_and_arm_accept(url)
-            except Exception as e:
-                self.logger.debug(f"Selenium accept watcher start failed: {e}")
-            # Run job acceptance in a separate thread to avoid blocking
             threading.Thread(
                 target=self._async_job_acceptance_wrapper, args=(job_data,), daemon=True
-            ).start()
-        elif hasattr(
-            self.browser_automation_engine, "is_job_eligible"
-        ) and self.browser_automation_engine.is_job_eligible(job_data):
-            self.logger.info(
-                f"Job {job_id} meets browser automation criteria, queuing for acceptance"
-            )
-            try:
-                self.browser_automation_engine.open_job_details_and_arm_accept(url)
-            except Exception as e:
-                self.logger.debug(f"Selenium accept watcher start failed: {e}")
-            # Run browser automation in a separate thread to avoid blocking
-            threading.Thread(
-                target=self._async_browser_automation_wrapper,
-                args=(job_data,),
-                daemon=True,
             ).start()
         else:
             self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
@@ -1474,14 +1381,6 @@ class GengoWatcher:
                 self.cancellation_manager.close_session(),
                 "close cancellation session",
             )
-
-        if getattr(self, "browser_automation_engine", None):
-            try:
-                self.browser_automation_engine.close()
-            except Exception as error:
-                self.logger.exception(
-                    "Failed to close browser automation engine: %s", error
-                )
 
         if self._all_entries_log_file:
             try:
