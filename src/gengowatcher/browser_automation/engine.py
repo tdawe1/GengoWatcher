@@ -17,6 +17,7 @@ from selenium.common.exceptions import WebDriverException
 
 try:
     from webdriver_manager.chrome import ChromeDriverManager
+
     _HAS_WDM = True
 except Exception:
     _HAS_WDM = False
@@ -45,6 +46,7 @@ return (function(){
 
 class BrowserAutomationEngine:
     """Browser automation engine for job acceptance"""
+
     def __init__(self, config, logger, captcha_solver=None):
         self.config = config
         self.logger = logger
@@ -119,11 +121,15 @@ class BrowserAutomationEngine:
             )
             submitted = self._safe_submit_first_form(driver)
             if not submitted:
-                self.logger.debug("No form/button found to submit after token injection")
+                self.logger.debug(
+                    "No form/button found to submit after token injection"
+                )
             WebDriverWait(driver, 5).until(lambda d: True)
             return submitted
         except Exception as e:
-            self.logger.error(f"Error submitting reCAPTCHA v2 with browser automation: {e}")
+            self.logger.error(
+                f"Error submitting reCAPTCHA v2 with browser automation: {e}"
+            )
             return False
 
     def submit_hcaptcha_with_token(self, page_url: str, token: str) -> bool:
@@ -157,13 +163,15 @@ class BrowserAutomationEngine:
             )
             submitted = self._safe_submit_first_form(driver)
             if not submitted:
-                self.logger.debug("No form/button found to submit after token injection")
+                self.logger.debug(
+                    "No form/button found to submit after token injection"
+                )
             WebDriverWait(driver, 5).until(lambda d: True)
             return submitted
         except Exception as e:
             self.logger.error(f"Error submitting hCaptcha with browser automation: {e}")
             return False
-    
+
     def preload_page(self, page_url: str) -> bool:
         """Warm up the browser by navigating to a page in advance"""
         try:
@@ -177,18 +185,23 @@ class BrowserAutomationEngine:
             self.logger.debug(f"Preload failed: {e}")
             return False
 
-    def open_job_details_and_arm_accept(self, page_url: str, probe_ms: int = 75, timeout_sec: int = 30) -> None:
+    def open_job_details_and_arm_accept(
+        self, page_url: str, probe_ms: int = 75, timeout_sec: int = 30
+    ) -> None:
         """Open details page and repeatedly try to submit acceptance ASAP."""
+
         def worker():
             try:
                 d = self._initialize_driver()
                 d.get(page_url)
-                WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                WebDriverWait(d, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
                 start = time.time()
                 while time.time() - start < timeout_sec:
                     try:
                         token_any = d.execute_script(
-                            "return (document.querySelector('textarea#g-recaptcha-response,textarea[name=\\'g-recaptcha-response\\']')||{value:''}).value ||" \
+                            "return (document.querySelector('textarea#g-recaptcha-response,textarea[name=\\'g-recaptcha-response\\']')||{value:''}).value ||"
                             "(document.querySelector('textarea#h-captcha-response,textarea[name=\\'h-captcha-response\\']')||{value:''}).value;"
                         )
                     except Exception:
@@ -203,6 +216,7 @@ class BrowserAutomationEngine:
                     time.sleep(max(0.02, probe_ms / 1000.0))
             except Exception as e:
                 self.logger.debug(f"Accept watcher error: {e}")
+
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         self._monitor_threads.add(t)
@@ -216,31 +230,42 @@ class BrowserAutomationEngine:
                 d.delete_cookie("my_gengo_session")
             except Exception:
                 pass
-            d.add_cookie({
-                'name': 'my_gengo_session',
-                'value': session_token,
-                'domain': 'gengo.com',
-                'path': '/',
-                'secure': True
-            })
+            d.add_cookie(
+                {
+                    "name": "my_gengo_session",
+                    "value": session_token,
+                    "domain": "gengo.com",
+                    "path": "/",
+                    "secure": True,
+                }
+            )
             d.get("https://gengo.com/t/jobs/status/available")
-            WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            WebDriverWait(d, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
             self.logger.info("Selenium session cookie set; jobs page reachable.")
             return True
         except Exception as e:
             self.logger.error(f"Failed to set Selenium session: {e}")
             return False
 
-    def start_live_dashboard_monitor(self, on_new_job: Callable[[str, str], None], interval_sec: float = 0.75) -> None:
+    def start_live_dashboard_monitor(
+        self, on_new_job: Callable[[str, str], None], interval_sec: float = 0.75
+    ) -> None:
         """Poll the realtime view for new job links and invoke callback(job_id, url)."""
+
         def worker():
             try:
                 d = self._initialize_driver()
                 d.get("https://gengo.com/t/jobs/status/available")
-                WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                WebDriverWait(d, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
                 while True:
                     try:
-                        links = d.find_elements(By.CSS_SELECTOR, "a[href*='/t/jobs/details/']")
+                        links = d.find_elements(
+                            By.CSS_SELECTOR, "a[href*='/t/jobs/details/']"
+                        )
                         for a in links:
                             href = a.get_attribute("href") or ""
                             if "/t/jobs/details/" in href:
@@ -253,20 +278,28 @@ class BrowserAutomationEngine:
                     time.sleep(interval_sec)
             except Exception as e:
                 self.logger.error(f"Live dashboard monitor error: {e}")
+
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         self._monitor_threads.add(t)
 
-    def start_jobs_page_refresher(self, on_new_job: Callable[[str, str], None], interval_sec: float = 1.5) -> None:
+    def start_jobs_page_refresher(
+        self, on_new_job: Callable[[str, str], None], interval_sec: float = 1.5
+    ) -> None:
         """Refresh the jobs list periodically and invoke callback(job_id, url) for new rows."""
+
         def worker():
             try:
                 d = self._initialize_driver()
                 d.get("https://gengo.com/t/jobs/status/available")
-                WebDriverWait(d, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                WebDriverWait(d, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
                 while True:
                     try:
-                        links = d.find_elements(By.CSS_SELECTOR, "a[href*='/t/jobs/details/']")
+                        links = d.find_elements(
+                            By.CSS_SELECTOR, "a[href*='/t/jobs/details/']"
+                        )
                         new_found = False
                         for a in links:
                             href = a.get_attribute("href") or ""
@@ -284,6 +317,7 @@ class BrowserAutomationEngine:
                         d.refresh()
             except Exception as e:
                 self.logger.error(f"Jobs refresher error: {e}")
+
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         self._monitor_threads.add(t)
@@ -291,61 +325,72 @@ class BrowserAutomationEngine:
     def _initialize_driver(self) -> webdriver.Chrome:
         """
         Create and configure a Chrome WebDriver instance using the engine's configuration.
-        
+
         Initialises and returns the existing driver if already created; otherwise builds Chrome options
         (from headless and user-agent settings) and constructs a new webdriver.Chrome instance.
-        
+
         Returns:
             The configured Chrome WebDriver instance.
-        
+
         Raises:
             Exception: If the WebDriver cannot be initialised.
         """
+        # Double-checked locking to prevent race condition where two threads
+        # could both pass the initial check before either creates the driver
         if self.driver:
             return self.driver
-            
-        chrome_options = Options()
-        # Headless toggle from config
-        headless = False
-        try:
-            headless = self.config.getboolean("SeleniumMonitoring", "headless", fallback=False)
-        except Exception:
+
+        with self._driver_lock:
+            # Re-check after acquiring lock in case another thread created it
+            if self.driver:
+                return self.driver
+
+            chrome_options = Options()
+            # Headless toggle from config
             headless = False
-        if headless:
-            chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        
-        # Add user agent if configured
-        user_agent = None
-        if hasattr(self.config, "get"):
             try:
-                # Try the new standard location first
-                user_agent = self.config.get("Network", "browser_user_agent")
-                # Fallback to legacy location
-                if not user_agent:
-                    user_agent = self.config.get("Watcher", "user_agent")
-            except Exception:
-                user_agent = None
-        if user_agent:
-            chrome_options.add_argument(f"--user-agent={user_agent}")
-            self.logger.debug(f"Browser automation using configured User-Agent: {user_agent[:30]}...")
-        
-        try:
-            if _HAS_WDM:
-                self.driver = webdriver.Chrome(
-                    service=Service(ChromeDriverManager().install()),
-                    options=chrome_options,
+                headless = self.config.getboolean(
+                    "SeleniumMonitoring", "headless", fallback=False
                 )
-            else:
-                self.driver = webdriver.Chrome(options=chrome_options)
-            self.logger.info("Chrome WebDriver initialized successfully")
-            return self.driver
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
-            raise
+            except Exception:
+                headless = False
+            if headless:
+                chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--window-size=1920,1080")
+
+            # Add user agent if configured
+            user_agent = None
+            if hasattr(self.config, "get"):
+                try:
+                    # Try the new standard location first
+                    user_agent = self.config.get("Network", "browser_user_agent")
+                    # Fallback to legacy location
+                    if not user_agent:
+                        user_agent = self.config.get("Watcher", "user_agent")
+                except Exception:
+                    user_agent = None
+            if user_agent:
+                chrome_options.add_argument(f"--user-agent={user_agent}")
+                self.logger.debug(
+                    f"Browser automation using configured User-Agent: {user_agent[:30]}..."
+                )
+
+            try:
+                if _HAS_WDM:
+                    self.driver = webdriver.Chrome(
+                        service=Service(ChromeDriverManager().install()),
+                        options=chrome_options,
+                    )
+                else:
+                    self.driver = webdriver.Chrome(options=chrome_options)
+                self.logger.info("Chrome WebDriver initialized successfully")
+                return self.driver
+            except Exception as e:
+                self.logger.error(f"Failed to initialize Chrome WebDriver: {e}")
+                raise
 
     def attempt_accept_via_browser(
         self,
@@ -398,7 +443,11 @@ class BrowserAutomationEngine:
                 token_present = bool(status.get("token_present"))
                 accept_enabled = bool(status.get("accept_enabled"))
 
-                if token_present and start_monotonic and result_timings.get("token_ms") is None:
+                if (
+                    token_present
+                    and start_monotonic
+                    and result_timings.get("token_ms") is None
+                ):
                     result_timings["token_ms"] = (
                         time.perf_counter() - start_monotonic
                     ) * 1000.0
@@ -420,7 +469,9 @@ class BrowserAutomationEngine:
                                 and completion.get("redirect_ms") is not None
                                 and result_timings.get("redirect_ms") is None
                             ):
-                                result_timings["redirect_ms"] = completion["redirect_ms"]
+                                result_timings["redirect_ms"] = completion[
+                                    "redirect_ms"
+                                ]
                             outcome.update(completion)
                             outcome["timings"] = result_timings
                             return outcome
@@ -494,20 +545,22 @@ class BrowserAutomationEngine:
             self.logger.debug("Saved failure screenshot to %s", filename)
             return filename
         except Exception:
-            self.logger.debug("Failed to capture screenshot for job %s", job_id, exc_info=True)
+            self.logger.debug(
+                "Failed to capture screenshot for job %s", job_id, exc_info=True
+            )
             return None
-    
+
     def solve_recaptcha_v3_with_browser(
         self, site_key: str, page_url: str, action: str = "job_acceptance"
     ) -> Optional[str]:
         """
         Solve reCAPTCHA v3 using browser automation to execute the challenge.
-        
+
         Args:
             site_key: reCAPTCHA v3 site key
             page_url: URL of the page where reCAPTCHA is used
             action: Action name for reCAPTCHA v3
-            
+
         Returns:
             str: reCAPTCHA v3 token if successful, None otherwise
         """
@@ -522,19 +575,19 @@ class BrowserAutomationEngine:
         if not enable_fallback:
             self.logger.debug("Browser automation fallback is disabled")
             return None
-            
+
         try:
             driver = self._initialize_driver()
-            
+
             # Navigate to the page
             self.logger.debug(f"Navigating to page: {page_url}")
             driver.get(page_url)
-            
+
             # Wait for page to load
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            
+
             # Execute reCAPTCHA v3 challenge using JavaScript
             script = f"""
             return new Promise((resolve, reject) => {{
@@ -551,21 +604,27 @@ class BrowserAutomationEngine:
                 }}
             }});
             """
-            
+
             self.logger.debug("Executing reCAPTCHA v3 challenge")
             token = driver.execute_script(script)
-            
+
             if token:
-                self.logger.info("Successfully obtained reCAPTCHA v3 token using browser automation")
+                self.logger.info(
+                    "Successfully obtained reCAPTCHA v3 token using browser automation"
+                )
                 return token
             else:
-                self.logger.warning("Failed to obtain reCAPTCHA v3 token using browser automation")
+                self.logger.warning(
+                    "Failed to obtain reCAPTCHA v3 token using browser automation"
+                )
                 return None
-                
+
         except Exception as e:
-            self.logger.error(f"Error solving reCAPTCHA v3 with browser automation: {e}")
+            self.logger.error(
+                f"Error solving reCAPTCHA v3 with browser automation: {e}"
+            )
             return None
-    
+
     def close(self):
         """Close the browser driver and clean up resources"""
         if self.driver:
