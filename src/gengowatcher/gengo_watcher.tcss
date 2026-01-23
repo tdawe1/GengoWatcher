@@ -248,3 +248,23 @@ ScrollBar > .scrollbar--thumb {
 .status-text-orange { color: $warning; }
 .status-text-cyan { color: $accent; }
 .status-text-dim { color: $text-muted; }
+
+/* Email Monitor Status */
+.status-email-idle { color: $success; }
+.status-email-polling { color: $accent; }
+.status-email-connecting { color: $warning; }
+.status-email-error { color: $error; }
+
+/* Website Monitor Status */
+.status-website-scraping { color: $warning; }
+.status-website-idle { color: $success; }
+.status-website-init { color: $accent; }
+.status-website-error { color: $error; }
+
+/* Monitor section separator */
+.monitor-section-label {
+    margin-top: 1;
+    color: $secondary;
+    text-style: bold italic;
+    column-span: 4;
+}

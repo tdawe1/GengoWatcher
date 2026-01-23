@@ -44,12 +44,17 @@ class WebsiteMonitor:
         self._page = None
         self._seen_job_ids: set[str] = set()
         self._playwright = None
+        self.status = "Disabled"  # Initializing/Scraping/Idle/Error/Disabled
+        self.last_check_time: Optional[float] = None
+        self.jobs_found_session = 0
+        self.pages_checked_session = 0
 
     async def start(self):
         if not self.config.get("WebsiteMonitor", "enabled"):
             self.logger.debug("Website monitor disabled")
             return
 
+        self.status = "Initializing"
         self.logger.info("Starting website monitor")
 
         try:
@@ -57,6 +62,7 @@ class WebsiteMonitor:
             await self._login_if_needed()
             await self._monitor_loop()
         except Exception as e:
+            self.status = "Error"
             self.logger.error(f"Website monitor error: {e}")
         finally:
             await self.stop()
@@ -172,6 +178,7 @@ class WebsiteMonitor:
                 if self.shutdown_event.is_set():
                     break
 
+                self.status = "Scraping"
                 await self._human_mouse_wiggle()
                 await self._page.goto(jobs_url)
                 await self._human_delay()
@@ -180,8 +187,13 @@ class WebsiteMonitor:
                 current_jobs = await self._scrape_job_ids()
                 new_jobs = current_jobs - self._seen_job_ids
 
+                self.status = "Idle"
+                self.last_check_time = time.time()
+                self.pages_checked_session += 1
+
                 if new_jobs:
                     self.logger.info(f"Found {len(new_jobs)} new job(s) on website")
+                    self.jobs_found_session += len(new_jobs)
                     for job_id in new_jobs:
                         url = f"https://gengo.com/t/jobs/details/{job_id}"
                         await self.job_callback(
@@ -195,6 +207,7 @@ class WebsiteMonitor:
                 self._seen_job_ids.update(current_jobs)
 
             except Exception as e:
+                self.status = "Error"
                 self.logger.error(f"Monitor loop error: {e}")
                 await asyncio.sleep(60)
 
@@ -314,6 +327,7 @@ class WebsiteMonitor:
             pass
 
     async def stop(self):
+        self.status = "Stopped"
         if self._page:
             try:
                 await self._page.close()
@@ -343,3 +357,11 @@ class WebsiteMonitor:
             self._playwright = None
 
         self.logger.info("Website monitor stopped")
+
+    def get_status_info(self) -> dict:
+        return {
+            "status": self.status,
+            "last_check": self.last_check_time,
+            "jobs_found": self.jobs_found_session,
+            "pages_checked": self.pages_checked_session,
+        }
