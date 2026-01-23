@@ -154,7 +154,9 @@ class HeaderPanel(Static):
         table.add_column(style="bold", justify="right", width=24)
         table.add_column(justify="left")
 
-        table.add_row("Feed URL:", f"[#7dcfff]{self.config.get('Watcher', 'feed_url')}[/]")
+        table.add_row(
+            "Feed URL:", f"[#7dcfff]{self.config.get('Watcher', 'feed_url')}[/]"
+        )
         table.add_row(
             "Check Interval:",
             f"{self.config.get('Watcher', 'check_interval')} seconds",
@@ -213,7 +215,7 @@ class RuntimeStatusPanel(Vertical):
         yield Label("$0.00", id="stat-avg-reward", classes="status-value")
 
         # Row 4
-        
+
         # Row 5 - Flags
         yield Label("RSS Fallback:", classes="status-label")
         yield Label("--", id="stat-rss", classes="status-badge status-text-dim")
@@ -224,15 +226,42 @@ class RuntimeStatusPanel(Vertical):
         yield Label("CAPTCHA:", classes="status-label")
         yield Label("--", id="stat-captcha", classes="status-badge status-text-dim")
         yield Label("WebSocket:", classes="status-label")
-        yield Label("Initializing...", id="ws-status-indicator", classes="status-badge status-offline")
+        yield Label(
+            "Initializing...",
+            id="ws-status-indicator",
+            classes="status-badge status-offline",
+        )
 
         # Row 7 - Heartbeat
         yield Label("WS Heartbeat:", classes="status-label")
-        yield Label("--", id="stat-ws-heartbeat", classes="status-value span-3") 
+        yield Label("--", id="stat-ws-heartbeat", classes="status-value span-3")
+
+        # Row - Email/Website Monitor Header
+        yield Label("── Monitors ──", classes="monitor-section-label")
+
+        # Row - Email Monitor
+        yield Label("Email:", classes="status-label")
+        yield Label("--", id="stat-email-status", classes="status-value")
+        yield Label("Last:", classes="status-label")
+        yield Label("--", id="stat-email-last", classes="status-value")
+
+        # Row - Website Monitor
+        yield Label("Website:", classes="status-label")
+        yield Label("--", id="stat-website-status", classes="status-value")
+        yield Label("Last:", classes="status-label")
+        yield Label("--", id="stat-website-last", classes="status-value")
+
+        # Row - Monitor Stats
+        yield Label("Email Jobs:", classes="status-label")
+        yield Label("0", id="stat-email-jobs", classes="status-value")
+        yield Label("Web Jobs:", classes="status-label")
+        yield Label("0", id="stat-website-jobs", classes="status-value")
 
         # Sparkline Section
         yield Label("Jobs/Hour Trend:", classes="sparkline-label span-4")
-        yield StatsSparkline(data=self.state.sparkline_data, id="sparkline", classes="span-4")
+        yield StatsSparkline(
+            data=self.state.sparkline_data, id="sparkline", classes="span-4"
+        )
 
     def refresh_status(self) -> None:
         # Calculate stats
@@ -254,11 +283,17 @@ class RuntimeStatusPanel(Vertical):
             str(datetime.timedelta(seconds=int(uptime_seconds)))
         )
         self.query_one("#stat-jph", Label).update(f"{jobs_per_hour:.1f}")
-        
-        self.query_one("#stat-jobs-sess", Label).update(str(self.watcher.session_new_entries))
-        self.query_one("#stat-jobs-tot", Label).update(str(self.state.total_new_entries_found))
-        
-        self.query_one("#stat-val-sess", Label).update(f"US$ {self.watcher.session_total_value:.2f}")
+
+        self.query_one("#stat-jobs-sess", Label).update(
+            str(self.watcher.session_new_entries)
+        )
+        self.query_one("#stat-jobs-tot", Label).update(
+            str(self.state.total_new_entries_found)
+        )
+
+        self.query_one("#stat-val-sess", Label).update(
+            f"US$ {self.watcher.session_total_value:.2f}"
+        )
         self.query_one("#stat-avg-reward", Label).update(f"US$ {avg_reward:.2f}")
 
         # Update Sparkline
@@ -290,11 +325,11 @@ class RuntimeStatusPanel(Vertical):
         rss_status_text = f"{self.watcher.rss_action} ({int(seconds_remaining)}s)"
         rss_class = "status-text-cyan"
         if "Backoff" in self.watcher.rss_action or "Paused" in self.watcher.rss_action:
-             rss_class = "status-text-orange"
-        
+            rss_class = "status-text-orange"
+
         if os.path.exists(self.watcher.PAUSE_FILE):
             rss_status_text = "Paused"
-        
+
         rss_lbl = self.query_one("#stat-rss", Label)
         rss_lbl.update(rss_status_text)
         rss_lbl.classes = f"status-badge {rss_class}"
@@ -303,7 +338,7 @@ class RuntimeStatusPanel(Vertical):
         autoaccept_enabled = self.config.getboolean("AutoAccept", "enabled")
         autoaccept_status = "Enabled" if autoaccept_enabled else "Disabled"
         aa_class = "status-text-green" if autoaccept_enabled else "status-text-dim"
-        
+
         aa_lbl = self.query_one("#stat-autoaccept", Label)
         aa_lbl.update(autoaccept_status)
         aa_lbl.classes = f"status-badge {aa_class}"
@@ -312,7 +347,7 @@ class RuntimeStatusPanel(Vertical):
         captcha_enabled = self.config.getboolean("Captcha", "enabled")
         captcha_status = "Enabled" if captcha_enabled else "Disabled"
         cap_class = "status-text-green" if captcha_enabled else "status-text-dim"
-        
+
         cap_lbl = self.query_one("#stat-captcha", Label)
         cap_lbl.update(captcha_status)
         cap_lbl.classes = f"status-badge {cap_class}"
@@ -333,8 +368,37 @@ class RuntimeStatusPanel(Vertical):
             except Exception:
                 pass
             hb = " | ".join(parts) if parts else "idle"
-        
+
         self.query_one("#stat-ws-heartbeat", Label).update(hb)
+
+        if hasattr(self.watcher, "_sync_monitor_metrics"):
+            self.watcher._sync_monitor_metrics()
+
+        email_status = getattr(self.watcher, "email_monitor_status", "Disabled")
+        self.query_one("#stat-email-status", Label).update(email_status)
+
+        email_last = getattr(self.watcher, "email_last_check_time", None)
+        if email_last:
+            ago = int(time.time() - email_last)
+            self.query_one("#stat-email-last", Label).update(f"{ago}s ago")
+        else:
+            self.query_one("#stat-email-last", Label).update("--")
+
+        email_jobs = getattr(self.watcher, "email_jobs_found_session", 0)
+        self.query_one("#stat-email-jobs", Label).update(str(email_jobs))
+
+        web_status = getattr(self.watcher, "website_monitor_status", "Disabled")
+        self.query_one("#stat-website-status", Label).update(web_status)
+
+        web_last = getattr(self.watcher, "website_last_check_time", None)
+        if web_last:
+            ago = int(time.time() - web_last)
+            self.query_one("#stat-website-last", Label).update(f"{ago}s ago")
+        else:
+            self.query_one("#stat-website-last", Label).update("--")
+
+        web_jobs = getattr(self.watcher, "website_jobs_found_session", 0)
+        self.query_one("#stat-website-jobs", Label).update(str(web_jobs))
 
 
 class StatusBar(Static):
@@ -397,7 +461,9 @@ class StatusBar(Static):
             website_text = "OK" if website_state == "alive" else "Dead"
             parts.append(f"[bold]Web:[/] [{website_color}]{website_text}[/]")
 
-        parts.append(f"[bold]Found:[/] [#9ece6a]{self.state.total_new_entries_found}[/]")
+        parts.append(
+            f"[bold]Found:[/] [#9ece6a]{self.state.total_new_entries_found}[/]"
+        )
 
         self.update(" │ ".join(parts))
 
@@ -590,10 +656,20 @@ class GengoWatcherApp(App):
                 "aliases": ["te"],
                 "help": "Toggle email monitor on/off.",
             },
+            "emailstats": {
+                "handler": self._cmd_email_stats,
+                "aliases": ["es", "emailinfo"],
+                "help": "Show email monitor statistics.",
+            },
             "togglewebsite": {
                 "handler": self._handle_toggle_website,
                 "aliases": ["tweb"],
                 "help": "Toggle website monitor on/off.",
+            },
+            "websitestats": {
+                "handler": self._cmd_website_stats,
+                "aliases": ["ws", "webinfo"],
+                "help": "Show website monitor statistics.",
             },
         }
         self.alias_map = {
@@ -636,16 +712,16 @@ class GengoWatcherApp(App):
 
                 with TabPane("Jobs", id="jobs"):
                     yield JobsTable(id="jobs-table")
-                
+
                 with TabPane("Output", id="output"):
-                     output_log = RichLog(
+                    output_log = RichLog(
                         highlight=True,
                         markup=True,
                         auto_scroll=True,
                         max_lines=500,
                         id="output-log",
                     )
-                     yield output_log
+                    yield output_log
 
         # Bottom status and input area
         with Vertical(id="bottom-area"):
@@ -653,13 +729,13 @@ class GengoWatcherApp(App):
             yield HistoryInput(
                 placeholder="Type command (h or ? for help)...", id="cmd-input"
             )
-        
+
         yield Footer()
 
     def on_mount(self) -> None:
         """Initialize on mount."""
         self.query_one("#activity-log", RichLog).write("[green]GengoWatcher started[/]")
-        
+
         # Load recent jobs from state or CSV
         try:
             if self.state.get_job_count() < 100:
@@ -674,15 +750,17 @@ class GengoWatcherApp(App):
                     # Convert timestamp to readable string
                     ts = job.get("timestamp", 0)
                     time_str = datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
-                    
+
                     self.add_job(
                         time_str,
                         job.get("source", "Unknown"),
                         job.get("lang_pair", "Unknown"),
                         f"{job.get('reward_currency', 'USD')} {job.get('reward', 0.0):.2f}",
-                        "Found" # Initial status for historical jobs
+                        "Found",  # Initial status for historical jobs
                     )
-                self.watcher.logger.info(f"Loaded {len(recent_jobs)} recent jobs from history.")
+                self.watcher.logger.info(
+                    f"Loaded {len(recent_jobs)} recent jobs from history."
+                )
         except Exception as e:
             self.watcher.logger.error(f"Failed to load recent jobs: {e}")
 
@@ -1122,3 +1200,47 @@ class GengoWatcherApp(App):
         status = "enabled" if not current else "disabled"
         self.watcher.logger.info(f"Website monitor {status}. Restart to apply.")
         self.notify(f"Website {status} (restart)", severity="warning")
+
+    def _cmd_email_stats(self, args: list[str]) -> None:
+        """Show email monitor statistics."""
+        _ = args
+        watcher = self.watcher
+        if hasattr(watcher, "_sync_monitor_metrics"):
+            watcher._sync_monitor_metrics()
+
+        status = getattr(watcher, "email_monitor_status", "Disabled")
+        last_check = getattr(watcher, "email_last_check_time", None)
+        jobs = getattr(watcher, "email_jobs_found_session", 0)
+
+        if last_check:
+            ago = int(time.time() - last_check)
+            last_str = f"{ago}s ago"
+        else:
+            last_str = "Never"
+
+        self._log_panel("[bold]Email Monitor[/bold]")
+        self._log_panel(f"  Status: {status}")
+        self._log_panel(f"  Last Check: {last_str}")
+        self._log_panel(f"  Jobs Found: {jobs}")
+
+    def _cmd_website_stats(self, args: list[str]) -> None:
+        """Show website monitor statistics."""
+        _ = args
+        watcher = self.watcher
+        if hasattr(watcher, "_sync_monitor_metrics"):
+            watcher._sync_monitor_metrics()
+
+        status = getattr(watcher, "website_monitor_status", "Disabled")
+        last_check = getattr(watcher, "website_last_check_time", None)
+        jobs = getattr(watcher, "website_jobs_found_session", 0)
+
+        if last_check:
+            ago = int(time.time() - last_check)
+            last_str = f"{ago}s ago"
+        else:
+            last_str = "Never"
+
+        self._log_panel("[bold]Website Monitor[/bold]")
+        self._log_panel(f"  Status: {status}")
+        self._log_panel(f"  Last Check: {last_str}")
+        self._log_panel(f"  Jobs Found: {jobs}")

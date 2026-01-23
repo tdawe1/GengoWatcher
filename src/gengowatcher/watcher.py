@@ -96,6 +96,15 @@ class GengoWatcher:
         self.websocket_next_ping_ts = None  # float epoch seconds
         self.websocket_last_close_code = None
         self.websocket_last_close_reason = None
+        # Email monitor metrics (read by UI)
+        self.email_monitor_status = "Disabled"
+        self.email_last_check_time = None
+        self.email_jobs_found_session = 0
+
+        # Website monitor metrics (read by UI)
+        self.website_monitor_status = "Disabled"
+        self.website_last_check_time = None
+        self.website_jobs_found_session = 0
         self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
@@ -176,7 +185,33 @@ class GengoWatcher:
                 status[name] = "alive"
             else:
                 status[name] = "dead"
+        status["email_detail"] = self.email_monitor_status
+        status["website_detail"] = self.website_monitor_status
         return status
+
+    def _sync_monitor_metrics(self):
+        """Sync metrics from email and website monitors."""
+        if hasattr(self, "_email_monitor") and self._email_monitor:
+            self.email_monitor_status = getattr(
+                self._email_monitor, "status", "Disabled"
+            )
+            self.email_last_check_time = getattr(
+                self._email_monitor, "last_check_time", None
+            )
+            self.email_jobs_found_session = getattr(
+                self._email_monitor, "jobs_found_session", 0
+            )
+
+        if hasattr(self, "_website_monitor") and self._website_monitor:
+            self.website_monitor_status = getattr(
+                self._website_monitor, "status", "Disabled"
+            )
+            self.website_last_check_time = getattr(
+                self._website_monitor, "last_check_time", None
+            )
+            self.website_jobs_found_session = getattr(
+                self._website_monitor, "jobs_found_session", 0
+            )
 
     def _setup_csv_logging(self):
         """
