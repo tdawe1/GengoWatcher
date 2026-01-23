@@ -66,6 +66,10 @@ class EmailMonitor:
         self._seen_email_ids: set[str] = set()
         self._last_token_refresh: float = 0
         self._access_token: str = ""
+        self.status = "Disabled"  # IDLE/Polling/Connecting/Error/Disabled
+        self.last_check_time: Optional[float] = None
+        self.jobs_found_session = 0
+        self.emails_processed_session = 0
 
     def _get_session_cookie(self) -> Optional[str]:
         """Get Gengo session cookie from config (shared with WebSocket/Website monitors)."""
@@ -81,6 +85,7 @@ class EmailMonitor:
             return
 
         self.logger.info("Starting email monitor")
+        self.status = "Connecting"
 
         while not self.shutdown_event.is_set():
             try:
@@ -88,6 +93,7 @@ class EmailMonitor:
                 await self._connect_and_monitor()
             except Exception as e:
                 self.logger.error(f"Email monitor error: {e}")
+                self.status = "Error"
                 await asyncio.sleep(30)
 
     async def _ensure_valid_token(self):
@@ -165,6 +171,7 @@ class EmailMonitor:
 
         while not self.shutdown_event.is_set():
             try:
+                self.status = "IDLE"
                 # Check if token needs refresh before entering IDLE
                 await self._ensure_valid_token()
 
@@ -220,6 +227,7 @@ class EmailMonitor:
                 raise
             except Exception as e:
                 self.logger.error(f"IDLE error: {e}")
+                self.status = "Error"
                 await asyncio.sleep(poll_interval)
 
     async def _poll_loop(self):
@@ -228,9 +236,11 @@ class EmailMonitor:
 
         while not self.shutdown_event.is_set():
             try:
+                self.status = "Polling"
                 await self._check_new_emails()
             except Exception as e:
                 self.logger.error(f"Poll error: {e}")
+                self.status = "Error"
 
             await asyncio.sleep(poll_interval)
 
@@ -255,6 +265,7 @@ class EmailMonitor:
             self.config.get("EmailMonitor", "from_filter") or "no-reply@gengo.com"
         )
         search_criteria = f'(FROM "{from_filter}" UNSEEN)'
+        self.last_check_time = time.time()
 
         # Use UID search for reliability across mailbox changes
         _, message_data = await asyncio.to_thread(
@@ -297,6 +308,7 @@ class EmailMonitor:
             self.logger.debug(f"Pruned seen emails set to {keep_count} entries")
 
     async def _process_email(self, msg: email.message.Message):
+        self.emails_processed_session += 1
         subject = self._decode_header(msg.get("Subject", ""))
         self.logger.debug(f"Processing email: {subject}")
 
@@ -347,6 +359,7 @@ class EmailMonitor:
                     job_id = job_match.group(1)
                     job_url = f"https://gengo.com/t/jobs/details/{job_id}"
                     self.logger.info(f"Found job from email: {job_id}")
+                    self.jobs_found_session += 1
 
                     await self.job_callback(
                         job_id,
@@ -454,6 +467,14 @@ class EmailMonitor:
 
         return "\n".join(body_parts)
 
+    def get_status_info(self) -> dict:
+        return {
+            "status": self.status,
+            "last_check": self.last_check_time,
+            "jobs_found": self.jobs_found_session,
+            "emails_processed": self.emails_processed_session,
+        }
+
     async def stop(self):
         if self._imap:
             try:
@@ -462,4 +483,5 @@ class EmailMonitor:
             except Exception:
                 pass
             self._imap = None
+        self.status = "Stopped"
         self.logger.info("Email monitor stopped")
