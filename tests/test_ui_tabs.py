@@ -33,14 +33,19 @@ def create_mock_app():
     mock_watcher.website_jobs_found_session = 0
 
     mock_config = MagicMock()
-    mock_config.get.return_value = "test_value"
     mock_config.getboolean.return_value = True
-    # Add attributes for ConfigPreview
-    mock_config.source_lang = "JA"
-    mock_config.target_lang = "EN"
-    mock_config.min_reward = 10.0
-    mock_config.check_interval = 30
-    mock_config.autoaccept_enabled = True
+
+    # Mock the get() method for ConfigPreview - returns section/key specific values
+    def mock_get(section, key):
+        config_values = {
+            ("Watcher", "check_interval"): 30,
+            ("Watcher", "min_reward"): 10.0,
+            ("AutoAccept", "enabled"): True,
+            ("WebSocket", "enable_websocket"): True,
+        }
+        return config_values.get((section, key), "test_value")
+
+    mock_config.get.side_effect = mock_get
 
     mock_state = MagicMock()
     mock_state.total_new_entries_found = 42
