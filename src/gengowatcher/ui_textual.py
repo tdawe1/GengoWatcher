@@ -145,6 +145,37 @@ class StatsSparkline(Static):
         return result
 
 
+class TitleBar(Static):
+    """Branded title bar with session timer and clock."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._start_time = time.time()
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            yield Static("◆ GENGOWATCHER v2.0", classes="brand")
+            yield Static("", id="session-time", classes="session-time")
+            yield Static("", id="clock", classes="clock")
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self._update_time)
+        self._update_time()
+
+    def _update_time(self) -> None:
+        # Session duration
+        elapsed = int(time.time() - self._start_time)
+        hours, remainder = divmod(elapsed, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        session_str = f"Session: {hours}h {minutes:02d}m {seconds:02d}s"
+        self.query_one("#session-time", Static).update(session_str)
+
+        # Current time
+        now = datetime.datetime.now()
+        clock_str = now.strftime("%a %b %d  %H:%M:%S %Z")
+        self.query_one("#clock", Static).update(clock_str)
+
+
 class JobsChart(Static):
     """Real-time chart showing jobs found over time."""
 
