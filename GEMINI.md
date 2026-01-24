@@ -22,7 +22,7 @@ Key features include:
     *   `websockets`: For WebSocket communication
     *   `fastapi`: For the optional web API
     *   `uvicorn`: For running the FastAPI server
-    *   `selenium`/`playwright`: For browser automation
+    *   `playwright`: For browser automation
 *   **Configuration:** The application uses a `config.ini` file for configuration.
 *   **Entry Point:** `src/gengowatcher/main.py`
 
