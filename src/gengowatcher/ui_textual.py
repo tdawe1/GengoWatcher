@@ -176,6 +176,67 @@ class TitleBar(Static):
         self.query_one("#clock", Static).update(clock_str)
 
 
+class MetricCard(Static):
+    """Individual metric display card with accent border."""
+
+    def __init__(self, label: str, value: str = "0", card_class: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._label = label
+        self._value = value
+        if card_class:
+            self.add_class(card_class)
+
+    def compose(self) -> ComposeResult:
+        # Sanitize label for ID usage
+        sanitized_label = "".join(
+            c for c in self._label.lower() if c.isalnum() or c == "-"
+        )
+        yield Static(
+            self._value, classes="metric-value", id=f"metric-{sanitized_label}-value"
+        )
+        yield Static(self._label, classes="metric-label")
+
+    def update_value(self, value: str) -> None:
+        """Update the displayed metric value."""
+        self._value = value
+        try:
+            self.query_one(".metric-value", Static).update(value)
+        except Exception:
+            pass  # Widget may not be mounted yet
+
+
+class MetricsRow(Horizontal):
+    """Container for the 5 metric cards."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__(**kwargs)
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield MetricCard("Found", "0", card_class="found", id="card-found")
+        yield MetricCard("Accepted", "0", card_class="accepted", id="card-accepted")
+        yield MetricCard("Value", "$0.00", card_class="value", id="card-value")
+        yield MetricCard("Rate", "0/hr", card_class="rate", id="card-rate")
+        yield MetricCard("Min/Word", "$0.00", card_class="minword", id="card-minword")
+
+    def refresh_metrics(self) -> None:
+        """Update all metric values from state."""
+        jobs = self._state.get_recent_jobs(limit=1000)
+        found = len(jobs)
+        accepted = sum(1 for j in jobs if j.get("accepted", False))
+        total_value = sum(j.get("reward", 0) for j in jobs)
+
+        self.query_one("#card-found", MetricCard).update_value(str(found))
+        self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
+        self.query_one("#card-value", MetricCard).update_value(f"${total_value:.2f}")
+
+        # Calculate rate (jobs per hour based on session time)
+        # Simplified: use state's sparkline data length as proxy
+        sparkline_len = len(self._state.sparkline_data)
+        rate = found / max(sparkline_len / 60, 1) if sparkline_len > 0 else 0
+        self.query_one("#card-rate", MetricCard).update_value(f"~{rate:.1f}/hr")
+
+
 class JobsChart(Static):
     """Real-time chart showing jobs found over time."""
 
