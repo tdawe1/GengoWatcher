@@ -35,6 +35,12 @@ def create_mock_app():
     mock_config = MagicMock()
     mock_config.get.return_value = "test_value"
     mock_config.getboolean.return_value = True
+    # Add attributes for ConfigPreview
+    mock_config.source_lang = "JA"
+    mock_config.target_lang = "EN"
+    mock_config.min_reward = 10.0
+    mock_config.check_interval = 30
+    mock_config.autoaccept_enabled = True
 
     mock_state = MagicMock()
     mock_state.total_new_entries_found = 42
@@ -62,11 +68,12 @@ async def test_main_tabs_exist():
 
         # Check tab panes exist
         tab_ids = [pane.id for pane in pilot.app.query("TabPane")]
-        assert "dashboard" in tab_ids
-        assert "jobs" in tab_ids
-        assert "activity" in tab_ids
-        assert "output" in tab_ids
-        assert "charts" in tab_ids
+        assert "dashboard-tab" in tab_ids
+        assert "jobs-tab" in tab_ids
+        assert "activity-tab" in tab_ids
+        assert "output-tab" in tab_ids
+        assert "charts-tab" in tab_ids
+        assert "stats-tab" in tab_ids
 
 
 @pytest.mark.asyncio
@@ -75,33 +82,42 @@ async def test_tab_switching_with_keys():
     app = create_mock_app()
 
     async with app.run_test() as pilot:
+        # Ensure input doesn't capture keys
+        pilot.app.set_focus(None)
+
         tabbed = pilot.app.query_one("#main-tabs")
 
         # Default should be dashboard
-        assert tabbed.active == "dashboard"
+        assert tabbed.active == "dashboard-tab"
 
         # Press 2 for Jobs
         await pilot.press("2")
-        assert tabbed.active == "jobs"
+        assert tabbed.active == "jobs-tab"
 
         # Press 3 for Activity
         await pilot.press("3")
-        assert tabbed.active == "activity"
+        assert tabbed.active == "activity-tab"
+
+        # Press 6 for Stats
+        await pilot.press("6")
+        assert tabbed.active == "stats-tab"
 
         # Press 1 to go back to Dashboard
         await pilot.press("1")
-        assert tabbed.active == "dashboard"
+        assert tabbed.active == "dashboard-tab"
 
 
 @pytest.mark.asyncio
 async def test_dashboard_contains_panels():
-    """Verify Dashboard tab contains RuntimeStatusPanel and HeaderPanel."""
+    """Verify Dashboard tab contains new preview panels."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
         # Should be on dashboard by default
-        runtime = pilot.app.query_one("#runtime-panel")
-        header = pilot.app.query_one("#header-panel")
+        activity = pilot.app.query_one("#activity-preview")
+        jobs = pilot.app.query_one("#jobs-preview")
+        config = pilot.app.query_one("#config-preview")
 
-        assert runtime is not None
-        assert header is not None
+        assert activity is not None
+        assert jobs is not None
+        assert config is not None
