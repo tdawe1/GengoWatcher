@@ -1428,9 +1428,8 @@ class GengoWatcherApp(App):
         # Wire Python logging to Debug panel
         self._log_handler = TextualLogHandler(self)
         self._log_handler.setLevel(logging.DEBUG)
-        # Add handler to watcher's logger and root logger
+        # Add handler only to watcher's logger (not root, to avoid duplicate logs)
         self.watcher.logger.addHandler(self._log_handler)
-        logging.getLogger().addHandler(self._log_handler)
 
         # Write startup message to debug log
         debug_log = self.query_one("#debug-log", RichLog)
