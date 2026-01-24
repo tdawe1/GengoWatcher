@@ -171,7 +171,7 @@ jobs:
               .sort()
 
             // Parse out the triaged issues
-            const triagedIssues = (JSON.parse(process.env.TRIAGED_ISSUES || '{}'))
+            const triagedIssues = (JSON.parse(process.env.TRIAGED_ISSUES || '[]'))
               .sort((a, b) => a.issue_number - b.issue_number)
 
             core.debug(`Triaged issues: ${JSON.stringify(triagedIssues)}`);
