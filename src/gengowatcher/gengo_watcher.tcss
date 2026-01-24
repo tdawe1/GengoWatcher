@@ -21,6 +21,19 @@ $success: #98BB6C;              /* springGreen */
 $warning: #DCA561;              /* autumnYellow */
 $error: #C34043;                /* autumnRed */
 
+/* ── Visual Hierarchy Depths ──────────────────────────────────────────── */
+$depth-0: #16161D;              /* Deepest - screen background */
+$depth-1: #1F1F28;              /* Main surface - tab panes */
+$depth-2: #2A2A37;              /* Elevated - cards, panels */
+$depth-3: #363646;              /* Borders, separators */
+
+/* ── Card Accent Colors ────────────────────────────────────────────────── */
+$card-found: #7E9CD8;           /* primary - blue */
+$card-accepted: #98BB6C;        /* success - green */
+$card-value: #DCA561;           /* warning - yellow */
+$card-rate: #7AA89F;            /* accent - aqua */
+$card-minword: #957FB8;         /* secondary - violet */
+
 /* ── Text Colors ───────────────────────────────────────────────────────── */
 $text: #DCD7BA;                 /* fujiWhite - primary text */
 $text-muted: #727169;           /* fujiGray - muted text */
@@ -310,4 +323,173 @@ ScrollBar > .scrollbar--thumb {
 /* Ensure main-tabs fills space */
 #main-tabs {
     height: 1fr;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TITLE BAR
+   ══════════════════════════════════════════════════════════════════════════ */
+
+TitleBar {
+    height: 3;
+    background: $depth-2;
+    border-left: tall $primary;
+    padding: 0 2;
+}
+
+TitleBar .brand {
+    color: $primary;
+    text-style: bold;
+}
+
+TitleBar .session-time {
+    color: $text;
+}
+
+TitleBar .clock {
+    color: $text-muted;
+    text-align: right;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   METRIC CARDS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+MetricsRow {
+    height: 5;
+    padding: 0 1;
+    align: center middle;
+}
+
+MetricCard {
+    width: 14;
+    height: 3;
+    background: $depth-2;
+    border: round $depth-3;
+    padding: 0 1;
+    margin: 0 1;
+}
+
+MetricCard.found { border-left: tall $card-found; }
+MetricCard.accepted { border-left: tall $card-accepted; }
+MetricCard.value { border-left: tall $card-value; }
+MetricCard.rate { border-left: tall $card-rate; }
+MetricCard.minword { border-left: tall $card-minword; }
+
+MetricCard .metric-value {
+    color: $text;
+    text-style: bold;
+}
+
+MetricCard .metric-label {
+    color: $text-muted;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STATUS ROW
+   ══════════════════════════════════════════════════════════════════════════ */
+
+StatusRow {
+    height: 1;
+    padding: 0 2;
+    background: $depth-1;
+}
+
+StatusIndicator {
+    width: auto;
+    margin-right: 3;
+}
+
+StatusIndicator .status-icon {
+    margin-right: 1;
+}
+
+StatusIndicator .status-live { color: $success; }
+StatusIndicator .status-working { color: $warning; }
+StatusIndicator .status-error { color: $error; }
+StatusIndicator .status-idle { color: $text-muted; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DASHBOARD QUADRANTS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.dashboard-grid {
+    layout: grid;
+    grid-size: 2 2;
+    grid-gutter: 1;
+    padding: 1;
+}
+
+DashboardQuadrant {
+    background: $depth-2;
+    border: round $depth-3;
+    padding: 0 1;
+}
+
+DashboardQuadrant.activity { border-left: tall $success; }
+DashboardQuadrant.jobs-preview { border-left: tall $primary; }
+DashboardQuadrant.chart { border-left: tall $accent; }
+DashboardQuadrant.config { border-left: tall $secondary; }
+
+DashboardQuadrant .quadrant-title {
+    color: $text;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STATS PANEL
+   ══════════════════════════════════════════════════════════════════════════ */
+
+StatsPanel {
+    padding: 1;
+}
+
+.stats-grid {
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1;
+}
+
+.stats-section {
+    background: $depth-2;
+    border: round $depth-3;
+    padding: 1;
+}
+
+.stats-section.session { border-left: tall $primary; }
+.stats-section.alltime { border-left: tall $secondary; }
+.stats-section.source { border-left: tall $accent; }
+.stats-section.language { border-left: tall $warning; }
+.stats-section.times { border-left: tall $success; }
+
+.stats-section .section-title {
+    color: $text;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+.stats-row {
+    height: 1;
+}
+
+.stats-label {
+    color: $text-muted;
+    width: 16;
+}
+
+.stats-value {
+    color: $text;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 1;
+}
+
+.progress-bar .bar-fill {
+    background: $primary;
+}
+
+.progress-bar .bar-empty {
+    background: $depth-3;
 }
