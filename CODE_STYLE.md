@@ -5,16 +5,17 @@
 - **Python classes**: `CamelCase` (examples: `GengoWatcher`, `AppConfig`, `JobAcceptanceEngine`).
 - **Python functions/vars**: `snake_case` (examples: `fetch_rss`, `session_new_entries`).
 - **Constants**: `UPPER_SNAKE_CASE` (examples: `DEFAULT_CONFIG`, `PLACEHOLDER_CONFIG_VALUES`).
-- **CSS classes**: `kebab-case` in `.tcss` files (examples: `.metric-card`, `.status-indicator`).
+- **Frontend**: React component files use `PascalCase.tsx` or `camelCase` per Vite defaults (see `frontend/src/`).
 
 ## File Organization
 - Core runtime logic lives under `src/gengowatcher/` with modules grouped by domain:
-  - Config/state: `src/gengowatcher/config.py`, `src/gengowatcher/state.py`, `src/gengowatcher/stats.py`
-  - Watcher + monitors: `src/gengowatcher/watcher.py`, `src/gengowatcher/email_monitor.py`, `src/gengowatcher/website_monitor.py`
+  - Config/state: `src/gengowatcher/config.py`, `src/gengowatcher/state.py`
+  - Watcher + monitors: `src/gengowatcher/watcher.py`, `src/gengowatcher/websocket_monitor.py` (if present)
   - Automation/acceptance: `src/gengowatcher/job_acceptance.py`, `src/gengowatcher/captcha_manager.py`
   - Web API: `src/gengowatcher/web.py`
-  - TUI: `src/gengowatcher/ui_textual.py`, `src/gengowatcher/main.py`, `src/gengowatcher/gengo_watcher.tcss`
-- Tests are under `tests/` (pytest).
+  - TUI: `src/gengowatcher/ui_textual.py`, `src/gengowatcher/main.py`
+- Frontend lives under `frontend/` and builds to `static/web/` via `frontend/vite.config.ts`.
+- Tests are under `tests/` (pytest) and `frontend/src/**.test.tsx` (Vitest).
 
 ## Import Style
 - Standard library imports first, then third-party, then local module imports.

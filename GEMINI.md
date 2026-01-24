@@ -1,6 +1,6 @@
 # GengoWatcher
 
-## Project Overview
+## Project Overviewgit pull origin feat/dashboard-visual-overhaul
 
 GengoWatcher is a Python application designed to monitor freelance job postings from Gengo. It uses a multi-source approach, fetching jobs from RSS feed, real-time WebSocket connection, email notifications (Gmail IMAP with OAuth2), and website scraping (Playwright stealth). The application features a text-based user interface (TUI) built with Textual for real-time monitoring and an optional FastAPI web server for external integrations.
 

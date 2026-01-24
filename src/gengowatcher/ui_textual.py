@@ -1444,6 +1444,8 @@ class GengoWatcherApp(App):
             self.query_one("#metrics-row", MetricsRow).refresh_metrics()
             self.query_one("#status-row", StatusRow).refresh_status()
             self.query_one("#jobs-preview", JobsPreview).refresh_jobs()
+            self.query_one("#runtime-panel", RuntimeStatusPanel).refresh_status()
+            self.query_one("#status-bar", StatusBar).refresh_status()
         except Exception:
             pass
 
