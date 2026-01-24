@@ -46,11 +46,11 @@ class TextualLogHandler(logging.Handler):
 
     # Color map for log levels (Kanagawa Wave theme)
     LEVEL_COLORS = {
-        logging.DEBUG: "#727169",  # muted gray
-        logging.INFO: "#7dcfff",  # info blue
-        logging.WARNING: "#DCA561",  # warning orange
-        logging.ERROR: "#C34043",  # error red
-        logging.CRITICAL: "#C34043",  # critical red (bold)
+        logging.DEBUG: "#727169",  # fujiGray - muted
+        logging.INFO: "#7FB4CA",  # springBlue - info
+        logging.WARNING: "#DCA561",  # autumnYellow - warning
+        logging.ERROR: "#C34043",  # autumnRed - error
+        logging.CRITICAL: "#E82424",  # samuraiRed - critical
     }
 
     def __init__(self, app: "GengoWatcherApp"):
@@ -65,7 +65,7 @@ class TextualLogHandler(logging.Handler):
         """Emit a log record to the debug panel."""
         try:
             msg = self.format(record)
-            color = self.LEVEL_COLORS.get(record.levelno, "#7dcfff")
+            color = self.LEVEL_COLORS.get(record.levelno, "#7FB4CA")
             formatted = f"[{color}]{msg}[/]"
             self._buffer.append(formatted)
             # Schedule write on main thread
@@ -470,7 +470,7 @@ class ActivityPreview(DashboardQuadrant):
         # Color by level
         colors = {
             "debug": "#565f89",
-            "info": "#7dcfff",
+            "info": "#7FB4CA",
             "success": "#98bb6c",
             "warning": "#e0af68",
             "error": "#f7768e",
@@ -536,7 +536,7 @@ class ConfigPreview(DashboardQuadrant):
 
         # Build Rich formatted content
         lines = [
-            f"[#7dcfff]Interval:[/] {check_interval}s",
+            f"[#7FB4CA]Interval:[/] {check_interval}s",
             f"[#98bb6c]Min $:[/] ${float(min_reward):.2f}",
             f"[#e0af68]Auto:[/] {'[#98bb6c]On[/]' if autoaccept_enabled else '[#f7768e]Off[/]'}",
             f"[#957fb8]WS:[/] {'[#98bb6c]On[/]' if ws_enabled else '[#f7768e]Off[/]'}",
@@ -770,7 +770,7 @@ class HeaderPanel(Static):
         table.add_column(justify="left")
 
         table.add_row(
-            "Feed URL:", f"[#7dcfff]{self.config.get('Watcher', 'feed_url')}[/]"
+            "Feed URL:", f"[#7FB4CA]{self.config.get('Watcher', 'feed_url')}[/]"
         )
         table.add_row(
             "Check Interval:",
@@ -1054,7 +1054,7 @@ class StatusBar(Static):
             ws_status_text, ws_status_color = ("Dead", "#f7768e")
 
         rss_status = self.watcher.rss_action
-        rss_color = "#7dcfff"
+        rss_color = "#7FB4CA"
         if monitor_status.get("rss") == "dead":
             rss_status, rss_color = ("Dead", "#f7768e")
 
@@ -1370,7 +1370,7 @@ class GengoWatcherApp(App):
 
         # Write startup message to debug log
         debug_log = self.query_one("#debug-log", RichLog)
-        debug_log.write("[#7dcfff]Debug log initialized - showing all app logs[/]")
+        debug_log.write("[#7FB4CA]Debug log initialized - showing all app logs[/]")
 
         # Load recent jobs from state or CSV
         try:
@@ -1523,7 +1523,7 @@ class GengoWatcherApp(App):
 
             # Show output in command response box
             if cmd_response:
-                cmd_response.write(f"[#7dcfff]> {command_str}[/]")
+                cmd_response.write(f"[#7FB4CA]> {command_str}[/]")
                 if output:
                     if hasattr(output, "__rich__") or hasattr(
                         output, "__rich_console__"
