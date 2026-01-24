@@ -21,7 +21,6 @@ import feedparser
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatusCode
 
-from .captcha_manager import CaptchaSolverManager
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
@@ -122,32 +121,10 @@ class GengoWatcher:
         if self.config.get("Logging", "log_all_entries_enabled"):
             self._setup_csv_logging()
 
-        # Initialize CAPTCHA solver
-        self.captcha_solver = CaptchaSolverManager(self.config.config, logger)
-
-        # Register alert callback for CAPTCHA monitoring
-        def captcha_alert_callback(service_name: str, level: str, message: str):
-            """Handle CAPTCHA service alerts"""
-            # Log the alert
-            getattr(self.logger, level.lower(), self.logger.info)(
-                f"CAPTCHA Alert [{service_name}]: {message}"
-            )
-
-            # Show notification for critical alerts
-            if level in ["ERROR", "CRITICAL"]:
-                self.show_notification(
-                    message,
-                    title=f"CAPTCHA Service Alert ({service_name})",
-                    play_sound=True,
-                )
-
-        self.captcha_solver.monitor.add_alert_callback(captcha_alert_callback)
-
-        # Initialize job acceptance engine
+        # Initialize job acceptance engine (without CAPTCHA support)
         self.job_acceptance_engine = JobAcceptanceEngine(
             config,
             logger,
-            self.captcha_solver,
         )
 
         # Initialize job cancellation manager
@@ -156,22 +133,6 @@ class GengoWatcher:
         self._configure_cancellation_manager()
 
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
-
-    def start_captcha_monitoring(self, interval: int = 300):
-        """Start monitoring CAPTCHA service health and performance"""
-        self.captcha_solver.start_monitoring(interval)
-
-    def stop_captcha_monitoring(self):
-        """Stop monitoring CAPTCHA service health and performance"""
-        self.captcha_solver.stop_monitoring()
-
-    def show_captcha_health_status(self):
-        """Show current CAPTCHA service health status"""
-        self.captcha_solver.monitor.log_health_status()
-
-    def show_captcha_performance_metrics(self):
-        """Show CAPTCHA service performance metrics"""
-        self.captcha_solver.monitor.log_performance_metrics()
 
     def get_monitor_status(self) -> dict:
         """
@@ -1366,17 +1327,6 @@ class GengoWatcher:
 
         return True
 
-    def get_captcha_stats(self):
-        """Get CAPTCHA solver statistics"""
-        if self.captcha_solver.is_configured():
-            return {
-                "configured": True,
-                "balance": self.captcha_solver.get_balance(),
-                "stats": self.captcha_solver.get_stats(),
-            }
-        else:
-            return {"configured": False, "balance": 0.0, "stats": {}}
-
     def get_job_acceptance_stats(self):
         """Get job acceptance engine statistics"""
         if hasattr(self, "job_acceptance_engine"):
@@ -1404,34 +1354,6 @@ class GengoWatcher:
             "[bold green]Test job notification sent. Please check your system notifications.[/bold green]"
         )
 
-    def handle_job_rejection(self, job_data: dict):
-        """Handle job rejection that might require CAPTCHA solving"""
-        self.logger.info(f"Handling job rejection for job ID: {job_data.get('id')}")
-
-        # Check if CAPTCHA solver is configured
-        if not self.captcha_solver.is_configured():
-            self.logger.warning(
-                "CAPTCHA solver not configured, cannot handle job rejection"
-            )
-            return False
-
-        # Let the CAPTCHA manager handle the rejection
-        success = self.captcha_solver.handle_job_rejection(job_data)
-
-        if success:
-            self.logger.info(
-                f"Successfully handled CAPTCHA for rejected job {job_data.get('id')}"
-            )
-            # Here you would implement logic to resubmit the job or notify the user
-            # For example:
-            # self._resubmit_job(job_data)
-        else:
-            self.logger.error(
-                f"Failed to handle CAPTCHA for rejected job {job_data.get('id')}"
-            )
-
-        return success
-
     def handle_exit(self):
         """Handle application exit"""
         if getattr(self, "_shutdown_initiated", False):
@@ -1455,16 +1377,6 @@ class GengoWatcher:
                 self.logger.exception(
                     "Failed to %s during shutdown: %s", description, error
                 )
-
-        if getattr(self, "captcha_solver", None):
-            try:
-                self.captcha_solver.stop_monitoring()
-            except Exception as error:
-                self.logger.exception("Failed to stop CAPTCHA monitoring: %s", error)
-            try:
-                self.captcha_solver.close()
-            except Exception as error:
-                self.logger.exception("Failed to close CAPTCHA solver: %s", error)
 
         if getattr(self, "job_acceptance_engine", None) and hasattr(
             self.job_acceptance_engine, "close_session"

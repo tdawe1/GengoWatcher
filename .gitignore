@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+pytest-of-*/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Application files (user-specific)
+config.ini
+config.ini.new
+state.json
+*.pause
+token.json
+credentials.json
+
+# Archives (keep structure, ignore contents)
+archives/logs-*/
+
+# Temporary / Session files
+.tmp/
+
+# Legacy files
+gengo_rss_log.txt
+rss_check_log.txt
+all_entries_log.txt
+flake8-report.txt
+*.spec
+MagicMock/
+
+# Build artifacts
+*.exe
+*.dmg
+*.app
+
+# Firebase
+firebase-debug.log
+
+# OS files
+.DS_Store
+Thumbs.db
