@@ -6,6 +6,17 @@ import threading
 from typing import Any, Dict, List, Optional
 
 
+# Values that indicate a config field has not been properly configured
+PLACEHOLDER_CONFIG_VALUES = [
+    "REPLACE_WITH_YOUR_SESSION_TOKEN",
+    "REPLACE_WITH_YOUR_USER_KEY",
+    "REPLACE_WITH_YOUR_WEB_API_TOKEN",
+    "",
+    0,
+    "0",
+]
+
+
 class AppConfig:
     CONFIG_FILE = "config.ini"
     DEFAULT_CONFIG = {
@@ -281,6 +292,26 @@ class AppConfig:
                     self._config_parser.write(f)
             except IOError as e:
                 print(f"Error saving config: {e}")
+
+    def list_all(self) -> Dict[str, Dict[str, Any]]:
+        """Return all config values as a nested dictionary.
+
+        Returns:
+            Dict with section names as keys, containing dicts of option:value pairs
+        """
+        with self._lock:
+            return {section: dict(options) for section, options in self.config.items()}
+
+    def is_placeholder(self, value: Any) -> bool:
+        """Check if a value is a placeholder that needs user configuration.
+
+        Args:
+            value: The config value to check
+
+        Returns:
+            True if the value is a placeholder, False otherwise
+        """
+        return value in PLACEHOLDER_CONFIG_VALUES
 
     def getboolean(
         self, section: str, key: str, fallback: Optional[bool] = None
