@@ -26,6 +26,7 @@ DEBUG_CATEGORIES = [
     "system",
     "email",
     "website",
+    "raw",
 ]
 
 CATEGORY_KEYWORDS = {
@@ -111,6 +112,86 @@ class UILoggingHandler(logging.Handler):
         self.log_queue.append(Text.from_markup(message, style=style))
 
 
+def handle_cli_config_commands(args, config: AppConfig, console: Console) -> bool:
+    """Handle CLI config commands using AppConfig directly.
+
+    Returns True if a command was handled (and we should exit), False otherwise.
+    """
+    if args.set:
+        section, option, value = args.set
+        # Parse boolean/int values
+        if value.lower() in ("true", "false"):
+            value = value.lower() == "true"
+        elif value.isdigit():
+            value = int(value)
+        config.set(section, option, value)
+        config.save_config()
+        print(f"Set [{section}] {option} = {value}")
+        return True
+
+    if args.get:
+        section, option = args.get
+        value = config.get(section, option)
+        print(f"[{section}] {option} = {value}")
+        return True
+
+    if args.list:
+        all_values = config.list_all()
+        for section, options in all_values.items():
+            print(f"[{section}]")
+            for option, value in options.items():
+                print(f"  {option} = {value}")
+        return True
+
+    if args.configure:
+        # Interactive configuration - needs special handling
+        _interactive_configure(config, console)
+        return True
+
+    return False
+
+
+def _interactive_configure(config: AppConfig, console: Console):
+    """Interactively prompt for missing/placeholder config values."""
+    from .config import PLACEHOLDER_CONFIG_VALUES
+
+    console.print("[title]GengoWatcher Configuration[/]")
+    console.print(
+        "Enter values for the following settings (or press Enter to keep current):\n"
+    )
+
+    required_fields = [
+        ("Credentials", "user_id", "Your Gengo user ID"),
+        ("Credentials", "user_key", "Your Gengo API key (optional)"),
+        ("Credentials", "session_token", "Your session token from browser cookies"),
+    ]
+
+    for section, option, description in required_fields:
+        current = config.get(section, option)
+        is_placeholder = current in PLACEHOLDER_CONFIG_VALUES
+
+        if is_placeholder:
+            prompt_text = f"[label]{description}[/] [warning](required)[/]: "
+        else:
+            # Mask sensitive values
+            masked = str(current)[:4] + "..." if len(str(current)) > 8 else str(current)
+            prompt_text = f"[label]{description}[/] [{masked}]: "
+
+        console.print(prompt_text, end="")
+        new_value = input().strip()
+
+        if new_value:
+            config.set(section, option, new_value)
+            console.print(f"  [success]✓ Updated[/]")
+        elif is_placeholder:
+            console.print(f"  [warning]⚠ Keeping placeholder value[/]")
+        else:
+            console.print(f"  [info]Kept existing value[/]")
+
+    config.save_config()
+    console.print("\n[success]Configuration saved![/]")
+
+
 def main():
     parser = argparse.ArgumentParser(description="GengoWatcher CLI")
     parser.add_argument(
@@ -157,6 +238,26 @@ def main():
     args, unknown = parser.parse_known_args()
 
     console = Console(theme=APP_THEME)
+
+    # =========================================================================
+    # LIGHTWEIGHT CONFIG COMMANDS - No GengoWatcher initialization required
+    # =========================================================================
+    # Handle config commands BEFORE initializing the heavy GengoWatcher instance.
+    # This allows CLI config operations to work even if another watcher is running.
+
+    if args.set or args.get or args.list or args.configure:
+        try:
+            config = AppConfig()
+            if handle_cli_config_commands(args, config, console):
+                sys.exit(0)
+        except Exception as e:
+            console.print(f"[error]Configuration error: {e}[/]")
+            sys.exit(1)
+
+    # =========================================================================
+    # FULL WATCHER INITIALIZATION - Only for running the main application
+    # =========================================================================
+
     log = logging.getLogger("gengowatcher")
     log.setLevel(logging.DEBUG)
     ui_handler = UILoggingHandler()
@@ -196,27 +297,6 @@ def main():
                 f"[error]A critical error occurred during initialization: {e}[/]"
             )
         sys.exit(1)
-
-    if args.set:
-        section, option, value = args.set
-        watcher.set_config_value(section, option, value)
-        print(f"Set [{section}] {option} = {value}")
-        sys.exit(0)
-    if args.get:
-        section, option = args.get
-        value = watcher.get_config_value(section, option)
-        print(f"[{section}] {option} = {value}")
-        sys.exit(0)
-    if args.list:
-        all_values = watcher.list_config_values()
-        for section, options in all_values.items():
-            print(f"[{section}]")
-            for option, value in options.items():
-                print(f"  {option} = {value}")
-        sys.exit(0)
-    if args.configure:
-        watcher.prompt_for_config_values()
-        sys.exit(0)
 
     if args.setup_email:
         try:
