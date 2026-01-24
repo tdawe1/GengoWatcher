@@ -769,6 +769,9 @@ class GengoWatcher:
                         self.logger.debug(
                             "WebSocket: No message received immediately after authentication (this is normal)."
                         )
+                        self._capture_raw_ws_message(
+                            "TIMEOUT: No initial message from server", direction="recv"
+                        )
                     except Exception as e:
                         self.logger.warning(
                             f"WebSocket: Error receiving first message: {e}"
