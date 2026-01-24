@@ -72,7 +72,7 @@ def setup_website_interactive(config: AppConfig, logger=None) -> bool:
     log("The URL to monitor for new jobs. Usually: https://gengo.com/t/jobs/\n")
 
     while True:
-        jobs_url = input(f"Enter jobs URL (Enter to keep current): ").strip()
+        jobs_url = input("Enter jobs URL (Enter to keep current): ").strip()
         if not jobs_url:
             jobs_url = current_url
             break
