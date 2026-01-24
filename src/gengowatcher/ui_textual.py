@@ -644,7 +644,7 @@ class GengoWatcherApp(App):
             "debug": {
                 "handler": self._handle_debug,
                 "aliases": ["d"],
-                "help": "Toggle debug category. Usage: d <category> or d list.",
+                "help": "Toggle debug category. Usage: d <category>, d raw [show|clear], d list.",
             },
             "setup-email": {
                 "handler": self._handle_setup_email,
@@ -1119,7 +1119,7 @@ class GengoWatcherApp(App):
         except Exception as e:
             self.watcher.logger.exception(f"Accept stats error: {e}")
 
-    def _handle_debug(self, args=None) -> None:
+    def _handle_debug(self, args=None) -> Table | None:
         categories = [
             "websocket",
             "rss",
@@ -1130,17 +1130,18 @@ class GengoWatcherApp(App):
             "system",
             "email",
             "website",
+            "raw",
         ]
 
         if not args:
             self._show_debug_status(categories)
-            return
+            return None
 
         arg = args[0].lower().strip() if args else ""
 
         if arg == "list":
             self._show_debug_status(categories)
-            return
+            return None
 
         if arg == "all":
             for cat in categories:
@@ -1148,7 +1149,7 @@ class GengoWatcherApp(App):
             self.config.save_config()
             self.watcher.logger.info("All debug categories enabled")
             self.notify("All debug enabled")
-            return
+            return None
 
         if arg == "none":
             for cat in categories:
@@ -1156,12 +1157,38 @@ class GengoWatcherApp(App):
             self.config.save_config()
             self.watcher.logger.info("All debug categories disabled")
             self.notify("All debug disabled")
-            return
+            return None
+
+        # Special handling for 'raw' - show buffered messages
+        if arg == "raw":
+            # Check for subcommand
+            if len(args) > 1:
+                subcmd = args[1].lower()
+                if subcmd == "show":
+                    return self._show_raw_ws_messages()
+                elif subcmd == "clear":
+                    self.watcher.clear_raw_ws_messages()
+                    self.watcher.logger.info("Raw WebSocket message buffer cleared")
+                    self.notify("Raw buffer cleared")
+                    return None
+
+            # Toggle raw mode
+            current = self.config.get("DebugCategories", "raw")
+            self.config.set("DebugCategories", "raw", not current)
+            self.config.save_config()
+            status = "enabled" if not current else "disabled"
+            self.watcher.logger.info(f"Raw WebSocket output {status}")
+            self.notify(f"Raw output: {status}")
+
+            # If enabling, show current buffer contents
+            if not current:
+                return self._show_raw_ws_messages()
+            return None
 
         if arg not in categories:
             self.watcher.logger.warning(f"Unknown category: {arg}")
             self.notify(f"Unknown: {arg}", severity="error")
-            return
+            return None
 
         current = self.config.get("DebugCategories", arg)
         self.config.set("DebugCategories", arg, not current)
@@ -1169,6 +1196,38 @@ class GengoWatcherApp(App):
         status = "enabled" if not current else "disabled"
         self.watcher.logger.info(f"Debug '{arg}' {status}")
         self.notify(f"Debug {arg}: {status}")
+        return None
+
+    def _show_raw_ws_messages(self) -> Table:
+        """Show raw WebSocket messages in a formatted table."""
+        messages = self.watcher.get_raw_ws_messages()
+
+        table = Table(
+            title="Raw WebSocket Messages",
+            show_header=True,
+            header_style="bold cyan",
+            expand=True,
+        )
+        table.add_column("Raw Output", style="white", no_wrap=False)
+
+        if not messages:
+            table.add_row("[dim]No messages captured yet.[/dim]")
+            table.add_row(
+                "[dim]Enable with 'd raw' and wait for WebSocket activity.[/dim]"
+            )
+        else:
+            for msg in messages:
+                table.add_row(msg)
+
+        # Add status footer
+        raw_enabled = self.config.get("DebugCategories", "raw")
+        status_text = "[green]ON[/green]" if raw_enabled else "[red]OFF[/red]"
+        table.add_row("")
+        table.add_row(
+            f"[dim]Raw capture: {status_text} | Buffer: {len(messages)}/50 | 'd raw clear' to clear[/dim]"
+        )
+
+        return table
 
     def _show_debug_status(self, categories) -> None:
         self.watcher.logger.info("Debug Categories:")
