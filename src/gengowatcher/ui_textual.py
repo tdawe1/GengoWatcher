@@ -14,7 +14,7 @@ from collections import deque
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, Container
 from textual.reactive import reactive
 from textual.widgets import (
     Footer,
@@ -1176,64 +1176,52 @@ class GengoWatcherApp(App):
         }
 
     def compose(self) -> ComposeResult:
-        """Compose the application layout."""
-        yield Static(
-            f"[bold]GengoWatcher[/] v{__version__}",
-            id="app-header",
-        )
+        """Create child widgets for the application."""
+        # Title Bar (replaces old header)
+        yield TitleBar(id="title-bar")
 
-        # Main tabbed content - primary navigation
-        with TabbedContent(initial="dashboard", id="main-tabs"):
-            # Dashboard tab - status overview
-            with TabPane("Dashboard", id="dashboard"):
-                with Vertical(id="dashboard-content"):
-                    runtime_panel = RuntimeStatusPanel(
-                        self.watcher, self.config, self.state, id="runtime-panel"
-                    )
-                    runtime_panel.border_title = "Runtime Status"
-                    yield runtime_panel
+        # Metrics Row
+        yield MetricsRow(self.state, id="metrics-row")
 
-                    header_panel = HeaderPanel(self.config, id="header-panel")
-                    header_panel.border_title = "Configuration"
-                    yield header_panel
+        # Status Row
+        yield StatusRow(self.watcher, id="status-row")
 
-            # Jobs tab - full-width jobs table
-            with TabPane("Jobs", id="jobs"):
+        # Main tabbed content
+        with TabbedContent(id="main-tabs"):
+            # Dashboard Tab (4 quadrants)
+            with TabPane("Dashboard", id="dashboard-tab"):
+                with Container(classes="dashboard-grid"):
+                    yield ActivityPreview(id="activity-preview")
+                    yield JobsChart(self.state, id="jobs-chart-mini")
+                    yield JobsPreview(self.state, id="jobs-preview")
+                    yield ConfigPreview(self.config, id="config-preview")
+
+            # Jobs Tab
+            with TabPane("Jobs", id="jobs-tab"):
                 yield JobsTable(id="jobs-table")
 
-            # Activity tab - activity log
-            with TabPane("Activity", id="activity"):
-                activity_log = RichLog(
-                    highlight=True,
-                    markup=True,
-                    auto_scroll=True,
-                    max_lines=1000,
-                    id="activity-log",
-                )
-                yield activity_log
+            # Activity Tab
+            with TabPane("Activity", id="activity-tab"):
+                yield RichLog(id="activity-log", highlight=True, markup=True, wrap=True)
 
-            # Output tab - command output
-            with TabPane("Output", id="output"):
-                output_log = RichLog(
-                    highlight=True,
-                    markup=True,
-                    auto_scroll=True,
-                    max_lines=500,
-                    id="output-log",
-                )
-                yield output_log
+            # Output Tab
+            with TabPane("Output", id="output-tab"):
+                yield RichLog(id="output-log", highlight=True, markup=True, wrap=True)
 
-            # Charts tab - real-time charts
-            with TabPane("Charts", id="charts"):
-                yield JobsChart(self.state, id="jobs-chart")
+            # Charts Tab
+            with TabPane("Charts", id="charts-tab"):
+                yield JobsChart(self.state, id="jobs-chart-full")
 
-        # Bottom status and input area
-        with Vertical(id="bottom-area"):
-            yield StatusBar(self.watcher, self.state, id="status-bar")
-            yield HistoryInput(
-                placeholder="Type command (h or ? for help)...", id="cmd-input"
-            )
+            # Stats Tab (NEW)
+            with TabPane("Stats", id="stats-tab"):
+                yield StatsPanel(self._stats_manager, id="stats-panel")
 
+        # Command Input
+        yield HistoryInput(
+            placeholder="Type command or press ? for help...", id="command-input"
+        )
+
+        # Footer
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1309,22 +1297,36 @@ class GengoWatcherApp(App):
     def _refresh_ui(self) -> None:
         """Refresh all dynamic UI elements."""
         try:
-            self.query_one("#runtime-panel", RuntimeStatusPanel).refresh_status()
-            self.query_one("#status-bar", StatusBar).refresh_status()
+            self.query_one("#metrics-row", MetricsRow).refresh_metrics()
+            self.query_one("#status-row", StatusRow).refresh_status()
+            self.query_one("#jobs-preview", JobsPreview).refresh_jobs()
         except Exception:
             pass
 
     def _drain_log_queue(self) -> None:
         """Drain log queue to activity log widget."""
         activity_log = self.query_one("#activity-log", RichLog)
+
+        # New activity preview widget
+        activity_preview = None
+        try:
+            activity_preview = self.query_one("#activity-preview", ActivityPreview)
+        except Exception:
+            pass
+
         with self._log_queue_lock:
             while self.log_queue:
                 try:
                     item = self.log_queue.popleft()
+                    # Write to main log
                     if hasattr(item, "__rich__") or hasattr(item, "__rich_console__"):
                         activity_log.write(item)
                     else:
                         activity_log.write(str(item))
+
+                    # Update preview
+                    if activity_preview:
+                        activity_preview.add_line(str(item))
                 except Exception:
                     break
 
@@ -1390,23 +1392,27 @@ class GengoWatcherApp(App):
 
     def action_tab_dashboard(self) -> None:
         """Switch to Dashboard tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "dashboard"
+        self.query_one("#main-tabs", TabbedContent).active = "dashboard-tab"
 
     def action_tab_jobs(self) -> None:
         """Switch to Jobs tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "jobs"
+        self.query_one("#main-tabs", TabbedContent).active = "jobs-tab"
 
     def action_tab_activity(self) -> None:
         """Switch to Activity tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "activity"
+        self.query_one("#main-tabs", TabbedContent).active = "activity-tab"
 
     def action_tab_output(self) -> None:
         """Switch to Output tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "output"
+        self.query_one("#main-tabs", TabbedContent).active = "output-tab"
 
     def action_tab_charts(self) -> None:
         """Switch to Charts tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "charts"
+        self.query_one("#main-tabs", TabbedContent).active = "charts-tab"
+
+    def action_tab_stats(self) -> None:
+        """Switch to Stats tab."""
+        self.query_one("#main-tabs", TabbedContent).active = "stats-tab"
 
     def action_show_help(self) -> None:
         """Show help modal."""
