@@ -516,10 +516,16 @@ class GengoWatcherApp(App):
         Binding("p", "pause", "Pause", show=True),
         Binding("r", "resume", "Resume", show=True),
         Binding("h", "help", "Help", show=True),
-        Binding("t", "toggle_runtime", "Toggle Stats", show=True),
+        Binding("t", "toggle_runtime", "Dashboard", show=True),
         Binding("question_mark", "show_help", "Help", key_display="?", show=False),
         Binding("ctrl+p", "command_palette", "Commands", show=True),
         Binding("ctrl+l", "clear_log", "Clear", show=False),
+        # Tab shortcuts
+        Binding("1", "tab_dashboard", "Dashboard", show=False),
+        Binding("2", "tab_jobs", "Jobs", show=False),
+        Binding("3", "tab_activity", "Activity", show=False),
+        Binding("4", "tab_output", "Output", show=False),
+        Binding("5", "tab_charts", "Charts", show=False),
     ]
 
     def __init__(
@@ -887,13 +893,32 @@ class GengoWatcherApp(App):
     # === Action handlers for keyboard shortcuts ===
 
     def action_toggle_runtime(self) -> None:
-        """Toggle runtime panel visibility."""
+        """Toggle to dashboard tab to view runtime stats."""
         try:
-            runtime_panel = self.query_one("#runtime-panel")
-            self.runtime_visible = not self.runtime_visible
-            runtime_panel.styles.display = "block" if self.runtime_visible else "none"
+            tabbed = self.query_one("#main-tabs", TabbedContent)
+            tabbed.active = "dashboard"
         except Exception:
             pass
+
+    def action_tab_dashboard(self) -> None:
+        """Switch to Dashboard tab."""
+        self.query_one("#main-tabs", TabbedContent).active = "dashboard"
+
+    def action_tab_jobs(self) -> None:
+        """Switch to Jobs tab."""
+        self.query_one("#main-tabs", TabbedContent).active = "jobs"
+
+    def action_tab_activity(self) -> None:
+        """Switch to Activity tab."""
+        self.query_one("#main-tabs", TabbedContent).active = "activity"
+
+    def action_tab_output(self) -> None:
+        """Switch to Output tab."""
+        self.query_one("#main-tabs", TabbedContent).active = "output"
+
+    def action_tab_charts(self) -> None:
+        """Switch to Charts tab."""
+        self.query_one("#main-tabs", TabbedContent).active = "charts"
 
     def action_show_help(self) -> None:
         """Show help modal."""
