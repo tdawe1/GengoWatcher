@@ -7,6 +7,7 @@ and modern widget system.
 
 import datetime
 import inspect
+import logging
 import os
 import threading
 import time
@@ -38,6 +39,49 @@ from .watcher import GengoWatcher, __version__
 from .config import AppConfig
 from .state import AppState
 from .stats import StatsManager
+
+
+class TextualLogHandler(logging.Handler):
+    """Logging handler that writes to a Textual RichLog widget."""
+
+    # Color map for log levels (Kanagawa Wave theme)
+    LEVEL_COLORS = {
+        logging.DEBUG: "#727169",  # muted gray
+        logging.INFO: "#7dcfff",  # info blue
+        logging.WARNING: "#DCA561",  # warning orange
+        logging.ERROR: "#C34043",  # error red
+        logging.CRITICAL: "#C34043",  # critical red (bold)
+    }
+
+    def __init__(self, app: "GengoWatcherApp"):
+        super().__init__()
+        self._app = app
+        self._buffer: deque = deque(maxlen=500)
+        self.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record to the debug panel."""
+        try:
+            msg = self.format(record)
+            color = self.LEVEL_COLORS.get(record.levelno, "#7dcfff")
+            formatted = f"[{color}]{msg}[/]"
+            self._buffer.append(formatted)
+            # Schedule write on main thread
+            self._app.call_from_thread(self._flush_to_widget)
+        except Exception:
+            pass
+
+    def _flush_to_widget(self) -> None:
+        """Flush buffered logs to the debug log widget."""
+        try:
+            debug_log = self._app.query_one("#debug-log", RichLog)
+            while self._buffer:
+                debug_log.write(self._buffer.popleft())
+        except Exception:
+            pass
+
 
 try:
     from textual_plotext import PlotextPlot
@@ -147,16 +191,26 @@ class StatsSparkline(Static):
 
 
 class TitleBar(Static):
-    """Branded title bar with session timer and clock."""
+    """Branded title bar with watcher status, session timer, and clock."""
 
-    def __init__(self, **kwargs):
+    def __init__(
+        self, watcher: "GengoWatcher" = None, state: "AppState" = None, **kwargs
+    ):
         super().__init__(**kwargs)
         self._start_time = time.time()
+        self._watcher = watcher
+        self._state = state
 
     def compose(self) -> ComposeResult:
-        with Horizontal():
-            yield Static("◆ GENGOWATCHER v2.0", classes="brand")
+        # Row 1: Brand and status
+        with Horizontal(classes="title-row"):
+            yield Static("◆ GENGOWATCHER", classes="brand")
+            yield Static("", id="watcher-status", classes="watcher-status")
+            yield Static("", id="job-count", classes="job-count")
+        # Row 2: Session and clock
+        with Horizontal(classes="title-row"):
             yield Static("", id="session-time", classes="session-time")
+            yield Static("", id="last-check", classes="last-check")
             yield Static("", id="clock", classes="clock")
 
     def on_mount(self) -> None:
@@ -168,34 +222,63 @@ class TitleBar(Static):
         elapsed = int(time.time() - self._start_time)
         hours, remainder = divmod(elapsed, 3600)
         minutes, seconds = divmod(remainder, 60)
-        session_str = f"Session: {hours}h {minutes:02d}m {seconds:02d}s"
+        session_str = f"⏱ {hours}h {minutes:02d}m {seconds:02d}s"
         self.query_one("#session-time", Static).update(session_str)
 
         # Current time
         now = datetime.datetime.now()
-        clock_str = now.strftime("%a %b %d  %H:%M:%S %Z")
+        clock_str = now.strftime("%H:%M:%S")
         self.query_one("#clock", Static).update(clock_str)
+
+        # Watcher status
+        if self._watcher:
+            if self._watcher.shutdown_event.is_set():
+                status = "[#f7768e]● STOPPED[/]"
+            elif os.path.exists(self._watcher.PAUSE_FILE):
+                status = "[#e0af68]● PAUSED[/]"
+            else:
+                status = "[#98bb6c]● RUNNING[/]"
+            self.query_one("#watcher-status", Static).update(status)
+
+            # Last check time
+            next_check = max(0, int(self._watcher.next_check_time - time.time()))
+            self.query_one("#last-check", Static).update(f"Next: {next_check}s")
+
+        # Job count
+        if self._state:
+            found = self._state.total_new_entries_found
+            self.query_one("#job-count", Static).update(f"Jobs: {found}")
 
 
 class MetricCard(Static):
-    """Individual metric display card with accent border."""
+    """Individual metric display card with icon and accent border."""
+
+    ICONS = {
+        "found": "▲",
+        "accepted": "✓",
+        "value": "$",
+        "rate": "~",
+        "minword": "≥",
+    }
 
     def __init__(self, label: str, value: str = "0", card_class: str = "", **kwargs):
         super().__init__(**kwargs)
         self._label = label
         self._value = value
+        self._card_class = card_class
         if card_class:
             self.add_class(card_class)
 
     def compose(self) -> ComposeResult:
+        icon = self.ICONS.get(self._card_class, "•")
         # Sanitize label for ID usage
         sanitized_label = "".join(
             c for c in self._label.lower() if c.isalnum() or c == "-"
         )
+        yield Static(f"{icon} {self._label}", classes="metric-label")
         yield Static(
             self._value, classes="metric-value", id=f"metric-{sanitized_label}-value"
         )
-        yield Static(self._label, classes="metric-label")
 
     def update_value(self, value: str) -> None:
         """Update the displayed metric value."""
@@ -332,6 +415,24 @@ class StatusRow(Horizontal):
         web_state = "polling" if web_enabled else "idle"
         self.query_one("#ind-website", StatusIndicator).set_state(web_state)
 
+        # Captcha - check if solver is active/solving
+        captcha_state = "ready"
+        if hasattr(self._watcher, "captcha_solver"):
+            solver = self._watcher.captcha_solver
+            if getattr(solver, "is_solving", False):
+                captcha_state = "solving"
+            elif getattr(solver, "enabled", True):
+                captcha_state = "ready"
+            else:
+                captcha_state = "idle"
+        self.query_one("#ind-captcha", StatusIndicator).set_state(captcha_state)
+
+        # Workflow - check auto-accept mode
+        workflow_state = "auto"
+        if hasattr(self._watcher, "auto_accept"):
+            workflow_state = "auto" if self._watcher.auto_accept else "manual"
+        self.query_one("#ind-workflow", StatusIndicator).set_state(workflow_state)
+
 
 class DashboardQuadrant(Static):
     """Base class for dashboard quadrant panels."""
@@ -352,25 +453,33 @@ class DashboardQuadrant(Static):
 
 
 class ActivityPreview(DashboardQuadrant):
-    """Mini activity log for dashboard."""
+    """Mini activity log for dashboard with colored output."""
 
     def __init__(self, **kwargs):
         super().__init__("Recent Activity", quadrant_class="activity", **kwargs)
-        self._log_lines: list[str] = []
 
     def _compose_content(self) -> ComposeResult:
-        yield Static("", id="activity-content")
+        yield RichLog(
+            id="activity-preview-log", highlight=True, markup=True, max_lines=8
+        )
 
-    def add_line(self, text: str) -> None:
-        """Add a line to the activity preview."""
-        timestamp = datetime.datetime.now().strftime("%H:%M")
-        line = f"{timestamp} {text}"
-        self._log_lines.append(line)
-        # Keep only last 6 lines
-        self._log_lines = self._log_lines[-6:]
+    def add_line(self, text: str, level: str = "info") -> None:
+        """Add a colored line to the activity preview."""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+
+        # Color by level
+        colors = {
+            "debug": "#565f89",
+            "info": "#7dcfff",
+            "success": "#98bb6c",
+            "warning": "#e0af68",
+            "error": "#f7768e",
+        }
+        color = colors.get(level, "#dcd7ba")
+
         try:
-            content = "\n".join(self._log_lines)
-            self.query_one("#activity-content", Static).update(content)
+            log = self.query_one("#activity-preview-log", RichLog)
+            log.write(f"[{color}]{timestamp}[/] {text}")
         except Exception:
             pass
 
@@ -405,26 +514,37 @@ class JobsPreview(DashboardQuadrant):
 
 
 class ConfigPreview(DashboardQuadrant):
-    """Configuration summary for dashboard."""
+    """Configuration summary for dashboard with Rich formatting."""
 
     def __init__(self, config: "AppConfig", **kwargs):
         super().__init__("Configuration", quadrant_class="config", **kwargs)
         self._config = config
 
     def _compose_content(self) -> ComposeResult:
+        yield Static("", id="config-content")
+
+    def on_mount(self) -> None:
+        self._refresh_config()
+
+    def _refresh_config(self) -> None:
+        """Update config display with Rich markup."""
         # Access config values using the dictionary-style API
         check_interval = self._config.get("Watcher", "check_interval") or 30
         min_reward = self._config.get("Watcher", "min_reward") or 0.0
         autoaccept_enabled = self._config.get("AutoAccept", "enabled") or False
         ws_enabled = self._config.get("WebSocket", "enable_websocket") or False
 
+        # Build Rich formatted content
         lines = [
-            f"Check Interval: {check_interval}s",
-            f"Min Reward: ${float(min_reward):.2f}",
-            f"Auto-Accept: {'On' if autoaccept_enabled else 'Off'}",
-            f"WebSocket: {'On' if ws_enabled else 'Off'}",
+            f"[#7dcfff]Interval:[/] {check_interval}s",
+            f"[#98bb6c]Min $:[/] ${float(min_reward):.2f}",
+            f"[#e0af68]Auto:[/] {'[#98bb6c]On[/]' if autoaccept_enabled else '[#f7768e]Off[/]'}",
+            f"[#957fb8]WS:[/] {'[#98bb6c]On[/]' if ws_enabled else '[#f7768e]Off[/]'}",
         ]
-        yield Static("\n".join(lines), id="config-content")
+        try:
+            self.query_one("#config-content", Static).update("\n".join(lines))
+        except Exception:
+            pass
 
 
 class StatsPanel(Static):
@@ -1184,7 +1304,7 @@ class GengoWatcherApp(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the application."""
         # Title Bar (replaces old header)
-        yield TitleBar(id="title-bar")
+        yield TitleBar(watcher=self.watcher, state=self.state, id="title-bar")
 
         # Metrics Row
         yield MetricsRow(self.state, id="metrics-row")
@@ -1194,13 +1314,20 @@ class GengoWatcherApp(App):
 
         # Main tabbed content
         with TabbedContent(id="main-tabs"):
-            # Dashboard Tab (4 quadrants)
+            # Dashboard Tab (4 quadrants + command response)
             with TabPane("Dashboard", id="dashboard-tab"):
                 with Container(classes="dashboard-grid"):
                     yield ActivityPreview(id="activity-preview")
-                    yield JobsChart(self.state, id="jobs-chart-mini")
                     yield JobsPreview(self.state, id="jobs-preview")
                     yield ConfigPreview(self.config, id="config-preview")
+                    # Command response box in 4th quadrant
+                    with Static(
+                        classes="command-response-box", id="cmd-response-container"
+                    ):
+                        yield Static("─ Command Response ", classes="quadrant-title")
+                        yield RichLog(
+                            id="cmd-response", highlight=True, markup=True, max_lines=6
+                        )
 
             # Jobs Tab
             with TabPane("Jobs", id="jobs-tab"):
@@ -1210,15 +1337,15 @@ class GengoWatcherApp(App):
             with TabPane("Activity", id="activity-tab"):
                 yield RichLog(id="activity-log", highlight=True, markup=True, wrap=True)
 
-            # Output Tab
-            with TabPane("Output", id="output-tab"):
-                yield RichLog(id="output-log", highlight=True, markup=True, wrap=True)
+            # Debug Tab (was Output)
+            with TabPane("Debug", id="debug-tab"):
+                yield RichLog(id="debug-log", highlight=True, markup=True, wrap=True)
 
             # Charts Tab
             with TabPane("Charts", id="charts-tab"):
                 yield JobsChart(self.state, id="jobs-chart-full")
 
-            # Stats Tab (NEW)
+            # Stats Tab
             with TabPane("Stats", id="stats-tab"):
                 yield StatsPanel(self._stats_manager, id="stats-panel")
 
@@ -1233,6 +1360,17 @@ class GengoWatcherApp(App):
     def on_mount(self) -> None:
         """Initialize on mount."""
         self.query_one("#activity-log", RichLog).write("[green]GengoWatcher started[/]")
+
+        # Wire Python logging to Debug panel
+        self._log_handler = TextualLogHandler(self)
+        self._log_handler.setLevel(logging.DEBUG)
+        # Add handler to watcher's logger and root logger
+        self.watcher.logger.addHandler(self._log_handler)
+        logging.getLogger().addHandler(self._log_handler)
+
+        # Write startup message to debug log
+        debug_log = self.query_one("#debug-log", RichLog)
+        debug_log.write("[#7dcfff]Debug log initialized - showing all app logs[/]")
 
         # Load recent jobs from state or CSV
         try:
@@ -1354,7 +1492,7 @@ class GengoWatcherApp(App):
         self._execute_command(command_str)
 
     def _execute_command(self, command_str: str) -> None:
-        """Execute a command."""
+        """Execute a command and show output in command response box."""
         parts = command_str.split()
         if not parts:
             return
@@ -1362,8 +1500,16 @@ class GengoWatcherApp(App):
         cmd_alias, args = parts[0].lower(), parts[1:]
         command = self.alias_map.get(cmd_alias)
 
+        # Get the command response log on dashboard
+        try:
+            cmd_response = self.query_one("#cmd-response", RichLog)
+        except Exception:
+            cmd_response = None
+
         if not command:
             self.watcher.logger.error(f"Unknown command: '{command_str}'")
+            if cmd_response:
+                cmd_response.write(f"[#f7768e]✗ Unknown command: {cmd_alias}[/]")
             self.notify(f"Unknown command: {cmd_alias}", severity="error")
             return
 
@@ -1375,15 +1521,22 @@ class GengoWatcherApp(App):
             else:
                 output = handler()
 
-            if output:
-                output_log = self.query_one("#output-log", RichLog)
-                output_log.clear()
-                if hasattr(output, "__rich__") or hasattr(output, "__rich_console__"):
-                    output_log.write(output)
+            # Show output in command response box
+            if cmd_response:
+                cmd_response.write(f"[#7dcfff]> {command_str}[/]")
+                if output:
+                    if hasattr(output, "__rich__") or hasattr(
+                        output, "__rich_console__"
+                    ):
+                        cmd_response.write(output)
+                    else:
+                        cmd_response.write(str(output))
                 else:
-                    output_log.write(str(output))
+                    cmd_response.write(f"[#98bb6c]✓ {command} executed[/]")
         except Exception as e:
             self.watcher.logger.exception(f"Error executing '{command}': {e}")
+            if cmd_response:
+                cmd_response.write(f"[#f7768e]✗ Error: {e}[/]")
             self.notify(f"Error: {e}", severity="error")
 
     # === Action handlers for keyboard shortcuts ===
@@ -1409,8 +1562,8 @@ class GengoWatcherApp(App):
         self.query_one("#main-tabs", TabbedContent).active = "activity-tab"
 
     def action_tab_output(self) -> None:
-        """Switch to Output tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "output-tab"
+        """Switch to Debug tab (was Output)."""
+        self.query_one("#main-tabs", TabbedContent).active = "debug-tab"
 
     def action_tab_charts(self) -> None:
         """Switch to Charts tab."""

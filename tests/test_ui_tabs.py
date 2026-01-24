@@ -76,7 +76,7 @@ async def test_main_tabs_exist():
         assert "dashboard-tab" in tab_ids
         assert "jobs-tab" in tab_ids
         assert "activity-tab" in tab_ids
-        assert "output-tab" in tab_ids
+        assert "debug-tab" in tab_ids
         assert "charts-tab" in tab_ids
         assert "stats-tab" in tab_ids
 

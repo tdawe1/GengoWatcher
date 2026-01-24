@@ -86,7 +86,7 @@ Screen {
 }
 
 /* Logs */
-#activity-log, #output-log {
+#activity-log, #output-log, #debug-log {
     background: $surface-darken-1;
     border: round $surface-lighten-2;
     border-title-color: $text-muted;
@@ -97,6 +97,15 @@ Screen {
 
 #activity-log { border: round $success; border-title-color: $success; }
 #output-log { border: round $warning; border-title-color: $warning; }
+#debug-log { border: round $accent; border-title-color: $accent; }
+
+/* Activity Preview RichLog inside quadrant */
+#activity-preview-log {
+    height: 1fr;
+    background: $depth-1;
+    scrollbar-background: $surface;
+    scrollbar-color: $primary;
+}
 
 /* Bottom Area Container - Fixed height to prevent overlap */
 #bottom-area {
@@ -334,20 +343,50 @@ TitleBar {
     background: $depth-2;
     border-left: tall $primary;
     padding: 0 2;
+    layout: vertical;
+}
+
+TitleBar .title-row {
+    height: 1;
+    width: 100%;
 }
 
 TitleBar .brand {
     color: $primary;
     text-style: bold;
+    width: auto;
+}
+
+TitleBar .watcher-status {
+    margin-left: 2;
+    width: auto;
+}
+
+TitleBar .watcher-status.running { color: $success; }
+TitleBar .watcher-status.paused { color: $warning; }
+TitleBar .watcher-status.stopped { color: $error; }
+
+TitleBar .job-count {
+    margin-left: 2;
+    color: $accent;
+    width: auto;
 }
 
 TitleBar .session-time {
     color: $text;
+    width: auto;
+}
+
+TitleBar .last-check {
+    margin-left: 2;
+    color: $text-muted;
+    width: auto;
 }
 
 TitleBar .clock {
     color: $text-muted;
     text-align: right;
+    width: 1fr;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -417,12 +456,14 @@ StatusIndicator .status-idle { color: $text-muted; }
     grid-size: 2 2;
     grid-gutter: 1;
     padding: 1;
+    height: 1fr;
 }
 
 DashboardQuadrant {
     background: $depth-2;
     border: round $depth-3;
     padding: 0 1;
+    height: 1fr;
 }
 
 DashboardQuadrant.activity { border-left: tall $success; }
@@ -434,6 +475,28 @@ DashboardQuadrant .quadrant-title {
     color: $text;
     text-style: bold;
     padding-bottom: 1;
+}
+
+/* Command Response Box (4th quadrant) */
+.command-response-box {
+    background: $depth-2;
+    border: round $depth-3;
+    border-left: tall $warning;
+    padding: 0 1;
+    height: 1fr;
+}
+
+.command-response-box .quadrant-title {
+    color: $text;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#cmd-response {
+    height: 1fr;
+    background: $depth-1;
+    scrollbar-background: $surface;
+    scrollbar-color: $primary;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
