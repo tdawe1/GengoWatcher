@@ -332,6 +332,94 @@ class StatusRow(Horizontal):
         self.query_one("#ind-website", StatusIndicator).set_state(web_state)
 
 
+class DashboardQuadrant(Static):
+    """Base class for dashboard quadrant panels."""
+
+    def __init__(self, title: str, quadrant_class: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._title = title
+        if quadrant_class:
+            self.add_class(quadrant_class)
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"─ {self._title} ", classes="quadrant-title")
+        yield from self._compose_content()
+
+    def _compose_content(self) -> ComposeResult:
+        """Override in subclasses to add content."""
+        yield Static("")
+
+
+class ActivityPreview(DashboardQuadrant):
+    """Mini activity log for dashboard."""
+
+    def __init__(self, **kwargs):
+        super().__init__("Recent Activity", quadrant_class="activity", **kwargs)
+        self._log_lines: list[str] = []
+
+    def _compose_content(self) -> ComposeResult:
+        yield Static("", id="activity-content")
+
+    def add_line(self, text: str) -> None:
+        """Add a line to the activity preview."""
+        timestamp = datetime.datetime.now().strftime("%H:%M")
+        line = f"{timestamp} {text}"
+        self._log_lines.append(line)
+        # Keep only last 6 lines
+        self._log_lines = self._log_lines[-6:]
+        try:
+            content = "\n".join(self._log_lines)
+            self.query_one("#activity-content", Static).update(content)
+        except Exception:
+            pass
+
+
+class JobsPreview(DashboardQuadrant):
+    """Mini jobs table for dashboard."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__("Jobs Preview", quadrant_class="jobs-preview", **kwargs)
+        self._state = state
+
+    def _compose_content(self) -> ComposeResult:
+        yield Static("", id="jobs-preview-content")
+
+    def refresh_jobs(self) -> None:
+        """Update jobs preview from state."""
+        jobs = self._state.get_recent_jobs(limit=4)
+        if not jobs:
+            content = "No jobs yet"
+        else:
+            lines = []
+            for job in jobs:
+                job_id = str(job.get("id", "?"))[:6]
+                lang = job.get("lang_pair", "?")[:6]
+                reward = job.get("reward", 0)
+                lines.append(f"#{job_id}  {lang}  ${reward:.2f}")
+            content = "\n".join(lines)
+        try:
+            self.query_one("#jobs-preview-content", Static).update(content)
+        except Exception:
+            pass
+
+
+class ConfigPreview(DashboardQuadrant):
+    """Configuration summary for dashboard."""
+
+    def __init__(self, config: "AppConfig", **kwargs):
+        super().__init__("Configuration", quadrant_class="config", **kwargs)
+        self._config = config
+
+    def _compose_content(self) -> ComposeResult:
+        lines = [
+            f"Languages: {self._config.source_lang}↔{self._config.target_lang}",
+            f"Min Reward: ${self._config.min_reward:.2f}",
+            f"Check Interval: {self._config.check_interval}s",
+            f"Auto-Accept: {'On' if self._config.autoaccept_enabled else 'Off'}",
+        ]
+        yield Static("\n".join(lines), id="config-content")
+
+
 class JobsChart(Static):
     """Real-time chart showing jobs found over time."""
 
