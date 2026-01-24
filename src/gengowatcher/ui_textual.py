@@ -237,6 +237,101 @@ class MetricsRow(Horizontal):
         self.query_one("#card-rate", MetricCard).update_value(f"~{rate:.1f}/hr")
 
 
+class StatusIndicator(Static):
+    """Single status indicator with icon, label, and live state."""
+
+    ICONS = {
+        "websocket": "●",
+        "email": "◉",
+        "website": "◎",
+        "captcha": "⧗",
+        "workflow": "⇄",
+    }
+
+    STATES = {
+        "live": ("∿∿∿ Live", "status-live"),
+        "connecting": ("◐ Connecting", "status-working"),
+        "polling": ("↻ Polling", "status-working"),
+        "idle": ("○ Idle", "status-idle"),
+        "error": ("✗ Error", "status-error"),
+        "ready": ("Ready", "status-live"),
+        "solving": ("Solving...", "status-working"),
+        "auto": ("Auto", "status-live"),
+        "manual": ("Manual", "status-idle"),
+    }
+
+    def __init__(self, name: str, initial_state: str = "idle", **kwargs):
+        super().__init__(**kwargs)
+        self._name = name
+        self._state = initial_state
+        self._icon = self.ICONS.get(name.lower(), "●")
+
+    def compose(self) -> ComposeResult:
+        state_text, state_class = self.STATES.get(
+            self._state, ("Unknown", "status-idle")
+        )
+        yield Static(f"{self._icon} {self._name.upper()}", classes="status-icon")
+        yield Static(
+            state_text,
+            classes=f"status-text {state_class}",
+            id=f"status-{self._name.lower()}",
+        )
+
+    def set_state(self, state: str) -> None:
+        """Update the indicator state."""
+        self._state = state
+        state_text, state_class = self.STATES.get(state, ("Unknown", "status-idle"))
+        try:
+            status_widget = self.query_one(f"#status-{self._name.lower()}", Static)
+            status_widget.update(state_text)
+            # Update classes for color
+            status_widget.remove_class(
+                "status-live", "status-working", "status-error", "status-idle"
+            )
+            status_widget.add_class(state_class)
+        except Exception:
+            pass
+
+
+class StatusRow(Horizontal):
+    """Row of status indicators for all monitored sources."""
+
+    def __init__(self, watcher: "GengoWatcher", **kwargs):
+        super().__init__(**kwargs)
+        self._watcher = watcher
+
+    def compose(self) -> ComposeResult:
+        yield StatusIndicator("WebSocket", "idle", id="ind-websocket")
+        yield StatusIndicator("Email", "idle", id="ind-email")
+        yield StatusIndicator("Website", "idle", id="ind-website")
+        yield StatusIndicator("Captcha", "ready", id="ind-captcha")
+        yield StatusIndicator("Workflow", "auto", id="ind-workflow")
+
+    def refresh_status(self) -> None:
+        """Update all indicators from watcher state."""
+        # WebSocket
+        ws_state = "live" if self._watcher.websocket_connected else "idle"
+        self.query_one("#ind-websocket", StatusIndicator).set_state(ws_state)
+
+        # Email
+        email_enabled = (
+            getattr(self._watcher.email_monitor, "enabled", False)
+            if hasattr(self._watcher, "email_monitor")
+            else False
+        )
+        email_state = "polling" if email_enabled else "idle"
+        self.query_one("#ind-email", StatusIndicator).set_state(email_state)
+
+        # Website
+        web_enabled = (
+            getattr(self._watcher.website_monitor, "enabled", False)
+            if hasattr(self._watcher, "website_monitor")
+            else False
+        )
+        web_state = "polling" if web_enabled else "idle"
+        self.query_one("#ind-website", StatusIndicator).set_state(web_state)
+
+
 class JobsChart(Static):
     """Real-time chart showing jobs found over time."""
 
