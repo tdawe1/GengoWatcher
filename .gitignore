@@ -1,7 +1,7 @@
 # =============================================================================
 # GengoWatcher Project-Specific Ignores
 # =============================================================================
-
+docs/
 # Configuration files (contain secrets)
 config.ini
 config_high_value.ini
