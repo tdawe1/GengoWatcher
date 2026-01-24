@@ -2,7 +2,7 @@
 
 ## Overview
 - GengoWatcher is a Python TUI application that monitors Gengo jobs via RSS + WebSocket, alerts users, and can auto-accept jobs with CAPTCHA solving and browser automation fallback.
-- An optional FastAPI web server exposes status/jobs/config endpoints and serves a React dashboard build.
+- An optional FastAPI web server exposes status/jobs/config endpoints for external integrations.
 
 ## Tech Stack
 | Area | Tech | Notes | Key Paths |
@@ -10,8 +10,7 @@
 | Core app | Python 3.8+ | TUI, watcher, job acceptance, CAPTCHA | `src/gengowatcher/` |
 | TUI | Textual + Rich | Terminal UI and logging | `src/gengowatcher/ui_textual.py`, `src/gengowatcher/main.py` |
 | Web API | FastAPI + Uvicorn | REST + WebSocket status | `src/gengowatcher/web.py` |
-| Frontend | Vite + React + TS | Builds to static web UI | `frontend/` -> `static/web/` |
-| Tests | pytest + Vitest | Python and frontend tests | `tests/`, `frontend/src/` |
+| Tests | pytest | Python tests | `tests/` |
 
 ## Directory Structure
 ```
@@ -22,13 +21,13 @@ src/
     web.py                 # FastAPI web API + WS status
     config.py              # config.ini defaults + load/save/validation
     state.py               # state.json persistence + job history
+    stats.py               # StatsManager for historical statistics
     job_acceptance.py      # auto-accept orchestration + CAPTCHA
     captcha_manager.py     # CAPTCHA solver plugins + monitoring
     job_cancellation_manager.py # cancel current job for higher value
-frontend/
-  src/                     # React app (login/dashboard)
-  vite.config.ts           # Vite build config -> static/web
-static/web/                # Built frontend assets
+    ui_textual.py          # Textual TUI widgets and app
+    gengo_watcher.tcss     # TUI stylesheet (Kanagawa Wave theme)
+static/web/                # Optional static assets for web API
 template-source/           # Legacy template dashboard source
 tests/                     # pytest coverage for watcher/config/TUI
 assets/                    # screenshots and shared assets
@@ -41,10 +40,11 @@ monitoring_config.json     # monitoring config example
 - **Watcher** (`src/gengowatcher/watcher.py`): central orchestrator; spawns RSS/WebSocket/email/website monitors, dedupes jobs, triggers notifications, auto-accept, cancellation, and state persistence.
 - **Configuration** (`src/gengowatcher/config.py`): default config template, type-coerced getters, config repair, auto-accept validation, and persistence.
 - **State** (`src/gengowatcher/state.py`): persists `state.json`, stores job history, and caps in-memory job lists.
+- **Stats** (`src/gengowatcher/stats.py`): StatsManager for session/all-time/source statistics with JSON persistence.
 - **Auto-Accept** (`src/gengowatcher/job_acceptance.py`): eligibility checks, rate limiting, retry flow, HTTP + Selenium attempts, CAPTCHA solving.
 - **CAPTCHA** (`src/gengowatcher/captcha_manager.py`): service initialization, retries, stats, monitoring/alerts.
-- **Web API** (`src/gengowatcher/web.py`): FastAPI endpoints for status/jobs/config/commands + WebSocket status stream; also serves `static/web`.
-- **Frontend** (`frontend/src/`): React UI using API endpoints; compiled assets in `static/web/`.
+- **Web API** (`src/gengowatcher/web.py`): FastAPI endpoints for status/jobs/config/commands + WebSocket status stream.
+- **TUI** (`src/gengowatcher/ui_textual.py`): Textual-based terminal UI with Kanagawa Wave theme, dashboard widgets, stats panel, and tabbed navigation.
 
 ## Data Flow
 - **Startup**: `main.py` -> `AppConfig` -> `AppState` -> `GengoWatcher` -> TUI loop + watcher thread.
@@ -66,11 +66,7 @@ monitoring_config.json     # monitoring config example
 - Web API auth token stored under `[WebServer] auth_token` in `config.ini` (auto-generated if placeholder).
 
 ## Build & Deploy
-- **Python**:
-  - Run: `make run` or `PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main`
-  - Tests: `make test` or `pytest`
-  - Lint/format: `make lint`, `make format`
-- **Frontend**:
-  - Dev: `cd frontend && npm install && npm run dev`
-  - Build: `cd frontend && npm run build` (outputs to `static/web`)
-  - Tests: `cd frontend && npm test`
+- **Run TUI**: `make run` or `PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main`
+- **Run with Web API**: `make run-web` or add `--web` flag
+- **Tests**: `make test` or `pytest`
+- **Lint/format**: `make lint`, `make format`
