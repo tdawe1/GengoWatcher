@@ -544,8 +544,29 @@ class GengoWatcher:
             feed = feedparser.parse(
                 self.config.get("Watcher", "feed_url"), request_headers=headers
             )
+            # Check HTTP status first (feedparser stores it in feed.status)
+            http_status = getattr(feed, "status", None)
+            if http_status == 429:
+                self.logger.warning(
+                    "RSS rate limited (HTTP 429). Gengo limits requests to once per 60s. "
+                    "Consider increasing check_interval in config."
+                )
+                return None
+            if http_status and http_status >= 400:
+                self.logger.error(f"RSS HTTP Error: {http_status}")
+                return None
+
             if feed.bozo:
-                self.logger.error(f"Feed Error: {feed.bozo_exception}")
+                # Check if it's a parsing error due to HTML response (rate limit page)
+                exc_str = str(feed.bozo_exception).lower()
+                if "mismatched tag" in exc_str or "not well-formed" in exc_str:
+                    # Likely an HTML error page instead of RSS/XML
+                    self.logger.warning(
+                        "RSS feed returned invalid XML (likely rate-limited or error page). "
+                        "Will retry after backoff."
+                    )
+                else:
+                    self.logger.error(f"Feed Parse Error: {feed.bozo_exception}")
                 return None
             self.logger.debug(
                 f"RSS feed fetched successfully. Entries: {len(feed.entries)}"
