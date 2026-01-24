@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import threading
+from typing import Any, Dict, List, Optional
 
 
 class AppConfig:
@@ -281,7 +282,9 @@ class AppConfig:
             except IOError as e:
                 print(f"Error saving config: {e}")
 
-    def getboolean(self, section: str, key: str, fallback: bool = None) -> bool:
+    def getboolean(
+        self, section: str, key: str, fallback: Optional[bool] = None
+    ) -> bool:
         """Get a boolean value from config with case-insensitive parsing.
 
         Args:
@@ -308,7 +311,7 @@ class AppConfig:
                     return fallback
                 raise
 
-    def getint(self, section: str, key: str, fallback: int = None) -> int:
+    def getint(self, section: str, key: str, fallback: Optional[int] = None) -> int:
         """Get an integer value from config.
 
         Args:
@@ -327,7 +330,9 @@ class AppConfig:
                     return fallback
                 raise
 
-    def getfloat(self, section: str, key: str, fallback: float = None) -> float:
+    def getfloat(
+        self, section: str, key: str, fallback: Optional[float] = None
+    ) -> float:
         """Get a float value from config.
 
         Args:

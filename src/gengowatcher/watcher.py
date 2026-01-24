@@ -264,7 +264,11 @@ class GengoWatcher:
         """
         self.logger.debug("Setting up CSV logging.")
         try:
-            log_path = Path(self.config.get("Paths", "all_entries_log"))
+            log_path_str = self.config.get("Paths", "all_entries_log")
+            if not log_path_str:
+                self.logger.error("all_entries_log path not configured")
+                return
+            log_path = Path(log_path_str)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._all_entries_log_file = open(
                 log_path, "a", newline="", encoding="utf-8"
@@ -679,7 +683,7 @@ class GengoWatcher:
                 self.logger.debug(
                     f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
                 )
-                async with websockets.connect(
+                async with websockets.connect(  # type: ignore
                     ws_url,
                     **{ws_header_key: headers},
                     ping_interval=20,
