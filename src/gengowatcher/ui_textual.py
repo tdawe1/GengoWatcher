@@ -412,11 +412,17 @@ class ConfigPreview(DashboardQuadrant):
         self._config = config
 
     def _compose_content(self) -> ComposeResult:
+        # Access config values using the dictionary-style API
+        check_interval = self._config.get("Watcher", "check_interval") or 30
+        min_reward = self._config.get("Watcher", "min_reward") or 0.0
+        autoaccept_enabled = self._config.get("AutoAccept", "enabled") or False
+        ws_enabled = self._config.get("WebSocket", "enable_websocket") or False
+
         lines = [
-            f"Languages: {self._config.source_lang}↔{self._config.target_lang}",
-            f"Min Reward: ${self._config.min_reward:.2f}",
-            f"Check Interval: {self._config.check_interval}s",
-            f"Auto-Accept: {'On' if self._config.autoaccept_enabled else 'Off'}",
+            f"Check Interval: {check_interval}s",
+            f"Min Reward: ${float(min_reward):.2f}",
+            f"Auto-Accept: {'On' if autoaccept_enabled else 'Off'}",
+            f"WebSocket: {'On' if ws_enabled else 'Off'}",
         ]
         yield Static("\n".join(lines), id="config-content")
 
