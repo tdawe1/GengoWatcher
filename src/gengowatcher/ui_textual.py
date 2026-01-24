@@ -37,6 +37,7 @@ from rich.text import Text
 from .watcher import GengoWatcher, __version__
 from .config import AppConfig
 from .state import AppState
+from .stats import StatsManager
 
 try:
     from textual_plotext import PlotextPlot
@@ -418,6 +419,120 @@ class ConfigPreview(DashboardQuadrant):
             f"Auto-Accept: {'On' if self._config.autoaccept_enabled else 'Off'}",
         ]
         yield Static("\n".join(lines), id="config-content")
+
+
+class StatsPanel(Static):
+    """Full stats tab content with multiple sections."""
+
+    def __init__(self, stats_manager: "StatsManager", **kwargs):
+        super().__init__(**kwargs)
+        self._stats = stats_manager
+
+    def compose(self) -> ComposeResult:
+        # Top row: Session and All-Time
+        with Horizontal(classes="stats-grid"):
+            with Static(classes="stats-section session"):
+                yield Static("─ Session ", classes="section-title")
+                yield Static("", id="stats-session-content")
+            with Static(classes="stats-section alltime"):
+                yield Static("─ All-Time ", classes="section-title")
+                yield Static("", id="stats-alltime-content")
+
+        # Source breakdown
+        with Static(classes="stats-section source"):
+            yield Static("─ By Source ", classes="section-title")
+            yield Static("", id="stats-source-content")
+
+        # Bottom row: Language and Best Times
+        with Horizontal(classes="stats-grid"):
+            with Static(classes="stats-section language"):
+                yield Static("─ By Language ", classes="section-title")
+                yield Static("", id="stats-language-content")
+            with Static(classes="stats-section times"):
+                yield Static("─ Best Times ", classes="section-title")
+                yield Static("", id="stats-times-content")
+
+        # Earnings chart
+        with Static(classes="stats-section"):
+            yield Static("─ Earnings (7 days) ", classes="section-title")
+            yield Static("", id="stats-earnings-content")
+
+    def on_mount(self) -> None:
+        self.set_interval(5.0, self.refresh_stats)
+        self.refresh_stats()
+
+    def refresh_stats(self) -> None:
+        """Update all stats displays."""
+        s = self._stats
+
+        # Session
+        dur = s.session.duration_seconds
+        h, m = divmod(dur // 60, 60)
+        session_lines = [
+            f"Duration     {h}h {m:02d}m",
+            f"Jobs Found   {s.session.jobs_found}",
+            f"Accepted     {s.session.jobs_accepted}",
+            f"Value        ${s.session.total_value:.2f}",
+            f"Rate         {s.session.rate_per_hour:.1f}/hr",
+        ]
+        self._update_content("#stats-session-content", "\n".join(session_lines))
+
+        # All-Time
+        alltime_lines = [
+            f"Total Jobs   {s.all_time.total_jobs:,}",
+            f"Total Value  ${s.all_time.total_value:,.2f}",
+            f"Avg Value    ${s.all_time.avg_job_value:.2f}",
+            f"Best Day     ${s.all_time.best_day_value:.2f}",
+            f"Sessions     {s.all_time.total_sessions}",
+        ]
+        self._update_content("#stats-alltime-content", "\n".join(alltime_lines))
+
+        # Source
+        pct = s.by_source.percentages()
+        source_lines = [
+            self._bar("WebSocket", s.by_source.websocket, pct["websocket"]),
+            self._bar("Email", s.by_source.email, pct["email"]),
+            self._bar("Website", s.by_source.website, pct["website"]),
+        ]
+        self._update_content("#stats-source-content", "\n".join(source_lines))
+
+        # Language
+        lang_items = sorted(s.by_language.items(), key=lambda x: x[1], reverse=True)[:4]
+        total_lang = sum(s.by_language.values()) or 1
+        lang_lines = [
+            self._bar(lang, count, count / total_lang * 100)
+            for lang, count in lang_items
+        ]
+        self._update_content(
+            "#stats-language-content",
+            "\n".join(lang_lines) if lang_lines else "No data",
+        )
+
+        # Best Times
+        peak_h, peak_c = s.get_peak_hour()
+        slow_h, slow_c = s.get_slowest_hour()
+        times_lines = [
+            f"Peak Hour    {peak_h:02d}:00-{peak_h + 1:02d}:00  ({peak_c} jobs)",
+            f"Slowest      {slow_h:02d}:00-{slow_h + 1:02d}:00  ({slow_c} jobs)",
+        ]
+        self._update_content("#stats-times-content", "\n".join(times_lines))
+
+        # Earnings
+        earnings = s.get_recent_earnings(7)
+        earnings_lines = [f"{day} ${val:.0f}" for day, val in earnings.items()]
+        self._update_content("#stats-earnings-content", "  ".join(earnings_lines))
+
+    def _bar(self, label: str, count: int, pct: float) -> str:
+        """Create a text-based progress bar."""
+        filled = int(pct / 5)  # 20 chars max
+        bar = "█" * filled + "░" * (20 - filled)
+        return f"{label:10} {bar} {count:,} ({pct:.0f}%)"
+
+    def _update_content(self, selector: str, text: str) -> None:
+        try:
+            self.query_one(selector, Static).update(text)
+        except Exception:
+            pass
 
 
 class JobsChart(Static):
@@ -900,6 +1015,7 @@ class GengoWatcherApp(App):
         Binding("3", "tab_activity", "3:Log", show=False),
         Binding("4", "tab_output", "4:Out", show=False),
         Binding("5", "tab_charts", "5:Chart", show=False),
+        Binding("6", "tab_stats", "Stats", show=False),
     ]
 
     def __init__(
@@ -914,6 +1030,7 @@ class GengoWatcherApp(App):
         self.config = config
         self.state = state
         self.log_queue = log_queue
+        self._stats_manager = StatsManager()
         self._log_queue_lock = threading.Lock()
         self.jobs_data = []
         self.command_history = []
