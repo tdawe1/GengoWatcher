@@ -334,3 +334,8 @@ src/logs/
 *.log.*
 job_cancellation_state.json
 all_entries.csv
+
+# New runtime stats
+stats.json
+state.json
+.tmp/
