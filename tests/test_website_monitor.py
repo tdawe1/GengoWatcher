@@ -859,13 +859,12 @@ class TestGetRealisticUserAgent:
         # Arrange & Act
         versions = set()
         for _ in range(20):
-            ua = website_monitor._get_realistic_user_agent()
-            # Extract version number
-            import re
-
-            match = re.search(r"Chrome/(\d+\.\d+\.\d+\.\d+)", ua)
-            if match:
-                versions.add(match.group(1))
+            for _ in range(20):
+                ua = website_monitor._get_realistic_user_agent()
+                # Extract version number
+                match = re.search(r"Chrome/(\d+\.\d+\.\d+\.\d+)", ua)
+                if match:
+                    versions.add(match.group(1))
 
         # Assert - should have found at least one version (randomness may not hit all)
         assert len(versions) >= 1
