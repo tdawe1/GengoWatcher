@@ -2,6 +2,13 @@
 # GengoWatcher Project-Specific Ignores
 # =============================================================================
 docs/
+AGENTS.md
+ARCHITECTURE.md
+CODE_STYLE.md
+GEMINI.md
+monitoring_config.json
+thoughts/
+
 # Configuration files (contain secrets)
 config.ini
 config_high_value.ini
@@ -106,6 +113,7 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
+.coveragerc
 .cache
 nosetests.xml
 coverage.xml
