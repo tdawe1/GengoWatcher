@@ -40,4 +40,5 @@ async def test_title_bar_session_time_updates():
         await pilot.pause()  # Allow timer to tick
         session_time = app.query_one("#session-time")
         content = str(session_time.render())
-        assert "Session:" in content
+        # Session time shows format: "⏱ Xh XXm XXs"
+        assert "h" in content and "m" in content and "s" in content

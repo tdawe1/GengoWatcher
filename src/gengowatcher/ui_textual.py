@@ -472,17 +472,8 @@ class StatusRow(Horizontal):
         web_state = "polling" if web_enabled else "idle"
         self.query_one("#ind-website", StatusIndicator).set_state(web_state)
 
-        # Captcha - check if solver is active/solving
-        captcha_state = "ready"
-        if hasattr(self._watcher, "captcha_solver"):
-            solver = self._watcher.captcha_solver
-            if getattr(solver, "is_solving", False):
-                captcha_state = "solving"
-            elif getattr(solver, "enabled", True):
-                captcha_state = "ready"
-            else:
-                captcha_state = "idle"
-        self.query_one("#ind-captcha", StatusIndicator).set_state(captcha_state)
+        # Captcha - disabled (captcha module removed)
+        self.query_one("#ind-captcha", StatusIndicator).set_state("idle")
 
         # Workflow - check auto-accept mode
         workflow_state = "auto"
@@ -1832,39 +1823,19 @@ class GengoWatcherApp(App):
 
     def _handle_captcha_setup(self, args=None) -> None:
         _ = args
-        from .captcha_cli import setup_captcha_solver
-
-        try:
-            setup_captcha_solver(self.watcher)
-        except Exception as e:
-            self.watcher.logger.exception(f"CAPTCHA setup error: {e}")
+        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
 
     def _handle_captcha_test(self, args=None) -> None:
         _ = args
-        from .captcha_cli import test_captcha_solver
-
-        try:
-            test_captcha_solver(self.watcher)
-        except Exception as e:
-            self.watcher.logger.exception(f"CAPTCHA test error: {e}")
+        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
 
     def _handle_captcha_stats(self, args=None) -> None:
         _ = args
-        from .captcha_cli import show_captcha_stats
-
-        try:
-            show_captcha_stats(self.watcher)
-        except Exception as e:
-            self.watcher.logger.exception(f"CAPTCHA stats error: {e}")
+        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
 
     def _handle_captcha_reset(self, args=None) -> None:
         _ = args
-        from .captcha_cli import reset_captcha_config
-
-        try:
-            reset_captcha_config(self.watcher)
-        except Exception as e:
-            self.watcher.logger.exception(f"CAPTCHA reset error: {e}")
+        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
 
     def _handle_accept_stats(self, args=None) -> None:
         _ = args
