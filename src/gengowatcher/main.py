@@ -14,7 +14,64 @@ from rich.theme import Theme
 from .config import AppConfig
 from .state import AppState
 from .watcher import GengoWatcher
-from .ui import CommandLineInterface
+from .ui_textual import GengoWatcherApp
+
+DEBUG_CATEGORIES = [
+    "websocket",
+    "rss",
+    "job",
+    "captcha",
+    "browser",
+    "config",
+    "system",
+    "email",
+    "website",
+    "raw",
+]
+
+CATEGORY_KEYWORDS = {
+    "websocket": ["websocket", "ws ", "pong", "ping", "heartbeat", "wss://"],
+    "rss": ["rss", "feed", "entries", "fetching", "parsing"],
+    "job": ["job", "acceptance", "accept", "reward", "translation", "cancellation"],
+    "captcha": ["captcha", "recaptcha", "2captcha", "anti-captcha", "solver"],
+    "browser": ["browser", "playwright", "selenium", "page", "click", "navigation"],
+    "config": ["config", "setting", "reload", "configuration"],
+    "system": [
+        "starting",
+        "stopping",
+        "shutdown",
+        "initialized",
+        "error",
+        "critical",
+        "exception",
+    ],
+    "email": ["email", "imap", "gmail", "oauth", "inbox", "mail"],
+    "website": ["website", "scrape", "viewport", "mouse", "scroll", "stealth"],
+}
+
+
+class CategoryFilter(logging.Filter):
+    def __init__(self, config: AppConfig):
+        super().__init__()
+        self.config = config
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        formatted_msg = record.getMessage()
+        sanitized_msg = formatted_msg.replace("\r", "\\r").replace("\n", "\\n")
+        record.msg = sanitized_msg
+        record.args = ()
+
+        if record.levelno >= logging.WARNING:
+            return True
+
+        msg_lower = sanitized_msg.lower()
+
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            if any(kw in msg_lower for kw in keywords):
+                return self.config.get("DebugCategories", category)
+
+        return self.config.get("DebugCategories", "system")
+
 
 APP_THEME = Theme(
     {
@@ -38,21 +95,101 @@ APP_THEME = Theme(
 class UILoggingHandler(logging.Handler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.log_queue = collections.deque(maxlen=10)
+        self.log_queue = collections.deque(maxlen=100)
 
     def emit(self, record):
         level_style_map = {
-            logging.INFO: "info",
-            logging.WARNING: "warning",
-            logging.ERROR: "error",
-            logging.CRITICAL: "bold red",
+            logging.INFO: "cyan",
+            logging.WARNING: "yellow",
+            logging.ERROR: "bold red",
+            logging.CRITICAL: "bold white on red",
         }
-        style = level_style_map.get(record.levelno, "default")
+        style = level_style_map.get(record.levelno, "white")
         message = (
             f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - "
             f"{record.getMessage()}"
         )
         self.log_queue.append(Text.from_markup(message, style=style))
+
+
+def handle_cli_config_commands(args, config: AppConfig, console: Console) -> bool:
+    """Handle CLI config commands using AppConfig directly.
+
+    Returns True if a command was handled (and we should exit), False otherwise.
+    """
+    if args.set:
+        section, option, value = args.set
+        # Parse boolean/int values
+        if value.lower() in ("true", "false"):
+            value = value.lower() == "true"
+        elif value.isdigit():
+            value = int(value)
+        config.set(section, option, value)
+        config.save_config()
+        print(f"Set [{section}] {option} = {value}")
+        return True
+
+    if args.get:
+        section, option = args.get
+        value = config.get(section, option)
+        print(f"[{section}] {option} = {value}")
+        return True
+
+    if args.list:
+        all_values = config.list_all()
+        for section, options in all_values.items():
+            print(f"[{section}]")
+            for option, value in options.items():
+                print(f"  {option} = {value}")
+        return True
+
+    if args.configure:
+        # Interactive configuration - needs special handling
+        _interactive_configure(config, console)
+        return True
+
+    return False
+
+
+def _interactive_configure(config: AppConfig, console: Console):
+    """Interactively prompt for missing/placeholder config values."""
+    from .config import PLACEHOLDER_CONFIG_VALUES
+
+    console.print("[title]GengoWatcher Configuration[/]")
+    console.print(
+        "Enter values for the following settings (or press Enter to keep current):\n"
+    )
+
+    required_fields = [
+        ("Credentials", "user_id", "Your Gengo user ID"),
+        ("Credentials", "user_key", "Your Gengo API key (optional)"),
+        ("Credentials", "session_token", "Your session token from browser cookies"),
+    ]
+
+    for section, option, description in required_fields:
+        current = config.get(section, option)
+        is_placeholder = current in PLACEHOLDER_CONFIG_VALUES
+
+        if is_placeholder:
+            prompt_text = f"[label]{description}[/] [warning](required)[/]: "
+        else:
+            # Mask sensitive values
+            masked = str(current)[:4] + "..." if len(str(current)) > 8 else str(current)
+            prompt_text = f"[label]{description}[/] [{masked}]: "
+
+        console.print(prompt_text, end="")
+        new_value = input().strip()
+
+        if new_value:
+            config.set(section, option, new_value)
+            console.print(f"  [success]✓ Updated[/]")
+        elif is_placeholder:
+            console.print(f"  [warning]⚠ Keeping placeholder value[/]")
+        else:
+            console.print(f"  [info]Kept existing value[/]")
+
+    config.save_config()
+    console.print("\n[success]Configuration saved![/]")
 
 
 def main():
@@ -88,9 +225,39 @@ def main():
         default=8000,
         help="Port for web server (default: 8000)",
     )
+    parser.add_argument(
+        "--setup-email",
+        action="store_true",
+        help="Configure Gmail OAuth for email monitoring (interactive)",
+    )
+    parser.add_argument(
+        "--setup-website",
+        action="store_true",
+        help="Configure WebsiteMonitor for browser-based job scraping (interactive)",
+    )
     args, unknown = parser.parse_known_args()
 
     console = Console(theme=APP_THEME)
+
+    # =========================================================================
+    # LIGHTWEIGHT CONFIG COMMANDS - No GengoWatcher initialization required
+    # =========================================================================
+    # Handle config commands BEFORE initializing the heavy GengoWatcher instance.
+    # This allows CLI config operations to work even if another watcher is running.
+
+    if args.set or args.get or args.list or args.configure:
+        try:
+            config = AppConfig()
+            if handle_cli_config_commands(args, config, console):
+                sys.exit(0)
+        except Exception as e:
+            console.print(f"[error]Configuration error: {e}[/]")
+            sys.exit(1)
+
+    # =========================================================================
+    # FULL WATCHER INITIALIZATION - Only for running the main application
+    # =========================================================================
+
     log = logging.getLogger("gengowatcher")
     log.setLevel(logging.DEBUG)
     ui_handler = UILoggingHandler()
@@ -98,14 +265,21 @@ def main():
 
     try:
         config = AppConfig()
+        category_filter = CategoryFilter(config)
+        log.addFilter(category_filter)
+        ui_handler.addFilter(category_filter)
         if config.get("Logging", "log_main_enabled"):
             try:
                 log_file = Path(config.get("Paths", "log_file"))
                 log_file.parent.mkdir(parents=True, exist_ok=True)
+                # Validate log_max_bytes to prevent handler crash
+                log_max_bytes = config.get("Logging", "log_max_bytes") or 0
+                if log_max_bytes < 1024:  # Minimum 1KB
+                    log_max_bytes = 10485760  # Default 10MB
                 file_handler = RotatingFileHandler(
                     log_file,
-                    maxBytes=config.get("Logging", "log_max_bytes"),
-                    backupCount=config.get("Logging", "log_backup_count"),
+                    maxBytes=log_max_bytes,
+                    backupCount=config.get("Logging", "log_backup_count") or 5,
                 )
                 file_handler.setFormatter(
                     logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -124,30 +298,38 @@ def main():
             )
         sys.exit(1)
 
-    if args.set:
-        section, option, value = args.set
-        watcher.set_config_value(section, option, value)
-        print(f"Set [{section}] {option} = {value}")
-        sys.exit(0)
-    if args.get:
-        section, option = args.get
-        value = watcher.get_config_value(section, option)
-        print(f"[{section}] {option} = {value}")
-        sys.exit(0)
-    if args.list:
-        all_values = watcher.list_config_values()
-        for section, options in all_values.items():
-            print(f"[{section}]")
-            for option, value in options.items():
-                print(f"  {option} = {value}")
-        sys.exit(0)
-    if args.configure:
-        watcher.prompt_for_config_values()
-        sys.exit(0)
+    if args.setup_email:
+        try:
+            from .oauth_setup import run_setup_sync
+
+            success = run_setup_sync(config)
+            sys.exit(0 if success else 1)
+        except ImportError as e:
+            console.print(f"[error]OAuth setup dependencies missing: {e}[/]")
+            console.print("[info]Install with: pip install google-auth-oauthlib[/]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[error]Email setup error: {e}[/]")
+            sys.exit(1)
+
+    if args.setup_website:
+        try:
+            from .website_setup import setup_website_interactive
+
+            success = setup_website_interactive(config)
+            sys.exit(0 if success else 1)
+        except ImportError as e:
+            console.print(f"[error]Website setup dependencies missing: {e}[/]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[error]Website setup error: {e}[/]")
+            sys.exit(1)
 
     if not watcher.is_config_complete():
         print("\n⚠️  Configuration is incomplete or contains placeholder values.")
-        print("The following settings need to be configured for GengoWatcher to work properly:")
+        print(
+            "The following settings need to be configured for GengoWatcher to work properly:"
+        )
         watcher.prompt_for_config_values()
 
     # Start web server if requested
@@ -167,6 +349,7 @@ def main():
 
             # Give web server time to start
             import time
+
             time.sleep(1)
 
         except ImportError as e:
@@ -183,8 +366,12 @@ def main():
             console.print("[info]Web server shutting down...[/]")
         sys.exit(0)
 
-    cli = CommandLineInterface(
-        watcher, config, state, console, log_queue=ui_handler.log_queue
+    # Start the Textual TUI
+    app = GengoWatcherApp(
+        watcher=watcher,
+        config=config,
+        state=state,
+        log_queue=ui_handler.log_queue,
     )
 
     watcher_thread = threading.Thread(
@@ -193,19 +380,19 @@ def main():
     watcher_thread.start()
 
     try:
-        cli.run()
+        app.run()
     except Exception as e:
-        log.error(f"UI loop crashed: {e}")
+        log.exception("UI loop crashed")
     finally:
         if not watcher.shutdown_event.is_set():
             watcher.handle_exit()
 
     # Print helpful exit message
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("👋 GengoWatcher has shut down.")
     print("💡 Tip: Run with --configure to change settings later")
     print("   Example: python -m gengowatcher.main --configure")
-    print("="*60)
+    print("=" * 60)
 
     try:
         watcher_thread.join(timeout=2)

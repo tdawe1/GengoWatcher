@@ -16,7 +16,14 @@ from gengowatcher.high_value_job_manager import HighValueJobManager
 
 
 def test_configuration():
-    """Test if high-value configuration is properly set."""
+    """
+    Verify that the high-value job configuration file exists and contains valid settings.
+    
+    Checks for the presence of config_high_value.ini, loads it via AppConfig and validates the RSS feed URL, WebSocket credentials (user_id, user_session, user_key), high-value thresholds and CAPTCHA configuration. Status messages are printed to stdout for each check.
+    
+    Returns:
+        bool: `True` if the configuration file exists and all validations complete without error, `False` otherwise.
+    """
     print("Testing High-Value Job Configuration...\n")
 
     # Check if high-value config exists
@@ -45,7 +52,17 @@ def test_configuration():
         # Check WebSocket settings
         user_id = config.get("WebSocket", "user_id")
         session = config.get("WebSocket", "user_session")
-        if user_id != 0 and "YOUR_SESSION_TOKEN" not in session:
+        user_key = config.get("WebSocket", "user_key")
+        key_placeholder_tokens = {
+            "YOUR_USER_KEY",
+            "REPLACE_WITH_YOUR_USER_KEY",
+            "REPLACE_WITH_BROWSER_USER_KEY",
+        }
+        if (
+            user_id != 0
+            and "YOUR_SESSION_TOKEN" not in session
+            and not any(token in (user_key or "") for token in key_placeholder_tokens)
+        ):
             print("✅ WebSocket appears to be configured")
         else:
             print("❌ WebSocket needs configuration")
@@ -114,7 +131,11 @@ async def test_high_value_manager():
 
 
 def show_setup_instructions():
-    """Show setup instructions."""
+    """
+    Print the setup and configuration instructions required to configure high-value job monitoring.
+    
+    The printed message covers required configuration file edits and keys, RSS feed details, WebSocket credentials (user ID, session cookie and user key), running instructions, recommended safety limits and notification/logging locations.
+    """
     print("\n" + "="*60)
     print("HIGH-VALUE JOB SETUP INSTRUCTIONS")
     print("="*60)
@@ -122,7 +143,7 @@ def show_setup_instructions():
 1. CONFIGURATION:
    - Copy config_high_value.ini to config.ini
    - Update YOUR_RSS_KEY_HERE with your actual RSS key
-   - Set your user_id and user_session from Gengo
+   - Set your user_id, user_session, and user_key from Gengo
    - Configure CAPTCHA service (recommended: 2captcha)
 
 2. RSS FEED:
@@ -131,7 +152,8 @@ def show_setup_instructions():
 
 3. WEBSOCKET:
    - User ID found in Gengo dashboard URL
-   - Session cookie from browser dev tools
+   - Session cookie from browser dev tools (Cookies → my_gengo_session)
+   - User key from browser dev tools (Application → Local Storage → https://gengo.com → userKey)
 
 4. RUNNING:
    - Use: python -m gengowatcher.main

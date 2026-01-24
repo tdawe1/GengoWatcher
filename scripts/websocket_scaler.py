@@ -29,7 +29,11 @@ class WebSocketWorker:
         self.last_message_time = time.time()
 
     async def connect_and_monitor(self):
-        """Main WebSocket connection and monitoring loop"""
+        """
+        Maintain a persistent WebSocket connection to the live-dashboard, authenticate with credentials from the instance config, and monitor incoming messages for job notifications.
+        
+        This coroutine sets the worker's running and connection status, sends an authentication payload containing `user_id`, `user_session` and `user_key` from the WebSocket config, and processes incoming messages. On each received message it updates `last_message_time`, attempts to parse JSON, and when a message of type `"available_collection"` contains a job `id` it increments `jobs_processed` and logs job details. Connection closures and other errors are logged; on exit the method clears the running flag and sets the connection status to `"Disconnected"`.
+        """
         ws_url = "wss://live-dashboard.gengo.com"
         self.is_running = True
         self.connection_status = "Connecting"
@@ -52,6 +56,7 @@ class WebSocketWorker:
                 auth_payload = {
                     "user_id": self.config.get("WebSocket", "user_id"),
                     "user_session": self.config.get("WebSocket", "user_session"),
+                    "user_key": self.config.get("WebSocket", "user_key"),
                 }
 
                 await websocket.send(json.dumps(auth_payload))

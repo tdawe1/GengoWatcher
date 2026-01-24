@@ -1,7 +1,20 @@
 import configparser
+import json
 from pathlib import Path
 import sys
 import threading
+from typing import Any, Dict, List, Optional
+
+
+# Values that indicate a config field has not been properly configured
+PLACEHOLDER_CONFIG_VALUES = [
+    "REPLACE_WITH_YOUR_SESSION_TOKEN",
+    "REPLACE_WITH_YOUR_USER_KEY",
+    "REPLACE_WITH_YOUR_WEB_API_TOKEN",
+    "",
+    0,
+    "0",
+]
 
 
 class AppConfig:
@@ -17,11 +30,13 @@ class AppConfig:
         },
         "WebSocket": {
             "enable_websocket": True,
+            "wss_url": "wss://live-dashboard.gengo.com",
             "user_id": 0,
             "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
+            "user_key": "REPLACE_WITH_YOUR_USER_KEY",
         },
         "Paths": {
-            "sound_file": "C:\\Windows\\Media\\chimes.wav",
+            "sound_file": "assets/alert.wav",
             "log_file": "logs/gengowatcher.log",
             "notification_icon_path": "",
             "browser_path": "",
@@ -34,12 +49,35 @@ class AppConfig:
             "log_main_enabled": True,
             "log_all_entries_enabled": True,
         },
-        "Network": {"max_backoff": 300, "user_agent_email": "your_email@example.com"},
+        "DebugCategories": {
+            "websocket": False,
+            "rss": False,
+            "job": True,
+            "captcha": True,
+            "browser": False,
+            "config": False,
+            "system": True,
+            "email": True,
+            "website": False,
+            "raw": False,
+        },
+        "Network": {
+            "max_backoff": 300,
+            "user_agent_email": "",
+            "browser_user_agent": "",
+            "clean_close_backoff_min": 20,
+            "clean_close_backoff_max": 45,
+            "reconnect_jitter_max": 5,
+        },
+        "RateLimit": {
+            "max_acceptances_per_hour": 30,
+        },
         "WebServer": {
             "enabled": False,
             "host": "127.0.0.1",
             "port": 8000,
             "cors_origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+            "auth_token": "REPLACE_WITH_YOUR_WEB_API_TOKEN",
         },
         "AutoAccept": {
             "enabled": False,
@@ -92,6 +130,26 @@ class AppConfig:
             "extreme_threshold": 1000.0,
             "auto_cancel_extreme_value": True,
         },
+        "EmailMonitor": {
+            "enabled": False,
+            "email": "",
+            "client_id": "",
+            "client_secret": "",
+            "refresh_token": "",
+            "access_token": "",
+            "token_expiry": 0,
+            "folder": "INBOX",
+            "from_filter": "no-reply@gengo.com",
+            "poll_fallback_interval": 60,
+        },
+        "WebsiteMonitor": {
+            "enabled": False,
+            "jobs_url": "https://gengo.com/t/jobs/",
+            "check_interval_min": 120,
+            "check_interval_max": 300,
+            "headless": True,
+            "session_cookie": "",
+        },
         "SeleniumMonitoring": {
             "enable_live_dashboard": True,
             "enable_list_refresh": True,
@@ -129,11 +187,25 @@ class AppConfig:
         # Don't exit - let the interactive config prompt handle it
 
     def load_config(self):
+        """
+        Load configuration from disk into the in-memory configuration, apply defaults and repair missing sections/options.
+
+        Reads the CONFIG_FILE into the internal parser, populates self.config with existing user-defined values, ensures every section and option from DEFAULT_CONFIG exists (adding any missing entries), and persists the updated config file when modifications are made. After loading and repair, calls _validate_auto_accept_config to enforce AutoAccept invariants. On parsing or value errors the function prints a critical message and exits the process.
+        """
         with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
             self._config_parser.read_file(f)
         with self._lock:
             try:
                 config_modified = False
+
+                # First, populate self.config with everything from the parser
+                # This ensures user-defined sections are available
+                for section in self._config_parser.sections():
+                    self.config[section] = {}
+                    for key, value in self._config_parser.items(section):
+                        self.config[section][key] = value
+
+                # Then, ensure all defaults are present and typed correctly where possible
                 for section, defaults in self.DEFAULT_CONFIG.items():
                     # Add missing sections
                     if not self._config_parser.has_section(section):
@@ -141,7 +213,9 @@ class AppConfig:
                         print(f"Added missing config section: [{section}]")
                         config_modified = True
 
-                    self.config[section] = {}
+                    if section not in self.config:
+                        self.config[section] = {}
+
                     for key, default_val in defaults.items():
                         if isinstance(default_val, bool):
                             method = self._config_parser.getboolean
@@ -149,18 +223,37 @@ class AppConfig:
                             method = self._config_parser.getint
                         elif isinstance(default_val, float):
                             method = self._config_parser.getfloat
+                        elif isinstance(default_val, list):
+                            method = None
                         else:
                             method = self._config_parser.get
 
                         try:
-                            self.config[section][key] = method(
-                                section, key, fallback=default_val
-                            )
-                        except (configparser.NoSectionError, configparser.NoOptionError):
+                            if method is None:
+                                raw_val = self._config_parser.get(
+                                    section, key, fallback=None
+                                )
+                                if raw_val is not None:
+                                    try:
+                                        self.config[section][key] = json.loads(raw_val)
+                                    except json.JSONDecodeError:
+                                        self.config[section][key] = default_val
+                                else:
+                                    self.config[section][key] = default_val
+                            else:
+                                self.config[section][key] = method(
+                                    section, key, fallback=default_val
+                                )
+                        except (
+                            configparser.NoSectionError,
+                            configparser.NoOptionError,
+                        ):
                             # Add missing option with default value
                             self._config_parser.set(section, key, str(default_val))
                             self.config[section][key] = default_val
-                            print(f"Added missing config option: [{section}]{key} = {default_val}")
+                            print(
+                                f"Added missing config option: [{section}]{key} = {default_val}"
+                            )
                             config_modified = True
 
                 # Save config if it was modified
@@ -188,14 +281,41 @@ class AppConfig:
                 if not self._config_parser.has_section(section):
                     self._config_parser.add_section(section)
                 for key, value in settings.items():
-                    self._config_parser.set(section, key, str(value))
+                    # Serialize lists as JSON to preserve them on reload
+                    if isinstance(value, list):
+                        serialized = json.dumps(value)
+                    else:
+                        serialized = str(value)
+                    self._config_parser.set(section, key, serialized)
             try:
                 with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                     self._config_parser.write(f)
             except IOError as e:
                 print(f"Error saving config: {e}")
 
-    def getboolean(self, section: str, key: str, fallback: bool = None) -> bool:
+    def list_all(self) -> Dict[str, Dict[str, Any]]:
+        """Return all config values as a nested dictionary.
+
+        Returns:
+            Dict with section names as keys, containing dicts of option:value pairs
+        """
+        with self._lock:
+            return {section: dict(options) for section, options in self.config.items()}
+
+    def is_placeholder(self, value: Any) -> bool:
+        """Check if a value is a placeholder that needs user configuration.
+
+        Args:
+            value: The config value to check
+
+        Returns:
+            True if the value is a placeholder, False otherwise
+        """
+        return value in PLACEHOLDER_CONFIG_VALUES
+
+    def getboolean(
+        self, section: str, key: str, fallback: Optional[bool] = None
+    ) -> bool:
         """Get a boolean value from config with case-insensitive parsing.
 
         Args:
@@ -211,9 +331,9 @@ class AppConfig:
                 value = self._config_parser.get(section, key)
                 # Case-insensitive boolean parsing
                 value_lower = value.lower().strip()
-                if value_lower in ('true', '1', 'yes', 'on', 'enabled'):
+                if value_lower in ("true", "1", "yes", "on", "enabled"):
                     return True
-                elif value_lower in ('false', '0', 'no', 'off', 'disabled'):
+                elif value_lower in ("false", "0", "no", "off", "disabled"):
                     return False
                 else:
                     raise ValueError(f"Invalid boolean value: {value}")
@@ -222,7 +342,7 @@ class AppConfig:
                     return fallback
                 raise
 
-    def getint(self, section: str, key: str, fallback: int = None) -> int:
+    def getint(self, section: str, key: str, fallback: Optional[int] = None) -> int:
         """Get an integer value from config.
 
         Args:
@@ -241,7 +361,9 @@ class AppConfig:
                     return fallback
                 raise
 
-    def getfloat(self, section: str, key: str, fallback: float = None) -> float:
+    def getfloat(
+        self, section: str, key: str, fallback: Optional[float] = None
+    ) -> float:
         """Get a float value from config.
 
         Args:
@@ -269,34 +391,62 @@ class AppConfig:
                 return None
 
     def set(self, section, key, value):
+        """
+        Set a configuration value in the in-memory config, creating the section if it does not exist.
+
+        Parameters:
+            section (str): Name of the configuration section to update or create.
+            key (str): Configuration option name to set.
+            value (Any): Value to assign to the given key in the section.
+        """
         with self._lock:
+            if section not in self.config:
+                self.config[section] = {}
             self.config[section][key] = value
 
     def _validate_auto_accept_config(self):
-        """Validate auto-accept configuration values"""
+        """
+        Validate and sanitise the AutoAccept section of the in-memory configuration.
+
+        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
+        """
         auto_accept = self.config["AutoAccept"]
-        
+
         # Validate reward range
         if auto_accept["min_reward"] > auto_accept["max_reward"]:
-            print("Warning: min_reward > max_reward in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["min_reward"], self.config["AutoAccept"]["max_reward"] = \
-                auto_accept["max_reward"], auto_accept["min_reward"]
-        
+            print(
+                "Warning: min_reward > max_reward in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["min_reward"],
+                self.config["AutoAccept"]["max_reward"],
+            ) = auto_accept["max_reward"], auto_accept["min_reward"]
+
         # Validate delay range
         if auto_accept["accept_delay_min"] > auto_accept["accept_delay_max"]:
-            print("Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values.")
-            self.config["AutoAccept"]["accept_delay_min"], self.config["AutoAccept"]["accept_delay_max"] = \
-                auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
-        
+            print(
+                "Warning: accept_delay_min > accept_delay_max in AutoAccept config. Swapping values."
+            )
+            (
+                self.config["AutoAccept"]["accept_delay_min"],
+                self.config["AutoAccept"]["accept_delay_max"],
+            ) = auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
+
         # Validate job sources
-        valid_sources = {"rss", "websocket"}
+        valid_sources = {"rss", "websocket", "email", "website"}
         sources = {s.strip() for s in auto_accept["job_sources"].split(",")}
         if not sources.issubset(valid_sources):
             invalid = sources - valid_sources
-            print(f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only.")
+            print(
+                f"Warning: Invalid job sources in AutoAccept config: {invalid}. Using valid sources only."
+            )
             valid_sources_in_config = sources & valid_sources
-            self.config["AutoAccept"]["job_sources"] = ",".join(valid_sources_in_config) if valid_sources_in_config else "rss,websocket"
-        
+            self.config["AutoAccept"]["job_sources"] = (
+                ",".join(valid_sources_in_config)
+                if valid_sources_in_config
+                else "rss,websocket"
+            )
+
         # Ensure delay values are reasonable
         if auto_accept["accept_delay_min"] < 0:
             self.config["AutoAccept"]["accept_delay_min"] = 0
