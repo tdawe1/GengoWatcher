@@ -303,7 +303,7 @@ poll_fallback_interval = 60      # Seconds between polls if IDLE fails
 ### Troubleshooting
 - **OAuth Errors**: If you encounter authentication errors, try running `python -m gengowatcher.main --setup-email` again to refresh your credentials.
 - **Token Refresh**: GengoWatcher handles token refresh automatically, but you may need to re-authorize if the refresh token expires.
-- **Tracking Links**: Tracking links require a valid Gengo session. Ensure your `session_cookie` is up to date in the `[WebsiteMonitor]` or `[WebSocket]` section.
+- **Tracking Links**: Tracking links require a valid Gengo session. Ensure your `session_cookie` in the `[WebsiteMonitor]` section (or `user_session` in the `[WebSocket]` section) is up to date.
 
 ---
 
