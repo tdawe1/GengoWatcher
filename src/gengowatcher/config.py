@@ -25,7 +25,7 @@ class AppConfig:
             "user_key": "REPLACE_WITH_YOUR_USER_KEY",
         },
         "Paths": {
-            "sound_file": "C:\\Windows\\Media\\chimes.wav",
+            "sound_file": "assets/alert.wav",
             "log_file": "logs/gengowatcher.log",
             "notification_icon_path": "",
             "browser_path": "",
