@@ -45,6 +45,13 @@ try:
 except ImportError:
     PLOTEXT_AVAILABLE = False
 
+try:
+    from textual_autocomplete import AutoComplete, Dropdown, DropdownItem
+
+    AUTOCOMPLETE_AVAILABLE = True
+except ImportError:
+    AUTOCOMPLETE_AVAILABLE = False
+
 
 class HelpScreen(ModalScreen):
     """Modal screen to show help commands."""
