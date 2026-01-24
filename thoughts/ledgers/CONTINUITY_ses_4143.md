@@ -1,73 +1,76 @@
 ---
 session: ses_4143
-updated: 2026-01-24T05:39:49.286Z
+updated: 2026-01-24T21:42:59.251Z
 ---
 
 # Session Summary
 
 ## Goal
-Transform GengoWatcher's Textual TUI into a polished command-center interface with Kanagawa Wave colors, tabbed navigation, 4-quadrant dashboard layout, metric cards, live status indicators, and a comprehensive Stats tab.
+Fix GengoWatcher TUI to match design spec: TitleBar with status info, MetricCards with icons, StatusRow with all 5 indicators, colored ActivityPreview, expanding quadrants, command feedback on Dashboard, and Debug tab for full application logs.
 
 ## Constraints & Preferences
-- Textual framework (existing)
-- Kanagawa Wave color scheme (not Tokyo Night)
-- Tabbed navigation (not sidebar)
-- Unicode icons only (no emoji) for status indicators
-- `textual-plotext` for charts, `textual-autocomplete` for command input
-- Incremental refactor with frequent commits
-- Command input panel needs commands configured in `_init_commands()`
+- Textual framework with Kanagawa Wave color scheme
+- Design spec at `docs/plans/2026-01-24-dashboard-visual-overhaul.md`
+- Unicode icons only (no emoji)
+- User wants to see FULL DEBUG OUTPUT while app runs
+- Command responses should appear on Dashboard (not separate tab)
 
 ## Progress
 ### Done
-- [x] Phase 1: Swapped Tokyo Night → Kanagawa Wave colors (`cfbede0`)
-- [x] Phase 2.1: Restructured to main tabbed navigation - Dashboard/Jobs/Activity/Output/Charts (`c0db038`)
-- [x] Phase 2.2+2.3: Added tab shortcuts 1-5, updated toggle_runtime (`d566e85`)
-- [x] Phase 3: Enhanced help modal with keyboard shortcuts table (`20f28e4`)
-- [x] Phase 4: Added textual-plotext + JobsChart widget (`e3b3a05`)
-- [x] Phase 5: Added textual-autocomplete import structure (`e02ebc9`)
-- [x] Phase 6: Created UI tab tests + cleaned up footer shortcuts (`0c6a18c`)
-- [x] Brainstormed comprehensive visual overhaul design
-- [x] Wrote design spec (`docs/plans/2026-01-24-dashboard-visual-overhaul.md`) (`2eefb8b`)
+- [x] PR #50 conflicts resolved (merged windows-terminal-ui, removed frontend/package*.json)
+- [x] PR #50 title/description updated to reflect actual scope
+- [x] `.gitignore` cleaned up (removed duplicates, organized sections)
+- [x] Fixed `ConfigPreview` to use `AppConfig.get()` API instead of direct attributes
+- [x] **TitleBar**: Added watcher status (Running/Paused/Stopped), job count, next check countdown, 2-row layout
+- [x] **MetricCard**: Added icons (▲✓$~/≥), reordered to label-on-top/value-below
+- [x] **ActivityPreview**: Converted to RichLog with colored timestamps by level
+- [x] **ConfigPreview**: Added Rich markup for colored key:value pairs
+- [x] **compose()**: Pass watcher/state to TitleBar, changed Output tab → Debug tab
+- [x] **Dashboard**: Added CommandResponse box (4th quadrant) with RichLog
+- [x] **_execute_command()**: Now writes to `#cmd-response` on Dashboard with colored feedback
 
 ### In Progress
-- [ ] Create implementation plan from design spec
-- [ ] Implement visual overhaul (new widgets, CSS, Stats tab)
+- [ ] CSS: Make quadrants expand to fill space (height: 1fr)
+- [ ] Wire Python logging to Debug panel
+- [ ] StatusRow: Wire up all 5 indicators with real state (Captcha/Workflow not updating)
 
 ### Blocked
 - (none)
 
 ## Key Decisions
-- **Tabbed layout over sidebar**: More natural for TUI navigation
-- **5 metric cards**: Found, Accepted, Value, Rate, Min/Word (with color-coded left borders)
-- **Unicode icons**: `●` WS, `◉` Email, `◎` Website, `⧗` Captcha, `⇄` Workflow
-- **Live status indicators**: `∿∿∿` heartbeat for WS Live, `↻` for polling, countdowns for idle
-- **4-quadrant dashboard**: Recent Activity + Jobs Preview (left), Jobs/Hour Chart + Configuration (right)
-- **Stats tab (6th tab)**: Session, All-Time, By Source, By Language, Best Times (peak/slow), 7-day Earnings
+- **TitleBar 2-row layout**: Row 1 = Brand + Status + Job count; Row 2 = Session timer + Next check + Clock
+- **Command feedback on Dashboard**: Added `#cmd-response` RichLog in 4th quadrant instead of Jobs chart
+- **Output → Debug tab**: Renamed and will wire Python logging to `#debug-log`
+- **Removed jobs-chart-mini from Dashboard**: Replaced with command response box
 
 ## Next Steps
-1. Use `writing-plans` skill to create detailed implementation plan from design spec
-2. Implement new widget classes: `TitleBar`, `MetricCard`, `MetricsRow`, `StatusIndicator`, `StatusRow`, `DashboardQuadrant`, `ActivityPreview`, `JobsPreview`, `StatsPanel`
-3. Update `gengo_watcher.tcss` with new styles
-4. Refactor `compose()` to use new layout
-5. Add Stats tab with historical data persistence
+1. Update CSS to make quadrants expand (`height: 1fr` on `.dashboard-grid` children)
+2. Add CSS for new elements: `.title-row`, `.command-response-box`, `#debug-log`
+3. Wire Python logging handler to write to `#debug-log` RichLog (color by level)
+4. Update StatusRow.refresh_status() to handle Captcha and Workflow states
+5. Update tests for new tab ID (`debug-tab` instead of `output-tab`)
+6. Test the app end-to-end
+7. Commit and push changes
 
 ## Critical Context
-- **Branch**: `feat/email-website-monitor-completion`
-- **Latest commit**: `2eefb8b`
-- **Design spec**: `/home/thomas/GengoWatcher/docs/plans/2026-01-24-dashboard-visual-overhaul.md`
-- **Kanagawa colors**: `$surface: #1F1F28`, `$primary: #7E9CD8`, `$accent: #7AA89F`, `$success: #98BB6C`, `$warning: #DCA561`, `$error: #C34043`, `$text: #DCD7BA`, `$text-muted: #727169`, `$secondary: #957FB8`
-- **Status row format**: `● WS ∿∿∿ Live   ◉ Email ↻ 45s   ◎ Web ○ Idle   ⧗ Captcha: Ready   ⇄ Workflow: Auto`
-- **Card accent colors**: Found=`$primary`, Accepted=`$success`, Value=`$warning`, Rate=`$accent`, Min/Word=`$secondary`
-- **Files to modify**: `ui_textual.py`, `gengo_watcher.tcss`, `state.py` or new `stats.py`
-- **Dependencies added**: `textual-plotext>=1.0.0`, `textual-autocomplete>=3.0.0` in `requirements.txt`
+- **Branch**: `feat/dashboard-visual-overhaul`
+- **PR**: #50 (MERGEABLE, waiting for checks)
+- **Key files modified this session**:
+  - `src/gengowatcher/ui_textual.py` - TitleBar, MetricCard, ActivityPreview, ConfigPreview, compose(), _execute_command()
+  - `src/gengowatcher/gengo_watcher.tcss` - needs updates for new styles
+- **New widget IDs**:
+  - `#cmd-response` - RichLog for command feedback on Dashboard
+  - `#debug-log` - RichLog for full app logs (was `#output-log`)
+  - `#activity-preview-log` - RichLog inside ActivityPreview
+- **Tab ID changed**: `output-tab` → `debug-tab`
+- **LSP errors**: Pre-existing (textual_plotext import, type hints) - not blockers
+- **Design spec colors**: success=#98BB6C, warning=#DCA561, error=#C34043, info=#7dcfff, muted=#727169
 
 ## File Operations
 ### Read
-- `/home/thomas/GengoWatcher/src/gengowatcher/gengo_watcher.tcss` (314 lines)
+- `src/gengowatcher/ui_textual.py` (full file)
+- `src/gengowatcher/gengo_watcher.tcss` (full file)
+- `docs/plans/2026-01-24-dashboard-visual-overhaul.md` (design spec)
 
 ### Modified
-- `/home/thomas/GengoWatcher/src/gengowatcher/gengo_watcher.tcss` - Kanagawa colors + Phase 2 CSS
-- `/home/thomas/GengoWatcher/src/gengowatcher/ui_textual.py` - Tabbed layout, shortcuts, help modal, JobsChart, autocomplete imports
-- `/home/thomas/GengoWatcher/requirements.txt` - Added textual-plotext, textual-autocomplete
-- `/home/thomas/GengoWatcher/tests/test_ui_tabs.py` - Created (3 async tests)
-- `/home/thomas/GengoWatcher/docs/plans/2026-01-24-dashboard-visual-overhaul.md` - Created design spec
+- `src/gengowatcher/ui_textual.py` - TitleBar (lines 149-205), MetricCard (lines 207-242), ActivityPreview (lines 392-416), ConfigPreview (lines 443-474), compose() (lines 1242-1289), _execute_command() (lines 1421-1464), action_tab_output() (line 1489)
