@@ -54,10 +54,44 @@ class HelpScreen(ModalScreen):
             yield Label("Press ESC or ? to close", classes="help-footer")
 
     def on_mount(self) -> None:
-        # Use the app's logic to generate the table
-        if hasattr(self.app, "_handle_help"):
-            table = self.app._handle_help()
-            self.query_one("#help-list", Static).update(table)
+        """Build help content with commands and keyboard shortcuts."""
+        from rich.table import Table
+        from rich.console import Group
+
+        # Keyboard shortcuts table
+        shortcut_table = Table(
+            title="Keyboard Shortcuts", show_header=True, header_style="bold cyan"
+        )
+        shortcut_table.add_column("Key", style="cyan", width=12)
+        shortcut_table.add_column("Action")
+
+        shortcuts = [
+            ("1-5", "Switch tabs (Dashboard/Jobs/Activity/Output/Charts)"),
+            ("t", "Go to Dashboard tab"),
+            ("q / Esc", "Quit application"),
+            ("c", "Trigger immediate check"),
+            ("p", "Pause watcher"),
+            ("r", "Resume watcher"),
+            ("h / ?", "Show this help"),
+            ("Ctrl+P", "Command palette"),
+            ("Ctrl+L", "Clear activity log"),
+            ("↑ / ↓", "Command history (in input)"),
+        ]
+        for key, action in shortcuts:
+            shortcut_table.add_row(key, action)
+
+        # Commands table
+        cmd_table = Table(title="Commands", show_header=True, header_style="bold cyan")
+        cmd_table.add_column("Command", style="cyan")
+        cmd_table.add_column("Aliases", style="dim")
+        cmd_table.add_column("Description")
+
+        if hasattr(self.app, "commands"):
+            for cmd, info in self.app.commands.items():
+                aliases = ", ".join(info.get("aliases", []))
+                cmd_table.add_row(cmd, aliases, info["help"])
+
+        self.query_one("#help-list", Static).update(Group(shortcut_table, cmd_table))
 
 
 class StatsSparkline(Static):
