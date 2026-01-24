@@ -16,7 +16,13 @@ def play_sound(sound_file_path: str):
     """
 
     def _play():
-        if not Path(sound_file_path).is_file():
+        path = Path(sound_file_path)
+        if not path.is_file():
+            # Try relative to the project root (assuming src/gengowatcher/notifier.py)
+            project_root = Path(__file__).parent.parent.parent
+            path = project_root / sound_file_path
+
+        if not path.is_file():
             logger.warning(f"Sound file not found: {sound_file_path}")
             return
 
@@ -27,11 +33,11 @@ def play_sound(sound_file_path: str):
         # 4. mpv (Very common)
         # 5. aplay (ALSA - absolute fallback)
         players = [
-            (["pw-play", sound_file_path], "pw-play"),
-            (["paplay", sound_file_path], "paplay"),
-            (["canberra-gtk-play", "-f", sound_file_path], "canberra-gtk-play"),
-            (["mpv", "--no-video", "--no-terminal", sound_file_path], "mpv"),
-            (["aplay", "-q", sound_file_path], "aplay"),
+            (["pw-play", str(path)], "pw-play"),
+            (["paplay", str(path)], "paplay"),
+            (["canberra-gtk-play", "-f", str(path)], "canberra-gtk-play"),
+            (["mpv", "--no-video", "--no-terminal", str(path)], "mpv"),
+            (["aplay", "-q", str(path)], "aplay"),
         ]
 
         for cmd, name in players:
