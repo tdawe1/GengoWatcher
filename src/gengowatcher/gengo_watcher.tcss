@@ -279,3 +279,35 @@ ScrollBar > .scrollbar--thumb {
     text-style: bold italic;
     column-span: 4;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PHASE 2: TABBED NAVIGATION LAYOUT
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Dashboard tab content layout */
+#dashboard-content {
+    layout: vertical;
+    height: 1fr;
+    padding: 0;
+}
+
+#dashboard-content #runtime-panel {
+    height: auto;
+}
+
+#dashboard-content #header-panel {
+    height: auto;
+}
+
+/* Charts placeholder */
+#charts-placeholder {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    color: $text-muted;
+}
+
+/* Ensure main-tabs fills space */
+#main-tabs {
+    height: 1fr;
+}
