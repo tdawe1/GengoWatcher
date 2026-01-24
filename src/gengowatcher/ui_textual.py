@@ -41,16 +41,70 @@ from .state import AppState
 from .stats import StatsManager
 
 
+# =============================================================================
+# UI Constants - Centralized icons and theme colors
+# =============================================================================
+
+
+class Icons:
+    """Unicode icons for UI elements."""
+
+    # Metric card icons
+    FOUND = "▲"
+    ACCEPTED = "✓"
+    VALUE = "$"
+    RATE = "~"
+    MIN_WORDS = "≥"
+
+    # Status indicator icons
+    WEBSOCKET = "●"
+    EMAIL = "◉"
+    WEBSITE = "◎"
+    CAPTCHA = "⧗"
+    WORKFLOW = "⇄"
+
+    # Status state icons
+    LIVE = "∿∿∿"
+    CONNECTING = "◐"
+    POLLING = "↻"
+    IDLE = "○"
+    ERROR = "✗"
+
+
+class KanagawaColors:
+    """Kanagawa Wave theme colors for consistent styling."""
+
+    # Depth levels (backgrounds)
+    DEPTH_0 = "#16161D"  # sumiInk0 - deepest
+    DEPTH_1 = "#1F1F28"  # sumiInk1 - default bg
+    DEPTH_2 = "#2A2A37"  # sumiInk3 - elevated
+    DEPTH_3 = "#363646"  # sumiInk4 - highest
+
+    # Semantic colors
+    FOUND = "#76946A"  # autumnGreen - new jobs
+    ACCEPTED = "#7AA89F"  # waveAqua2 - success
+    VALUE = "#DCA561"  # autumnYellow - money
+    RATE = "#7FB4CA"  # springBlue - info
+    MIN_WORDS = "#957FB8"  # oniViolet - accent
+
+    # Log level colors
+    DEBUG = "#727169"  # fujiGray - muted
+    INFO = "#7FB4CA"  # springBlue
+    WARNING = "#DCA561"  # autumnYellow
+    ERROR = "#C34043"  # autumnRed
+    CRITICAL = "#E82424"  # samuraiRed
+
+
 class TextualLogHandler(logging.Handler):
     """Logging handler that writes to a Textual RichLog widget."""
 
-    # Color map for log levels (Kanagawa Wave theme)
+    # Color map for log levels using KanagawaColors
     LEVEL_COLORS = {
-        logging.DEBUG: "#727169",  # fujiGray - muted
-        logging.INFO: "#7FB4CA",  # springBlue - info
-        logging.WARNING: "#DCA561",  # autumnYellow - warning
-        logging.ERROR: "#C34043",  # autumnRed - error
-        logging.CRITICAL: "#E82424",  # samuraiRed - critical
+        logging.DEBUG: KanagawaColors.DEBUG,
+        logging.INFO: KanagawaColors.INFO,
+        logging.WARNING: KanagawaColors.WARNING,
+        logging.ERROR: KanagawaColors.ERROR,
+        logging.CRITICAL: KanagawaColors.CRITICAL,
     }
 
     def __init__(self, app: "GengoWatcherApp"):
@@ -253,12 +307,13 @@ class TitleBar(Static):
 class MetricCard(Static):
     """Individual metric display card with icon and accent border."""
 
+    # Map card_class to Icons constants
     ICONS = {
-        "found": "▲",
-        "accepted": "✓",
-        "value": "$",
-        "rate": "~",
-        "minword": "≥",
+        "found": Icons.FOUND,
+        "accepted": Icons.ACCEPTED,
+        "value": Icons.VALUE,
+        "rate": Icons.RATE,
+        "minword": Icons.MIN_WORDS,
     }
 
     def __init__(self, label: str, value: str = "0", card_class: str = "", **kwargs):
@@ -324,20 +379,22 @@ class MetricsRow(Horizontal):
 class StatusIndicator(Static):
     """Single status indicator with icon, label, and live state."""
 
+    # Map indicator types to Icons constants
     ICONS = {
-        "websocket": "●",
-        "email": "◉",
-        "website": "◎",
-        "captcha": "⧗",
-        "workflow": "⇄",
+        "websocket": Icons.WEBSOCKET,
+        "email": Icons.EMAIL,
+        "website": Icons.WEBSITE,
+        "captcha": Icons.CAPTCHA,
+        "workflow": Icons.WORKFLOW,
     }
 
+    # Status states with display text and CSS class
     STATES = {
-        "live": ("∿∿∿ Live", "status-live"),
-        "connecting": ("◐ Connecting", "status-working"),
-        "polling": ("↻ Polling", "status-working"),
-        "idle": ("○ Idle", "status-idle"),
-        "error": ("✗ Error", "status-error"),
+        "live": (f"{Icons.LIVE} Live", "status-live"),
+        "connecting": (f"{Icons.CONNECTING} Connecting", "status-working"),
+        "polling": (f"{Icons.POLLING} Polling", "status-working"),
+        "idle": (f"{Icons.IDLE} Idle", "status-idle"),
+        "error": (f"{Icons.ERROR} Error", "status-error"),
         "ready": ("Ready", "status-live"),
         "solving": ("Solving...", "status-working"),
         "auto": ("Auto", "status-live"),
@@ -588,65 +645,81 @@ class StatsPanel(Static):
         self.refresh_stats()
 
     def refresh_stats(self) -> None:
-        """Update all stats displays."""
-        s = self._stats
+        """Update all stats displays by delegating to section methods."""
+        self._refresh_session_stats()
+        self._refresh_alltime_stats()
+        self._refresh_source_stats()
+        self._refresh_language_stats()
+        self._refresh_times_stats()
+        self._refresh_earnings_stats()
 
-        # Session
+    def _refresh_session_stats(self) -> None:
+        """Update session statistics section."""
+        s = self._stats
         dur = s.session.duration_seconds
         h, m = divmod(dur // 60, 60)
-        session_lines = [
+        lines = [
             f"Duration     {h}h {m:02d}m",
             f"Jobs Found   {s.session.jobs_found}",
             f"Accepted     {s.session.jobs_accepted}",
             f"Value        ${s.session.total_value:.2f}",
             f"Rate         {s.session.rate_per_hour:.1f}/hr",
         ]
-        self._update_content("#stats-session-content", "\n".join(session_lines))
+        self._update_content("#stats-session-content", "\n".join(lines))
 
-        # All-Time
-        alltime_lines = [
+    def _refresh_alltime_stats(self) -> None:
+        """Update all-time statistics section."""
+        s = self._stats
+        lines = [
             f"Total Jobs   {s.all_time.total_jobs:,}",
             f"Total Value  ${s.all_time.total_value:,.2f}",
             f"Avg Value    ${s.all_time.avg_job_value:.2f}",
             f"Best Day     ${s.all_time.best_day_value:.2f}",
             f"Sessions     {s.all_time.total_sessions}",
         ]
-        self._update_content("#stats-alltime-content", "\n".join(alltime_lines))
+        self._update_content("#stats-alltime-content", "\n".join(lines))
 
-        # Source
+    def _refresh_source_stats(self) -> None:
+        """Update job source breakdown section."""
+        s = self._stats
         pct = s.by_source.percentages()
-        source_lines = [
+        lines = [
             self._bar("WebSocket", s.by_source.websocket, pct["websocket"]),
             self._bar("Email", s.by_source.email, pct["email"]),
             self._bar("Website", s.by_source.website, pct["website"]),
         ]
-        self._update_content("#stats-source-content", "\n".join(source_lines))
+        self._update_content("#stats-source-content", "\n".join(lines))
 
-        # Language
+    def _refresh_language_stats(self) -> None:
+        """Update language breakdown section."""
+        s = self._stats
         lang_items = sorted(s.by_language.items(), key=lambda x: x[1], reverse=True)[:4]
         total_lang = sum(s.by_language.values()) or 1
-        lang_lines = [
+        lines = [
             self._bar(lang, count, count / total_lang * 100)
             for lang, count in lang_items
         ]
         self._update_content(
             "#stats-language-content",
-            "\n".join(lang_lines) if lang_lines else "No data",
+            "\n".join(lines) if lines else "No data",
         )
 
-        # Best Times
+    def _refresh_times_stats(self) -> None:
+        """Update best/slowest times section."""
+        s = self._stats
         peak_h, peak_c = s.get_peak_hour()
         slow_h, slow_c = s.get_slowest_hour()
-        times_lines = [
+        lines = [
             f"Peak Hour    {peak_h:02d}:00-{peak_h + 1:02d}:00  ({peak_c} jobs)",
             f"Slowest      {slow_h:02d}:00-{slow_h + 1:02d}:00  ({slow_c} jobs)",
         ]
-        self._update_content("#stats-times-content", "\n".join(times_lines))
+        self._update_content("#stats-times-content", "\n".join(lines))
 
-        # Earnings
-        earnings = s.get_recent_earnings(7)
-        earnings_lines = [f"{day} ${val:.0f}" for day, val in earnings.items()]
-        self._update_content("#stats-earnings-content", "  ".join(earnings_lines))
+    def _refresh_earnings_stats(self) -> None:
+        """Update 7-day earnings section."""
+        earnings = self._stats.get_recent_earnings(7)
+        lines = [f"{day} ${val:.0f}" for day, val in earnings.items()]
+        self._update_content("#stats-earnings-content", "  ".join(lines))
 
     def _bar(self, label: str, count: int, pct: float) -> str:
         """Create a text-based progress bar."""
