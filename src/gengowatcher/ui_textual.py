@@ -38,6 +38,13 @@ from .watcher import GengoWatcher, __version__
 from .config import AppConfig
 from .state import AppState
 
+try:
+    from textual_plotext import PlotextPlot
+
+    PLOTEXT_AVAILABLE = True
+except ImportError:
+    PLOTEXT_AVAILABLE = False
+
 
 class HelpScreen(ModalScreen):
     """Modal screen to show help commands."""
@@ -129,6 +136,57 @@ class StatsSparkline(Static):
             result += self.SPARKLINE_CHARS[index]
 
         return result
+
+
+class JobsChart(Static):
+    """Real-time chart showing jobs found over time."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__(**kwargs)
+        self.state = state
+        self._chart = None
+
+    def compose(self) -> ComposeResult:
+        if PLOTEXT_AVAILABLE:
+            self._chart = PlotextPlot()
+            yield self._chart
+        else:
+            yield Static(
+                "[dim]Install textual-plotext for charts:\n"
+                "pip install textual-plotext[/]",
+                id="charts-unavailable",
+            )
+
+    def on_mount(self) -> None:
+        if self._chart:
+            self.update_chart()
+            self.set_interval(60, self.update_chart)
+
+    def update_chart(self) -> None:
+        """Update chart with latest sparkline data."""
+        if not self._chart or not PLOTEXT_AVAILABLE:
+            return
+
+        data = self.state.sparkline_data if self.state.sparkline_data else []
+        if not data:
+            data = [0]
+
+        try:
+            plt = self._chart.plt
+            plt.clear_data()
+            plt.clear_figure()
+
+            # Create x-axis (samples)
+            x = list(range(len(data)))
+
+            plt.plot(x, data, marker="braille")
+            plt.title("Jobs/Hour (Recent)")
+            plt.xlabel("Samples")
+            plt.ylabel("Jobs/Hour")
+
+            self._chart.refresh()
+        except Exception:
+            pass
 
 
 class HistoryInput(Input):
@@ -766,12 +824,9 @@ class GengoWatcherApp(App):
                 )
                 yield output_log
 
-            # Charts tab - placeholder for Phase 4
+            # Charts tab - real-time charts
             with TabPane("Charts", id="charts"):
-                yield Static(
-                    "[dim]Charts coming soon - install textual-plotext[/]",
-                    id="charts-placeholder",
-                )
+                yield JobsChart(self.state, id="jobs-chart")
 
         # Bottom status and input area
         with Vertical(id="bottom-area"):
