@@ -47,6 +47,7 @@ class AppConfig:
             "system": True,
             "email": True,
             "website": False,
+            "raw": False,
         },
         "Network": {
             "max_backoff": 300,
