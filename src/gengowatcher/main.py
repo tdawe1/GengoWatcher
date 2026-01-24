@@ -302,7 +302,7 @@ def main():
     try:
         app.run()
     except Exception as e:
-        log.error(f"UI loop crashed: {e}")
+        log.exception("UI loop crashed")
     finally:
         if not watcher.shutdown_event.is_set():
             watcher.handle_exit()
