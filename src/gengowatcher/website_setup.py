@@ -210,7 +210,7 @@ def setup_website_interactive(config: AppConfig, logger=None) -> bool:
     log(f"  Session Cookie:  {'*' * 20} (hidden)")
     log(f"  Headless Mode:   {'Yes' if headless else 'No'}")
     log(f"  Check Interval:  {check_min}-{check_max} seconds")
-    log(f"  Enabled:         Yes")
+    log("  Enabled:         Yes")
     log("")
     log("WebsiteMonitor is now enabled and will start with GengoWatcher.")
     log("")
