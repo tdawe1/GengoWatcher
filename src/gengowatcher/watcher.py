@@ -728,8 +728,10 @@ class GengoWatcher:
                                 self.logger.debug(
                                     "WebSocket: Sending heartbeat ping..."
                                 )
+                                self._capture_raw_ws_message("PING", direction="send")
                                 waiter = await websocket.ping()
                                 await asyncio.wait_for(waiter, timeout=5)
+                                self._capture_raw_ws_message("PONG", direction="recv")
                                 latency = (time.perf_counter() - t0) * 1000.0
                                 self.websocket_last_pong_ts = time.time()
                                 self.websocket_ping_latency_ms = latency
@@ -752,6 +754,8 @@ class GengoWatcher:
                         self.logger.debug(
                             f"WebSocket: First message received: {first_message[:100]}..."
                         )
+                        # Capture raw message
+                        self._capture_raw_ws_message(first_message, direction="recv")
                         try:
                             data = json.loads(first_message)
                             self.logger.debug(
@@ -792,8 +796,14 @@ class GengoWatcher:
                                     "WebSocket: PING test initiated by user."
                                 )
                                 try:
+                                    self._capture_raw_ws_message(
+                                        "PING (Manual)", direction="send"
+                                    )
                                     pong_waiter = await websocket.ping()
                                     await asyncio.wait_for(pong_waiter, timeout=5)
+                                    self._capture_raw_ws_message(
+                                        "PONG (Manual)", direction="recv"
+                                    )
                                     self.logger.info(
                                         "[bold green]WebSocket: PING test successful. Connection is live.[/bold green]"
                                     )
