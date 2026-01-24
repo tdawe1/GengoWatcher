@@ -685,43 +685,53 @@ class GengoWatcherApp(App):
             id="app-header",
         )
 
-        with Vertical(id="main-container"):
-            # Runtime status is always visible at top of main area
-            runtime_panel = RuntimeStatusPanel(
-                self.watcher, self.config, self.state, id="runtime-panel"
-            )
-            runtime_panel.border_title = "Runtime Status"
-            yield runtime_panel
-
-            # Config Panel (visible at top, not a tab)
-            header_panel = HeaderPanel(self.config, id="header-panel")
-            header_panel.border_title = "Configuration"
-            yield header_panel
-
-            # Tabs for activity, jobs, output
-            with TabbedContent(initial="activity"):
-                with TabPane("Activity", id="activity"):
-                    activity_log = RichLog(
-                        highlight=True,
-                        markup=True,
-                        auto_scroll=True,
-                        max_lines=1000,
-                        id="activity-log",
+        # Main tabbed content - primary navigation
+        with TabbedContent(initial="dashboard", id="main-tabs"):
+            # Dashboard tab - status overview
+            with TabPane("Dashboard", id="dashboard"):
+                with Vertical(id="dashboard-content"):
+                    runtime_panel = RuntimeStatusPanel(
+                        self.watcher, self.config, self.state, id="runtime-panel"
                     )
-                    yield activity_log
+                    runtime_panel.border_title = "Runtime Status"
+                    yield runtime_panel
 
-                with TabPane("Jobs", id="jobs"):
-                    yield JobsTable(id="jobs-table")
+                    header_panel = HeaderPanel(self.config, id="header-panel")
+                    header_panel.border_title = "Configuration"
+                    yield header_panel
 
-                with TabPane("Output", id="output"):
-                    output_log = RichLog(
-                        highlight=True,
-                        markup=True,
-                        auto_scroll=True,
-                        max_lines=500,
-                        id="output-log",
-                    )
-                    yield output_log
+            # Jobs tab - full-width jobs table
+            with TabPane("Jobs", id="jobs"):
+                yield JobsTable(id="jobs-table")
+
+            # Activity tab - activity log
+            with TabPane("Activity", id="activity"):
+                activity_log = RichLog(
+                    highlight=True,
+                    markup=True,
+                    auto_scroll=True,
+                    max_lines=1000,
+                    id="activity-log",
+                )
+                yield activity_log
+
+            # Output tab - command output
+            with TabPane("Output", id="output"):
+                output_log = RichLog(
+                    highlight=True,
+                    markup=True,
+                    auto_scroll=True,
+                    max_lines=500,
+                    id="output-log",
+                )
+                yield output_log
+
+            # Charts tab - placeholder for Phase 4
+            with TabPane("Charts", id="charts"):
+                yield Static(
+                    "[dim]Charts coming soon - install textual-plotext[/]",
+                    id="charts-placeholder",
+                )
 
         # Bottom status and input area
         with Vertical(id="bottom-area"):
