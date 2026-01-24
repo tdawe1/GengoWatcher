@@ -2,97 +2,85 @@
 
 ## Project Overview
 
-GengoWatcher is a Python application designed to monitor freelance job postings from Gengo. It uses a dual-source approach, fetching jobs from both a personal RSS feed and a real-time WebSocket connection. The application features a text-based user interface (TUI) for real-time monitoring and an optional web interface. It also includes features like auto job acceptance and CAPTCHA solving.
+GengoWatcher is a Python application designed to monitor freelance job postings from Gengo. It uses a multi-source approach, fetching jobs from RSS feed, real-time WebSocket connection, email notifications (Gmail IMAP with OAuth2), and website scraping (Playwright stealth). The application features a text-based user interface (TUI) built with Textual for real-time monitoring and an optional FastAPI web server for external integrations.
 
-The project is a monorepo containing a Python backend and a React frontend.
+Key features include:
+- Real-time job monitoring from multiple sources
+- Auto job acceptance with CAPTCHA solving
+- Kanagawa Wave themed TUI dashboard
+- Statistics tracking (session, all-time, by source)
+- Desktop notifications and sound alerts
 
-**Backend:**
+**Tech Stack:**
 
-*   **Language:** Python
+*   **Language:** Python 3.8+
 *   **Main Libraries:**
-    *   `aiohttp`: For asynchronous HTTP requests.
-    *   `feedparser`: for parsing RSS feeds.
-    *   `rich`: For the text-based user interface (TUI).
-    *   `websockets`: For WebSocket communication.
-    *   `fastapi`: For the web API.
-    *   `uvicorn`: For running the FastAPI server.
-    *   `selenium`: For browser automation.
+    *   `textual`: For the terminal user interface (TUI)
+    *   `rich`: For enhanced terminal output and logging
+    *   `aiohttp`: For asynchronous HTTP requests
+    *   `feedparser`: For parsing RSS feeds
+    *   `websockets`: For WebSocket communication
+    *   `fastapi`: For the optional web API
+    *   `uvicorn`: For running the FastAPI server
+    *   `selenium`/`playwright`: For browser automation
 *   **Configuration:** The application uses a `config.ini` file for configuration.
 *   **Entry Point:** `src/gengowatcher/main.py`
 
-**Frontend:**
-
-*   **Framework:** React
-*   **Build Tool:** Vite
-*   **Styling:** Tailwind CSS and Material-UI
-*   **Key Libraries:**
-    *   `@mui/material`: For UI components.
-    *   `@nivo/*`: For data visualization.
-    *   `react-router-dom`: For routing.
-    *   `@tanstack/react-query`: For data fetching.
-*   **Package Manager:** npm
-
 ## Building and Running
 
-### Backend
+### Installation
 
-**Installation:**
-
-1.  Create and activate a Python virtual environment.
+1.  Create and activate a Python virtual environment:
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate
+    ```
 2.  Install dependencies:
     ```bash
     pip install -r requirements.txt
     ```
 
-**Running:**
+### Running
 
 *   **TUI only:**
     ```bash
+    make run
+    # or
     python -m gengowatcher.main
     ```
 *   **TUI with web server:**
     ```bash
+    make run-web
+    # or
     python -m gengowatcher.main --web
     ```
 *   **Web server only:**
     ```bash
+    make run-web-only
+    # or
     python -m gengowatcher.main --web-only
-    ```
-
-### Frontend
-
-**Installation:**
-
-1.  Navigate to the `frontend` directory.
-2.  Install dependencies:
-    ```bash
-    npm install
-    ```
-
-**Running:**
-
-*   **Development server:**
-    ```bash
-    npm run dev
-    ```
-*   **Build for production:**
-    ```bash
-    npm run build
-    ```
-*   **Preview production build:**
-    ```bash
-    npm run preview
     ```
 
 ## Development Conventions
 
-### Backend
-
 *   **Testing:** The project uses `pytest` for testing. Run tests with `make test`.
 *   **Linting:** The project uses `flake8` for linting. Run the linter with `make lint`.
 *   **Formatting:** The project uses `black` for code formatting. Format the code with `make format`.
+*   **Coverage:** Run `make coverage` for test coverage report.
 
-### Frontend
+## Key Directories
 
-*   **Testing:** The project uses `vitest` for testing. Run tests with `npm test`.
-*   **Linting:** The project uses `eslint` for linting. Run the linter with `npm run lint`.
+```
+src/gengowatcher/     # Main application code
+  main.py             # CLI entry point
+  watcher.py          # Job monitoring orchestrator
+  ui_textual.py       # TUI widgets and app
+  gengo_watcher.tcss  # TUI stylesheet (Kanagawa Wave theme)
+  stats.py            # Statistics manager
+  config.py           # Configuration handling
+  state.py            # State persistence
+  web.py              # FastAPI web server
+tests/                # pytest test suite
+docs/                 # Documentation and plans
+assets/               # Screenshots and shared assets
+```
