@@ -611,20 +611,20 @@ class GengoWatcherApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("escape", "quit", "Quit", show=False),
-        Binding("c", "check", "Check Now", show=True),
+        Binding("c", "check", "Check", show=True),
         Binding("p", "pause", "Pause", show=True),
         Binding("r", "resume", "Resume", show=True),
-        Binding("h", "help", "Help", show=True),
-        Binding("t", "toggle_runtime", "Dashboard", show=True),
-        Binding("question_mark", "show_help", "Help", key_display="?", show=False),
-        Binding("ctrl+p", "command_palette", "Commands", show=True),
+        Binding("h", "help", "Help", show=False),
+        Binding("t", "toggle_runtime", "Dashboard", show=False),
+        Binding("question_mark", "show_help", "?:Help", show=True),
+        Binding("ctrl+p", "command_palette", "Cmds", show=True),
         Binding("ctrl+l", "clear_log", "Clear", show=False),
-        # Tab shortcuts
-        Binding("1", "tab_dashboard", "Dashboard", show=False),
-        Binding("2", "tab_jobs", "Jobs", show=False),
-        Binding("3", "tab_activity", "Activity", show=False),
-        Binding("4", "tab_output", "Output", show=False),
-        Binding("5", "tab_charts", "Charts", show=False),
+        # Tab shortcuts (hidden from footer, shown in help)
+        Binding("1", "tab_dashboard", "1:Dash", show=False),
+        Binding("2", "tab_jobs", "2:Jobs", show=False),
+        Binding("3", "tab_activity", "3:Log", show=False),
+        Binding("4", "tab_output", "4:Out", show=False),
+        Binding("5", "tab_charts", "5:Chart", show=False),
     ]
 
     def __init__(
