@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import webbrowser
+from collections import deque
 from pathlib import Path
 
 import feedparser
@@ -112,6 +113,9 @@ class GengoWatcher:
         self._shutdown_initiated = False
         # Thread references for health monitoring
         self._monitor_threads = {}  # name -> threading.Thread
+        # Raw WebSocket message buffer for debug output
+        self._raw_ws_messages = deque(maxlen=50)
+        self._raw_ws_lock = threading.Lock()
         self.logger.debug(
             f"Initializing GengoWatcher with config: {self.config.config}"
         )
@@ -212,6 +216,45 @@ class GengoWatcher:
             self.website_jobs_found_session = getattr(
                 self._website_monitor, "jobs_found_session", 0
             )
+
+    def _capture_raw_ws_message(self, message: str, direction: str = "recv"):
+        """Capture raw WebSocket message for debug output when raw debug is enabled.
+
+        Args:
+            message: The raw message string (JSON or otherwise)
+            direction: "recv" for received, "send" for sent
+        """
+        if not self.config.get("DebugCategories", "raw"):
+            return
+
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        prefix = "→" if direction == "send" else "←"
+
+        # Try to pretty-format JSON
+        try:
+            parsed = json.loads(message)
+            formatted = json.dumps(parsed, indent=2)
+        except (json.JSONDecodeError, TypeError):
+            formatted = message
+
+        entry = f"[{timestamp}] {prefix} {formatted}"
+
+        with self._raw_ws_lock:
+            self._raw_ws_messages.append(entry)
+
+    def get_raw_ws_messages(self) -> list:
+        """Get a copy of the raw WebSocket message buffer.
+
+        Returns:
+            List of raw message entries with timestamps
+        """
+        with self._raw_ws_lock:
+            return list(self._raw_ws_messages)
+
+    def clear_raw_ws_messages(self):
+        """Clear the raw WebSocket message buffer."""
+        with self._raw_ws_lock:
+            self._raw_ws_messages.clear()
 
     def _setup_csv_logging(self):
         """
@@ -657,7 +700,9 @@ class GengoWatcher:
                         masked_user_key,
                     )
 
-                    await websocket.send(json.dumps(auth_payload))
+                    auth_json = json.dumps(auth_payload)
+                    self._capture_raw_ws_message(auth_json, direction="send")
+                    await websocket.send(auth_json)
 
                     self.websocket_status = "Live"
                     self.logger.info(
@@ -770,6 +815,9 @@ class GengoWatcher:
                             self.logger.debug(
                                 f"WebSocket: Message received (len={len(message)})"
                             )
+                            # Capture raw message for debug output
+                            self._capture_raw_ws_message(message, direction="recv")
+
                             data = None
                             try:
                                 data = json.loads(message)
