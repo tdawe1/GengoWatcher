@@ -2,7 +2,7 @@
 
 ## Overview
 - GengoWatcher is a Python TUI application that monitors Gengo jobs via RSS + WebSocket, alerts users, and can auto-accept jobs with CAPTCHA solving and browser automation fallback.
-- An optional FastAPI web server exposes status/jobs/config endpoints for external integrations.
+
 
 ## Tech Stack
 | Area | Tech | Notes | Key Paths |
@@ -66,7 +66,11 @@ monitoring_config.json     # monitoring config example
 - Web API auth token stored under `[WebServer] auth_token` in `config.ini` (auto-generated if placeholder).
 
 ## Build & Deploy
-- **Run TUI**: `make run` or `PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main`
-- **Run with Web API**: `make run-web` or add `--web` flag
-- **Tests**: `make test` or `pytest`
-- **Lint/format**: `make lint`, `make format`
+- **Python**:
+  - Run: `make run` or `PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main`
+  - Tests: `make test` or `pytest`
+  - Lint/format: `make lint`, `make format`
+- **Frontend**:
+  - Dev: `cd frontend && npm install && npm run dev`
+  - Build: `cd frontend && npm run build` (outputs to `static/web`)
+  - Tests: `cd frontend && npm test`
