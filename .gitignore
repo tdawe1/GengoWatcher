@@ -43,7 +43,10 @@ release todolist.md
 logs/
 .gemini/
 gha-creds-*.json
-
+docs/
+.state/
+.tmp/
+state.json
 
 #Ignore vscode AI rules
 .github/instructions/codacy.instructions.md
