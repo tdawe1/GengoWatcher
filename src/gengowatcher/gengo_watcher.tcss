@@ -1,18 +1,29 @@
-/* Global Theme - Tokyo Night Palette */
-$surface: #1a1b26;
-$panel-bg: #24283b;
-$primary: #7aa2f7;
-$primary-darken-2: #5d79c6;
-$secondary: #bb9af7;
-$accent: #7dcfff;
-$success: #9ece6a;
-$warning: #e0af68;
-$error: #f7768e;
-$text: #c0caf5;
-$text-muted: #565f89;
-$surface-darken-1: #16161e;
-$surface-lighten-1: #292e42;
-$surface-lighten-2: #414868;
+/* ══════════════════════════════════════════════════════════════════════════
+   KANAGAWA WAVE COLOR PALETTE
+   Source: https://github.com/rebelot/kanagawa.nvim
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Background Shades ─────────────────────────────────────────────────── */
+$surface: #1F1F28;              /* sumiInk3 - primary surface */
+$surface-darken-1: #16161D;     /* sumiInk0 - deepest background */
+$surface-lighten-1: #2A2A37;    /* sumiInk4 - elevated surfaces */
+$surface-lighten-2: #363646;    /* sumiInk5 - borders, separators */
+
+/* ── Panel & Accent ────────────────────────────────────────────────────── */
+$panel-bg: #2A2A37;             /* sumiInk4 - panel background */
+$primary: #7E9CD8;              /* crystalBlue - main accent */
+$primary-darken-2: #5D7BC0;     /* darker crystal blue */
+$secondary: #957FB8;            /* oniViolet - secondary accent */
+$accent: #7AA89F;               /* waveAqua2 - accent/cyan */
+
+/* ── Semantic Colors ───────────────────────────────────────────────────── */
+$success: #98BB6C;              /* springGreen */
+$warning: #DCA561;              /* autumnYellow */
+$error: #C34043;                /* autumnRed */
+
+/* ── Text Colors ───────────────────────────────────────────────────────── */
+$text: #DCD7BA;                 /* fujiWhite - primary text */
+$text-muted: #727169;           /* fujiGray - muted text */
 
 Screen {
     layout: vertical;
