@@ -13,7 +13,15 @@ import csv
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Depends, Query
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    Request,
+    Depends,
+    Query,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +38,7 @@ from .watcher import GengoWatcher
 # Authentication
 security = HTTPBearer(auto_error=False)
 
+
 class APIAuthenticator:
     """Simple API key authentication for web API."""
 
@@ -41,7 +50,9 @@ class APIAuthenticator:
         """
         self.api_key = api_key or secrets.token_urlsafe(32)
 
-    def authenticate(self, credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+    def authenticate(
+        self, credentials: HTTPAuthorizationCredentials = Depends(security)
+    ) -> bool:
         """Authenticate API request using Bearer token."""
         if not credentials:
             return False
@@ -66,25 +77,25 @@ class JobEntry(BaseModel):
     timestamp: float
     source: str  # "rss" or "websocket"
 
-    @field_validator('id', 'title', 'url', 'source')
+    @field_validator("id", "title", "url", "source")
     @classmethod
     def validate_string_fields(cls, v):
         if not isinstance(v, str) or not v.strip():
-            raise ValueError('Field must be a non-empty string')
+            raise ValueError("Field must be a non-empty string")
         return v.strip()
 
-    @field_validator('reward')
+    @field_validator("reward")
     @classmethod
     def validate_reward(cls, v):
         if not isinstance(v, (int, float)) or v < 0:
-            raise ValueError('Reward must be a non-negative number')
+            raise ValueError("Reward must be a non-negative number")
         return float(v)
 
-    @field_validator('timestamp')
+    @field_validator("timestamp")
     @classmethod
     def validate_timestamp(cls, v):
         if not isinstance(v, (int, float)) or v < 0:
-            raise ValueError('Timestamp must be a valid positive number')
+            raise ValueError("Timestamp must be a valid positive number")
         return float(v)
 
 
@@ -98,11 +109,11 @@ class WatcherStatus(BaseModel):
     failure_count: int
     cancellation_stats: Optional[Dict[str, Any]] = None
 
-    @field_validator('websocket_status', 'rss_status')
+    @field_validator("websocket_status", "rss_status")
     @classmethod
     def validate_status_fields(cls, v):
         if not isinstance(v, str):
-            raise ValueError('Status must be a string')
+            raise ValueError("Status must be a string")
         return v.strip()
 
 
@@ -110,11 +121,11 @@ class ConfigSection(BaseModel):
     section: str
     options: Dict[str, Any]
 
-    @field_validator('section')
+    @field_validator("section")
     @classmethod
     def validate_section(cls, v):
         if not isinstance(v, str) or not v.strip():
-            raise ValueError('Section must be a non-empty string')
+            raise ValueError("Section must be a non-empty string")
         return v.strip()
 
 
@@ -122,25 +133,25 @@ class CommandRequest(BaseModel):
     command: str
     args: Optional[List[str]] = []
 
-    @field_validator('command')
+    @field_validator("command")
     @classmethod
     def validate_command(cls, v):
         if not isinstance(v, str) or not v.strip():
-            raise ValueError('Command must be a non-empty string')
-        allowed_commands = ['check', 'pause', 'resume', 'ping', 'notify', 'cancel']
+            raise ValueError("Command must be a non-empty string")
+        allowed_commands = ["check", "pause", "resume", "ping", "notify", "cancel"]
         if v.strip().lower() not in allowed_commands:
-            raise ValueError(f'Command must be one of: {", ".join(allowed_commands)}')
+            raise ValueError(f"Command must be one of: {', '.join(allowed_commands)}")
         return v.strip().lower()
 
-    @field_validator('args')
+    @field_validator("args")
     @classmethod
     def validate_args(cls, v):
         if v is not None:
             if not isinstance(v, list):
-                raise ValueError('Args must be a list or None')
+                raise ValueError("Args must be a list or None")
             for arg in v:
                 if not isinstance(arg, str):
-                    raise ValueError('All args must be strings')
+                    raise ValueError("All args must be strings")
         return v
 
 
@@ -148,14 +159,14 @@ class PaginationParams(BaseModel):
     page: int = Field(default=1, ge=1)
     limit: int = Field(default=50, ge=1, le=100)
 
-    @field_validator('page', 'limit')
+    @field_validator("page", "limit")
     @classmethod
     def validate_pagination(cls, v, info):
         field_name = info.field_name
         if not isinstance(v, int) or v < 1:
-            raise ValueError(f'{field_name} must be a positive integer')
-        if field_name == 'limit' and v > 100:
-            raise ValueError('Limit cannot exceed 100')
+            raise ValueError(f"{field_name} must be a positive integer")
+        if field_name == "limit" and v > 100:
+            raise ValueError("Limit cannot exceed 100")
         return v
 
 
@@ -230,7 +241,9 @@ class WebAPI:
         """Get recent jobs from state with pagination."""
         try:
             with self._jobs_lock:
-                recent_jobs = self.state.get_recent_jobs(limit * page)  # Get more to handle pagination
+                recent_jobs = self.state.get_recent_jobs(
+                    limit * page
+                )  # Get more to handle pagination
                 total_jobs = len(recent_jobs)
 
                 # Apply pagination
@@ -251,30 +264,31 @@ class WebAPI:
                         "page": page,
                         "limit": limit,
                         "total": total_jobs,
-                        "pages": (total_jobs + limit - 1) // limit  # Ceiling division
-                    }
+                        "pages": (total_jobs + limit - 1) // limit,  # Ceiling division
+                    },
                 }
         except Exception as e:
             self.logger.exception(f"Error retrieving recent jobs: {e}")
             return {
                 "jobs": [],
-                "pagination": {
-                    "page": page,
-                    "limit": limit,
-                    "total": 0,
-                    "pages": 0
-                }
+                "pagination": {"page": page, "limit": limit, "total": 0, "pages": 0},
             }
 
-    def get_jobs_from_csv(self, limit: int = 50, page: int = 1, 
-                         min_reward: Optional[float] = None, 
-                         max_reward: Optional[float] = None,
-                         search_term: Optional[str] = None) -> Dict[str, Any]:
+    def get_jobs_from_csv(
+        self,
+        limit: int = 50,
+        page: int = 1,
+        min_reward: Optional[float] = None,
+        max_reward: Optional[float] = None,
+        search_term: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Get jobs from CSV file with pagination and filtering."""
         try:
             # Get CSV file path from config
-            csv_file_path = self.config.get("Paths", "all_entries_log", fallback="logs/all_entries.csv")
-            
+            csv_file_path = self.config.get(
+                "Paths", "all_entries_log", fallback="logs/all_entries.csv"
+            )
+
             # Check if file exists
             if not os.path.exists(csv_file_path):
                 self.logger.warning(f"CSV file not found: {csv_file_path}")
@@ -284,15 +298,15 @@ class WebAPI:
                         "page": page,
                         "limit": limit,
                         "total": 0,
-                        "pages": 0
-                    }
+                        "pages": 0,
+                    },
                 }
-            
+
             # Count total rows first (for pagination)
             total_rows = 0
-            with open(csv_file_path, 'r', encoding='utf-8') as f:
+            with open(csv_file_path, "r", encoding="utf-8") as f:
                 total_rows = sum(1 for line in f) - 1  # Subtract 1 for header row
-            
+
             # If no rows, return empty result
             if total_rows <= 0:
                 return {
@@ -301,54 +315,56 @@ class WebAPI:
                         "page": page,
                         "limit": limit,
                         "total": 0,
-                        "pages": 0
-                    }
+                        "pages": 0,
+                    },
                 }
-            
+
             jobs = []
             current_row = 0
             start_idx = (page - 1) * limit
             end_idx = start_idx + limit
             rows_processed = 0
-            
+
             # Read CSV file with filtering
-            with open(csv_file_path, 'r', encoding='utf-8') as f:
+            with open(csv_file_path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                
+
                 for row in reader:
                     current_row += 1
-                    
+
                     # Skip header row if present
-                    if current_row == 1 and row.get('timestamp') == 'timestamp':
+                    if current_row == 1 and row.get("timestamp") == "timestamp":
                         continue
-                    
+
                     try:
                         # Extract data from row
-                        timestamp = row.get('timestamp', '')
-                        title = row.get('title', 'N/A')
-                        reward_str = row.get('reward', '0')
-                        link = row.get('link', '')
-                        summary = row.get('summary', '')
-                        
+                        timestamp = row.get("timestamp", "")
+                        title = row.get("title", "N/A")
+                        reward_str = row.get("reward", "0")
+                        link = row.get("link", "")
+                        summary = row.get("summary", "")
+
                         # Convert reward to float
                         try:
                             reward = float(reward_str) if reward_str else 0.0
                         except ValueError:
                             reward = 0.0
-                        
+
                         # Apply reward filtering
                         if min_reward is not None and reward < min_reward:
                             continue
                         if max_reward is not None and reward > max_reward:
                             continue
-                        
+
                         # Apply search filtering
                         if search_term:
                             search_lower = search_term.lower()
-                            if (search_lower not in title.lower() and 
-                                search_lower not in summary.lower()):
+                            if (
+                                search_lower not in title.lower()
+                                and search_lower not in summary.lower()
+                            ):
                                 continue
-                        
+
                         # Create job entry
                         job_entry = JobEntry(
                             id=str(hash(f"{link}{timestamp}")),  # Create unique ID
@@ -357,54 +373,46 @@ class WebAPI:
                             currency="USD",
                             url=link,
                             timestamp=time.time(),  # Use current time since we don't have exact timestamp
-                            source="csv"
+                            source="csv",
                         )
-                        
+
                         # Apply pagination
                         if rows_processed >= start_idx and rows_processed < end_idx:
                             jobs.append(job_entry)
-                        
+
                         rows_processed += 1
-                        
+
                         # Stop if we have enough jobs
                         if len(jobs) >= limit:
                             break
-                            
+
                     except Exception as e:
-                        self.logger.warning(f"Error processing CSV row {current_row}: {e}")
+                        self.logger.warning(
+                            f"Error processing CSV row {current_row}: {e}"
+                        )
                         continue
-            
+
             return {
                 "jobs": jobs,
                 "pagination": {
                     "page": page,
                     "limit": limit,
                     "total": rows_processed,
-                    "pages": (rows_processed + limit - 1) // limit  # Ceiling division
-                }
+                    "pages": (rows_processed + limit - 1) // limit,  # Ceiling division
+                },
             }
-            
+
         except FileNotFoundError:
             self.logger.warning(f"CSV file not found: {csv_file_path}")
             return {
                 "jobs": [],
-                "pagination": {
-                    "page": page,
-                    "limit": limit,
-                    "total": 0,
-                    "pages": 0
-                }
+                "pagination": {"page": page, "limit": limit, "total": 0, "pages": 0},
             }
         except Exception as e:
             self.logger.exception(f"Error reading jobs from CSV: {e}")
             return {
                 "jobs": [],
-                "pagination": {
-                    "page": page,
-                    "limit": limit,
-                    "total": 0,
-                    "pages": 0
-                }
+                "pagination": {"page": page, "limit": limit, "total": 0, "pages": 0},
             }
 
     def add_job(self, job_id: str, title: str, reward: float, url: str, source: str):
@@ -418,7 +426,7 @@ class WebAPI:
                     "currency": "USD",
                     "url": url,
                     "timestamp": time.time(),
-                    "source": source
+                    "source": source,
                 }
                 self.state.add_job(job_data)
                 self.logger.debug(f"Added job to storage: {job_id}")
@@ -429,7 +437,7 @@ class WebAPI:
         """Accept a job by ID using the job acceptance engine."""
         try:
             # Check if the watcher has a job acceptance engine
-            if not hasattr(self.watcher, 'job_acceptance_engine'):
+            if not hasattr(self.watcher, "job_acceptance_engine"):
                 self.logger.error("Job acceptance engine not available")
                 return False
 
@@ -437,7 +445,7 @@ class WebAPI:
             jobs_result = self.get_recent_jobs(limit=1000)  # Get all jobs to search
             jobs = jobs_result["jobs"]
             target_job = None
-            
+
             for job in jobs:
                 if str(job.id) == str(job_id):
                     target_job = {
@@ -445,18 +453,20 @@ class WebAPI:
                         "title": job.title,
                         "reward": job.reward,
                         "url": job.url,
-                        "source": job.source
+                        "source": job.source,
                     }
                     break
-            
+
             if not target_job:
                 self.logger.error(f"Job {job_id} not found")
                 return False
 
             # Attempt to accept the job
-            success = await self.watcher.job_acceptance_engine._attempt_job_acceptance(target_job)
+            success = await self.watcher.job_acceptance_engine._attempt_job_acceptance(
+                target_job
+            )
             return success
-            
+
         except Exception as e:
             self.logger.exception(f"Error accepting job {job_id}: {e}")
             return False
@@ -495,7 +505,9 @@ class WebAPI:
             self.logger.exception(f"Failed to update config {section}.{option}: {e}")
             return False
 
-    def execute_command(self, command: str, args: Optional[List[str]] = None) -> Dict[str, Any]:
+    def execute_command(
+        self, command: str, args: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """Execute a watcher command."""
         try:
             if command == "check":
@@ -510,6 +522,7 @@ class WebAPI:
                 # Remove pause file
                 try:
                     import os
+
                     os.remove(self.watcher.PAUSE_FILE)
                 except FileNotFoundError:
                     pass
@@ -518,7 +531,10 @@ class WebAPI:
                 success = self.watcher.cancel_current_job_sync()
                 if success:
                     return {"status": "success", "message": "Current job cancelled"}
-                return {"status": "error", "message": "No active job to cancel or cancellation failed"}
+                return {
+                    "status": "error",
+                    "message": "No active job to cancel or cancellation failed",
+                }
             else:
                 return {"status": "error", "message": f"Unknown command: {command}"}
         except Exception as e:
@@ -527,10 +543,7 @@ class WebAPI:
     async def broadcast_status_update(self):
         """Broadcast status update to all connected WebSocket clients."""
         status = self.get_status()
-        message = {
-            "type": "status_update",
-            "data": status.model_dump()
-        }
+        message = {"type": "status_update", "data": status.model_dump()}
 
         with self._connections_lock:
             disconnected = []
@@ -564,25 +577,38 @@ async def lifespan(app: FastAPI):
     try:
         # Check if config exists, create it if needed
         from pathlib import Path
+
         config_path = Path("config.ini")
         if not config_path.exists():
             logger.info("Creating default config.ini for web API")
             # Create default config without exiting
             import configparser
+
             config = configparser.ConfigParser()
             config.read_dict(AppConfig.DEFAULT_CONFIG)
-            with open(config_path, 'w') as f:
+            with open(config_path, "w") as f:
                 config.write(f)
-            logger.info("Default config created. Please review config.ini before using the web API.")
+            logger.info(
+                "Default config created. Please review config.ini before using the web API."
+            )
 
         config = AppConfig()
         state = AppState(logger=logger)
 
         # Initialize authenticator with config token
-        try:
-            api_token = config.get("WebServer", "auth_token")
-        except:
-            api_token = "gengo-token-demo"
+        api_token = config.get("WebServer", "auth_token")
+
+        if not api_token or api_token == "REPLACE_WITH_YOUR_WEB_API_TOKEN":
+            api_token = secrets.token_urlsafe(32)
+            config.set("WebServer", "auth_token", api_token)
+            config.save_config()
+            logger.warning(
+                "No WebServer auth_token found or it was a placeholder. Generated a new one."
+            )
+            logger.warning(
+                "Check config.ini [WebServer] section for the auth_token value."
+            )
+
         global authenticator
         authenticator = APIAuthenticator(api_token)
 
@@ -604,7 +630,7 @@ app = FastAPI(
     title="GengoWatcher API",
     description="Web API for GengoWatcher job monitoring application",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add CORS middleware with security restrictions
@@ -616,7 +642,7 @@ app.add_middleware(
         "http://localhost:5173",  # Vite dev server
         "http://127.0.0.1:5173",
         "http://localhost:5174",  # Vite dev server (alternative port)
-        "http://127.0.0.1:5174"
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -628,7 +654,9 @@ static_path = os.path.join(os.path.dirname(__file__), "..", "..", "static", "web
 if os.path.exists(static_path):
     app.mount("/web", StaticFiles(directory=static_path, html=True), name="web")
 else:
-    logging.getLogger("gengowatcher.web").warning(f"Static files directory not found: {static_path}")
+    logging.getLogger("gengowatcher.web").warning(
+        f"Static files directory not found: {static_path}"
+    )
 
 
 async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -637,7 +665,7 @@ async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(securi
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing API key",
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
     return True
 
@@ -662,7 +690,7 @@ async def get_jobs(
     max_reward: Optional[float] = Query(None, ge=0),
     search: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
-    authenticated: bool = Depends(verify_auth)
+    authenticated: bool = Depends(verify_auth),
 ):
     """Get recent jobs with pagination and filtering."""
     if not api_instance:
@@ -672,11 +700,11 @@ async def get_jobs(
         # If source is specified as 'csv' or if we want to include CSV data, read from CSV
         if source == "csv":
             result = api_instance.get_jobs_from_csv(
-                limit=limit, 
+                limit=limit,
                 page=page,
                 min_reward=min_reward,
                 max_reward=max_reward,
-                search_term=search
+                search_term=search,
             )
             return result
         else:
@@ -689,22 +717,24 @@ async def get_jobs(
 
 
 @app.post("/api/jobs/{job_id}/accept")
-async def accept_job(
-    job_id: str,
-    authenticated: bool = Depends(verify_auth)
-):
+async def accept_job(job_id: str, authenticated: bool = Depends(verify_auth)):
     """Force accept a job by ID."""
     if not api_instance:
         raise HTTPException(status_code=503, detail="API not initialized")
 
     try:
         success = await api_instance.accept_job(job_id)
-        
+
         if success:
-            return {"status": "success", "message": f"Job {job_id} accepted successfully"}
+            return {
+                "status": "success",
+                "message": f"Job {job_id} accepted successfully",
+            }
         else:
-            raise HTTPException(status_code=500, detail=f"Failed to accept job {job_id}")
-            
+            raise HTTPException(
+                status_code=500, detail=f"Failed to accept job {job_id}"
+            )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -722,7 +752,9 @@ async def cancel_current_job(authenticated: bool = Depends(verify_auth)):
         success = await api_instance.cancel_current_job()
         if success:
             return {"status": "success", "message": "Current job cancelled"}
-        raise HTTPException(status_code=400, detail="No active job to cancel or cancellation failed")
+        raise HTTPException(
+            status_code=400, detail="No active job to cancel or cancellation failed"
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -744,10 +776,7 @@ async def get_config(authenticated: bool = Depends(verify_auth)):
 
 @app.put("/api/config/{section}/{option}")
 async def update_config(
-    section: str,
-    option: str,
-    value: str,
-    authenticated: bool = Depends(verify_auth)
+    section: str, option: str, value: str, authenticated: bool = Depends(verify_auth)
 ):
     """Update configuration value."""
     if not api_instance:
@@ -760,7 +789,9 @@ async def update_config(
     try:
         success = api_instance.update_config(section, option, value)
         if not success:
-            raise HTTPException(status_code=400, detail="Failed to update configuration")
+            raise HTTPException(
+                status_code=400, detail="Failed to update configuration"
+            )
         return {"status": "success"}
     except HTTPException:
         raise
@@ -771,8 +802,7 @@ async def update_config(
 
 @app.post("/api/commands")
 async def execute_command(
-    request: CommandRequest,
-    authenticated: bool = Depends(verify_auth)
+    request: CommandRequest, authenticated: bool = Depends(verify_auth)
 ):
     """Execute a watcher command."""
     if not api_instance:
@@ -812,10 +842,9 @@ async def websocket_status(websocket: WebSocket):
     try:
         # Send initial status
         status = api_instance.get_status()
-        await websocket.send_json({
-            "type": "status_update",
-            "data": status.model_dump()
-        })
+        await websocket.send_json(
+            {"type": "status_update", "data": status.model_dump()}
+        )
 
         # Keep connection alive and listen for client messages
         while True:
@@ -833,10 +862,9 @@ async def websocket_status(websocket: WebSocket):
                 # Send periodic status updates
                 try:
                     status = api_instance.get_status()
-                    await websocket.send_json({
-                        "type": "status_update",
-                        "data": status.model_dump()
-                    })
+                    await websocket.send_json(
+                        {"type": "status_update", "data": status.model_dump()}
+                    )
                 except Exception as e:
                     api_instance.logger.exception(f"Error sending status update: {e}")
                     break
@@ -863,7 +891,7 @@ async def root():
         "version": "1.0.0",
         "docs": "/docs",
         "status": "/api/status",
-        "api_key_required": True
+        "api_key_required": True,
     }
 
 
@@ -875,12 +903,12 @@ async def get_api_key():
     if not dev_mode:
         raise HTTPException(
             status_code=403,
-            detail="This endpoint is only available in development mode"
+            detail="This endpoint is only available in development mode",
         )
 
     return {
         "api_key": authenticator.get_api_key(),
-        "warning": "This endpoint should be disabled in production"
+        "warning": "This endpoint should be disabled in production",
     }
 
 
@@ -911,7 +939,7 @@ async def get_stats(authenticated: bool = Depends(verify_auth)):
             "average_reward": round(avg_reward, 2),
             "jobs_by_source": source_counts,
             "session_stats": status.session_stats,
-            "uptime": status.session_stats.get("uptime", 0)
+            "uptime": status.session_stats.get("uptime", 0),
         }
     except Exception as e:
         api_instance.logger.exception(f"Error getting stats: {e}")
@@ -925,7 +953,7 @@ async def health_check():
         return {
             "status": "unhealthy",
             "detail": "API not initialized",
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
     try:
@@ -934,14 +962,10 @@ async def health_check():
             "status": "healthy",
             "watcher_running": status.is_running,
             "websocket_status": status.websocket_status,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "detail": str(e),
-            "timestamp": time.time()
-        }
+        return {"status": "unhealthy", "detail": str(e), "timestamp": time.time()}
 
 
 @app.get("/web/{path:path}")
@@ -957,11 +981,7 @@ async def serve_react_app(path: str):
 def run_web_server(host: str = "127.0.0.1", port: int = 8000):
     """Run the web server."""
     uvicorn.run(
-        "gengowatcher.web:app",
-        host=host,
-        port=port,
-        reload=False,
-        log_level="info"
+        "gengowatcher.web:app", host=host, port=port, reload=False, log_level="info"
     )
 
 

@@ -43,7 +43,14 @@ def setup_logging():
 
 
 async def test_job_acceptance():
-    """Test the job acceptance functionality with real Gengo API."""
+    """
+    Run an end-to-end test of the job acceptance flow against the real Gengo API.
+    
+    Performs configuration checks (including AutoAccept and required WebSocket credentials), initialises application components, evaluates a synthetic test job for eligibility and, if eligible, attempts to accept it via the real Gengo API. The operation may perform network calls and produce side effects on the associated Gengo account.
+    
+    Returns:
+        bool: `True` if the test completed and the job was accepted, `False` otherwise.
+    """
     logger = setup_logging()
     logger.info("Starting real implementation test")
     
@@ -60,9 +67,14 @@ async def test_job_acceptance():
         
         # Check for required credentials
         user_session = config.get("WebSocket", "user_session")
+        user_key = config.get("WebSocket", "user_key")
         if not user_session or user_session == "REPLACE_WITH_YOUR_SESSION_TOKEN":
             logger.error("Gengo user session token not configured")
             print("Please configure your Gengo user session token in config.ini")
+            return False
+        if not user_key or user_key == "REPLACE_WITH_YOUR_USER_KEY":
+            logger.error("Gengo browser user key not configured")
+            print("Please configure your user_key (DevTools → Application → Local Storage → userKey) in config.ini")
             return False
             
         user_id = config.get("WebSocket", "user_id")
