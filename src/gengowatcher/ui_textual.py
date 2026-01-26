@@ -61,57 +61,81 @@ class Icons:
 
 
 class TitleBar(Static):
-    """3-line title bar: Brand, Separator, Info."""
+    """3-line title bar: Brand, Separator, Info (Config + Session + Clock)."""
+
+    def __init__(self, config: AppConfig = None, **kwargs):
+        super().__init__(**kwargs)
+        self.config = config
 
     def on_mount(self) -> None:
         self.set_interval(1.0, self.update_clock)
 
     def compose(self) -> ComposeResult:
-        # Line 1
+        # Line 1: Brand
         yield Static("◆ GENGOWATCHER v2.0", classes="brand")
-        # Line 2
+
+        # Line 2: Separator (handled by CSS border-bottom usually, but explicit line requested)
         yield Static("─" * 200, classes="separator")
-        # Line 3
+
+        # Line 3: Info Row (Config | Session | Clock)
         with Horizontal(classes="info-row"):
+            # Config section
+            config_text = "Config: N/A"
+            if self.config:
+                lang = f"{self.config.source_lang}↔{self.config.target_lang}"
+                interval = f"{self.config.check_interval}s"
+                config_text = (
+                    f" {lang} | {interval} | Min: ${self.config.min_reward:.2f} "
+                )
+            yield Static(config_text, classes="config-info")
+
+            yield Static(" | ", classes="dim")
             yield Static("Session: 0h 00m", id="session-timer")
-            yield Static("  |  ", classes="dim")
+            yield Static(" | ", classes="dim")
             yield Static("12:00:00 JST", id="clock")
 
     def update_clock(self) -> None:
         now = datetime.datetime.now()
         try:
-            self.query_one("#clock", Static).update(now.strftime("%H:%M:%S %Z"))
+            self.query_one("#clock", Static).update(now.strftime("%H:%M:%S"))
         except Exception:
             pass
 
         # Session timer
         app = self.app
-        # Access watcher safely
         watcher = getattr(app, "watcher", None)
         if watcher:
             elapsed = int(time.time() - watcher.start_time)
             h, m = divmod(elapsed // 60, 60)
             try:
-                self.query_one("#session-timer", Static).update(f"Session: {h}h {m}m")
+                self.query_one("#session-timer", Static).update(
+                    f"Session: {h}h {m:02d}m"
+                )
             except Exception:
                 pass
 
 
 class MetricCard(Static):
-    """Vertical metric card: Icon+Value on top, Label on bottom."""
+    """Metric card with precise Grid layout."""
 
     def __init__(self, label: str, icon: str, value: str = "0", **kwargs):
         super().__init__(**kwargs)
         self.label = label
         self.icon = icon
         self.value = value
+        self.border_title = label  # Native Textual border title
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="metric-value-row"):
+        # Use a grid: Column 1 (Icon), Column 2 (Value)
+        with Grid(classes="metric-grid"):
             yield Static(self.icon, classes="metric-icon")
             yield Static(
                 self.value, classes="metric-value", id=f"val-{self.label.lower()}"
             )
+        # Label is handled by border_title now, or we can keep it inside if desired.
+        # Design doc shows "Found" at bottom. Let's keep it simple: Icon+Value centered.
+        # The Label is strictly the card title/footer.
+        # Let's put label at bottom as a Static if border_title isn't enough.
         yield Static(self.label, classes="metric-label")
 
     def update_value(self, value: str):
@@ -122,85 +146,106 @@ class MetricCard(Static):
 
 
 class MetricsRow(Horizontal):
-    """Container for 5 metric cards."""
+    """Row of 5 metric cards with sparklines."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__(**kwargs)
+        self.state = state
 
     def compose(self) -> ComposeResult:
-        yield MetricCard("Found", Icons.FOUND, "0", id="card-found")
-        yield MetricCard("Accepted", Icons.ACCEPTED, "0", id="card-accepted")
-        yield MetricCard("Value", Icons.VALUE, "$0.00", id="card-value")
-        yield MetricCard("Rate", Icons.RATE, "0.0/hr", id="card-rate")
-        yield MetricCard("Min", Icons.MIN_WORDS, "≥$0.00", id="card-min")
+        yield MetricCard("Found", "▲", id="card-found", classes="found")
+        yield MetricCard("Accepted", "✓", id="card-accepted", classes="accepted")
+        yield MetricCard("Value", "$", id="card-value", classes="value")
+        yield MetricCard("Rate", "~", id="card-rate", classes="rate")
+        yield MetricCard("Today", "☀", id="card-today", classes="today")
 
-    def refresh_metrics(self, state: AppState):
-        jobs = state.get_recent_jobs(limit=1000)
+    def refresh_metrics(self) -> None:
+        if not self.state:
+            return
+        jobs = self.state.get_recent_jobs(limit=1000)
         found = len(jobs)
         accepted = sum(1 for j in jobs if j.get("accepted", False))
-        value = sum(j.get("reward", 0) for j in jobs)
+        total_value = sum(j.get("reward", 0) for j in jobs)
 
-        try:
-            self.query_one("#card-found", MetricCard).update_value(str(found))
-            self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
-            self.query_one("#card-value", MetricCard).update_value(f"${value:.2f}")
-        except Exception:
-            pass
+        # Rate calculation (simplified)
+        rate = found / 1.0  # Placeholder
+
+        self.query_one("#card-found", MetricCard).update_value(str(found))
+        self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
+        self.query_one("#card-value", MetricCard).update_value(f"${total_value:.2f}")
+        self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
+        self.query_one("#card-today", MetricCard).update_value(f"${total_value:.2f}")
 
 
 class StatusIndicator(Static):
-    """Icon + Label + State."""
+    """Status indicator with icon and color."""
 
-    def __init__(
-        self,
-        icon: str,
-        label: str,
-        state_text: str = "Idle",
-        state_class: str = "status-idle",
-        **kwargs,
-    ):
+    def __init__(self, icon: str, name: str, **kwargs):
         super().__init__(**kwargs)
         self.icon = icon
-        self.label = label
-        self.state_text = state_text
-        self.state_class = state_class
+        self.name = name
+        self.add_class("status-indicator")
 
     def compose(self) -> ComposeResult:
-        yield Static(self.icon, classes="status-icon")
-        yield Static(
-            f"{self.label} {self.state_text}",
-            classes=f"status-text {self.state_class}",
-            id=f"stat-{self.label.lower()}",
-        )
+        yield Static(f"{self.icon} {self.name}", classes="status-label")
 
-    def set_state(self, text: str, css_class: str):
-        try:
-            w = self.query_one(f"#stat-{self.label.lower()}", Static)
-            w.update(f"{self.label} {text}")
-            w.set_classes(f"status-text {css_class}")
-        except Exception:
-            pass
+    def set_state(self, state: str):
+        self.remove_class("live", "working", "idle", "error")
+        self.add_class(state)
 
 
 class StatusRow(Horizontal):
-    """7 status indicators."""
+    """Dedicated row of status indicators."""
+
+    def __init__(self, watcher: "GengoWatcher", **kwargs):
+        super().__init__(**kwargs)
+        self.watcher = watcher
 
     def compose(self) -> ComposeResult:
-        yield StatusIndicator(Icons.WEBSOCKET, "WS", "Live", "status-live")
-        yield StatusIndicator(Icons.EMAIL, "Email", "45s", "status-working")
-        yield StatusIndicator(Icons.WEB, "Web", "Idle", "status-idle")
-        yield StatusIndicator(Icons.RSS, "RSS", "Idle", "status-idle")  # Added
-        yield StatusIndicator(Icons.CAPTCHA, "Captcha", "", "status-idle")
-        yield StatusIndicator(Icons.WORKFLOW, "Workflow", "", "status-idle")
-        yield StatusIndicator(Icons.AUTO, "Auto", "On", "status-live")  # Added
+        # 7 Indicators
+        yield StatusIndicator("●", "WS", id="ind-ws")
+        yield StatusIndicator("◉", "Email", id="ind-email")
+        yield StatusIndicator("◎", "Web", id="ind-web")
+        yield StatusIndicator("⊛", "RSS", id="ind-rss")
+        yield StatusIndicator("⧗", "Cap", id="ind-cap")
+        yield StatusIndicator("⇄", "Work", id="ind-work")
+        yield StatusIndicator("▶", "Auto", id="ind-auto")
+
+    def refresh_status(self):
+        if not self.watcher:
+            return
+        # Basic wiring - elaborate later if needed
+        self.query_one("#ind-ws", StatusIndicator).set_state(
+            "live"
+            if getattr(self.watcher, "websocket_status", "") == "Live"
+            else "idle"
+        )
+        self.query_one("#ind-email", StatusIndicator).set_state(
+            "working"
+            if getattr(self.watcher, "email_monitor_status", "") == "Polling"
+            else "idle"
+        )
+        self.query_one("#ind-web", StatusIndicator).set_state("idle")  # Placeholder
+        self.query_one("#ind-rss", StatusIndicator).set_state(
+            "working"
+            if "Fetching" in getattr(self.watcher, "rss_action", "")
+            else "idle"
+        )
+        self.query_one("#ind-cap", StatusIndicator).set_state("live")
+        self.query_one("#ind-work", StatusIndicator).set_state("live")
+        self.query_one("#ind-auto", StatusIndicator).set_state("idle")
 
 
 class DashboardQuadrant(Static):
-    """Base class for quadrants."""
+    """Base class for panels using native border titles."""
 
     def __init__(self, title: str, **kwargs):
         super().__init__(**kwargs)
-        self.title_text = title
+        self.border_title = title  # Use native border title!
+        self.add_class("dashboard-panel")
 
     def compose(self) -> ComposeResult:
-        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        # No manual ASCII border here!
         yield Container(id="quadrant-content")
 
 
@@ -209,7 +254,7 @@ class ActivityPreview(DashboardQuadrant):
         super().__init__("Recent Activity", **kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        # Just yield content, border_title handles the header
         yield RichLog(id="activity-log", markup=True)
 
 
@@ -218,7 +263,6 @@ class JobsPreview(DashboardQuadrant):
         super().__init__("Jobs Preview", **kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
         yield DataTable(id="jobs-table")
 
     def on_mount(self):
@@ -234,7 +278,6 @@ class ChartPlaceholder(DashboardQuadrant):
         super().__init__("Jobs/Hour", **kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
         yield Static(
             "\n    (Chart Placeholder)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────",
             classes="chart-ascii",
@@ -246,18 +289,55 @@ class ConfigPreview(DashboardQuadrant):
         super().__init__("Configuration", **kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        # This panel is now redundant if config is in TitleBar,
+        # but user might want detailed config here.
         yield Static("Languages: JA↔EN\nCheck Interval: 60s")
 
 
-class DashboardGrid(Grid):
-    """2x2 Grid container."""
+class SessionStats(DashboardQuadrant):
+    """Session statistics summary."""
+
+    def __init__(self, watcher: "GengoWatcher", state: "AppState", **kwargs):
+        super().__init__("Session", **kwargs)
+        self.watcher = watcher
+        self.state = state
 
     def compose(self) -> ComposeResult:
-        yield ActivityPreview()
-        yield ChartPlaceholder()
-        yield JobsPreview()
-        yield ConfigPreview()
+        with Vertical(id="session-stats-content"):
+            yield Static("Duration: 0h 00m", id="stat-duration")
+            yield Static("Found: 0", id="stat-found")
+            yield Static("Accepted: 0", id="stat-accepted")
+            yield Static("Value: $0.00", id="stat-value")
+
+    def refresh_stats(self):
+        if not self.watcher or not self.state:
+            return
+        elapsed = int(time.time() - self.watcher.start_time)
+        h, m = divmod(elapsed // 60, 60)
+        jobs = self.state.get_recent_jobs(limit=1000)
+        found = len(jobs)
+        accepted = sum(1 for j in jobs if j.get("accepted", False))
+        total = sum(j.get("reward", 0) for j in jobs)
+
+        self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
+        self.query_one("#stat-found", Static).update(f"Found: {found}")
+        self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
+        self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+
+
+class SourcesBreakdown(DashboardQuadrant):
+    """Job source breakdown."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__("Sources", **kwargs)
+        self.state = state
+
+    def compose(self) -> ComposeResult:
+        yield Static("WS: 0%\nEmail: 0%\nWeb: 0%\nRSS: 0%", id="sources-content")
+
+    def refresh_sources(self):
+        # ... logic ...
+        pass
 
 
 # =============================================================================
@@ -296,21 +376,30 @@ class GengoWatcherApp(App):
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
-        yield TitleBar()
+        yield TitleBar(config=self.config)
 
         # 2. Tabs
         with TabbedContent(initial="dashboard"):
             with TabPane("Dashboard", id="dashboard"):
-                yield MetricsRow()
-                yield StatusRow()
-                yield DashboardGrid()
+                yield MetricsRow(state=self.state)
+                yield StatusRow(watcher=self.watcher)
+
+                # 2x2 Grid + Activity
+                with Vertical(id="dashboard-content"):
+                    with Container(classes="dashboard-grid"):
+                        yield JobsPreview(state=self.state)
+                        yield ChartPlaceholder()
+                        yield ConfigPreview()  # Keep as bottom-right per doc
+                        yield SessionStats(watcher=self.watcher, state=self.state)
+
+                    yield ActivityPreview()
 
             with TabPane("Jobs", id="jobs"):
-                yield Static("Jobs Content")
+                yield DataTable(id="jobs-table-full")
             with TabPane("Activity", id="activity"):
-                yield Static("Activity Content")
+                yield RichLog(id="activity-log-full", markup=True)
             with TabPane("Output", id="output"):
-                yield Static("Output Content")
+                yield RichLog(id="output-log", markup=True)
             with TabPane("Charts", id="charts"):
                 yield Static("Charts Content")
             with TabPane("Stats", id="stats"):
