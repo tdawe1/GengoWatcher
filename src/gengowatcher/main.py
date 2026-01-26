@@ -13,6 +13,7 @@ from rich.theme import Theme
 
 from .config import AppConfig
 from .state import AppState
+from .stats import StatsManager
 from .watcher import GengoWatcher
 from .ui_textual import GengoWatcherApp
 
@@ -367,11 +368,12 @@ def main():
         sys.exit(0)
 
     # Start the Textual TUI
+    stats_manager = StatsManager()
     app = GengoWatcherApp(
         watcher=watcher,
         config=config,
         state=state,
-        log_queue=ui_handler.log_queue,
+        stats=stats_manager,
     )
 
     watcher_thread = threading.Thread(

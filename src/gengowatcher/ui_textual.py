@@ -1,38 +1,28 @@
 """
 Textual-based TUI for GengoWatcher.
 
-Replaces the Rich Live-based UI with proper scrolling, mouse support,
-and modern widget system.
+Strict implementation of the v2.0 Design Doc.
 """
 
 import datetime
-import inspect
 import logging
-import os
-import threading
 import time
 from collections import deque
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, Container
-from textual.reactive import reactive
+from textual.containers import Horizontal, Vertical, Grid, Container
 from textual.widgets import (
     Footer,
     Input,
     Label,
-    Log,
     Static,
     RichLog,
     TabbedContent,
     TabPane,
     DataTable,
 )
-from textual.screen import ModalScreen
-from textual.command import Provider
-
 from textual import work
-from rich.table import Table
 from rich.text import Text
 
 from .watcher import GengoWatcher, __version__
@@ -40,1999 +30,318 @@ from .config import AppConfig
 from .state import AppState
 from .stats import StatsManager
 
-
 # =============================================================================
-# UI Constants - Centralized icons and theme colors
+# Constants
 # =============================================================================
 
 
 class Icons:
-    """Unicode icons for UI elements."""
-
-    # Metric card icons
     FOUND = "▲"
     ACCEPTED = "✓"
     VALUE = "$"
     RATE = "~"
     MIN_WORDS = "≥"
 
-    # Status indicator icons
     WEBSOCKET = "●"
     EMAIL = "◉"
-    WEBSITE = "◎"
+    WEB = "◎"
+    RSS = "⊛"  # Added
     CAPTCHA = "⧗"
     WORKFLOW = "⇄"
+    AUTO = "▶"  # Added
 
-    # Status state icons
-    LIVE = "∿∿∿"
-    CONNECTING = "◐"
-    POLLING = "↻"
     IDLE = "○"
-    ERROR = "✗"
+    LIVE = "∿∿∿"
+    POLLING = "↻"
 
 
-class KanagawaColors:
-    """Kanagawa Wave theme colors for consistent styling."""
-
-    # Depth levels (backgrounds)
-    DEPTH_0 = "#16161D"  # sumiInk0 - deepest
-    DEPTH_1 = "#1F1F28"  # sumiInk1 - default bg
-    DEPTH_2 = "#2A2A37"  # sumiInk3 - elevated
-    DEPTH_3 = "#363646"  # sumiInk4 - highest
-
-    # Semantic colors
-    FOUND = "#76946A"  # autumnGreen - new jobs
-    ACCEPTED = "#7AA89F"  # waveAqua2 - success
-    VALUE = "#DCA561"  # autumnYellow - money
-    RATE = "#7FB4CA"  # springBlue - info
-    MIN_WORDS = "#957FB8"  # oniViolet - accent
-
-    # Log level colors
-    DEBUG = "#727169"  # fujiGray - muted
-    INFO = "#7FB4CA"  # springBlue
-    WARNING = "#DCA561"  # autumnYellow
-    ERROR = "#C34043"  # autumnRed
-    CRITICAL = "#E82424"  # samuraiRed
-
-
-class TextualLogHandler(logging.Handler):
-    """Logging handler that writes to a Textual RichLog widget."""
-
-    # Color map for log levels using KanagawaColors
-    LEVEL_COLORS = {
-        logging.DEBUG: KanagawaColors.DEBUG,
-        logging.INFO: KanagawaColors.INFO,
-        logging.WARNING: KanagawaColors.WARNING,
-        logging.ERROR: KanagawaColors.ERROR,
-        logging.CRITICAL: KanagawaColors.CRITICAL,
-    }
-
-    def __init__(self, app: "GengoWatcherApp"):
-        super().__init__()
-        self._app = app
-        self._buffer: deque = deque(maxlen=500)
-        self.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
-        )
-
-    def emit(self, record: logging.LogRecord) -> None:
-        """Emit a log record to the debug panel."""
-        try:
-            msg = self.format(record)
-            color = self.LEVEL_COLORS.get(record.levelno, "#7FB4CA")
-            formatted = f"[{color}]{msg}[/]"
-            self._buffer.append(formatted)
-            # Schedule write on main thread
-            self._app.call_from_thread(self._flush_to_widget)
-        except Exception:
-            pass
-
-    def _flush_to_widget(self) -> None:
-        """Flush buffered logs to the debug log widget."""
-        try:
-            debug_log = self._app.query_one("#debug-log", RichLog)
-            while self._buffer:
-                debug_log.write(self._buffer.popleft())
-        except Exception:
-            pass
-
-
-try:
-    from textual_plotext import PlotextPlot
-
-    PLOTEXT_AVAILABLE = True
-except ImportError:
-    PLOTEXT_AVAILABLE = False
-
-try:
-    from textual_autocomplete import AutoComplete, Dropdown, DropdownItem
-
-    AUTOCOMPLETE_AVAILABLE = True
-except ImportError:
-    AUTOCOMPLETE_AVAILABLE = False
-
-
-class HelpScreen(ModalScreen):
-    """Modal screen to show help commands."""
-
-    BINDINGS = [
-        Binding("escape", "dismiss", "Close"),
-        Binding("question_mark", "dismiss", "Close"),
-    ]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="help-container"):
-            yield Label("Available Commands", id="help-title")
-            yield Static(id="help-list")
-            yield Label("Press ESC or ? to close", classes="help-footer")
-
-    def on_mount(self) -> None:
-        """Build help content with commands and keyboard shortcuts."""
-        from rich.table import Table
-        from rich.console import Group
-
-        # Keyboard shortcuts table
-        shortcut_table = Table(
-            title="Keyboard Shortcuts", show_header=True, header_style="bold cyan"
-        )
-        shortcut_table.add_column("Key", style="cyan", width=12)
-        shortcut_table.add_column("Action")
-
-        shortcuts = [
-            ("1-5", "Switch tabs (Dashboard/Jobs/Activity/Output/Charts)"),
-            ("t", "Go to Dashboard tab"),
-            ("q / Esc", "Quit application"),
-            ("c", "Trigger immediate check"),
-            ("p", "Pause watcher"),
-            ("r", "Resume watcher"),
-            ("h / ?", "Show this help"),
-            ("Ctrl+P", "Command palette"),
-            ("Ctrl+L", "Clear activity log"),
-            ("↑ / ↓", "Command history (in input)"),
-        ]
-        for key, action in shortcuts:
-            shortcut_table.add_row(key, action)
-
-        # Commands table
-        cmd_table = Table(title="Commands", show_header=True, header_style="bold cyan")
-        cmd_table.add_column("Command", style="cyan")
-        cmd_table.add_column("Aliases", style="dim")
-        cmd_table.add_column("Description")
-
-        if hasattr(self.app, "commands"):
-            for cmd, info in self.app.commands.items():
-                aliases = ", ".join(info.get("aliases", []))
-                cmd_table.add_row(cmd, aliases, info["help"])
-
-        self.query_one("#help-list", Static).update(Group(shortcut_table, cmd_table))
-
-
-class StatsSparkline(Static):
-    """Sparkline widget showing jobs/hour trend."""
-
-    SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
-
-    def __init__(self, data=None, **kwargs):
-        super().__init__(**kwargs)
-        self.data = deque(maxlen=20)
-        if data:
-            self.data.extend(data)
-
-    def add_data(self, value: float) -> None:
-        self.data.append(value)
-        self.refresh()
-
-    def render(self):
-        if not self.data:
-            return ""
-
-        min_val = min(self.data)
-        max_val = max(self.data)
-        range_val = max_val - min_val
-
-        if range_val == 0:
-            # If all values are the same, show middle bar or max
-            return self.SPARKLINE_CHARS[4] * len(self.data)
-
-        result = ""
-        for val in self.data:
-            normalized = (val - min_val) / range_val
-            # Clamp to index range 0-7
-            index = int(normalized * (len(self.SPARKLINE_CHARS) - 1))
-            result += self.SPARKLINE_CHARS[index]
-
-        return result
+# =============================================================================
+# Widgets
+# =============================================================================
 
 
 class TitleBar(Static):
-    """Branded title bar with watcher status, session timer, and clock."""
-
-    def __init__(
-        self, watcher: "GengoWatcher" = None, state: "AppState" = None, **kwargs
-    ):
-        super().__init__(**kwargs)
-        self._start_time = time.time()
-        self._watcher = watcher
-        self._state = state
-
-    def compose(self) -> ComposeResult:
-        # Row 1: Brand and status
-        with Horizontal(classes="title-row"):
-            yield Static("◆ GENGOWATCHER", classes="brand")
-            yield Static("", id="watcher-status", classes="watcher-status")
-            yield Static("", id="job-count", classes="job-count")
-        # Row 2: Session and clock
-        with Horizontal(classes="title-row"):
-            yield Static("", id="session-time", classes="session-time")
-            yield Static("", id="last-check", classes="last-check")
-            yield Static("", id="clock", classes="clock")
+    """3-line title bar: Brand, Separator, Info."""
 
     def on_mount(self) -> None:
-        self.set_interval(1.0, self._update_time)
-        self._update_time()
+        self.set_interval(1.0, self.update_clock)
 
-    def _update_time(self) -> None:
-        # Session duration
-        elapsed = int(time.time() - self._start_time)
-        hours, remainder = divmod(elapsed, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        session_str = f"⏱ {hours}h {minutes:02d}m {seconds:02d}s"
-        self.query_one("#session-time", Static).update(session_str)
+    def compose(self) -> ComposeResult:
+        # Line 1
+        yield Static("◆ GENGOWATCHER v2.0", classes="brand")
+        # Line 2
+        yield Static("─" * 200, classes="separator")
+        # Line 3
+        with Horizontal(classes="info-row"):
+            yield Static("Session: 0h 00m", id="session-timer")
+            yield Static("  |  ", classes="dim")
+            yield Static("12:00:00 JST", id="clock")
 
-        # Current time
+    def update_clock(self) -> None:
         now = datetime.datetime.now()
-        clock_str = now.strftime("%H:%M:%S")
-        self.query_one("#clock", Static).update(clock_str)
+        try:
+            self.query_one("#clock", Static).update(now.strftime("%H:%M:%S %Z"))
+        except Exception:
+            pass
 
-        # Watcher status
-        if self._watcher:
-            if self._watcher.shutdown_event.is_set():
-                status = "[#f7768e]● STOPPED[/]"
-            elif os.path.exists(self._watcher.PAUSE_FILE):
-                status = "[#e0af68]● PAUSED[/]"
-            else:
-                status = "[#98bb6c]● RUNNING[/]"
-            self.query_one("#watcher-status", Static).update(status)
-
-            # Last check time
-            next_check = max(0, int(self._watcher.next_check_time - time.time()))
-            self.query_one("#last-check", Static).update(f"Next: {next_check}s")
-
-        # Job count
-        if self._state:
-            found = self._state.total_new_entries_found
-            self.query_one("#job-count", Static).update(f"Jobs: {found}")
+        # Session timer
+        app = self.app
+        # Access watcher safely
+        watcher = getattr(app, "watcher", None)
+        if watcher:
+            elapsed = int(time.time() - watcher.start_time)
+            h, m = divmod(elapsed // 60, 60)
+            try:
+                self.query_one("#session-timer", Static).update(f"Session: {h}h {m}m")
+            except Exception:
+                pass
 
 
 class MetricCard(Static):
-    """Individual metric display card with icon and accent border."""
+    """Vertical metric card: Icon+Value on top, Label on bottom."""
 
-    # Map card_class to Icons constants
-    ICONS = {
-        "found": Icons.FOUND,
-        "accepted": Icons.ACCEPTED,
-        "value": Icons.VALUE,
-        "rate": Icons.RATE,
-        "minword": Icons.MIN_WORDS,
-    }
-
-    def __init__(self, label: str, value: str = "0", card_class: str = "", **kwargs):
+    def __init__(self, label: str, icon: str, value: str = "0", **kwargs):
         super().__init__(**kwargs)
-        self._label = label
-        self._value = value
-        self._card_class = card_class
-        if card_class:
-            self.add_class(card_class)
+        self.label = label
+        self.icon = icon
+        self.value = value
 
     def compose(self) -> ComposeResult:
-        icon = self.ICONS.get(self._card_class, "•")
-        # Sanitize label for ID usage
-        sanitized_label = "".join(
-            c for c in self._label.lower() if c.isalnum() or c == "-"
-        )
-        yield Static(f"{icon} {self._label}", classes="metric-label")
-        yield Static(
-            self._value, classes="metric-value", id=f"metric-{sanitized_label}-value"
-        )
+        with Horizontal(classes="metric-value-row"):
+            yield Static(self.icon, classes="metric-icon")
+            yield Static(
+                self.value, classes="metric-value", id=f"val-{self.label.lower()}"
+            )
+        yield Static(self.label, classes="metric-label")
 
-    def update_value(self, value: str) -> None:
-        """Update the displayed metric value."""
-        self._value = value
+    def update_value(self, value: str):
         try:
-            self.query_one(".metric-value", Static).update(value)
+            self.query_one(f"#val-{self.label.lower()}", Static).update(value)
         except Exception:
-            pass  # Widget may not be mounted yet
+            pass
 
 
 class MetricsRow(Horizontal):
-    """Container for the 5 metric cards."""
-
-    def __init__(self, state: "AppState", **kwargs):
-        super().__init__(**kwargs)
-        self._state = state
+    """Container for 5 metric cards."""
 
     def compose(self) -> ComposeResult:
-        yield MetricCard("Found", "0", card_class="found", id="card-found")
-        yield MetricCard("Accepted", "0", card_class="accepted", id="card-accepted")
-        yield MetricCard("Value", "$0.00", card_class="value", id="card-value")
-        yield MetricCard("Rate", "0/hr", card_class="rate", id="card-rate")
-        yield MetricCard("Min/Word", "$0.00", card_class="minword", id="card-minword")
+        yield MetricCard("Found", Icons.FOUND, "0", id="card-found")
+        yield MetricCard("Accepted", Icons.ACCEPTED, "0", id="card-accepted")
+        yield MetricCard("Value", Icons.VALUE, "$0.00", id="card-value")
+        yield MetricCard("Rate", Icons.RATE, "0.0/hr", id="card-rate")
+        yield MetricCard("Min", Icons.MIN_WORDS, "≥$0.00", id="card-min")
 
-    def refresh_metrics(self) -> None:
-        """Update all metric values from state."""
-        jobs = self._state.get_recent_jobs(limit=1000)
+    def refresh_metrics(self, state: AppState):
+        jobs = state.get_recent_jobs(limit=1000)
         found = len(jobs)
         accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total_value = sum(j.get("reward", 0) for j in jobs)
+        value = sum(j.get("reward", 0) for j in jobs)
 
-        self.query_one("#card-found", MetricCard).update_value(str(found))
-        self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
-        self.query_one("#card-value", MetricCard).update_value(f"${total_value:.2f}")
-
-        # Calculate rate (jobs per hour based on session time)
-        # Simplified: use state's sparkline data length as proxy
-        sparkline_len = len(self._state.sparkline_data)
-        rate = found / max(sparkline_len / 60, 1) if sparkline_len > 0 else 0
-        self.query_one("#card-rate", MetricCard).update_value(f"~{rate:.1f}/hr")
+        try:
+            self.query_one("#card-found", MetricCard).update_value(str(found))
+            self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
+            self.query_one("#card-value", MetricCard).update_value(f"${value:.2f}")
+        except Exception:
+            pass
 
 
 class StatusIndicator(Static):
-    """Single status indicator with icon, label, and live state."""
+    """Icon + Label + State."""
 
-    # Map indicator types to Icons constants
-    ICONS = {
-        "websocket": Icons.WEBSOCKET,
-        "email": Icons.EMAIL,
-        "website": Icons.WEBSITE,
-        "captcha": Icons.CAPTCHA,
-        "workflow": Icons.WORKFLOW,
-    }
-
-    # Status states with display text and CSS class
-    STATES = {
-        "live": (f"{Icons.LIVE} Live", "status-live"),
-        "connecting": (f"{Icons.CONNECTING} Connecting", "status-working"),
-        "polling": (f"{Icons.POLLING} Polling", "status-working"),
-        "idle": (f"{Icons.IDLE} Idle", "status-idle"),
-        "error": (f"{Icons.ERROR} Error", "status-error"),
-        "ready": ("Ready", "status-live"),
-        "solving": ("Solving...", "status-working"),
-        "auto": ("Auto", "status-live"),
-        "manual": ("Manual", "status-idle"),
-    }
-
-    def __init__(self, name: str, initial_state: str = "idle", **kwargs):
+    def __init__(
+        self,
+        icon: str,
+        label: str,
+        state_text: str = "Idle",
+        state_class: str = "status-idle",
+        **kwargs,
+    ):
         super().__init__(**kwargs)
-        self._name = name
-        self._state = initial_state
-        self._icon = self.ICONS.get(name.lower(), "●")
+        self.icon = icon
+        self.label = label
+        self.state_text = state_text
+        self.state_class = state_class
 
     def compose(self) -> ComposeResult:
-        state_text, state_class = self.STATES.get(
-            self._state, ("Unknown", "status-idle")
-        )
-        yield Static(f"{self._icon} {self._name.upper()}", classes="status-icon")
+        yield Static(self.icon, classes="status-icon")
         yield Static(
-            state_text,
-            classes=f"status-text {state_class}",
-            id=f"status-{self._name.lower()}",
+            f"{self.label} {self.state_text}",
+            classes=f"status-text {self.state_class}",
+            id=f"stat-{self.label.lower()}",
         )
 
-    def set_state(self, state: str) -> None:
-        """Update the indicator state."""
-        self._state = state
-        state_text, state_class = self.STATES.get(state, ("Unknown", "status-idle"))
+    def set_state(self, text: str, css_class: str):
         try:
-            status_widget = self.query_one(f"#status-{self._name.lower()}", Static)
-            status_widget.update(state_text)
-            # Update classes for color
-            status_widget.remove_class(
-                "status-live", "status-working", "status-error", "status-idle"
-            )
-            status_widget.add_class(state_class)
+            w = self.query_one(f"#stat-{self.label.lower()}", Static)
+            w.update(f"{self.label} {text}")
+            w.set_classes(f"status-text {css_class}")
         except Exception:
             pass
 
 
 class StatusRow(Horizontal):
-    """Row of status indicators for all monitored sources."""
-
-    def __init__(self, watcher: "GengoWatcher", **kwargs):
-        super().__init__(**kwargs)
-        self._watcher = watcher
+    """7 status indicators."""
 
     def compose(self) -> ComposeResult:
-        yield StatusIndicator("WebSocket", "idle", id="ind-websocket")
-        yield StatusIndicator("Email", "idle", id="ind-email")
-        yield StatusIndicator("Website", "idle", id="ind-website")
-        yield StatusIndicator("Captcha", "ready", id="ind-captcha")
-        yield StatusIndicator("Workflow", "auto", id="ind-workflow")
-
-    def refresh_status(self) -> None:
-        """Update all indicators from watcher state."""
-        # WebSocket
-        ws_state = "live" if self._watcher.websocket_connected else "idle"
-        self.query_one("#ind-websocket", StatusIndicator).set_state(ws_state)
-
-        # Email
-        email_enabled = (
-            getattr(self._watcher.email_monitor, "enabled", False)
-            if hasattr(self._watcher, "email_monitor")
-            else False
-        )
-        email_state = "polling" if email_enabled else "idle"
-        self.query_one("#ind-email", StatusIndicator).set_state(email_state)
-
-        # Website
-        web_enabled = (
-            getattr(self._watcher.website_monitor, "enabled", False)
-            if hasattr(self._watcher, "website_monitor")
-            else False
-        )
-        web_state = "polling" if web_enabled else "idle"
-        self.query_one("#ind-website", StatusIndicator).set_state(web_state)
-
-        # Captcha - disabled (captcha module removed)
-        self.query_one("#ind-captcha", StatusIndicator).set_state("idle")
-
-        # Workflow - check auto-accept mode
-        workflow_state = "auto"
-        if hasattr(self._watcher, "auto_accept"):
-            workflow_state = "auto" if self._watcher.auto_accept else "manual"
-        self.query_one("#ind-workflow", StatusIndicator).set_state(workflow_state)
+        yield StatusIndicator(Icons.WEBSOCKET, "WS", "Live", "status-live")
+        yield StatusIndicator(Icons.EMAIL, "Email", "45s", "status-working")
+        yield StatusIndicator(Icons.WEB, "Web", "Idle", "status-idle")
+        yield StatusIndicator(Icons.RSS, "RSS", "Idle", "status-idle")  # Added
+        yield StatusIndicator(Icons.CAPTCHA, "Captcha", "", "status-idle")
+        yield StatusIndicator(Icons.WORKFLOW, "Workflow", "", "status-idle")
+        yield StatusIndicator(Icons.AUTO, "Auto", "On", "status-live")  # Added
 
 
 class DashboardQuadrant(Static):
-    """Base class for dashboard quadrant panels."""
+    """Base class for quadrants."""
 
-    def __init__(self, title: str, quadrant_class: str = "", **kwargs):
+    def __init__(self, title: str, **kwargs):
         super().__init__(**kwargs)
-        self._title = title
-        if quadrant_class:
-            self.add_class(quadrant_class)
+        self.title_text = title
 
     def compose(self) -> ComposeResult:
-        yield Static(f"─ {self._title} ", classes="quadrant-title")
-        yield from self._compose_content()
-
-    def _compose_content(self) -> ComposeResult:
-        """Override in subclasses to add content."""
-        yield Static("")
+        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        yield Container(id="quadrant-content")
 
 
 class ActivityPreview(DashboardQuadrant):
-    """Mini activity log for dashboard with colored output."""
-
     def __init__(self, **kwargs):
-        super().__init__("Recent Activity", quadrant_class="activity", **kwargs)
+        super().__init__("Recent Activity", **kwargs)
 
-    def _compose_content(self) -> ComposeResult:
-        yield RichLog(
-            id="activity-preview-log", highlight=True, markup=True, max_lines=8
-        )
-
-    def add_line(self, text: str, level: str = "info") -> None:
-        """Add a colored line to the activity preview."""
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-
-        # Color by level
-        colors = {
-            "debug": "#565f89",
-            "info": "#7FB4CA",
-            "success": "#98bb6c",
-            "warning": "#e0af68",
-            "error": "#f7768e",
-        }
-        color = colors.get(level, "#dcd7ba")
-
-        try:
-            log = self.query_one("#activity-preview-log", RichLog)
-            log.write(f"[{color}]{timestamp}[/] {text}")
-        except Exception:
-            pass
+    def compose(self) -> ComposeResult:
+        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        yield RichLog(id="activity-log", markup=True)
 
 
 class JobsPreview(DashboardQuadrant):
-    """Mini jobs table for dashboard."""
+    def __init__(self, **kwargs):
+        super().__init__("Jobs Preview", **kwargs)
 
-    def __init__(self, state: "AppState", **kwargs):
-        super().__init__("Jobs Preview", quadrant_class="jobs-preview", **kwargs)
-        self._state = state
+    def compose(self) -> ComposeResult:
+        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        yield DataTable(id="jobs-table")
 
-    def _compose_content(self) -> ComposeResult:
-        yield Static("", id="jobs-preview-content")
-
-    def refresh_jobs(self) -> None:
-        """Update jobs preview from state."""
-        jobs = self._state.get_recent_jobs(limit=4)
-        if not jobs:
-            content = "No jobs yet"
-        else:
-            lines = []
-            for job in jobs:
-                job_id = str(job.get("id", "?"))[:6]
-                lang = job.get("lang_pair", "?")[:6]
-                reward = job.get("reward", 0)
-                lines.append(f"#{job_id}  {lang}  ${reward:.2f}")
-            content = "\n".join(lines)
+    def on_mount(self):
         try:
-            self.query_one("#jobs-preview-content", Static).update(content)
+            dt = self.query_one(DataTable)
+            dt.add_columns("ID", "Pair", "Words", "$$$")
         except Exception:
             pass
+
+
+class ChartPlaceholder(DashboardQuadrant):
+    def __init__(self, **kwargs):
+        super().__init__("Jobs/Hour", **kwargs)
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        yield Static(
+            "\n    (Chart Placeholder)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────",
+            classes="chart-ascii",
+        )
 
 
 class ConfigPreview(DashboardQuadrant):
-    """Configuration summary for dashboard with Rich formatting."""
-
-    def __init__(self, config: "AppConfig", **kwargs):
-        super().__init__("Configuration", quadrant_class="config", **kwargs)
-        self._config = config
-
-    def _compose_content(self) -> ComposeResult:
-        yield Static("", id="config-content")
-
-    def on_mount(self) -> None:
-        self._refresh_config()
-
-    def _refresh_config(self) -> None:
-        """Update config display with Rich markup."""
-        # Access config values using the dictionary-style API
-        check_interval = self._config.get("Watcher", "check_interval") or 30
-        min_reward = self._config.get("Watcher", "min_reward") or 0.0
-        autoaccept_enabled = self._config.get("AutoAccept", "enabled") or False
-        ws_enabled = self._config.get("WebSocket", "enable_websocket") or False
-
-        # Build Rich formatted content
-        lines = [
-            f"[#7FB4CA]Interval:[/] {check_interval}s",
-            f"[#98bb6c]Min $:[/] ${float(min_reward):.2f}",
-            f"[#e0af68]Auto:[/] {'[#98bb6c]On[/]' if autoaccept_enabled else '[#f7768e]Off[/]'}",
-            f"[#957fb8]WS:[/] {'[#98bb6c]On[/]' if ws_enabled else '[#f7768e]Off[/]'}",
-        ]
-        try:
-            self.query_one("#config-content", Static).update("\n".join(lines))
-        except Exception:
-            pass
-
-
-class StatsPanel(Static):
-    """Full stats tab content with multiple sections."""
-
-    def __init__(self, stats_manager: "StatsManager", **kwargs):
-        super().__init__(**kwargs)
-        self._stats = stats_manager
+    def __init__(self, **kwargs):
+        super().__init__("Configuration", **kwargs)
 
     def compose(self) -> ComposeResult:
-        # Top row: Session and All-Time
-        with Horizontal(classes="stats-grid"):
-            with Static(classes="stats-section session"):
-                yield Static("─ Session ", classes="section-title")
-                yield Static("", id="stats-session-content")
-            with Static(classes="stats-section alltime"):
-                yield Static("─ All-Time ", classes="section-title")
-                yield Static("", id="stats-alltime-content")
-
-        # Source breakdown
-        with Static(classes="stats-section source"):
-            yield Static("─ By Source ", classes="section-title")
-            yield Static("", id="stats-source-content")
-
-        # Bottom row: Language and Best Times
-        with Horizontal(classes="stats-grid"):
-            with Static(classes="stats-section language"):
-                yield Static("─ By Language ", classes="section-title")
-                yield Static("", id="stats-language-content")
-            with Static(classes="stats-section times"):
-                yield Static("─ Best Times ", classes="section-title")
-                yield Static("", id="stats-times-content")
-
-        # Earnings chart
-        with Static(classes="stats-section"):
-            yield Static("─ Earnings (7 days) ", classes="section-title")
-            yield Static("", id="stats-earnings-content")
-
-    def on_mount(self) -> None:
-        self.set_interval(5.0, self.refresh_stats)
-        self.refresh_stats()
-
-    def refresh_stats(self) -> None:
-        """Update all stats displays by delegating to section methods."""
-        self._refresh_session_stats()
-        self._refresh_alltime_stats()
-        self._refresh_source_stats()
-        self._refresh_language_stats()
-        self._refresh_times_stats()
-        self._refresh_earnings_stats()
-
-    def _refresh_session_stats(self) -> None:
-        """Update session statistics section."""
-        s = self._stats
-        dur = s.session.duration_seconds
-        h, m = divmod(dur // 60, 60)
-        lines = [
-            f"Duration     {h}h {m:02d}m",
-            f"Jobs Found   {s.session.jobs_found}",
-            f"Accepted     {s.session.jobs_accepted}",
-            f"Value        ${s.session.total_value:.2f}",
-            f"Rate         {s.session.rate_per_hour:.1f}/hr",
-        ]
-        self._update_content("#stats-session-content", "\n".join(lines))
-
-    def _refresh_alltime_stats(self) -> None:
-        """Update all-time statistics section."""
-        s = self._stats
-        lines = [
-            f"Total Jobs   {s.all_time.total_jobs:,}",
-            f"Total Value  ${s.all_time.total_value:,.2f}",
-            f"Avg Value    ${s.all_time.avg_job_value:.2f}",
-            f"Best Day     ${s.all_time.best_day_value:.2f}",
-            f"Sessions     {s.all_time.total_sessions}",
-        ]
-        self._update_content("#stats-alltime-content", "\n".join(lines))
-
-    def _refresh_source_stats(self) -> None:
-        """Update job source breakdown section."""
-        s = self._stats
-        pct = s.by_source.percentages()
-        lines = [
-            self._bar("WebSocket", s.by_source.websocket, pct["websocket"]),
-            self._bar("Email", s.by_source.email, pct["email"]),
-            self._bar("Website", s.by_source.website, pct["website"]),
-        ]
-        self._update_content("#stats-source-content", "\n".join(lines))
-
-    def _refresh_language_stats(self) -> None:
-        """Update language breakdown section."""
-        s = self._stats
-        lang_items = sorted(s.by_language.items(), key=lambda x: x[1], reverse=True)[:4]
-        total_lang = sum(s.by_language.values()) or 1
-        lines = [
-            self._bar(lang, count, count / total_lang * 100)
-            for lang, count in lang_items
-        ]
-        self._update_content(
-            "#stats-language-content",
-            "\n".join(lines) if lines else "No data",
-        )
-
-    def _refresh_times_stats(self) -> None:
-        """Update best/slowest times section."""
-        s = self._stats
-        peak_h, peak_c = s.get_peak_hour()
-        slow_h, slow_c = s.get_slowest_hour()
-        lines = [
-            f"Peak Hour    {peak_h:02d}:00-{peak_h + 1:02d}:00  ({peak_c} jobs)",
-            f"Slowest      {slow_h:02d}:00-{slow_h + 1:02d}:00  ({slow_c} jobs)",
-        ]
-        self._update_content("#stats-times-content", "\n".join(lines))
-
-    def _refresh_earnings_stats(self) -> None:
-        """Update 7-day earnings section."""
-        earnings = self._stats.get_recent_earnings(7)
-        lines = [f"{day} ${val:.0f}" for day, val in earnings.items()]
-        self._update_content("#stats-earnings-content", "  ".join(lines))
-
-    def _bar(self, label: str, count: int, pct: float) -> str:
-        """Create a text-based progress bar."""
-        filled = int(pct / 5)  # 20 chars max
-        bar = "█" * filled + "░" * (20 - filled)
-        return f"{label:10} {bar} {count:,} ({pct:.0f}%)"
-
-    def _update_content(self, selector: str, text: str) -> None:
-        try:
-            self.query_one(selector, Static).update(text)
-        except Exception:
-            pass
+        yield Static(f"┌─ {self.title_text} ────────────┐", classes="quadrant-title")
+        yield Static("Languages: JA↔EN\nCheck Interval: 60s")
 
 
-class JobsChart(Static):
-    """Real-time chart showing jobs found over time."""
-
-    def __init__(self, state: "AppState", **kwargs):
-        super().__init__(**kwargs)
-        self.state = state
-        self._chart = None
+class DashboardGrid(Grid):
+    """2x2 Grid container."""
 
     def compose(self) -> ComposeResult:
-        if PLOTEXT_AVAILABLE:
-            self._chart = PlotextPlot()
-            yield self._chart
-        else:
-            yield Static(
-                "[dim]Install textual-plotext for charts:\n"
-                "pip install textual-plotext[/]",
-                id="charts-unavailable",
-            )
-
-    def on_mount(self) -> None:
-        if self._chart:
-            self.update_chart()
-            self.set_interval(60, self.update_chart)
-
-    def update_chart(self) -> None:
-        """Update chart with latest sparkline data."""
-        if not self._chart or not PLOTEXT_AVAILABLE:
-            return
-
-        data = self.state.sparkline_data if self.state.sparkline_data else []
-        if not data:
-            data = [0]
-
-        try:
-            plt = self._chart.plt
-            plt.clear_data()
-            plt.clear_figure()
-
-            # Create x-axis (samples)
-            x = list(range(len(data)))
-
-            plt.plot(x, data, marker="braille")
-            plt.title("Jobs/Hour (Recent)")
-            plt.xlabel("Samples")
-            plt.ylabel("Jobs/Hour")
-
-            self._chart.refresh()
-        except Exception:
-            pass
-
-
-class HistoryInput(Input):
-    """Input with command history support."""
-
-    BINDINGS = [
-        Binding("up", "history_up", "History Up", show=False),
-        Binding("down", "history_down", "History Down", show=False),
-    ]
-
-    def action_history_up(self) -> None:
-        app = self.app
-        if not app.command_history:
-            return
-
-        if app.history_index == -1:
-            # Save current input if we haven't started navigating history
-            app._temp_input = self.value
-            app.history_index = len(app.command_history) - 1
-        elif app.history_index > 0:
-            app.history_index -= 1
-
-        self.value = app.command_history[app.history_index]
-        self.cursor_position = len(self.value)
-
-    def action_history_down(self) -> None:
-        app = self.app
-        if app.history_index == -1:
-            return
-
-        if app.history_index < len(app.command_history) - 1:
-            app.history_index += 1
-            self.value = app.command_history[app.history_index]
-        else:
-            # Restore temp input or clear
-            app.history_index = -1
-            self.value = getattr(app, "_temp_input", "")
-
-        self.cursor_position = len(self.value)
-
-
-class HeaderPanel(Static):
-    """Header panel showing configuration summary."""
-
-    def __init__(self, config: AppConfig, **kwargs):
-        super().__init__(**kwargs)
-        self.config = config
-
-    def compose(self) -> ComposeResult:
-        yield Static(id="header-content")
-
-    def on_mount(self) -> None:
-        self._refresh_content()
-
-    def _refresh_content(self) -> None:
-        table = Table.grid(expand=True, padding=(0, 1))
-        table.add_column(style="bold", justify="right", width=24)
-        table.add_column(justify="left")
-
-        table.add_row(
-            "Feed URL:", f"[#7FB4CA]{self.config.get('Watcher', 'feed_url')}[/]"
-        )
-        table.add_row(
-            "Check Interval:",
-            f"{self.config.get('Watcher', 'check_interval')} seconds",
-        )
-        table.add_row()
-        table.add_row(
-            "Minimum Reward:",
-            f"[#9ece6a]US$ {self.config.get('Watcher', 'min_reward'):.2f}[/]",
-        )
-
-        notif_enabled = self.config.get("Watcher", "enable_notifications")
-        sound_enabled = self.config.get("Watcher", "enable_sound")
-        table.add_row(
-            "Desktop Notifications:",
-            "[#9ece6a]Enabled[/]" if notif_enabled else "[#f7768e]Disabled[/]",
-        )
-        table.add_row(
-            "Sound Alerts:",
-            "[#9ece6a]Enabled[/]" if sound_enabled else "[#f7768e]Disabled[/]",
-        )
-
-        self.query_one("#header-content", Static).update(table)
-
-    def refresh_config(self) -> None:
-        self._refresh_content()
-
-
-class RuntimeStatusPanel(Vertical):
-    """Runtime status panel showing live statistics."""
-
-    def __init__(
-        self, watcher: GengoWatcher, config: AppConfig, state: AppState, **kwargs
-    ):
-        super().__init__(**kwargs)
-        self.watcher = watcher
-        self.config = config
-        self.state = state
-
-    def compose(self) -> ComposeResult:
-        # Row 1
-        yield Label("Uptime:", classes="status-label")
-        yield Label("--", id="stat-uptime", classes="status-value")
-        yield Label("Jobs/Hour:", classes="status-label")
-        yield Label("--", id="stat-jph", classes="status-value")
-
-        # Row 2
-        yield Label("Jobs (Sess):", classes="status-label")
-        yield Label("0", id="stat-jobs-sess", classes="status-value")
-        yield Label("Found (Tot):", classes="status-label")
-        yield Label("0", id="stat-jobs-tot", classes="status-value")
-
-        # Row 3
-        yield Label("Value (Sess):", classes="status-label")
-        yield Label("$0.00", id="stat-val-sess", classes="status-value")
-        yield Label("Avg Reward:", classes="status-label")
-        yield Label("$0.00", id="stat-avg-reward", classes="status-value")
-
-        # Row 4
-
-        # Row 5 - Flags
-        yield Label("RSS Fallback:", classes="status-label")
-        yield Label("--", id="stat-rss", classes="status-badge status-text-dim")
-        yield Label("Auto-Accept:", classes="status-label")
-        yield Label("--", id="stat-autoaccept", classes="status-badge status-text-dim")
-
-        # Row 6 - Flags & WS
-        yield Label("CAPTCHA:", classes="status-label")
-        yield Label("--", id="stat-captcha", classes="status-badge status-text-dim")
-        yield Label("WebSocket:", classes="status-label")
-        yield Label(
-            "Initializing...",
-            id="ws-status-indicator",
-            classes="status-badge status-offline",
-        )
-
-        # Row 7 - Heartbeat
-        yield Label("WS Heartbeat:", classes="status-label")
-        yield Label("--", id="stat-ws-heartbeat", classes="status-value span-3")
-
-        # Row - Email/Website Monitor Header
-        yield Label("── Monitors ──", classes="monitor-section-label")
-
-        # Row - Email Monitor
-        yield Label("Email:", classes="status-label")
-        yield Label("--", id="stat-email-status", classes="status-value")
-        yield Label("Last:", classes="status-label")
-        yield Label("--", id="stat-email-last", classes="status-value")
-
-        # Row - Website Monitor
-        yield Label("Website:", classes="status-label")
-        yield Label("--", id="stat-website-status", classes="status-value")
-        yield Label("Last:", classes="status-label")
-        yield Label("--", id="stat-website-last", classes="status-value")
-
-        # Row - Monitor Stats
-        yield Label("Email Jobs:", classes="status-label")
-        yield Label("0", id="stat-email-jobs", classes="status-value")
-        yield Label("Web Jobs:", classes="status-label")
-        yield Label("0", id="stat-website-jobs", classes="status-value")
-
-        # Sparkline Section
-        yield Label("Jobs/Hour Trend:", classes="sparkline-label span-4")
-        yield StatsSparkline(
-            data=self.state.sparkline_data, id="sparkline", classes="span-4"
-        )
-
-    def refresh_status(self) -> None:
-        # Calculate stats
-        uptime_seconds = time.time() - self.watcher.start_time
-        uptime_hours = uptime_seconds / 3600.0
-        jobs_per_hour = (
-            (self.watcher.session_new_entries / uptime_hours)
-            if uptime_hours > 0
-            else 0.0
-        )
-        avg_reward = (
-            (self.watcher.session_total_value / self.watcher.session_new_entries)
-            if self.watcher.session_new_entries > 0
-            else 0.0
-        )
-
-        # Update Labels
-        self.query_one("#stat-uptime", Label).update(
-            str(datetime.timedelta(seconds=int(uptime_seconds)))
-        )
-        self.query_one("#stat-jph", Label).update(f"{jobs_per_hour:.1f}")
-
-        self.query_one("#stat-jobs-sess", Label).update(
-            str(self.watcher.session_new_entries)
-        )
-        self.query_one("#stat-jobs-tot", Label).update(
-            str(self.state.total_new_entries_found)
-        )
-
-        self.query_one("#stat-val-sess", Label).update(
-            f"US$ {self.watcher.session_total_value:.2f}"
-        )
-        self.query_one("#stat-avg-reward", Label).update(f"US$ {avg_reward:.2f}")
-
-        # Update Sparkline
-        try:
-            sparkline = self.query_one("#sparkline", StatsSparkline)
-            sparkline.add_data(jobs_per_hour)
-            # Update state with latest data
-            self.state.sparkline_data = list(sparkline.data)
-        except Exception:
-            pass
-
-        # WebSocket Status
-        ws_status = self.watcher.websocket_status
-        status_class = "status-offline"
-        if ws_status == "Live":
-            status_class = "status-live"
-        elif ws_status in ("Connecting", "Authenticating"):
-            status_class = "status-connecting"
-
-        try:
-            lbl = self.query_one("#ws-status-indicator", Label)
-            lbl.update(ws_status)
-            lbl.classes = f"status-badge {status_class}"
-        except Exception:
-            pass
-
-        # RSS Status
-        seconds_remaining = max(0, self.watcher.next_check_time - time.time())
-        rss_status_text = f"{self.watcher.rss_action} ({int(seconds_remaining)}s)"
-        rss_class = "status-text-cyan"
-        if "Backoff" in self.watcher.rss_action or "Paused" in self.watcher.rss_action:
-            rss_class = "status-text-orange"
-
-        if os.path.exists(self.watcher.PAUSE_FILE):
-            rss_status_text = "Paused"
-
-        rss_lbl = self.query_one("#stat-rss", Label)
-        rss_lbl.update(rss_status_text)
-        rss_lbl.classes = f"status-badge {rss_class}"
-
-        # Auto-Accept
-        autoaccept_enabled = self.config.getboolean("AutoAccept", "enabled")
-        autoaccept_status = "Enabled" if autoaccept_enabled else "Disabled"
-        aa_class = "status-text-green" if autoaccept_enabled else "status-text-dim"
-
-        aa_lbl = self.query_one("#stat-autoaccept", Label)
-        aa_lbl.update(autoaccept_status)
-        aa_lbl.classes = f"status-badge {aa_class}"
-
-        # Captcha
-        captcha_enabled = self.config.getboolean("Captcha", "enabled")
-        captcha_status = "Enabled" if captcha_enabled else "Disabled"
-        cap_class = "status-text-green" if captcha_enabled else "status-text-dim"
-
-        cap_lbl = self.query_one("#stat-captcha", Label)
-        cap_lbl.update(captcha_status)
-        cap_lbl.classes = f"status-badge {cap_class}"
-
-        # WebSocket Heartbeat
-        hb = "—"
-        if ws_status == "Live":
-            now = time.time()
-            parts = []
-            try:
-                if getattr(self.watcher, "websocket_ping_latency_ms", None) is not None:
-                    parts.append(f"{int(self.watcher.websocket_ping_latency_ms)}ms")
-                if getattr(self.watcher, "websocket_last_pong_ts", None):
-                    last_pong_age = max(
-                        0, int(now - self.watcher.websocket_last_pong_ts)
-                    )
-                    parts.append(f"last {last_pong_age}s")
-            except Exception:
-                pass
-            hb = " | ".join(parts) if parts else "idle"
-
-        self.query_one("#stat-ws-heartbeat", Label).update(hb)
-
-        if hasattr(self.watcher, "_sync_monitor_metrics"):
-            self.watcher._sync_monitor_metrics()
-
-        email_status = getattr(self.watcher, "email_monitor_status", "Disabled")
-        self.query_one("#stat-email-status", Label).update(email_status)
-
-        email_last = getattr(self.watcher, "email_last_check_time", None)
-        if email_last:
-            ago = int(time.time() - email_last)
-            self.query_one("#stat-email-last", Label).update(f"{ago}s ago")
-        else:
-            self.query_one("#stat-email-last", Label).update("--")
-
-        email_jobs = getattr(self.watcher, "email_jobs_found_session", 0)
-        self.query_one("#stat-email-jobs", Label).update(str(email_jobs))
-
-        web_status = getattr(self.watcher, "website_monitor_status", "Disabled")
-        self.query_one("#stat-website-status", Label).update(web_status)
-
-        web_last = getattr(self.watcher, "website_last_check_time", None)
-        if web_last:
-            ago = int(time.time() - web_last)
-            self.query_one("#stat-website-last", Label).update(f"{ago}s ago")
-        else:
-            self.query_one("#stat-website-last", Label).update("--")
-
-        web_jobs = getattr(self.watcher, "website_jobs_found_session", 0)
-        self.query_one("#stat-website-jobs", Label).update(str(web_jobs))
-
-
-class StatusBar(Static):
-    """Bottom status bar showing overall system status."""
-
-    def __init__(self, watcher: GengoWatcher, state: AppState, **kwargs):
-        super().__init__(**kwargs)
-        self.watcher = watcher
-        self.state = state
-
-    def refresh_status(self) -> None:
-        status, color = ("Running", "#9ece6a")
-        if self.watcher.shutdown_event.is_set():
-            status, color = ("Stopped", "#f7768e")
-        elif os.path.exists(self.watcher.PAUSE_FILE):
-            status, color = ("Paused", "#e0af68")
-
-        monitor_status = self.watcher.get_monitor_status()
-        dead_monitors = [
-            name for name, state in monitor_status.items() if state == "dead"
-        ]
-        if dead_monitors and status == "Running":
-            status, color = ("Degraded", "#e0af68")
-
-        ws_status_text, ws_status_color = {
-            "Live": ("Live", "#9ece6a"),
-            "Connecting": ("Connecting", "#e0af68"),
-            "Authenticating": ("Authenticating", "#e0af68"),
-            "Offline": ("Offline", "#e0af68"),
-            "Disabled": ("Disabled", "#565f89"),
-            "Stopped": ("Stopped", "#f7768e"),
-        }.get(self.watcher.websocket_status, (self.watcher.websocket_status, "#f7768e"))
-
-        if monitor_status.get("websocket") == "dead" and ws_status_text not in (
-            "Disabled",
-            "Stopped",
-        ):
-            ws_status_text, ws_status_color = ("Dead", "#f7768e")
-
-        rss_status = self.watcher.rss_action
-        rss_color = "#7FB4CA"
-        if monitor_status.get("rss") == "dead":
-            rss_status, rss_color = ("Dead", "#f7768e")
-
-        parts = [
-            f"[bold]Status:[/] [{color}]{status}[/]",
-            f"[bold]WS:[/] [{ws_status_color}]{ws_status_text}[/]",
-            f"[bold]RSS:[/] [{rss_color}]{rss_status}[/]",
-        ]
-
-        if monitor_status.get("email") != "disabled":
-            email_state = monitor_status.get("email")
-            email_color = "#9ece6a" if email_state == "alive" else "#f7768e"
-            email_text = "OK" if email_state == "alive" else "Dead"
-            parts.append(f"[bold]Email:[/] [{email_color}]{email_text}[/]")
-
-        if monitor_status.get("website") != "disabled":
-            website_state = monitor_status.get("website")
-            website_color = "#9ece6a" if website_state == "alive" else "#f7768e"
-            website_text = "OK" if website_state == "alive" else "Dead"
-            parts.append(f"[bold]Web:[/] [{website_color}]{website_text}[/]")
-
-        parts.append(
-            f"[bold]Found:[/] [#9ece6a]{self.state.total_new_entries_found}[/]"
-        )
-
-        self.update(" │ ".join(parts))
-
-
-class JobsTable(DataTable):
-    """DataTable for displaying found jobs."""
-
-    def on_mount(self) -> None:
-        self.cursor_type = "row"
-        self.add_columns("Time", "Source", "Language Pair", "Reward", "Status")
-        self.zebra_stripes = True
-
-
-class GengoWatcherCommands(Provider):
-    """Command palette provider."""
-
-    async def search(self, query: str):
-        matcher = self.matcher(query)
-        app = self.screen.app
-        assert isinstance(app, GengoWatcherApp)
-
-        for name, command in app.commands.items():
-            display_name = name
-            if command.get("aliases"):
-                display_name = f"{name} ({', '.join(command['aliases'])})"
-
-            score = matcher.match(display_name)
-            if score > 0:
-                yield self.hit(
-                    score,
-                    matcher.highlight(display_name),
-                    lambda n=name: app._execute_command(n),
-                    help=command["help"],
-                )
+        yield ActivityPreview()
+        yield ChartPlaceholder()
+        yield JobsPreview()
+        yield ConfigPreview()
+
+
+# =============================================================================
+# Main App
+# =============================================================================
 
 
 class GengoWatcherApp(App):
-    """Textual TUI application for GengoWatcher."""
-
-    TITLE = "GengoWatcher"
-    SUB_TITLE = f"v{__version__}"
-    COMMANDS = {GengoWatcherCommands}
-
     CSS_PATH = "gengo_watcher.tcss"
-
     BINDINGS = [
-        Binding("q", "quit", "Quit", show=True),
-        Binding("escape", "quit", "Quit", show=False),
-        Binding("c", "check", "Check", show=True),
-        Binding("p", "pause", "Pause", show=True),
-        Binding("r", "resume", "Resume", show=True),
-        Binding("h", "help", "Help", show=False),
-        Binding("t", "toggle_runtime", "Dashboard", show=False),
-        Binding("question_mark", "show_help", "?:Help", show=True),
-        Binding("ctrl+p", "command_palette", "Cmds", show=True),
-        Binding("ctrl+l", "clear_log", "Clear", show=False),
-        # Tab shortcuts (hidden from footer, shown in help)
-        Binding("1", "tab_dashboard", "1:Dash", show=False),
-        Binding("2", "tab_jobs", "2:Jobs", show=False),
-        Binding("3", "tab_activity", "3:Log", show=False),
-        Binding("4", "tab_output", "4:Out", show=False),
-        Binding("5", "tab_charts", "5:Chart", show=False),
-        Binding("6", "tab_stats", "Stats", show=False),
+        ("q", "quit", "Quit"),
+        ("c", "check", "Check"),
+        ("p", "pause", "Pause"),
+        ("?", "help", "Help"),
     ]
 
     def __init__(
         self,
-        watcher: GengoWatcher,
         config: AppConfig,
         state: AppState,
-        log_queue: deque,
+        watcher: GengoWatcher,
+        stats: StatsManager,
     ):
         super().__init__()
-        self.watcher = watcher
         self.config = config
         self.state = state
-        self.log_queue = log_queue
-        self._stats_manager = StatsManager()
-        self._log_queue_lock = threading.Lock()
-        self.jobs_data = []
-        self.command_history = []
-        self.history_index = -1
-        self.runtime_visible = True
-        self._init_commands()
+        self.watcher = watcher
+        self.stats = stats
 
-    def _init_commands(self) -> None:
-        """Initialize command handlers - ported from Rich UI."""
-        self.commands = {
-            "check": {
-                "handler": self._handle_check,
-                "help": "Trigger an immediate RSS feed check.",
-            },
-            "help": {
-                "handler": self._handle_help,
-                "help": "Display this list of commands.",
-            },
-            "exit": {
-                "handler": self._handle_exit,
-                "aliases": ["q", "quit"],
-                "help": "Save state and quit the application.",
-            },
-            "pause": {
-                "handler": self._handle_pause,
-                "aliases": ["p"],
-                "help": "Pause RSS feed checks.",
-            },
-            "resume": {
-                "handler": self._handle_resume,
-                "aliases": ["r"],
-                "help": "Resume RSS feed checks.",
-            },
-            "togglesound": {
-                "handler": self._handle_toggle_sound,
-                "aliases": ["ts"],
-                "help": "Toggle sound alerts on/off.",
-            },
-            "togglenotifications": {
-                "handler": self._handle_toggle_notifications,
-                "aliases": ["tn"],
-                "help": "Toggle desktop notifications on/off.",
-            },
-            "togglewebsocket": {
-                "handler": self._handle_toggle_websocket,
-                "aliases": ["tw"],
-                "help": "Toggle WebSocket monitoring (requires restart).",
-            },
-            "autoaccept": {
-                "handler": self._handle_autoaccept,
-                "aliases": ["aa"],
-                "help": "Toggle auto-accept on/off.",
-            },
-            "captchatoggle": {
-                "handler": self._handle_captchatoggle,
-                "aliases": ["ct"],
-                "help": "Toggle CAPTCHA solving on/off.",
-            },
-            "setminreward": {
-                "handler": self._handle_set_min_reward,
-                "aliases": ["smr"],
-                "help": "Set min reward (e.g., `smr 5.50`).",
-            },
-            "reloadconfig": {
-                "handler": self._handle_reload_config,
-                "aliases": ["rl"],
-                "help": "Reload all settings from config.ini.",
-            },
-            "restart": {
-                "handler": self.watcher.restart,
-                "aliases": [],
-                "help": "Restart the entire script.",
-            },
-            "notifytest": {
-                "handler": self.watcher.run_notify_test,
-                "aliases": ["nt"],
-                "help": "Send a test notification.",
-            },
-            "clear": {
-                "handler": self._handle_clear,
-                "help": "Clear the output panel.",
-            },
-            "wstest": {
-                "handler": self._handle_websocket_test,
-                "aliases": ["wt"],
-                "help": "Test WebSocket. Use 'wt' for PING, 'wt notify' for test notification.",
-            },
-            "captchasetup": {
-                "handler": self._handle_captcha_setup,
-                "help": "Configure CAPTCHA solver service.",
-            },
-            "captchatest": {
-                "handler": self._handle_captcha_test,
-                "help": "Test CAPTCHA solver configuration.",
-            },
-            "captchastats": {
-                "handler": self._handle_captcha_stats,
-                "help": "Show CAPTCHA solver statistics.",
-            },
-            "captchareset": {
-                "handler": self._handle_captcha_reset,
-                "help": "Reset CAPTCHA configuration.",
-            },
-            "acceptstats": {
-                "handler": self._handle_accept_stats,
-                "help": "Display job acceptance statistics.",
-            },
-            "debug": {
-                "handler": self._handle_debug,
-                "aliases": ["d"],
-                "help": "Toggle debug category. Usage: d <category>, d raw [show|clear], d list.",
-            },
-            "setup-email": {
-                "handler": self._handle_setup_email,
-                "aliases": ["se"],
-                "help": "Configure Gmail OAuth for email monitoring.",
-            },
-            "toggleemail": {
-                "handler": self._handle_toggle_email,
-                "aliases": ["te"],
-                "help": "Toggle email monitor on/off.",
-            },
-            "emailstats": {
-                "handler": self._cmd_email_stats,
-                "aliases": ["es", "emailinfo"],
-                "help": "Show email monitor statistics.",
-            },
-            "togglewebsite": {
-                "handler": self._handle_toggle_website,
-                "aliases": ["tweb"],
-                "help": "Toggle website monitor on/off.",
-            },
-            "websitestats": {
-                "handler": self._cmd_website_stats,
-                "aliases": ["ws", "webinfo"],
-                "help": "Show website monitor statistics.",
-            },
-        }
-        self.alias_map = {
-            alias: cmd
-            for cmd, details in self.commands.items()
-            for alias in [cmd] + details.get("aliases", [])
-        }
+        # Setup logging redirection
+        self._setup_logging()
+
+    def _setup_logging(self):
+        handler = TextualLogHandler(self)
+        logging.getLogger().addHandler(handler)
 
     def compose(self) -> ComposeResult:
-        """Create child widgets for the application."""
-        # Title Bar (replaces old header)
-        yield TitleBar(watcher=self.watcher, state=self.state, id="title-bar")
+        # 1. Title Bar
+        yield TitleBar()
 
-        # Metrics Row
-        yield MetricsRow(self.state, id="metrics-row")
+        # 2. Tabs
+        with TabbedContent(initial="dashboard"):
+            with TabPane("Dashboard", id="dashboard"):
+                yield MetricsRow()
+                yield StatusRow()
+                yield DashboardGrid()
 
-        # Status Row
-        yield StatusRow(self.watcher, id="status-row")
+            with TabPane("Jobs", id="jobs"):
+                yield Static("Jobs Content")
+            with TabPane("Activity", id="activity"):
+                yield Static("Activity Content")
+            with TabPane("Output", id="output"):
+                yield Static("Output Content")
+            with TabPane("Charts", id="charts"):
+                yield Static("Charts Content")
+            with TabPane("Stats", id="stats"):
+                yield Static("Stats Content")
 
-        # Main tabbed content
-        with TabbedContent(id="main-tabs"):
-            # Dashboard Tab (4 quadrants + command response)
-            with TabPane("Dashboard", id="dashboard-tab"):
-                with Container(classes="dashboard-grid"):
-                    yield ActivityPreview(id="activity-preview")
-                    yield JobsPreview(self.state, id="jobs-preview")
-                    yield ConfigPreview(self.config, id="config-preview")
-                    # Command response box in 4th quadrant
-                    with Static(
-                        classes="command-response-box", id="cmd-response-container"
-                    ):
-                        yield Static("─ Command Response ", classes="quadrant-title")
-                        yield RichLog(
-                            id="cmd-response", highlight=True, markup=True, max_lines=6
-                        )
-
-            # Jobs Tab
-            with TabPane("Jobs", id="jobs-tab"):
-                yield JobsTable(id="jobs-table")
-
-            # Activity Tab
-            with TabPane("Activity", id="activity-tab"):
-                yield RichLog(id="activity-log", highlight=True, markup=True, wrap=True)
-
-            # Debug Tab (was Output)
-            with TabPane("Debug", id="debug-tab"):
-                yield RichLog(id="debug-log", highlight=True, markup=True, wrap=True)
-
-            # Charts Tab
-            with TabPane("Charts", id="charts-tab"):
-                yield JobsChart(self.state, id="jobs-chart-full")
-
-            # Stats Tab
-            with TabPane("Stats", id="stats-tab"):
-                yield StatsPanel(self._stats_manager, id="stats-panel")
-
-        # Command Input
-        yield HistoryInput(
-            placeholder="Type command or press ? for help...", id="command-input"
-        )
-
-        # Footer
+        # 3. Input & Footer
+        yield Input(placeholder="> help_")
         yield Footer()
 
-    def on_mount(self) -> None:
-        """Initialize on mount."""
-        self.query_one("#activity-log", RichLog).write("[green]GengoWatcher started[/]")
+    def call_from_thread(self, func, *args, **kwargs):
+        # The base App.call_from_thread will be used, but we need to ensure we don't block
+        super().call_from_thread(func, *args, **kwargs)
 
-        # Wire Python logging to Debug panel
-        self._log_handler = TextualLogHandler(self)
-        self._log_handler.setLevel(logging.DEBUG)
-        # Add handler only to watcher's logger (not root, to avoid duplicate logs)
-        self.watcher.logger.addHandler(self._log_handler)
 
-        # Write startup message to debug log
-        debug_log = self.query_one("#debug-log", RichLog)
-        debug_log.write("[#7FB4CA]Debug log initialized - showing all app logs[/]")
+class TextualLogHandler(logging.Handler):
+    """Redirects logs to the ActivityPreview widget."""
 
-        # Load recent jobs from state or CSV
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+
+    def emit(self, record):
         try:
-            if self.state.get_job_count() < 100:
-                csv_path = self.config.get("Paths", "all_entries_log")
-                if csv_path:
-                    self.state.load_jobs_from_csv(csv_path)
-
-            recent_jobs = self.state.get_recent_jobs(limit=1000)
-            if recent_jobs:
-                table = self.query_one("#jobs-table", JobsTable)
-                for job in recent_jobs:
-                    # Convert timestamp to readable string
-                    ts = job.get("timestamp", 0)
-                    time_str = datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
-
-                    self.add_job(
-                        time_str,
-                        job.get("source", "Unknown"),
-                        job.get("lang_pair", "Unknown"),
-                        f"{job.get('reward_currency', 'USD')} {job.get('reward', 0.0):.2f}",
-                        "Found",  # Initial status for historical jobs
-                    )
-                self.watcher.logger.info(
-                    f"Loaded {len(recent_jobs)} recent jobs from history."
-                )
-        except Exception as e:
-            self.watcher.logger.error(f"Failed to load recent jobs: {e}")
-
-        self.refresh_worker()
-
-    def add_job(
-        self, time: str, source: str, lang_pair: str, reward: str, status: str
-    ) -> None:
-        """Add a job to the jobs table."""
-        self.jobs_data.append(
-            {
-                "time": time,
-                "source": source,
-                "lang_pair": lang_pair,
-                "reward": reward,
-                "status": status,
-            }
-        )
-        try:
-            table = self.query_one("#jobs-table", JobsTable)
-            table.add_row(time, source, lang_pair, reward, status)
-            # Scroll to end if needed, or keep at top? Textual tables usually scroll.
-        except Exception:
+            msg = self.format(record)
+            self.app.call_from_thread(self.write_log, msg)
+        except:
             pass
 
-    @work(thread=True)
-    def refresh_worker(self) -> None:
-        """Background worker to refresh UI from watcher state."""
-        while not self.watcher.shutdown_event.is_set():
-            try:
-                # Check if app is still running before calling
-                if self._exit:
-                    break
-                self.call_from_thread(self._refresh_ui)
-                self.call_from_thread(self._drain_log_queue)
-            except Exception:
-                # App may be shutting down, exit gracefully
-                if self._exit or self.watcher.shutdown_event.is_set():
-                    break
-            time.sleep(0.5)
-
-    def _refresh_ui(self) -> None:
-        """Refresh all dynamic UI elements."""
+    def write_log(self, msg):
         try:
-            self.query_one("#metrics-row", MetricsRow).refresh_metrics()
-            self.query_one("#status-row", StatusRow).refresh_status()
-            self.query_one("#jobs-preview", JobsPreview).refresh_jobs()
-            self.query_one("#runtime-panel", RuntimeStatusPanel).refresh_status()
-            self.query_one("#status-bar", StatusBar).refresh_status()
-        except Exception:
+            log = self.app.query_one("#activity-log", RichLog)
+            log.write(msg)
+        except:
             pass
-
-    def _drain_log_queue(self) -> None:
-        """Drain log queue to activity log widget."""
-        activity_log = self.query_one("#activity-log", RichLog)
-
-        # New activity preview widget
-        activity_preview = None
-        try:
-            activity_preview = self.query_one("#activity-preview", ActivityPreview)
-        except Exception:
-            pass
-
-        with self._log_queue_lock:
-            while self.log_queue:
-                try:
-                    item = self.log_queue.popleft()
-                    # Write to main log
-                    if hasattr(item, "__rich__") or hasattr(item, "__rich_console__"):
-                        activity_log.write(item)
-                    else:
-                        activity_log.write(str(item))
-
-                    # Update preview
-                    if activity_preview:
-                        activity_preview.add_line(str(item))
-                except Exception:
-                    break
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle command input."""
-        command_str = event.value.strip()
-        event.input.clear()
-
-        if not command_str:
-            return
-
-        # Add to history
-        if not self.command_history or self.command_history[-1] != command_str:
-            self.command_history.append(command_str)
-            if len(self.command_history) > 50:
-                self.command_history.pop(0)
-        self.history_index = -1
-
-        self._execute_command(command_str)
-
-    def _execute_command(self, command_str: str) -> None:
-        """Execute a command and show output in command response box."""
-        parts = command_str.split()
-        if not parts:
-            return
-
-        cmd_alias, args = parts[0].lower(), parts[1:]
-        command = self.alias_map.get(cmd_alias)
-
-        # Get the command response log on dashboard
-        try:
-            cmd_response = self.query_one("#cmd-response", RichLog)
-        except Exception:
-            cmd_response = None
-
-        if not command:
-            self.watcher.logger.error(f"Unknown command: '{command_str}'")
-            if cmd_response:
-                cmd_response.write(f"[#f7768e]✗ Unknown command: {cmd_alias}[/]")
-            self.notify(f"Unknown command: {cmd_alias}", severity="error")
-            return
-
-        handler = self.commands[command]["handler"]
-        try:
-            sig = inspect.signature(handler)
-            if "args" in sig.parameters:
-                output = handler(args)
-            else:
-                output = handler()
-
-            # Show output in command response box
-            if cmd_response:
-                cmd_response.write(f"[#7FB4CA]> {command_str}[/]")
-                if output:
-                    if hasattr(output, "__rich__") or hasattr(
-                        output, "__rich_console__"
-                    ):
-                        cmd_response.write(output)
-                    else:
-                        cmd_response.write(str(output))
-                else:
-                    cmd_response.write(f"[#98bb6c]✓ {command} executed[/]")
-        except Exception as e:
-            self.watcher.logger.exception(f"Error executing '{command}': {e}")
-            if cmd_response:
-                cmd_response.write(f"[#f7768e]✗ Error: {e}[/]")
-            self.notify(f"Error: {e}", severity="error")
-
-    # === Action handlers for keyboard shortcuts ===
-
-    def action_toggle_runtime(self) -> None:
-        """Toggle to dashboard tab to view runtime stats."""
-        try:
-            tabbed = self.query_one("#main-tabs", TabbedContent)
-            tabbed.active = "dashboard"
-        except Exception:
-            pass
-
-    def action_tab_dashboard(self) -> None:
-        """Switch to Dashboard tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "dashboard-tab"
-
-    def action_tab_jobs(self) -> None:
-        """Switch to Jobs tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "jobs-tab"
-
-    def action_tab_activity(self) -> None:
-        """Switch to Activity tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "activity-tab"
-
-    def action_tab_output(self) -> None:
-        """Switch to Debug tab (was Output)."""
-        self.query_one("#main-tabs", TabbedContent).active = "debug-tab"
-
-    def action_tab_charts(self) -> None:
-        """Switch to Charts tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "charts-tab"
-
-    def action_tab_stats(self) -> None:
-        """Switch to Stats tab."""
-        self.query_one("#main-tabs", TabbedContent).active = "stats-tab"
-
-    def action_show_help(self) -> None:
-        """Show help modal."""
-        self.push_screen(HelpScreen())
-
-    def action_quit(self) -> None:
-        """Quit the application."""
-        self.watcher.handle_exit()
-        self.exit()
-
-    def action_check(self) -> None:
-        """Trigger immediate check."""
-        self._handle_check()
-
-    def action_pause(self) -> None:
-        """Pause monitoring."""
-        self._handle_pause()
-
-    def action_resume(self) -> None:
-        """Resume monitoring."""
-        self._handle_resume()
-
-    def action_help(self) -> None:
-        """Show help."""
-        self._handle_help()
-
-    def action_clear_log(self) -> None:
-        """Clear activity log."""
-        self.query_one("#activity-log", RichLog).clear()
-
-    # === Command handlers (ported from Rich UI) ===
-
-    def _handle_check(self, args=None) -> None:
-        _ = args
-        self.watcher.check_now_event.set()
-        self.watcher.logger.info("Manual check triggered.")
-        self.notify("Manual check triggered")
-
-    def _handle_help(self, args=None) -> Table:
-        _ = args
-        table = Table(title="Commands", show_header=True, header_style="bold")
-        table.add_column("Command", style="cyan")
-        table.add_column("Aliases", style="dim")
-        table.add_column("Description")
-
-        for cmd, info in self.commands.items():
-            aliases = ", ".join(info.get("aliases", []))
-            table.add_row(cmd, aliases, info["help"])
-
-        return table
-
-    def _handle_exit(self, args=None) -> None:
-        _ = args
-        self.watcher.handle_exit()
-        self.exit()
-
-    def _handle_pause(self, args=None) -> None:
-        _ = args
-        if not os.path.exists(self.watcher.PAUSE_FILE):
-            with open(self.watcher.PAUSE_FILE, "w") as f:
-                f.write("Paused.")
-            self.watcher.logger.warning("Watcher paused.")
-            self.notify("Watcher paused", severity="warning")
-        else:
-            self.watcher.logger.warning("Watcher is already paused.")
-            self.notify("Already paused", severity="warning")
-
-    def _handle_resume(self, args=None) -> None:
-        _ = args
-        if os.path.exists(self.watcher.PAUSE_FILE):
-            os.remove(self.watcher.PAUSE_FILE)
-            self.watcher.logger.info("Watcher resumed.")
-            self.notify("Watcher resumed")
-        else:
-            self.watcher.logger.warning("Watcher is not paused.")
-            self.notify("Not paused", severity="warning")
-
-    def _handle_toggle_sound(self, args=None) -> None:
-        _ = args
-        current_state = self.config.get("Watcher", "enable_sound")
-        self.config.set("Watcher", "enable_sound", not current_state)
-        self.config.save_config()
-        status = "enabled" if not current_state else "disabled"
-        self.watcher.logger.info(f"Sound alerts {status}.")
-        self.notify(f"Sound {status}")
-        self.query_one("#header-panel", HeaderPanel).refresh_config()
-
-    def _handle_toggle_notifications(self, args=None) -> None:
-        _ = args
-        current_state = self.config.get("Watcher", "enable_notifications")
-        self.config.set("Watcher", "enable_notifications", not current_state)
-        self.config.save_config()
-        status = "enabled" if not current_state else "disabled"
-        self.watcher.logger.info(f"Desktop notifications {status}.")
-        self.notify(f"Notifications {status}")
-        self.query_one("#header-panel", HeaderPanel).refresh_config()
-
-    def _handle_toggle_websocket(self, args=None) -> None:
-        _ = args
-        current_state = self.config.get("WebSocket", "enable_websocket")
-        self.config.set("WebSocket", "enable_websocket", not current_state)
-        self.config.save_config()
-        status = "enabled" if not current_state else "disabled"
-        self.watcher.logger.info(f"WebSocket monitoring {status}.")
-        self.watcher.logger.warning("Restart required for this change.")
-        self.notify(f"WebSocket {status} (restart required)", severity="warning")
-
-    def _handle_autoaccept(self, args=None) -> None:
-        _ = args
-        current_state = self.config.getboolean("AutoAccept", "enabled")
-        self.config.set("AutoAccept", "enabled", not current_state)
-        self.config.save_config()
-        status = "enabled" if not current_state else "disabled"
-        self.watcher.logger.info(f"Auto-accept {status}.")
-        self.notify(f"Auto-accept {status}")
-
-        if hasattr(self.watcher, "job_acceptance_engine"):
-            self.watcher.job_acceptance_engine.enabled = not current_state
-
-    def _handle_captchatoggle(self, args=None) -> None:
-        _ = args
-        current_state = self.config.getboolean("Captcha", "enabled")
-        self.config.set("Captcha", "enabled", not current_state)
-        self.config.save_config()
-        status = "enabled" if not current_state else "disabled"
-        self.watcher.logger.info(f"CAPTCHA solving {status}.")
-        self.notify(f"CAPTCHA {status}")
-
-        if hasattr(self.watcher, "captcha_solver"):
-            try:
-                self.watcher.captcha_solver.reinitialize()
-            except Exception as e:
-                self.watcher.logger.exception(f"Failed to reinitialize CAPTCHA: {e}")
-
-    def _handle_set_min_reward(self, args) -> None:
-        if not args:
-            self.watcher.logger.error("Usage: setminreward <amount>")
-            self.notify("Usage: smr <amount>", severity="error")
-            return
-        try:
-            amount = float(args[0])
-            self.config.set("Watcher", "min_reward", amount)
-            self.config.save_config()
-            self.watcher.logger.info(f"Minimum reward set to US$ {amount:.2f}")
-            self.notify(f"Min reward: ${amount:.2f}")
-            self.query_one("#header-panel", HeaderPanel).refresh_config()
-        except ValueError:
-            self.watcher.logger.error("Invalid amount. Please enter a number.")
-            self.notify("Invalid amount", severity="error")
-
-    def _handle_reload_config(self, args=None) -> None:
-        _ = args
-        self.config.load_config()
-        self.watcher.logger.info("Configuration reloaded from config.ini.")
-        self.notify("Config reloaded")
-        self.query_one("#header-panel", HeaderPanel).refresh_config()
-
-    def _handle_clear(self, args=None) -> None:
-        _ = args
-        self.query_one("#output-log", RichLog).clear()
-        self.watcher.logger.info("Output cleared.")
-
-    def _handle_websocket_test(self, args) -> None:
-        command = "ping"
-        if args and args[0].lower() == "notify":
-            command = "notify"
-
-        with self.watcher._test_command_lock:
-            if command == "ping":
-                if self.watcher.websocket_status == "Live":
-                    self.watcher.logger.info("Triggering WebSocket PING test...")
-                    self.watcher._test_command = "ping"
-                    self.notify("PING test triggered")
-                else:
-                    self.watcher.logger.warning(
-                        f"WebSocket not live ({self.watcher.websocket_status})"
-                    )
-                    self.notify("WebSocket not live", severity="warning")
-            elif command == "notify":
-                self.watcher.logger.info("Triggering test notification...")
-                self.watcher._test_command = "notify"
-                self.notify("Test notification triggered")
-
-    def _handle_captcha_setup(self, args=None) -> None:
-        _ = args
-        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
-
-    def _handle_captcha_test(self, args=None) -> None:
-        _ = args
-        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
-
-    def _handle_captcha_stats(self, args=None) -> None:
-        _ = args
-        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
-
-    def _handle_captcha_reset(self, args=None) -> None:
-        _ = args
-        self._show_command_response("[yellow]CAPTCHA support has been removed[/yellow]")
-
-    def _handle_accept_stats(self, args=None) -> None:
-        _ = args
-        try:
-            stats = self.watcher.get_job_acceptance_stats()
-            table = Table(title="Job Acceptance Statistics")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="green")
-            table.add_row("Enabled", str(stats["enabled"]))
-            table.add_row("Accepted Jobs", str(stats["accepted_jobs"]))
-            table.add_row("Failed", str(stats["failed_acceptances"]))
-            table.add_row("Rate Limited", str(stats["rate_limited"]))
-            table.add_row("Current Rate", f"{stats['current_rate']:.2f} req/s")
-            return table
-        except Exception as e:
-            self.watcher.logger.exception(f"Accept stats error: {e}")
-
-    def _handle_debug(self, args=None) -> Table | None:
-        categories = [
-            "websocket",
-            "rss",
-            "job",
-            "captcha",
-            "browser",
-            "config",
-            "system",
-            "email",
-            "website",
-            "raw",
-        ]
-
-        if not args:
-            self._show_debug_status(categories)
-            return None
-
-        arg = args[0].lower().strip() if args else ""
-
-        if arg == "list":
-            self._show_debug_status(categories)
-            return None
-
-        if arg == "all":
-            for cat in categories:
-                self.config.set("DebugCategories", cat, True)
-            self.config.save_config()
-            self.watcher.logger.info("All debug categories enabled")
-            self.notify("All debug enabled")
-            return None
-
-        if arg == "none":
-            for cat in categories:
-                self.config.set("DebugCategories", cat, False)
-            self.config.save_config()
-            self.watcher.logger.info("All debug categories disabled")
-            self.notify("All debug disabled")
-            return None
-
-        # Special handling for 'raw' - show buffered messages
-        if arg == "raw":
-            # Check for subcommand
-            if len(args) > 1:
-                subcmd = args[1].lower()
-                if subcmd == "show":
-                    return self._show_raw_ws_messages()
-                elif subcmd == "clear":
-                    self.watcher.clear_raw_ws_messages()
-                    self.watcher.logger.info("Raw WebSocket message buffer cleared")
-                    self.notify("Raw buffer cleared")
-                    return None
-
-            # Toggle raw mode
-            current = self.config.get("DebugCategories", "raw")
-            self.config.set("DebugCategories", "raw", not current)
-            self.config.save_config()
-            status = "enabled" if not current else "disabled"
-            self.watcher.logger.info(f"Raw WebSocket output {status}")
-            self.notify(f"Raw output: {status}")
-
-            # If enabling, show current buffer contents
-            if not current:
-                return self._show_raw_ws_messages()
-            return None
-
-        if arg not in categories:
-            self.watcher.logger.warning(f"Unknown category: {arg}")
-            self.notify(f"Unknown: {arg}", severity="error")
-            return None
-
-        current = self.config.get("DebugCategories", arg)
-        self.config.set("DebugCategories", arg, not current)
-        self.config.save_config()
-        status = "enabled" if not current else "disabled"
-        self.watcher.logger.info(f"Debug '{arg}' {status}")
-        self.notify(f"Debug {arg}: {status}")
-        return None
-
-    def _show_raw_ws_messages(self) -> Table:
-        """Show raw WebSocket messages in a formatted table."""
-        messages = self.watcher.get_raw_ws_messages()
-
-        table = Table(
-            title="Raw WebSocket Messages",
-            show_header=True,
-            header_style="bold cyan",
-            expand=True,
-        )
-        table.add_column("Raw Output", style="white", no_wrap=False)
-
-        if not messages:
-            table.add_row("[dim]No messages captured yet.[/dim]")
-            table.add_row(
-                "[dim]Enable with 'd raw' and wait for WebSocket activity.[/dim]"
-            )
-        else:
-            for msg in messages:
-                table.add_row(msg)
-
-        # Add status footer
-        raw_enabled = self.config.get("DebugCategories", "raw")
-        status_text = "[green]ON[/green]" if raw_enabled else "[red]OFF[/red]"
-        table.add_row("")
-        table.add_row(
-            f"[dim]Raw capture: {status_text} | Buffer: {len(messages)}/50 | 'd raw clear' to clear[/dim]"
-        )
-
-        return table
-
-    def _show_debug_status(self, categories) -> None:
-        self.watcher.logger.info("Debug Categories:")
-        for cat in categories:
-            enabled = self.config.get("DebugCategories", cat)
-            status = "ON" if enabled else "OFF"
-            self.watcher.logger.info(f"  {cat}: {status}")
-
-    def _handle_setup_email(self, args=None) -> None:
-        _ = args
-        self.watcher.logger.info("To configure Gmail OAuth, exit and run:")
-        self.watcher.logger.info("  python -m gengowatcher.main --setup-email")
-        self.notify("Exit and run --setup-email", severity="information")
-
-    def _handle_toggle_email(self, args=None) -> None:
-        _ = args
-        current = self.config.get("EmailMonitor", "enabled")
-        self.config.set("EmailMonitor", "enabled", not current)
-        self.config.save_config()
-        status = "enabled" if not current else "disabled"
-        self.watcher.logger.info(f"Email monitor {status}. Restart to apply.")
-        self.notify(f"Email {status} (restart)", severity="warning")
-
-    def _handle_toggle_website(self, args=None) -> None:
-        _ = args
-        current = self.config.get("WebsiteMonitor", "enabled")
-        self.config.set("WebsiteMonitor", "enabled", not current)
-        self.config.save_config()
-        status = "enabled" if not current else "disabled"
-        self.watcher.logger.info(f"Website monitor {status}. Restart to apply.")
-        self.notify(f"Website {status} (restart)", severity="warning")
-
-    def _cmd_email_stats(self, args: list[str]) -> None:
-        """Show email monitor statistics."""
-        _ = args
-        watcher = self.watcher
-        if hasattr(watcher, "_sync_monitor_metrics"):
-            watcher._sync_monitor_metrics()
-
-        status = getattr(watcher, "email_monitor_status", "Disabled")
-        last_check = getattr(watcher, "email_last_check_time", None)
-        jobs = getattr(watcher, "email_jobs_found_session", 0)
-
-        if last_check:
-            ago = int(time.time() - last_check)
-            last_str = f"{ago}s ago"
-        else:
-            last_str = "Never"
-
-        self._log_panel("[bold]Email Monitor[/bold]")
-        self._log_panel(f"  Status: {status}")
-        self._log_panel(f"  Last Check: {last_str}")
-        self._log_panel(f"  Jobs Found: {jobs}")
-
-    def _cmd_website_stats(self, args: list[str]) -> None:
-        """Show website monitor statistics."""
-        _ = args
-        watcher = self.watcher
-        if hasattr(watcher, "_sync_monitor_metrics"):
-            watcher._sync_monitor_metrics()
-
-        status = getattr(watcher, "website_monitor_status", "Disabled")
-        last_check = getattr(watcher, "website_last_check_time", None)
-        jobs = getattr(watcher, "website_jobs_found_session", 0)
-
-        if last_check:
-            ago = int(time.time() - last_check)
-            last_str = f"{ago}s ago"
-        else:
-            last_str = "Never"
-
-        self._log_panel("[bold]Website Monitor[/bold]")
-        self._log_panel(f"  Status: {status}")
-        self._log_panel(f"  Last Check: {last_str}")
-        self._log_panel(f"  Jobs Found: {jobs}")
