@@ -205,7 +205,7 @@ class StatusRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         # 7 Indicators
-        yield StatusIndicator("●", "WS", id="ind-ws")
+        yield StatusIndicator("●", "Websocket", id="ind-ws")
         yield StatusIndicator("◉", "Email", id="ind-email")
         yield StatusIndicator("◎", "Web", id="ind-web")
         yield StatusIndicator("⊛", "RSS", id="ind-rss")

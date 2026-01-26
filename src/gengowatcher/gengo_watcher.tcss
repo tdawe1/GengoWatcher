@@ -102,7 +102,25 @@ StatusIndicator {
     margin: 0 1;
     min-width: 12;
     align: center middle;
+    width: auto;
 }
+
+.status-label {
+    width: auto;
+    color: $text-muted; /* Default color */
+}
+
+/* Status Colors */
+.status-live { color: $accent-green; }
+.status-working { color: $accent-orange; }
+.status-error { color: $accent-red; }
+.status-idle { color: $text-muted; }
+
+/* Ensure label inherits color */
+.status-live .status-label { color: $accent-green; }
+.status-working .status-label { color: $accent-orange; }
+.status-error .status-label { color: $accent-red; }
+.status-idle .status-label { color: $text-muted; }
 
 .status-icon {
     margin-right: 1;
