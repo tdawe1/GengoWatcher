@@ -82,11 +82,13 @@ class TitleBar(Static):
             # Config section
             config_text = "Config: N/A"
             if self.config:
-                lang = f"{self.config.source_lang}↔{self.config.target_lang}"
-                interval = f"{self.config.check_interval}s"
-                config_text = (
-                    f" {lang} | {interval} | Min: ${self.config.min_reward:.2f} "
-                )
+                sl = self.config.get("Watcher", "source_lang") or "JA"
+                tl = self.config.get("Watcher", "target_lang") or "EN"
+                interval = self.config.get("Watcher", "check_interval") or 60
+                min_reward = self.config.get("Watcher", "min_reward") or 0.0
+
+                lang = f"{sl}↔{tl}"
+                config_text = f" {lang} | {interval}s | Min: ${float(min_reward):.2f} "
             yield Static(config_text, classes="config-info")
 
             yield Static(" | ", classes="dim")
@@ -183,11 +185,11 @@ class StatusIndicator(Static):
     def __init__(self, icon: str, name: str, **kwargs):
         super().__init__(**kwargs)
         self.icon = icon
-        self.name = name
+        self.label_text = name
         self.add_class("status-indicator")
 
     def compose(self) -> ComposeResult:
-        yield Static(f"{self.icon} {self.name}", classes="status-label")
+        yield Static(f"{self.icon} {self.label_text}", classes="status-label")
 
     def set_state(self, state: str):
         self.remove_class("live", "working", "idle", "error")
@@ -259,8 +261,9 @@ class ActivityPreview(DashboardQuadrant):
 
 
 class JobsPreview(DashboardQuadrant):
-    def __init__(self, **kwargs):
+    def __init__(self, state: "AppState", **kwargs):
         super().__init__("Jobs Preview", **kwargs)
+        self.state = state
 
     def compose(self) -> ComposeResult:
         yield DataTable(id="jobs-table")
