@@ -20,9 +20,58 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     BeautifulSoup = None  # type: ignore
 
-from .rate_limiter import RateLimiter
 from .config import AppConfig
-from .captcha_manager import CaptchaSolverManager
+
+
+class RateLimiter:
+    """Simple rate limiter using sliding window."""
+
+    def __init__(self, max_requests: int, time_window: int):
+        """
+        Initialize rate limiter.
+
+        Args:
+            max_requests: Maximum number of requests allowed in the time window
+            time_window: Time window in seconds
+        """
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self._requests: list[float] = []
+
+    def _clean_old_requests(self) -> None:
+        """Remove requests outside the time window."""
+        now = time.time()
+        self._requests = [t for t in self._requests if now - t < self.time_window]
+
+    def can_proceed(self) -> bool:
+        """Check if a new request can proceed without exceeding rate limit."""
+        self._clean_old_requests()
+        return len(self._requests) < self.max_requests
+
+    def acquire(self) -> bool:
+        """Try to acquire a slot. Returns True if successful, False if rate limited."""
+        if self.can_proceed():
+            self._requests.append(time.time())
+            return True
+        return False
+
+    def wait_time(self) -> float:
+        """Return seconds to wait before next request is allowed."""
+        self._clean_old_requests()
+        if len(self._requests) < self.max_requests:
+            return 0.0
+        # Find oldest request and calculate when it will expire
+        oldest = min(self._requests)
+        return max(0.0, self.time_window - (time.time() - oldest))
+
+    def record_request(self) -> None:
+        """Record that a request was made."""
+        self._requests.append(time.time())
+
+    def get_current_rate(self) -> float:
+        """Return current requests per time window."""
+        self._clean_old_requests()
+        return len(self._requests)
 
 
 @dataclass
@@ -50,21 +99,18 @@ class JobAcceptanceEngine:
         self,
         config: AppConfig,
         logger: logging.Logger,
-        captcha_solver: Optional[CaptchaSolverManager] = None,
     ):
         """
-        Initialise the JobAcceptanceEngine with configuration, logging and optional helpers.
+        Initialise the JobAcceptanceEngine with configuration and logging.
 
         Initialises internal state including enabled flag, an hourly rate limiter (configured from the RateLimit.max_acceptances_per_hour setting, default 1800), HTTP session placeholder, retry policy and runtime counters.
 
         Parameters:
             config (AppConfig): Application configuration; used to read AutoAccept.enabled and RateLimit.max_acceptances_per_hour.
             logger (logging.Logger): Logger for informational and debug messages.
-            captcha_solver (Optional[CaptchaSolverManager]): Optional manager for solving CAPTCHAs during acceptance.
         """
         self.config = config
         self.logger = logger
-        self.captcha_solver = captcha_solver
         self._enabled = config.getboolean("AutoAccept", "enabled", fallback=False)
 
         if self.enabled:
@@ -556,295 +602,20 @@ class JobAcceptanceEngine:
     ) -> bool:
         """Handle captcha challenge during job acceptance.
 
+        Note: CAPTCHA solving has been removed. This method now logs an error and returns False.
+
         Args:
             job_id: The job ID being accepted
             captcha_page_content: HTML content of the captcha page
             headers: Authentication headers
 
         Returns:
-            bool: True if captcha was solved and job accepted, False otherwise
+            bool: Always False - CAPTCHA solving is not supported
         """
-
-        def mark_timing(key: str) -> None:
-            if timings is None or start_monotonic is None:
-                return
-            if timings.get(key) is None:
-                timings[key] = (time.perf_counter() - start_monotonic) * 1000.0
-
-        try:
-            # Check if captcha solver is configured
-            if not self.captcha_solver or not self.captcha_solver.is_configured():
-                self.logger.error(
-                    "Captcha solver not configured - cannot solve captcha challenge"
-                )
-                return False
-
-            self.logger.info(f"Attempting to solve captcha for job {job_id}")
-
-            # Extract captcha information from the page
-            # We need to parse the HTML to find the specific captcha elements
-            if BeautifulSoup is None:
-                self.logger.error(
-                    "beautifulsoup4 is required to parse CAPTCHA challenge pages. Install it to enable CAPTCHA handling."
-                )
-                return False
-
-            soup = BeautifulSoup(captcha_page_content, "html.parser")
-
-            # Check for reCAPTCHA v2
-            recaptcha_div = soup.find("div", class_="g-recaptcha")
-            if recaptcha_div:
-                site_key = recaptcha_div.get("data-sitekey")
-                if site_key:
-                    page_url = f"https://gengo.com/t/jobs/accept/{job_id}"
-
-                    # Solve the reCAPTCHA using the configured solver
-                    self.logger.debug(f"Found reCAPTCHA v2 with site key: {site_key}")
-                    try:
-                        solution = await asyncio.get_event_loop().run_in_executor(
-                            None,
-                            self.captcha_solver.solve_recaptcha_v2,
-                            site_key,
-                            page_url,
-                        )
-
-                        if not solution:
-                            self.logger.error(
-                                f"Failed to solve reCAPTCHA for job {job_id}"
-                            )
-                            return False
-
-                        self.logger.info(
-                            f"Successfully solved reCAPTCHA for job {job_id}"
-                        )
-                        mark_timing("token_ms")
-
-                        # Submit the solved captcha along with the job acceptance request
-                        captcha_data = {
-                            "g-recaptcha-response": solution.solution,
-                            "job_id": job_id,
-                        }
-
-                        # Submit the captcha solution
-                        # Include CSRF if available
-                        csrf_field, csrf_token = self._extract_csrf_token(
-                            captcha_page_content
-                        )
-                        if csrf_field and csrf_token:
-                            captcha_data[csrf_field] = csrf_token
-                        async with self.session.post(
-                            f"https://gengo.com/t/jobs/accept/{job_id}",
-                            headers=headers,
-                            data=captcha_data,
-                            timeout=30,
-                        ) as response:
-                            if response.status == 200:
-                                content = await response.text()
-                                if (
-                                    "accepted" in content.lower()
-                                    or "success" in content.lower()
-                                ):
-                                    self.logger.info(
-                                        f"Successfully accepted job {job_id} after solving reCAPTCHA"
-                                    )
-                                    mark_timing("redirect_ms")
-                                    return True
-                                else:
-                                    self.logger.warning(
-                                        f"Job {job_id} acceptance may have failed after reCAPTCHA - unexpected response"
-                                    )
-                                    return False
-                            else:
-                                self.logger.error(
-                                    f"Failed to accept job {job_id} after reCAPTCHA solving, status: {response.status}"
-                                )
-                                return False
-                    except Exception as e:
-                        self.logger.error(
-                            f"Error solving reCAPTCHA for job {job_id}: {e}"
-                        )
-                        return False
-
-            # Check for hCaptcha
-            hcaptcha_div = soup.find("div", class_="h-captcha")
-            if hcaptcha_div:
-                site_key = hcaptcha_div.get("data-sitekey")
-                if site_key:
-                    page_url = f"https://gengo.com/t/jobs/accept/{job_id}"
-
-                    # Solve the hCaptcha using the configured solver
-                    self.logger.debug(f"Found hCaptcha with site key: {site_key}")
-                    try:
-                        solution = await asyncio.get_event_loop().run_in_executor(
-                            None, self.captcha_solver.solve_hcaptcha, site_key, page_url
-                        )
-
-                        if not solution:
-                            self.logger.error(
-                                f"Failed to solve hCaptcha for job {job_id}"
-                            )
-                            return False
-
-                        self.logger.info(
-                            f"Successfully solved hCaptcha for job {job_id}"
-                        )
-                        mark_timing("token_ms")
-
-                        # Submit the solved captcha along with the job acceptance request
-                        captcha_data = {
-                            "h-captcha-response": solution.solution,
-                            "job_id": job_id,
-                        }
-
-                        # Submit the captcha solution
-                        async with self.session.post(
-                            f"https://gengo.com/t/jobs/accept/{job_id}",
-                            headers=headers,
-                            data=captcha_data,
-                            timeout=30,
-                        ) as response:
-                            if response.status == 200:
-                                content = await response.text()
-                                if (
-                                    "accepted" in content.lower()
-                                    or "success" in content.lower()
-                                ):
-                                    self.logger.info(
-                                        f"Successfully accepted job {job_id} after solving hCaptcha"
-                                    )
-                                    mark_timing("redirect_ms")
-                                    return True
-                                else:
-                                    self.logger.warning(
-                                        f"Job {job_id} acceptance may have failed after hCaptcha - unexpected response"
-                                    )
-                                    return False
-                            else:
-                                self.logger.error(
-                                    f"Failed to accept job {job_id} after hCaptcha solving, status: {response.status}"
-                                )
-                                return False
-                    except Exception as e:
-                        self.logger.error(
-                            f"Error solving hCaptcha for job {job_id}: {e}"
-                        )
-                        return False
-
-            # Check for reCAPTCHA v3 (invisible)
-            recaptcha_v3_scripts = soup.find_all(
-                "script", src=lambda x: x and "recaptcha" in x
-            )
-            if recaptcha_v3_scripts:
-                # For reCAPTCHA v3, we need to extract the site key from the script
-                page_url = f"https://gengo.com/t/jobs/accept/{job_id}"
-
-                # Extract site key and action from the page
-                site_key = self._extract_recaptcha_v3_site_key(soup)
-                action = self._extract_recaptcha_v3_action(soup)
-
-                if not site_key:
-                    self.logger.warning(
-                        f"Failed to extract reCAPTCHA v3 site key for job {job_id}"
-                    )
-                    if self.config.getboolean(
-                        "Captcha", "skip_on_v3_extraction_failure", True
-                    ):
-                        self.logger.info(
-                            f"Skipping reCAPTCHA v3 solving for job {job_id} due to extraction failure"
-                        )
-                        return False
-                    else:
-                        site_key = self.config.get(
-                            "Captcha",
-                            "recaptcha_v3_fallback_site_key",
-                            "6Lc6BAAAAAAAAAChqR2QwNcAAAAA",
-                        )
-                        self.logger.warning(
-                            f"Using fallback reCAPTCHA v3 site key for job {job_id}"
-                        )
-
-                if not action:
-                    # Use default action if not found
-                    action = self.config.get(
-                        "Captcha", "recaptcha_v3_default_action", "job_acceptance"
-                    )
-                    self.logger.debug(
-                        f"Using default reCAPTCHA v3 action for job {job_id}: {action}"
-                    )
-
-                # Solve the reCAPTCHA v3 using the configured solver
-                self.logger.debug(
-                    f"Attempting to solve reCAPTCHA v3 for job {job_id} with site key: {site_key}, action: {action}"
-                )
-                try:
-                    solution = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        self.captcha_solver.solve_recaptcha_v3,
-                        site_key,
-                        page_url,
-                        action,
-                    )
-
-                    if not solution:
-                        self.logger.error(
-                            f"Failed to solve reCAPTCHA v3 for job {job_id}"
-                        )
-                        return False
-
-                    self.logger.info(
-                        f"Successfully solved reCAPTCHA v3 for job {job_id}"
-                    )
-                    mark_timing("token_ms")
-
-                    # Submit the solved captcha along with the job acceptance request
-                    captcha_data = {
-                        "g-recaptcha-response": solution.solution,
-                        "job_id": job_id,
-                    }
-
-                    # Submit the captcha solution
-                    async with self.session.post(
-                        f"https://gengo.com/t/jobs/accept/{job_id}",
-                        headers=headers,
-                        data=captcha_data,
-                        timeout=30,
-                    ) as response:
-                        if response.status == 200:
-                            content = await response.text()
-                            if (
-                                "accepted" in content.lower()
-                                or "success" in content.lower()
-                            ):
-                                self.logger.info(
-                                    f"Successfully accepted job {job_id} after solving reCAPTCHA v3"
-                                )
-                                mark_timing("redirect_ms")
-                                return True
-                            else:
-                                self.logger.warning(
-                                    f"Job {job_id} acceptance may have failed after reCAPTCHA v3 - unexpected response"
-                                )
-                                return False
-                        else:
-                            self.logger.error(
-                                f"Failed to accept job {job_id} after reCAPTCHA v3 solving, status: {response.status}"
-                            )
-                            return False
-                except Exception as e:
-                    self.logger.error(
-                        f"Error solving reCAPTCHA v3 for job {job_id}: {e}"
-                    )
-                    return False
-
-            # If we can't identify the captcha type, log the issue
-            self.logger.error(f"Unable to identify captcha type for job {job_id}")
-            return False
-
-        except Exception as e:
-            self.logger.exception(
-                f"Error handling captcha challenge for job {job_id}: {e}"
-            )
-            return False
+        self.logger.error(
+            f"CAPTCHA challenge encountered for job {job_id} but CAPTCHA solving is not available"
+        )
+        return False
 
     def _extract_csrf_token(self, html: str) -> tuple[Optional[str], Optional[str]]:
         """Extract CSRF token field name and value from HTML if present"""

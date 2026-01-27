@@ -1,7 +1,0 @@
-# Local runtime state file
-state.json
-
-# Python bytecode caches in this subtree
-__pycache__/
-**/__pycache__/
-
