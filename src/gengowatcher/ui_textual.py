@@ -23,6 +23,7 @@ from textual.widgets import (
     DataTable,
 )
 from textual import work
+from textual.css.query import NoMatches
 from rich.text import Text
 
 from .watcher import GengoWatcher, __version__
@@ -63,7 +64,7 @@ class Icons:
 class TitleBar(Static):
     """3-line title bar: Brand, Separator, Info (Config + Session + Clock)."""
 
-    def __init__(self, config: AppConfig = None, **kwargs):
+    def __init__(self, config: AppConfig | None = None, **kwargs):
         super().__init__(**kwargs)
         self.config = config
 
@@ -100,8 +101,8 @@ class TitleBar(Static):
         now = datetime.datetime.now()
         try:
             self.query_one("#clock", Static).update(now.strftime("%H:%M:%S"))
-        except Exception:
-            pass
+        except NoMatches:
+            pass  # Widget not mounted yet
 
         # Session timer
         app = self.app
@@ -113,8 +114,8 @@ class TitleBar(Static):
                 self.query_one("#session-timer", Static).update(
                     f"Session: {h}h {m:02d}m"
                 )
-            except Exception:
-                pass
+            except NoMatches:
+                pass  # Widget not mounted yet
 
 
 class MetricCard(Static):
@@ -143,8 +144,8 @@ class MetricCard(Static):
     def update_value(self, value: str):
         try:
             self.query_one(f"#val-{self.label.lower()}", Static).update(value)
-        except Exception:
-            pass
+        except NoMatches:
+            pass  # Widget not mounted yet
 
 
 class MetricsRow(Horizontal):
@@ -169,8 +170,13 @@ class MetricsRow(Horizontal):
         accepted = sum(1 for j in jobs if j.get("accepted", False))
         total_value = sum(j.get("reward", 0) for j in jobs)
 
-        # Rate calculation (simplified)
-        rate = found / 1.0  # Placeholder
+        # Rate calculation using session duration
+        session_start = getattr(self.state, "session_start", None)
+        if session_start:
+            elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
+        else:
+            elapsed_hours = 1.0  # Default to 1 hour if no session start
+        rate = found / elapsed_hours
 
         self.query_one("#card-found", MetricCard).update_value(str(found))
         self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
@@ -192,8 +198,9 @@ class StatusIndicator(Static):
         yield Static(f"{self.icon} {self.label_text}", classes="status-label")
 
     def set_state(self, state: str):
-        self.remove_class("live", "working", "idle", "error")
-        self.add_class(state)
+        for s in ("live", "working", "idle", "error"):
+            self.remove_class(f"status-{s}")
+        self.add_class(f"status-{state}")
 
 
 class StatusRow(Horizontal):
@@ -272,8 +279,25 @@ class JobsPreview(DashboardQuadrant):
         try:
             dt = self.query_one(DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$")
-        except Exception:
-            pass
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+    def refresh_jobs(self):
+        """Refresh jobs table with recent jobs from state."""
+        if not self.state:
+            return
+        try:
+            dt = self.query_one(DataTable)
+            dt.clear()
+            jobs = self.state.get_recent_jobs(limit=10)
+            for job in jobs:
+                job_id = str(job.get("id", "N/A"))[:8]
+                pair = job.get("lang_pair", "??→??")
+                words = str(job.get("word_count", job.get("words", 0)))
+                reward = f"${job.get('reward', 0):.2f}"
+                dt.add_row(job_id, pair, words, reward)
+        except NoMatches:
+            pass  # Widget not mounted yet
 
 
 class ChartPlaceholder(DashboardQuadrant):
@@ -339,8 +363,77 @@ class SourcesBreakdown(DashboardQuadrant):
         yield Static("WS: 0%\nEmail: 0%\nWeb: 0%\nRSS: 0%", id="sources-content")
 
     def refresh_sources(self):
-        # ... logic ...
-        pass
+        """Refresh sources breakdown with job source statistics."""
+        if not self.state:
+            return
+        try:
+            jobs = self.state.get_recent_jobs(limit=1000)
+            total = len(jobs) if jobs else 1  # Avoid division by zero
+
+            # Count jobs by source
+            ws_count = sum(1 for j in jobs if j.get("source") == "websocket")
+            email_count = sum(1 for j in jobs if j.get("source") == "email")
+            web_count = sum(1 for j in jobs if j.get("source") == "web")
+            rss_count = sum(1 for j in jobs if j.get("source") == "rss")
+
+            # Calculate percentages
+            ws_pct = (ws_count / total) * 100 if total > 0 else 0
+            email_pct = (email_count / total) * 100 if total > 0 else 0
+            web_pct = (web_count / total) * 100 if total > 0 else 0
+            rss_pct = (rss_count / total) * 100 if total > 0 else 0
+
+            content = f"WS: {ws_pct:.0f}%\nEmail: {email_pct:.0f}%\nWeb: {web_pct:.0f}%\nRSS: {rss_pct:.0f}%"
+            self.query_one("#sources-content", Static).update(content)
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+
+class StatsPanel(Static):
+    """Full statistics panel for the Stats tab."""
+
+    def __init__(self, stats: "StatsManager", **kwargs):
+        super().__init__(**kwargs)
+        self.stats = stats
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            # Session Stats Section
+            yield Static("── Session Stats ──", classes="stats-section-header")
+            yield Static(
+                "Jobs Found: 0\nAccepted: 0\nValue: $0.00", id="stats-session-content"
+            )
+
+            # All-Time Stats Section
+            yield Static("── All-Time Stats ──", classes="stats-section-header")
+            yield Static(
+                "Total Jobs: 0\nTotal Accepted: 0\nTotal Value: $0.00",
+                id="stats-alltime-content",
+            )
+
+    def refresh_stats(self):
+        """Refresh stats display with current data."""
+        if not self.stats:
+            return
+        try:
+            # Session stats (from self.stats.session dataclass)
+            session = self.stats.session
+            session_text = (
+                f"Jobs Found: {session.jobs_found}\n"
+                f"Accepted: {session.jobs_accepted}\n"
+                f"Value: ${session.total_value:.2f}"
+            )
+            self.query_one("#stats-session-content", Static).update(session_text)
+
+            # All-time stats (from self.stats.all_time dataclass)
+            alltime = self.stats.all_time
+            alltime_text = (
+                f"Total Jobs: {alltime.total_jobs}\n"
+                f"Total Accepted: {alltime.total_sessions}\n"
+                f"Total Value: ${alltime.total_value:.2f}"
+            )
+            self.query_one("#stats-alltime-content", Static).update(alltime_text)
+        except NoMatches:
+            pass  # Widget not mounted yet
 
 
 # =============================================================================
@@ -428,12 +521,12 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self.format(record)
             self.app.call_from_thread(self.write_log, msg)
-        except:
-            pass
+        except Exception:
+            pass  # Logging failures should not crash the app
 
     def write_log(self, msg):
         try:
             log = self.app.query_one("#activity-log", RichLog)
             log.write(msg)
-        except:
-            pass
+        except NoMatches:
+            pass  # Widget not mounted yet
