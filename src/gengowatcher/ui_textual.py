@@ -271,13 +271,13 @@ class StatusRow(Horizontal):
         self.set_interval(1.0, self.refresh_status)
 
     def compose(self) -> ComposeResult:
-        # 7 Indicators with descriptive base icons
+        # 7 Indicators - reordered: WS, RSS next to each other, then Mail, Web, Captcha, Workflow, Auto
         yield StatusIndicator("●", "WS", id="ind-ws")
+        yield StatusIndicator("⊛", "RSS", id="ind-rss")
         yield StatusIndicator("◉", "Mail", id="ind-email")
         yield StatusIndicator("◎", "Web", id="ind-web")
-        yield StatusIndicator("⊛", "RSS", id="ind-rss")
-        yield StatusIndicator("⧗", "Cap", id="ind-cap")
-        yield StatusIndicator("⇄", "Flow", id="ind-work")
+        yield StatusIndicator("⧗", "Captcha", id="ind-cap")
+        yield StatusIndicator("⇄", "Workflow", id="ind-work")
         yield StatusIndicator("▶", "Auto", id="ind-auto")
 
     def refresh_status(self) -> None:
@@ -335,17 +335,23 @@ class StatusRow(Horizontal):
             else:
                 self.query_one("#ind-rss", StatusIndicator).set_state("idle")
 
-            # Captcha solver status (check if available)
-            captcha_available = True  # Placeholder - check actual captcha status
-            self.query_one("#ind-cap", StatusIndicator).set_state(
-                "live" if captcha_available else "idle"
-            )
+            # Captcha solver status - check if captcha solving is enabled in config
+            # For now, this feature isn't implemented, so show as idle
+            captcha_enabled = getattr(self.watcher, "captcha_enabled", False)
+            captcha_solving = getattr(self.watcher, "captcha_solving", False)
+            if captcha_solving:
+                self.query_one("#ind-cap", StatusIndicator).set_state("working")
+            elif captcha_enabled:
+                self.query_one("#ind-cap", StatusIndicator).set_state("live")
+            else:
+                self.query_one("#ind-cap", StatusIndicator).set_state("idle")
 
-            # Workflow/job processing
+            # Workflow/job processing - only show as working when actively processing
             is_processing = getattr(self.watcher, "is_processing", False)
-            self.query_one("#ind-work", StatusIndicator).set_state(
-                "working" if is_processing else "live"
-            )
+            if is_processing:
+                self.query_one("#ind-work", StatusIndicator).set_state("working")
+            else:
+                self.query_one("#ind-work", StatusIndicator).set_state("idle")
 
             # Auto-accept status
             auto_accept = getattr(self.watcher, "auto_accept_enabled", False)
@@ -357,7 +363,6 @@ class StatusRow(Horizontal):
             pass  # Widgets not mounted yet
         except Exception:
             pass  # Swallow errors during refresh
-        self.query_one("#ind-auto", StatusIndicator).set_state("idle")
 
 
 class DashboardQuadrant(Static):
