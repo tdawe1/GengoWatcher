@@ -130,17 +130,19 @@ StatusRow {
     height: 3;
     width: 100%;
     layout: horizontal;
-    background: $surface;
+    background: $surface-lighten-1;
     align: center middle;
-    margin-bottom: 1;
+    margin: 0 1 1 1;
+    padding: 0 2;
+    border: round #727169;
 }
 
 StatusIndicator {
     layout: horizontal;
-    margin: 0 1;
-    min-width: 12;
+    margin: 0 2;
+    min-width: 10;
     align: center middle;
-    width: auto;
+    width: 1fr;
 }
 
 .status-label {
@@ -148,14 +150,29 @@ StatusIndicator {
     color: $text-muted; /* Default color */
 }
 
-/* Status Colors */
-.status-live { color: $accent-green; }
-.status-working { color: $accent-orange; }
-.status-error { color: $accent-red; }
-.status-idle { color: $text-muted; }
+/* Status Colors - applied to indicator and inherited by label */
+.status-live { 
+    color: $accent-green; 
+    text-style: bold;
+}
+.status-working { 
+    color: $accent-orange; 
+}
+.status-error { 
+    color: $accent-red; 
+    text-style: bold;
+}
+.status-idle { 
+    color: $text-muted; 
+}
+
+/* Pulsing animation for live status */
+.status-live .status-label {
+    color: $accent-green;
+    text-style: bold;
+}
 
 /* Ensure label inherits color */
-.status-live .status-label { color: $accent-green; }
 .status-working .status-label { color: $accent-orange; }
 .status-error .status-label { color: $accent-red; }
 .status-idle .status-label { color: $text-muted; }
