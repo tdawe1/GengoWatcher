@@ -187,62 +187,176 @@ class MetricsRow(Horizontal):
 
 
 class StatusIndicator(Static):
-    """Status indicator with icon and color."""
+    """Status indicator with dynamic icon and color based on state."""
 
-    def __init__(self, icon: str, name: str, **kwargs):
+    # Icons for different states
+    ICONS = {
+        "idle": "○",  # Empty circle
+        "live": "●",  # Filled circle (will pulse)
+        "working": "◐",  # Half circle (activity)
+        "error": "✗",  # X mark
+    }
+
+    # Pulse animation frames for live state
+    PULSE_FRAMES = ["●", "◉", "○", "◉"]
+
+    def __init__(self, base_icon: str, name: str, **kwargs):
         super().__init__(**kwargs)
-        self.icon = icon
+        self.base_icon = base_icon
         self.label_text = name
+        self.current_state = "idle"
+        self._pulse_index = 0
         self.add_class("status-indicator")
+        self.add_class("status-idle")
 
     def compose(self) -> ComposeResult:
-        yield Static(f"{self.icon} {self.label_text}", classes="status-label")
+        yield Static(
+            f"{self.ICONS['idle']} {self.label_text}",
+            classes="status-label",
+            id=f"{self.id}-label",
+        )
 
-    def set_state(self, state: str):
+    def on_mount(self) -> None:
+        """Start the pulse animation timer."""
+        self.set_interval(0.5, self._pulse_tick)
+
+    def _pulse_tick(self) -> None:
+        """Update pulse animation for live indicators."""
+        if self.current_state == "live":
+            self._pulse_index = (self._pulse_index + 1) % len(self.PULSE_FRAMES)
+            self._update_display()
+
+    def _update_display(self) -> None:
+        """Update the displayed icon based on current state."""
+        try:
+            label = self.query_one(f"#{self.id}-label", Static)
+            if self.current_state == "live":
+                icon = self.PULSE_FRAMES[self._pulse_index]
+            elif self.current_state == "working":
+                # Rotate through working icons
+                working_frames = ["◐", "◓", "◑", "◒"]
+                self._pulse_index = (self._pulse_index + 1) % len(working_frames)
+                icon = working_frames[self._pulse_index]
+            else:
+                icon = self.ICONS.get(self.current_state, self.base_icon)
+            label.update(f"{icon} {self.label_text}")
+        except NoMatches:
+            pass
+
+    def set_state(self, state: str) -> None:
+        """Set the indicator state and update styling."""
+        old_state = self.current_state
+        self.current_state = state
+
+        # Update CSS classes
         for s in ("live", "working", "idle", "error"):
             self.remove_class(f"status-{s}")
         self.add_class(f"status-{state}")
 
+        # Reset pulse index when state changes
+        if old_state != state:
+            self._pulse_index = 0
+            self._update_display()
+
 
 class StatusRow(Horizontal):
-    """Dedicated row of status indicators."""
+    """Dedicated row of status indicators with live updates."""
 
     def __init__(self, watcher: "GengoWatcher", **kwargs):
         super().__init__(**kwargs)
         self.watcher = watcher
 
+    def on_mount(self) -> None:
+        """Start periodic status refresh."""
+        self.set_interval(1.0, self.refresh_status)
+
     def compose(self) -> ComposeResult:
-        # 7 Indicators
-        yield StatusIndicator("●", "Websocket", id="ind-ws")
-        yield StatusIndicator("◉", "Email", id="ind-email")
+        # 7 Indicators with descriptive base icons
+        yield StatusIndicator("●", "WS", id="ind-ws")
+        yield StatusIndicator("◉", "Mail", id="ind-email")
         yield StatusIndicator("◎", "Web", id="ind-web")
         yield StatusIndicator("⊛", "RSS", id="ind-rss")
         yield StatusIndicator("⧗", "Cap", id="ind-cap")
-        yield StatusIndicator("⇄", "Work", id="ind-work")
+        yield StatusIndicator("⇄", "Flow", id="ind-work")
         yield StatusIndicator("▶", "Auto", id="ind-auto")
 
-    def refresh_status(self):
+    def refresh_status(self) -> None:
+        """Refresh all status indicators based on watcher state."""
         if not self.watcher:
             return
-        # Basic wiring - elaborate later if needed
-        self.query_one("#ind-ws", StatusIndicator).set_state(
-            "live"
-            if getattr(self.watcher, "websocket_status", "") == "Live"
-            else "idle"
-        )
-        self.query_one("#ind-email", StatusIndicator).set_state(
-            "working"
-            if getattr(self.watcher, "email_monitor_status", "") == "Polling"
-            else "idle"
-        )
-        self.query_one("#ind-web", StatusIndicator).set_state("idle")  # Placeholder
-        self.query_one("#ind-rss", StatusIndicator).set_state(
-            "working"
-            if "Fetching" in getattr(self.watcher, "rss_action", "")
-            else "idle"
-        )
-        self.query_one("#ind-cap", StatusIndicator).set_state("live")
-        self.query_one("#ind-work", StatusIndicator).set_state("live")
+
+        try:
+            # WebSocket status
+            ws_status = getattr(self.watcher, "websocket_status", "")
+            ws_connected = getattr(self.watcher, "websocket_connected", False)
+            if ws_connected or ws_status == "Live":
+                self.query_one("#ind-ws", StatusIndicator).set_state("live")
+            elif ws_status in ("Connecting", "Reconnecting"):
+                self.query_one("#ind-ws", StatusIndicator).set_state("working")
+            elif "error" in ws_status.lower() if ws_status else False:
+                self.query_one("#ind-ws", StatusIndicator).set_state("error")
+            else:
+                self.query_one("#ind-ws", StatusIndicator).set_state("idle")
+
+            # Email monitor status
+            email_status = getattr(self.watcher, "email_monitor_status", "")
+            email_enabled = getattr(self.watcher, "_email_monitor", None) is not None
+            if email_status == "Polling" or email_status == "Connected":
+                self.query_one("#ind-email", StatusIndicator).set_state("live")
+            elif email_status == "Checking":
+                self.query_one("#ind-email", StatusIndicator).set_state("working")
+            elif "error" in email_status.lower() if email_status else False:
+                self.query_one("#ind-email", StatusIndicator).set_state("error")
+            elif email_enabled:
+                self.query_one("#ind-email", StatusIndicator).set_state("idle")
+            else:
+                self.query_one("#ind-email", StatusIndicator).set_state("idle")
+
+            # Website monitor status
+            web_enabled = getattr(self.watcher, "_website_monitor", None) is not None
+            web_status = getattr(self.watcher, "website_monitor_status", "")
+            if web_status == "Monitoring":
+                self.query_one("#ind-web", StatusIndicator).set_state("live")
+            elif web_status == "Checking":
+                self.query_one("#ind-web", StatusIndicator).set_state("working")
+            elif "error" in web_status.lower() if web_status else False:
+                self.query_one("#ind-web", StatusIndicator).set_state("error")
+            else:
+                self.query_one("#ind-web", StatusIndicator).set_state("idle")
+
+            # RSS status
+            rss_action = getattr(self.watcher, "rss_action", "")
+            if "Fetching" in rss_action or "Checking" in rss_action:
+                self.query_one("#ind-rss", StatusIndicator).set_state("working")
+            elif "error" in rss_action.lower() if rss_action else False:
+                self.query_one("#ind-rss", StatusIndicator).set_state("error")
+            elif rss_action:
+                self.query_one("#ind-rss", StatusIndicator).set_state("live")
+            else:
+                self.query_one("#ind-rss", StatusIndicator).set_state("idle")
+
+            # Captcha solver status (check if available)
+            captcha_available = True  # Placeholder - check actual captcha status
+            self.query_one("#ind-cap", StatusIndicator).set_state(
+                "live" if captcha_available else "idle"
+            )
+
+            # Workflow/job processing
+            is_processing = getattr(self.watcher, "is_processing", False)
+            self.query_one("#ind-work", StatusIndicator).set_state(
+                "working" if is_processing else "live"
+            )
+
+            # Auto-accept status
+            auto_accept = getattr(self.watcher, "auto_accept_enabled", False)
+            self.query_one("#ind-auto", StatusIndicator).set_state(
+                "live" if auto_accept else "idle"
+            )
+
+        except NoMatches:
+            pass  # Widgets not mounted yet
+        except Exception:
+            pass  # Swallow errors during refresh
         self.query_one("#ind-auto", StatusIndicator).set_state("idle")
 
 
