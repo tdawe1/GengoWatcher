@@ -6,6 +6,7 @@ Strict implementation of the v2.0 Design Doc.
 
 import datetime
 import logging
+import re
 import time
 from collections import deque
 
@@ -259,12 +260,106 @@ class DashboardQuadrant(Static):
 
 
 class ActivityPreview(DashboardQuadrant):
+    """Recent activity log with colored output."""
+
+    # Kanagawa-inspired colors (same as TextualLogHandler)
+    COLORS = {
+        "timestamp": "#727169",  # Fuji Gray (muted)
+        "job_id": "#7E9CD8",  # Crystal Blue
+        "money": "#E6C384",  # Carp Yellow
+        "lang_pair": "#957FB8",  # Oni Violet
+        "number": "#D27E99",  # Sakura Pink
+        "success": "#98BB6C",  # Spring Green
+        "error_word": "#C34043",  # Samurai Red
+        "warning_word": "#E6C384",  # Carp Yellow
+        "source_ws": "#957FB8",  # Oni Violet
+        "source_email": "#FFA066",  # Surimi Orange
+        "source_rss": "#7AA89F",  # Wave Aqua
+        "source_web": "#7E9CD8",  # Crystal Blue
+        "url": "#7AA89F",  # Wave Aqua
+        "default": "#DCD7BA",  # Fuji White
+    }
+
+    # Regex patterns for content types
+    PATTERNS = [
+        (r"\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\]?", "timestamp"),
+        (r"\b\d{2}:\d{2}:\d{2}\b", "timestamp"),
+        (r"#\d{4,}", "job_id"),
+        (r"\bjob[_-]?\d+\b", "job_id"),
+        (r"\bID:?\s*\d+\b", "job_id"),
+        (r"[\$¥€£]\d{1,3}(?:,\d{3})*(?:\.\d{2})?", "money"),
+        (r"\b[A-Z]{2}[→\->][A-Z]{2}\b", "lang_pair"),
+        (r"https?://[^\s]+", "url"),
+        (
+            r"\b(?:found|accepted|success|connected|started|completed|ok|passed)\b",
+            "success",
+        ),
+        (
+            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|denied)\b",
+            "error_word",
+        ),
+        (r"\b(?:warning|warn|caution|retry|retrying|slow|delayed)\b", "warning_word"),
+        (r"\b(?:websocket|ws|socket)\b", "source_ws"),
+        (r"\b(?:email|imap|mail)\b", "source_email"),
+        (r"\b(?:rss|feed)\b", "source_rss"),
+        (r"\b(?:web|http|browser|scrape)\b", "source_web"),
+        (r"\b\d+(?:\.\d+)?\b", "number"),
+    ]
+
     def __init__(self, **kwargs):
         super().__init__("Recent Activity", **kwargs)
+        # Compile patterns
+        self._compiled_patterns = [
+            (re.compile(pattern, re.IGNORECASE), color_key)
+            for pattern, color_key in self.PATTERNS
+        ]
 
     def compose(self) -> ComposeResult:
         # Just yield content, border_title handles the header
         yield RichLog(id="activity-log", markup=True)
+
+    def add_line(self, message: str, level: str = "info") -> None:
+        """Add a colored line to the activity log.
+
+        Args:
+            message: The message to display
+            level: One of 'info', 'warning', 'error', 'debug', 'success', 'job'
+        """
+        try:
+            log = self.query_one("#activity-log", RichLog)
+            colored_text = self._colorize_message(message, level)
+            log.write(colored_text)
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+    def _colorize_message(self, msg: str, level: str = "info") -> Text:
+        """Apply Rich markup coloring based on content patterns."""
+        # Determine base color from level
+        level_colors = {
+            "debug": "#727169",
+            "info": "#DCD7BA",
+            "warning": "#E6C384",
+            "error": "#C34043",
+            "success": "#98BB6C",
+            "job": "#7E9CD8",
+        }
+        base_color = level_colors.get(level, self.COLORS["default"])
+
+        # Create text with base styling
+        text = Text(msg, style=base_color)
+
+        # Apply pattern-based highlighting
+        for pattern, color_key in self._compiled_patterns:
+            color = self.COLORS.get(color_key, base_color)
+            for match in pattern.finditer(msg):
+                start, end = match.span()
+                # Apply bold for important items
+                if color_key in ("job_id", "money", "success", "error_word"):
+                    text.stylize(f"bold {color}", start, end)
+                else:
+                    text.stylize(color, start, end)
+
+        return text
 
 
 class JobsPreview(DashboardQuadrant):
@@ -511,22 +606,128 @@ class GengoWatcherApp(App):
 
 
 class TextualLogHandler(logging.Handler):
-    """Redirects logs to the ActivityPreview widget."""
+    """Redirects logs to the ActivityPreview widget with Rich markup coloring."""
+
+    # Kanagawa-inspired colors
+    COLORS = {
+        "timestamp": "#727169",  # Fuji Gray (muted)
+        "level_debug": "#727169",  # Fuji Gray
+        "level_info": "#DCD7BA",  # Fuji White (default)
+        "level_warning": "#E6C384",  # Carp Yellow
+        "level_error": "#C34043",  # Samurai Red
+        "level_critical": "#FF5D62",  # Peach Red
+        "job_id": "#7E9CD8",  # Crystal Blue
+        "money": "#E6C384",  # Carp Yellow
+        "lang_pair": "#957FB8",  # Oni Violet
+        "number": "#D27E99",  # Sakura Pink
+        "success": "#98BB6C",  # Spring Green
+        "error_word": "#C34043",  # Samurai Red
+        "warning_word": "#E6C384",  # Carp Yellow
+        "source_ws": "#957FB8",  # Oni Violet
+        "source_email": "#FFA066",  # Surimi Orange
+        "source_rss": "#7AA89F",  # Wave Aqua
+        "source_web": "#7E9CD8",  # Crystal Blue
+        "url": "#7AA89F",  # Wave Aqua
+        "bracket": "#727169",  # Fuji Gray
+        "punctuation": "#727169",  # Fuji Gray
+    }
+
+    # Regex patterns for different content types
+    PATTERNS = [
+        # Timestamps: [2024-01-15 12:34:56] or 2024-01-15 12:34:56
+        (r"\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\]?", "timestamp"),
+        # Time only: 12:34:56
+        (r"\b\d{2}:\d{2}:\d{2}\b", "timestamp"),
+        # Job IDs: #123456, job_123456, ID: 123456
+        (r"#\d{4,}", "job_id"),
+        (r"\bjob[_-]?\d+\b", "job_id"),
+        (r"\bID:?\s*\d+\b", "job_id"),
+        # Money: $12.34, $1,234.56, ¥1234
+        (r"[\$¥€£]\d{1,3}(?:,\d{3})*(?:\.\d{2})?", "money"),
+        (r"\b\d+\.\d{2}\s*(?:USD|JPY|EUR)\b", "money"),
+        # Language pairs: JA→EN, EN-JA, Japanese→English
+        (r"\b[A-Z]{2}[→\->][A-Z]{2}\b", "lang_pair"),
+        (
+            r"\b(?:Japanese|English|Chinese|Korean|German|French|Spanish)[→\->](?:Japanese|English|Chinese|Korean|German|French|Spanish)\b",
+            "lang_pair",
+        ),
+        # URLs
+        (r"https?://[^\s]+", "url"),
+        # Success words
+        (
+            r"\b(?:found|accepted|success|connected|started|completed|ok|passed)\b",
+            "success",
+        ),
+        # Error words
+        (
+            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|denied)\b",
+            "error_word",
+        ),
+        # Warning words
+        (r"\b(?:warning|warn|caution|retry|retrying|slow|delayed)\b", "warning_word"),
+        # Source indicators
+        (r"\b(?:websocket|ws|socket)\b", "source_ws"),
+        (r"\b(?:email|imap|mail)\b", "source_email"),
+        (r"\b(?:rss|feed)\b", "source_rss"),
+        (r"\b(?:web|http|browser|scrape)\b", "source_web"),
+        # Numbers (but not part of other patterns)
+        (r"\b\d+(?:\.\d+)?\b", "number"),
+    ]
 
     def __init__(self, app):
         super().__init__()
         self.app = app
+        # Compile patterns
+        self._compiled_patterns = [
+            (re.compile(pattern, re.IGNORECASE), color_key)
+            for pattern, color_key in self.PATTERNS
+        ]
 
     def emit(self, record):
         try:
             msg = self.format(record)
-            self.app.call_from_thread(self.write_log, msg)
+            level = record.levelno
+            self.app.call_from_thread(self.write_log, msg, level)
         except Exception:
             pass  # Logging failures should not crash the app
 
-    def write_log(self, msg):
+    def write_log(self, msg: str, level: int = logging.INFO):
         try:
             log = self.app.query_one("#activity-log", RichLog)
-            log.write(msg)
+            colored_text = self._colorize_message(msg, level)
+            log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
+
+    def _colorize_message(self, msg: str, level: int) -> Text:
+        """Apply Rich markup coloring based on content patterns."""
+        # Determine base color from log level
+        level_colors = {
+            logging.DEBUG: self.COLORS["level_debug"],
+            logging.INFO: self.COLORS["level_info"],
+            logging.WARNING: self.COLORS["level_warning"],
+            logging.ERROR: self.COLORS["level_error"],
+            logging.CRITICAL: self.COLORS["level_critical"],
+        }
+        base_color = level_colors.get(level, self.COLORS["level_info"])
+
+        # Create text with base styling
+        text = Text(msg, style=base_color)
+
+        # Apply pattern-based highlighting
+        for pattern, color_key in self._compiled_patterns:
+            color = self.COLORS.get(color_key, base_color)
+            for match in pattern.finditer(msg):
+                start, end = match.span()
+                # Apply bold for important items
+                if color_key in ("job_id", "money", "success", "error_word"):
+                    text.stylize(f"bold {color}", start, end)
+                else:
+                    text.stylize(color, start, end)
+
+        # Style brackets and punctuation
+        for match in re.finditer(r"[\[\](){}:,]", msg):
+            start, end = match.span()
+            text.stylize(self.COLORS["bracket"], start, end)
+
+        return text
