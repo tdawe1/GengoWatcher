@@ -1,12 +1,17 @@
-/* Kanagawa Theme Colors */
-$surface: #1F1F28;
-$surface-lighten-1: #2A2A37;
-$text: #DCD7BA;
-$text-muted: #727169;
-$accent-blue: #7E9CD8;
-$accent-green: #98BB6C;
-$accent-red: #FF5D62;
-$accent-orange: #DCA561;
+/* Kanagawa Theme Colors (Corrected Palette) */
+$surface: #1F1F28;          /* Sumi Ink 1 */
+$surface-lighten-1: #2A2A37; /* Sumi Ink 2 */
+$text: #DCD7BA;             /* Fuji White */
+$text-muted: #727169;       /* Fuji Gray */
+
+/* Accents */
+$accent-blue: #7E9CD8;      /* Crystal Blue */
+$accent-green: #98BB6C;     /* Spring Green */
+$accent-red: #C34043;       /* Samurai Red */
+$accent-orange: #FFA066;    /* Surimi Orange */
+$accent-yellow: #E6C384;    /* Carp Yellow */
+$accent-violet: #957FB8;    /* Oni Violet */
+$accent-aqua: #7AA89F;      /* Wave Aqua 1 */
 
 Screen {
     background: $surface;
@@ -53,31 +58,64 @@ MetricsRow {
 MetricCard {
     width: 1fr;
     height: 100%;
-    border: round $surface-lighten-1;
-    background: $surface;
+    background: $surface-lighten-1;
+    border: round #727169;
     layout: vertical;
     align: center middle;
     margin: 0 1;
+    padding: 0 1;
+}
+
+/* Color diversity for cards */
+MetricCard.found { 
+    border-left: tall $accent-green; 
+    border-title-color: $accent-green;
+    color: $accent-green;
+}
+MetricCard.accepted { 
+    border-left: tall $accent-green; 
+    border-title-color: $accent-green;
+    color: $accent-green;
+}
+MetricCard.value { 
+    border-left: tall $accent-yellow; 
+    border-title-color: $accent-yellow;
+    color: $accent-yellow;
+}
+MetricCard.rate { 
+    border-left: tall $accent-orange; 
+    border-title-color: $accent-orange;
+    color: $accent-orange;
+}
+MetricCard.today { 
+    border-left: tall $accent-violet; 
+    border-title-color: $accent-violet;
+    color: $accent-violet;
 }
 
 MetricCard:focus {
     border: round $accent-blue;
 }
 
-.metric-value-row {
+.metric-grid {
+    layout: grid;
+    grid-size: 2;
+    grid-columns: auto 1fr;
     width: 100%;
+    height: 1;
     align: center middle;
-    height: 1fr;
 }
 
 .metric-icon {
-    color: $accent-blue;
+    color: $text;
     margin-right: 1;
 }
 
 .metric-value {
     text-style: bold;
     color: $text;
+    width: 100%;
+    text-align: right;
 }
 
 .metric-label {

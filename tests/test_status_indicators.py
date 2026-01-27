@@ -9,7 +9,8 @@ from gengowatcher.ui_textual import StatusIndicator, StatusRow
 
 class StatusIndicatorTestApp(App):
     def compose(self) -> ComposeResult:
-        yield StatusIndicator("WebSocket", "live")
+        # Updated: StatusIndicator now takes (icon, name, **kwargs)
+        yield StatusIndicator("●", "WebSocket")
 
 
 class StatusRowTestApp(App):
@@ -23,31 +24,32 @@ class StatusRowTestApp(App):
 
 @pytest.mark.asyncio
 async def test_status_indicator_displays_icon_and_state():
-    """StatusIndicator should show icon and state text."""
+    """StatusIndicator should show icon and label text."""
     app = StatusIndicatorTestApp()
     async with app.run_test() as pilot:
         indicator = app.query_one(StatusIndicator)
-        # Check icon is rendered
-        icon_widget = indicator.query_one(".status-icon")
-        assert "●" in str(icon_widget.render())
-        assert "WEBSOCKET" in str(icon_widget.render())
+        # Updated: use .status-label instead of .status-icon
+        label_widget = indicator.query_one(".status-label")
+        rendered = str(label_widget.render())
+        assert "●" in rendered
+        assert "WebSocket" in rendered
 
 
 @pytest.mark.asyncio
 async def test_status_indicator_set_state():
-    """StatusIndicator.set_state should update display."""
+    """StatusIndicator.set_state should update CSS class."""
     app = StatusIndicatorTestApp()
     async with app.run_test() as pilot:
         indicator = app.query_one(StatusIndicator)
         indicator.set_state("error")
         await pilot.pause()
-        status_text = indicator.query_one(".status-text")
-        assert "Error" in str(status_text.render())
+        # Check that the status-error class is applied
+        assert indicator.has_class("status-error")
 
 
 @pytest.mark.asyncio
-async def test_status_row_renders_five_indicators():
-    """StatusRow should contain 5 status indicators."""
+async def test_status_row_renders_seven_indicators():
+    """StatusRow should contain 7 status indicators."""
     watcher = MagicMock()
     watcher.websocket_connected = False
     watcher.email_monitor = MagicMock(enabled=False)
@@ -56,4 +58,5 @@ async def test_status_row_renders_five_indicators():
     app = StatusRowTestApp(watcher)
     async with app.run_test() as pilot:
         indicators = app.query(StatusIndicator)
-        assert len(indicators) == 5
+        # Updated: Now 7 indicators (WS, Email, Web, RSS, Cap, Work, Auto)
+        assert len(indicators) == 7

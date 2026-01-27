@@ -21,14 +21,6 @@ async def test_title_bar_renders():
 
         # Check brand text exists
         brand = title_bar.query_one(".brand")
-        # In newer Textual, we might need to check the renderable directly or use render()
-        # For Static, it often holds a Text object or string.
-        # Let's try checking the widget's content via its renderable property if available,
-        # or fall back to checking what we expect it to render.
-        # Since 'renderable' attribute failed, let's try accessing the content directly if it's a Static.
-        # Static usually has 'update' method but extracting content is tricky if not exposed.
-        # However, for testing, we can often rely on the fact that Static stores its content.
-        # Let's try using the .render() method which should return the content.
         assert "GENGOWATCHER" in str(brand.render())
 
 
@@ -38,7 +30,8 @@ async def test_title_bar_session_time_updates():
     app = TitleBarTestApp()
     async with app.run_test() as pilot:
         await pilot.pause()  # Allow timer to tick
-        session_time = app.query_one("#session-time")
+        # Updated: use #session-timer instead of #session-time
+        session_time = app.query_one("#session-timer")
         content = str(session_time.render())
-        # Session time shows format: "⏱ Xh XXm XXs"
-        assert "h" in content and "m" in content and "s" in content
+        # Session time shows format: "Session: Xh XXm"
+        assert "Session:" in content

@@ -9,7 +9,8 @@ from gengowatcher.ui_textual import MetricCard, MetricsRow
 
 class MetricCardTestApp(App):
     def compose(self) -> ComposeResult:
-        yield MetricCard("Found", "42", card_class="found")
+        # Updated: MetricCard now takes (label, icon, value, **kwargs)
+        yield MetricCard("Found", "▲", "42", classes="found")
 
 
 class MetricsRowTestApp(App):
