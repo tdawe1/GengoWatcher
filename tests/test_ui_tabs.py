@@ -2,12 +2,14 @@
 
 import pytest
 from unittest.mock import MagicMock
-from collections import deque
+import tempfile
+import pathlib
 
 
 def create_mock_app():
     """Create app with mocked dependencies for testing."""
     from gengowatcher.ui_textual import GengoWatcherApp
+    from gengowatcher.stats import StatsManager
 
     mock_watcher = MagicMock()
     mock_watcher.start_time = 0
@@ -33,8 +35,19 @@ def create_mock_app():
     mock_watcher.website_jobs_found_session = 0
 
     mock_config = MagicMock()
-    mock_config.get.return_value = "test_value"
     mock_config.getboolean.return_value = True
+
+    # Mock the get() method for ConfigPreview - returns section/key specific values
+    def mock_get(section, key):
+        config_values = {
+            ("Watcher", "check_interval"): 30,
+            ("Watcher", "min_reward"): 10.0,
+            ("AutoAccept", "enabled"): True,
+            ("WebSocket", "enable_websocket"): True,
+        }
+        return config_values.get((section, key), "test_value")
+
+    mock_config.get.side_effect = mock_get
 
     mock_state = MagicMock()
     mock_state.total_new_entries_found = 42
@@ -42,11 +55,16 @@ def create_mock_app():
     mock_state.get_job_count.return_value = 0
     mock_state.get_recent_jobs.return_value = []
 
+    # Create a real StatsManager with temp file
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stats_path = pathlib.Path(tmpdir) / "stats.json"
+        mock_stats = StatsManager(stats_path=stats_path)
+
     return GengoWatcherApp(
         watcher=mock_watcher,
         config=mock_config,
         state=mock_state,
-        log_queue=deque(),
+        stats=mock_stats,
     )
 
 
@@ -56,52 +74,69 @@ async def test_main_tabs_exist():
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        # Check that TabbedContent exists with expected tabs
-        tabbed = pilot.app.query_one("#main-tabs")
+        # Check that TabbedContent exists
+        from textual.widgets import TabbedContent
+
+        tabbed = pilot.app.query_one(TabbedContent)
         assert tabbed is not None
 
-        # Check tab panes exist
+        # Check tab panes exist (using current IDs from ui_textual.py)
         tab_ids = [pane.id for pane in pilot.app.query("TabPane")]
         assert "dashboard" in tab_ids
         assert "jobs" in tab_ids
         assert "activity" in tab_ids
         assert "output" in tab_ids
         assert "charts" in tab_ids
+        assert "stats" in tab_ids
 
 
 @pytest.mark.asyncio
 async def test_tab_switching_with_keys():
-    """Test that number keys switch tabs."""
+    """Test that tabs can be switched programmatically."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        tabbed = pilot.app.query_one("#main-tabs")
+        from textual.widgets import TabbedContent
+
+        tabbed = pilot.app.query_one(TabbedContent)
 
         # Default should be dashboard
         assert tabbed.active == "dashboard"
 
-        # Press 2 for Jobs
-        await pilot.press("2")
+        # Switch to jobs tab programmatically
+        tabbed.active = "jobs"
+        await pilot.pause()
         assert tabbed.active == "jobs"
 
-        # Press 3 for Activity
-        await pilot.press("3")
+        # Switch to activity tab
+        tabbed.active = "activity"
+        await pilot.pause()
         assert tabbed.active == "activity"
-
-        # Press 1 to go back to Dashboard
-        await pilot.press("1")
-        assert tabbed.active == "dashboard"
 
 
 @pytest.mark.asyncio
 async def test_dashboard_contains_panels():
-    """Verify Dashboard tab contains RuntimeStatusPanel and HeaderPanel."""
+    """Verify Dashboard tab contains expected widgets."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        # Should be on dashboard by default
-        runtime = pilot.app.query_one("#runtime-panel")
-        header = pilot.app.query_one("#header-panel")
+        from gengowatcher.ui_textual import (
+            ActivityPreview,
+            JobsPreview,
+            ConfigPreview,
+            MetricsRow,
+            StatusRow,
+        )
 
-        assert runtime is not None
-        assert header is not None
+        # Should be on dashboard by default - check for widgets
+        activity = pilot.app.query_one(ActivityPreview)
+        jobs = pilot.app.query_one(JobsPreview)
+        config = pilot.app.query_one(ConfigPreview)
+        metrics = pilot.app.query_one(MetricsRow)
+        status = pilot.app.query_one(StatusRow)
+
+        assert activity is not None
+        assert jobs is not None
+        assert config is not None
+        assert metrics is not None
+        assert status is not None

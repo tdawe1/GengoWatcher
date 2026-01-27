@@ -11,9 +11,6 @@ PLACEHOLDER_CONFIG_VALUES = [
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
     "REPLACE_WITH_YOUR_WEB_API_TOKEN",
-    "",
-    0,
-    "0",
 ]
 
 
@@ -94,23 +91,6 @@ class AppConfig:
             "attempt_timeout_sec": 12,
             "selenium_attempt_timeout_sec": 8,
         },
-        "Captcha": {
-            "enabled": True,
-            "service": "",  # "2captcha", "anti-captcha", or "local"
-            "api_key": "",
-            "max_retries": 3,
-            "retry_delay": 5,
-            "rate_limit": 60,  # requests per minute
-            "rate_limit_window": 60,  # seconds
-            "skip_on_v3_extraction_failure": True,
-            "recaptcha_v3_fallback_site_key": "6Lc6BAAAAAAAAAChqR2QwNcAAAAA",
-            "recaptcha_v3_default_action": "job_acceptance",
-            "enable_browser_automation_fallback": False,
-        },
-        "LocalCaptcha": {
-            "preferred_solver": "simple",
-            "tensorflow_model_path": "models/captcha_model.h5",
-        },
         "HighValue": {
             "threshold": 500.0,
             "very_high_threshold": 1000.0,
@@ -149,12 +129,6 @@ class AppConfig:
             "check_interval_max": 300,
             "headless": True,
             "session_cookie": "",
-        },
-        "SeleniumMonitoring": {
-            "enable_live_dashboard": True,
-            "enable_list_refresh": True,
-            "refresh_interval_ms": 1500,
-            "headless": False,
         },
     }
 
