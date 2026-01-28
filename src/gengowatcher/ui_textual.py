@@ -514,15 +514,105 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
 
-class ChartPlaceholder(DashboardQuadrant):
-    def __init__(self, **kwargs):
+class JobsHourChart(DashboardQuadrant):
+    """ASCII bar chart showing jobs per hour distribution."""
+
+    # Bar characters for different fill levels
+    BAR_CHARS = "▏▎▍▌▋▊▉█"
+    MAX_BAR_WIDTH = 12  # Maximum bar width in characters
+
+    def __init__(self, stats: "StatsManager | None" = None, **kwargs):
         super().__init__("Jobs/Hour", **kwargs)
+        self.stats = stats
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "\n    (Chart Placeholder)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────",
-            classes="chart-ascii",
-        )
+        yield Static(id="chart-content", classes="chart-ascii")
+
+    def on_mount(self):
+        self.refresh_chart()
+        # Refresh chart every 30 seconds
+        self.set_interval(30.0, self.refresh_chart)
+
+    def refresh_chart(self):
+        """Refresh the chart with current hourly data."""
+        try:
+            content = self.query_one("#chart-content", Static)
+            chart_text = self._render_chart()
+            content.update(chart_text)
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+    def _render_chart(self) -> Text:
+        """Render ASCII bar chart for hourly job distribution."""
+        text = Text()
+
+        # Get hourly counts from stats or use empty data
+        if self.stats:
+            hourly = dict(self.stats.hourly_counts)
+            peak_hour, _ = self.stats.get_peak_hour()
+        else:
+            hourly = {}
+            peak_hour = -1
+
+        # Find max value for scaling
+        max_count = max(hourly.values()) if hourly else 1
+
+        # Show 6 time periods (4-hour blocks) to fit in quadrant
+        periods = [
+            ("00-03", range(0, 4)),
+            ("04-07", range(4, 8)),
+            ("08-11", range(8, 12)),
+            ("12-15", range(12, 16)),
+            ("16-19", range(16, 20)),
+            ("20-23", range(20, 24)),
+        ]
+
+        for label, hours in periods:
+            # Sum jobs in this period
+            period_count = sum(hourly.get(h, 0) for h in hours)
+            # Check if peak hour is in this period
+            is_peak = peak_hour in hours
+
+            # Calculate bar width
+            if max_count > 0:
+                bar_width = int((period_count / max_count) * self.MAX_BAR_WIDTH)
+            else:
+                bar_width = 0
+
+            # Build the bar
+            full_blocks = bar_width
+            bar = "█" * full_blocks
+
+            # Pad to consistent width
+            bar_padded = bar.ljust(self.MAX_BAR_WIDTH, "░")
+
+            # Format: "00-03 ████████░░░░ 12"
+            count_str = f"{period_count:3d}" if period_count > 0 else "  0"
+
+            # Add label
+            text.append(f"{label} ", style="#737c73")  # Dragon Gray
+
+            # Add bar with appropriate color
+            if is_peak and period_count > 0:
+                text.append(bar_padded, style="bold #8ba4b0")  # Dragon Blue (peak)
+            elif period_count > 0:
+                text.append(bar_padded, style="#8a9a7b")  # Dragon Green
+            else:
+                text.append(bar_padded, style="#393836")  # Dragon Black 5 (empty)
+
+            # Add count
+            if is_peak and period_count > 0:
+                text.append(f" {count_str}", style="bold #8ba4b0")
+            else:
+                text.append(f" {count_str}", style="#737c73")
+
+            text.append("\n")
+
+        return text
+
+
+# Keep for backwards compatibility
+ChartPlaceholder = JobsHourChart
 
 
 class ConfigPreview(DashboardQuadrant):
@@ -698,7 +788,7 @@ class GengoWatcherApp(App):
                 with Vertical(id="dashboard-content"):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
-                        yield ChartPlaceholder()
+                        yield JobsHourChart(stats=self.stats)
                         yield ConfigPreview()  # Keep as bottom-right per doc
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
