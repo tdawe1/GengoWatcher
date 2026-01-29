@@ -34,6 +34,7 @@ class AllTimeStats:
     """Aggregate statistics across all sessions."""
 
     total_jobs: int = 0
+    total_jobs_accepted: int = 0
     total_value: float = 0.0
     total_sessions: int = 0
     best_day_value: float = 0.0
@@ -135,6 +136,7 @@ class StatsManager:
             # All-time stats
             self.all_time.total_jobs += 1
             if accepted:
+                self.all_time.total_jobs_accepted += 1
                 self.all_time.total_value += reward
 
             # Source stats
