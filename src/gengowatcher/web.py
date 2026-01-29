@@ -965,7 +965,12 @@ async def health_check():
             "timestamp": time.time(),
         }
     except Exception as e:
-        return {"status": "unhealthy", "detail": str(e), "timestamp": time.time()}
+        logging.exception("Health check failed: %s", e)
+        return {
+            "status": "unhealthy",
+            "detail": "Internal error",
+            "timestamp": time.time(),
+        }
 
 
 @app.get("/web/{path:path}")
