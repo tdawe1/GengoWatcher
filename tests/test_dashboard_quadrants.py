@@ -21,6 +21,15 @@ class JobsPreviewTestApp(App):
         yield JobsPreview(self._state)
 
 
+class ConfigPreviewTestApp(App):
+    def __init__(self, config):
+        super().__init__()
+        self._config = config
+
+    def compose(self) -> ComposeResult:
+        yield ConfigPreview(config=self._config)
+
+
 @pytest.mark.asyncio
 async def test_activity_preview_has_log():
     """ActivityPreview should have a RichLog widget."""
@@ -51,3 +60,204 @@ async def test_jobs_preview_displays_jobs():
         assert table is not None
         # Check that the table has rows
         assert table.row_count == 2
+
+
+# =============================================================================
+# ConfigPreview Tests
+# =============================================================================
+
+
+def create_mock_config(config_dict):
+    """Create a mock AppConfig with the given config dictionary."""
+    mock = MagicMock()
+    mock.list_all.return_value = config_dict
+    return mock
+
+
+@pytest.mark.asyncio
+async def test_config_preview_renders_sections():
+    """ConfigPreview should render config sections."""
+    config = create_mock_config(
+        {
+            "Watcher": {"check_interval": 30, "min_reward": 0.0},
+            "WebSocket": {"enable_websocket": True},
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+        content = preview.query_one("#config-content")
+        assert content is not None
+
+
+@pytest.mark.asyncio
+async def test_config_preview_masks_sensitive_keys():
+    """ConfigPreview should mask sensitive values like tokens and secrets."""
+    config = create_mock_config(
+        {
+            "WebSocket": {
+                "user_session": "abc123xyz789secret",
+                "user_key": "my_secret_key_12345",
+            },
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+
+        # Test the masking function directly
+        assert preview._is_sensitive("user_session") is True
+        assert preview._is_sensitive("user_key") is True
+        assert preview._is_sensitive("access_token") is True
+        assert preview._is_sensitive("client_secret") is True
+        assert preview._is_sensitive("check_interval") is False
+
+        # Test mask output
+        masked = preview._mask_value("abc123xyz789secret")
+        assert masked == "ab...et"
+        assert "abc123xyz789secret" not in masked
+
+
+@pytest.mark.asyncio
+async def test_config_preview_formats_booleans():
+    """ConfigPreview should format booleans as ✓ or ✗."""
+    config = create_mock_config(
+        {
+            "Watcher": {"enable_notifications": True, "use_custom_user_agent": False},
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+
+        assert preview._format_value("enable_notifications", True) == "✓"
+        assert preview._format_value("use_custom_user_agent", False) == "✗"
+
+
+@pytest.mark.asyncio
+async def test_config_preview_formats_numbers():
+    """ConfigPreview should format numbers appropriately."""
+    config = create_mock_config(
+        {
+            "Watcher": {"check_interval": 30, "min_reward": 5.50},
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+
+        # Integer-like floats should display as integers
+        assert preview._format_value("check_interval", 30.0) == "30"
+        # Floats with decimals should show 2 decimal places
+        assert preview._format_value("min_reward", 5.50) == "5.50"
+
+
+@pytest.mark.asyncio
+async def test_config_preview_formats_lists():
+    """ConfigPreview should format lists as comma-separated values."""
+    config = create_mock_config(
+        {
+            "WebServer": {
+                "cors_origins": ["http://localhost:5173", "http://127.0.0.1:5173"]
+            },
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+
+        formatted = preview._format_value("cors_origins", ["a", "b", "c"])
+        assert formatted == "a, b, c"
+
+
+@pytest.mark.asyncio
+async def test_config_preview_truncates_long_values():
+    """ConfigPreview should truncate values longer than 20 characters."""
+    config = create_mock_config(
+        {
+            "Paths": {"feed_url": "https://example.com/very/long/path/to/resource"},
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+        text = preview._render_config()
+        plain_text = text.plain
+
+        # The full URL should not appear (it's > 20 chars)
+        assert "https://example.com/very/long/path/to/resource" not in plain_text
+        # But truncated version with ... should appear
+        assert "..." in plain_text
+
+
+@pytest.mark.asyncio
+async def test_config_preview_handles_empty_values():
+    """ConfigPreview should handle empty/None values gracefully."""
+    config = create_mock_config(
+        {
+            "Paths": {"browser_path": "", "notification_icon_path": None},
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+
+        assert preview._format_value("browser_path", "") == "—"
+        assert preview._format_value("notification_icon_path", None) == "—"
+
+
+@pytest.mark.asyncio
+async def test_config_preview_refresh_updates_content():
+    """ConfigPreview.refresh_config should update the Static widget content."""
+    config = create_mock_config(
+        {
+            "Watcher": {"check_interval": 30},
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+
+        # Update config mock
+        config.list_all.return_value = {
+            "Watcher": {"check_interval": 60},
+        }
+
+        preview.refresh_config()
+        await pilot.pause()
+
+        text = preview._render_config()
+        assert "60" in text.plain
+
+
+@pytest.mark.asyncio
+async def test_config_preview_section_ordering():
+    """ConfigPreview should display sections in the defined order."""
+    config = create_mock_config(
+        {
+            "Logging": {"log_main_enabled": True},
+            "Watcher": {"check_interval": 30},
+            "WebSocket": {"enable_websocket": True},
+        }
+    )
+
+    app = ConfigPreviewTestApp(config)
+    async with app.run_test() as pilot:
+        preview = app.query_one(ConfigPreview)
+        text = preview._render_config()
+        plain_text = text.plain
+
+        # Watcher should appear before WebSocket, which should appear before Logging
+        watcher_pos = plain_text.find("Watcher")
+        websocket_pos = plain_text.find("WebSocket")
+        logging_pos = plain_text.find("Logging")
+
+        assert watcher_pos < websocket_pos < logging_pos
