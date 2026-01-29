@@ -50,8 +50,6 @@ def test_stats_manager_persistence():
         assert manager2.by_source.email == 1
 
 
-def test_stats_manager_accepted_vs_total():
-    """StatsManager should track accepted jobs separately from total jobs."""
 def test_get_peak_hour_with_empty_data():
     """get_peak_hour() should return zero rate when hourly_counts is empty."""
 
