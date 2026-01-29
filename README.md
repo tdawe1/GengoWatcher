@@ -1,414 +1,74 @@
-# GengoWatcher v2.2.0
+# GengoWatcher
 
-GengoWatcher is an intelligent terminal application designed to find and alert you to new freelance jobs the instant they become available. It monitors both your personal Gengo RSS feed and a real-time WebSocket connection, ensuring maximum notification speed.
+A terminal-based monitor for Gengo translation jobs with real-time notifications.
 
-It features an interactive text-based user interface (TUI) that runs directly in your terminal, providing real-time status updates, activity logs, and command controls.
+## Features
 
----
+- **Real-time monitoring** via WebSocket and RSS feed
+- **Desktop notifications** with sound alerts
+- **Auto-accept jobs** matching your criteria
+- **Multiple sources** - WebSocket, RSS, email, and website scraping
+- **CAPTCHA solving** integration (2Captcha, Anti-Captcha)
+- **Modern TUI** built with Textual
 
-## ✨ Key Features
-
-- **Dual-Source Monitoring**: Fetches jobs from both a personal RSS feed (as a fallback) and a real-time WebSocket connection.
-- **Highly Efficient**: Near-zero CPU usage when idle, ensuring it runs quietly in the background without impacting system performance.
-- **Responsive Interactive TUI**: A clean, modern interface that provides at-a-glance status, feels responsive to user input, and includes command controls.
-- **Interactive Diagnostics**: A `wstest` command allows you to test WebSocket connectivity and the full notification pipeline on demand.
-- **Customizable Alerts**:
-    - Filter jobs by a minimum reward value.
-    - Toggle desktop and sound alerts on/off.
-- **Auto Job Acceptance**: Automatically accept jobs that meet your criteria with configurable delays and CAPTCHA solving integration.
-- **CAPTCHA Solving Integration**: Automated solving for job acceptance using 2Captcha, Anti-Captcha, or local ML-based solver.
-- **Interactive Controls**: Pause, resume, restart, and trigger manual checks on the fly.
-- **Robust & Resilient**: Handles connection errors with an exponential backoff strategy and runs correctly even in non-interactive terminals.
-- **Persistent State**: Remembers the last job seen in `state.json`, so you only get notified about truly new entries.
-- **CSV Logging**: Optionally logs every job entry to a CSV file for historical data analysis.
-- **Web Interface**: Optional web-based monitoring interface with real-time job tracking.
-
----
-
-![GengoWatcher TUI Screenshot](assets/tui-screenshot.png)
-
----
-
-## 📋 Table of Contents
-
-- [✨ Key Features](#-key-features)
-- [🚀 Installation](#-installation)
-- [⚙️ Usage](#️-usage)
-  - [📝 Example `config.ini`](#-example-configini)
-- [🤖 Auto Job Acceptance](#-auto-job-acceptance)
-- [📧 Email Monitoring](#-email-monitoring)
-- [🌐 Website Monitoring](#-website-monitoring)
-- [🔐 CAPTCHA Solver Setup](#-captcha-solver-setup)
-- [⌨️ Commands](#️-commands)
-- [🐛 Troubleshooting](#-troubleshooting)
-- [📜 License](#-license)
-
----
-
-## 🚀 Installation
-
-GengoWatcher is a Python application requiring Python 3.8 or newer.
-
-**1. Clone the Repository**
+## Installation
 
 ```bash
 git clone https://github.com/tdawe1/GengoWatcher.git
 cd GengoWatcher
-```
-
-**2. Set Up a Virtual Environment (Highly Recommended)**
-
-Using a virtual environment keeps project dependencies isolated from your system's global Python installation.
-
-```bash
-# Create a virtual environment
 python -m venv venv
-
-# Activate it
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-```
-
-**3. Install Dependencies**
-
-```bash
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
----
-
-## ⚙️ Usage
-
-**1. Launch the Application**
-
-The easiest way to run GengoWatcher is using the included `Makefile`, which automatically handles the virtual environment and `PYTHONPATH`:
+## Quick Start
 
 ```bash
-# Start the TUI (Textual interface)
 make run
-
-# Start the TUI with the web server enabled
-make run-web
-
-# Start only the web server (no TUI)
-make run-web-only
 ```
 
-Alternatively, you can run it directly using the virtual environment:
+Or directly:
 
 ```bash
-PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main
+PYTHONPATH=src python -m gengowatcher.main
 ```
 
-**Optional Command-Line Arguments:**
+On first run, you'll be guided through configuration setup.
 
-- `--web` - Run TUI with web server enabled (default port: 8000)
-- `--web-only` - Run web server only (no TUI)
-- `--web-port PORT` - Specify web server port
-- `--configure` - Run interactive configuration setup
-- `--set SECTION OPTION VALUE` - Set config value via CLI
-- `--get SECTION OPTION` - Get config value via CLI
-- `--list` - List all configuration values
+## Configuration
 
-**2. First-Time Setup**
-
-The first time you run GengoWatcher, it will detect that it's a new installation and guide you through an interactive setup. It will ask for essential details needed for WebSocket and RSS monitoring.
-
-**3. Start Monitoring**
-
-After you complete the prompts, the application will automatically save your details to `config.ini` and begin monitoring for jobs.
-
----
-
-### 📝 Example `config.ini`
-
-The interactive setup will create a `config.ini` file for you. You can edit this file later to fine-tune your settings. It will look similar to this:
+Settings are stored in `config.ini`. Key sections:
 
 ```ini
 [Watcher]
-feed_url = https://your-feed/rss.xml
+feed_url = https://your-rss-feed-url
 check_interval = 31
 min_reward = 0.0
-enable_notifications = true
-enable_sound = true
-use_custom_user_agent = false
 
 [WebSocket]
 enable_websocket = true
 user_id = 12345
-user_session = your_long_session_token_here
-user_key = your_browser_user_key
-
-[Paths]
-sound_file = C:\Windows\Media\chimes.wav
-log_file = logs/gengowatcher.log
-notification_icon_path =
-browser_path =
-browser_args = --new-window {url}
-all_entries_log = logs/all_entries.csv
-
-[Logging]
-log_max_bytes = 1000000
-log_backup_count = 3
-log_main_enabled = true
-log_all_entries_enabled = true
-
-[Network]
-max_backoff = 300
-user_agent_email = your_email@example.com
-
-[AutoAccept]
-enabled = false
-min_reward = 0.0
-max_reward = 999999.0
-job_sources = rss,websocket
-accept_delay_min = 5
-accept_delay_max = 30
-browser_profile_path =
-notification_on_accept = true
-log_acceptance = true
-
-[Captcha]
-service = 2captcha
-max_retries = 3
-retry_delay = 5
-rate_limit = 60
-
-[WebServer]
-enabled = false
-port = 8000
-host = localhost
-; When enabled, the web API requires a Bearer token.
-; The token is stored as auth_token. If left blank,
-; GengoWatcher will generate a secure random token on
-; first web-server startup and persist it to config.ini.
-auth_token =
+user_session = YOUR_SESSION_TOKEN
+user_key = YOUR_USER_KEY
 ```
 
-> **Tip:** The WebSocket `user_key` must come from the same logged-in browser profile (e.g., Vivaldi). In DevTools go to **Application → Local Storage → https://gengo.com → userKey** and copy the value into `config.ini`.
+Get WebSocket credentials from your browser's DevTools:
+- **user_id** / **user_session**: Application → Cookies → gengo.com
+- **user_key**: Application → Local Storage → gengo.com → userKey
 
----
+## Commands
 
-## 🤖 Auto Job Acceptance
+| Command | Description |
+|---------|-------------|
+| `check` | Trigger immediate RSS check |
+| `pause` / `resume` | Pause/resume monitoring |
+| `wstest` | Test WebSocket connection |
+| `notifytest` | Test notifications |
+| `togglesound` | Toggle sound alerts |
+| `autoaccept` | Toggle auto job acceptance |
+| `help` | Show all commands |
+| `exit` | Save state and quit |
 
-GengoWatcher can automatically accept jobs that meet your configured criteria:
+## License
 
-### Configuration Options
-
-- `enabled`: Enable/disable auto job acceptance (true/false)
-- `min_reward`: Minimum reward amount for auto acceptance
-- `max_reward`: Maximum reward amount for auto acceptance
-- `job_sources`: Comma-separated list of sources (rss, websocket)
-- `accept_delay_min`: Minimum delay in seconds before accepting a job
-- `accept_delay_max`: Maximum delay in seconds before accepting a job
-- `browser_profile_path`: Path to browser profile for job acceptance (if needed)
-- `notification_on_accept`: Show notification when a job is accepted
-- `log_acceptance`: Log accepted jobs to a file
-
-Additional watcher options:
-
-- `open_links_on_new_job`: When true (default), opening a new job triggers
-  the browser to open the job details page. Set this to false if you want
-  notifications/sounds without automatic browser popups.
-- `seen_jobs_max`: Optional cap for how many job IDs are kept in the
-  in-memory "seen" set for the current session (defaults to 1000). This
-  protects long-running sessions from unbounded memory growth.
-
-### Rate Limiting & Error Handling
-
-The auto-acceptance engine includes built-in rate limiting (30 requests/minute) to prevent exceeding API limits and implements retry mechanisms for failed acceptance attempts.
-
-### Management Commands
-
-- `toggleautoaccept` - Enable/disable auto-acceptance
-- `acceptstats` - Display job acceptance statistics
-
----
-
-## 🔐 CAPTCHA Solver Setup
-
-GengoWatcher supports integration with CAPTCHA solving services to automate job acceptance:
-
-### Supported Services
-
-1. **2Captcha** - https://2captcha.com (Pay-per-solve)
-2. **Anti-Captcha** - https://anti-captcha.com (Pay-per-solve)
-3. **Local Solver** - ML-based solver (No API key required)
-
-### Quick Setup
-
-To configure CAPTCHA solving:
-1. Run `python -m gengowatcher.main`
-2. Type `captchasetup` in the command interface
-3. Select your service and enter your API key (if required)
-4. The API key is stored securely using Fernet encryption (AES-128-CBC with HMAC)
-
-### Configuration Options
-
-```ini
-[Captcha]
-service = 2captcha           # Service: 2captcha, anti-captcha, or local
-max_retries = 3             # Maximum retry attempts
-retry_delay = 5              # Seconds between retries
-rate_limit = 60              # Requests per minute
-```
-
-### Management Commands
-
-- `captchatest` - Verify API key and check balance
-- `captchastats` - View usage statistics and costs
-- `captchareset` - Clear configuration and start over
-
-### Security Features
-
-- API keys encrypted at rest using system-specific key derivation
-- Restrictive file permissions (0o600)
-- No sensitive data logged (tokens, keys, or solutions)
-- HTTPS-only API communication
-
-⚠️ **Note**: Using CAPTCHA solving services incurs costs. Monitor usage with `captchastats`.
-
----
-
-## 📧 Email Monitoring
-
-GengoWatcher can monitor your Gmail inbox for new job notifications, extracting job IDs directly from the emails. This is often the fastest way to detect jobs that are not yet visible via RSS.
-
-### What it does
-- **Gmail IMAP with OAuth2**: Securely connects to your Gmail account using Google OAuth2.
-- **IDLE Push + Polling Fallback**: Uses IMAP IDLE for real-time "push" notifications of new emails, with a configurable polling fallback.
-- **Automated Extraction**: Scans incoming Gengo emails for tracking links and follows them (using your session cookie) to find the job ID.
-
-### Setup Instructions
-To enable email monitoring, you must first configure Gmail OAuth:
-1. Run the interactive setup wizard:
-   ```bash
-   python -m gengowatcher.main --setup-email
-   ```
-2. Follow the prompts to create a Google Cloud Project and authorize GengoWatcher.
-3. Enable the monitor in your `config.ini` by setting `enabled = true` under `[EmailMonitor]`.
-
-### Configuration Options
-```ini
-[EmailMonitor]
-enabled = true                  # Enable/disable email monitoring
-email = your-email@gmail.com    # Your Gmail address
-folder = INBOX                  # IMAP folder to monitor
-from_filter = no-reply@gengo.com # Only process emails from this sender
-poll_fallback_interval = 60      # Seconds between polls if IDLE fails
-```
-
-### Troubleshooting
-- **OAuth Errors**: If you encounter authentication errors, try running `python -m gengowatcher.main --setup-email` again to refresh your credentials.
-- **Token Refresh**: GengoWatcher handles token refresh automatically, but you may need to re-authorize if the refresh token expires.
-- **Tracking Links**: Tracking links require a valid Gengo session. Ensure your `session_cookie` in the `[WebsiteMonitor]` section (or `user_session` in the `[WebSocket]` section) is up to date.
-
----
-
-## 🌐 Website Monitoring
-
-The Website Monitor uses browser automation to scrape the Gengo jobs page directly, providing a fallback when WebSocket or RSS updates are delayed.
-
-### What it does
-- **Playwright Stealth Scraper**: Uses Playwright with stealth plugins to avoid detection by Gengo's anti-bot measures.
-- **Human-like Behavior**: Simulates realistic browsing patterns, including randomized mouse movements, scrolling, and timing delays.
-- **Direct Scraping**: Periodically visits the jobs list page and extracts job IDs from the page source.
-
-### Setup Instructions
-1. Install Playwright dependencies:
-   ```bash
-   pip install playwright
-   playwright install chromium
-   ```
-2. Extract your `_gengo_session` cookie from your browser (DevTools -> Application -> Cookies -> gengo.com) and add it to `config.ini`:
-   ```ini
-   [WebsiteMonitor]
-   enabled = true
-   session_cookie = your_long_session_cookie_here
-   ```
-
-### Configuration Options
-```ini
-[WebsiteMonitor]
-enabled = false                 # Enable/disable website monitoring
-jobs_url = https://gengo.com/t/jobs/
-check_interval_min = 120        # Minimum seconds between checks
-check_interval_max = 300        # Maximum seconds between checks
-headless = true                 # Run browser in headless mode
-session_cookie =                # Your _gengo_session cookie value
-```
-
-### Troubleshooting
-- **Detection**: If you are being blocked, try increasing the check intervals or running with `headless = false` to debug.
-- **Cookie Expiry**: The `_gengo_session` cookie eventually expires. If the monitor redirects to the login page, you must update the cookie in your configuration.
-
----
-
-## ⌨️ Commands
-
-Type commands directly into the TUI and press `Enter` to execute them.
-
-| Command               | Aliases      | Description                                                 |
-| --------------------- | ------------ | ----------------------------------------------------------- |
-| `acceptstats`         |              | Display job acceptance statistics.                          |
-| `autoaccept`          |              | Toggle auto job acceptance on/off.                          |
-| `captchasetup`        |              | Interactive CAPTCHA solver configuration.                   |
-| `captchatest`         |              | Test CAPTCHA solving service connection and balance.        |
-| `captchastats`        |              | View CAPTCHA usage statistics and costs.                    |
-| `captchareset`        |              | Reset CAPTCHA configuration.                                |
-| `captchatoggle`       |              | Toggle CAPTCHA solving on/off.                              |
-| `check`               |              | Trigger an immediate RSS feed check.                        |
-| `clear`               |              | Clear the command output panel.                             |
-| `exit`                | `q`, `quit`  | Save the current state and exit the application.            |
-| `help`                |              | Display the list of available commands.                     |
-| `notifytest`          | `nt`         | Send a test notification to check sound and alerts.         |
-| `pause`               | `p`          | Pause feed checks. A `gengowatcher.pause` file is created.  |
-| `reloadconfig`        | `rl`         | Reload all settings from `config.ini`.                      |
-| `restart`             |              | Restart the entire script.                                  |
-| `resume`              | `r`          | Resume feed checks by deleting the pause file.              |
-| `setminreward <amt>`  | `smr <amt>`  | Set a minimum reward value (e.g., `smr 5.50`).              |
-| `setup-email`         |              | Configure Gmail OAuth for email monitoring.                 |
-| `toggleautoaccept`    | `taa`        | Toggle auto job acceptance on/off.                          |
-| `toggleemail`         | `te`         | Toggle email monitor on/off.                                |
-| `togglenotifications` | `tn`         | Toggle desktop notifications on or off.                     |
-| `togglesound`         | `ts`         | Toggle sound alerts on or off.                              |
-| `togglewebsite`       | `tweb`       | Toggle website monitor on/off.                              |
-| `togglewebsocket`     | `tw`         | Toggle WebSocket monitoring (requires restart).             |
-| `wstest [mode]`       | `wt`         | Test the watcher. `wt` checks the WebSocket connection. `wt notify` sends a test job. |
-
----
-
-## 🐛 Troubleshooting
-
-#### Terminal Flickering or Rendering Issues
-
-This application uses a Text-Based User Interface (TUI) which draws and redraws itself rapidly. Older terminals (like the default `cmd.exe` or `powershell.exe` on Windows) may struggle to keep up, causing flickering or graphical glitches.
-
-**Solution**: Use a modern, hardware-accelerated terminal for the best experience.
--   **Windows**: [**Windows Terminal**](https://aka.ms/terminal) (recommended, available on the Microsoft Store)
--   **macOS**: [**iTerm2**](https://iterm2.com/)
--   **Linux/Cross-Platform**: [**Alacritty**](https://alacritty.org/), [**Kitty**](https://sw.kovidgoyal.net/kitty/)
-
-#### WebSocket Connection Issues
-
-If you're experiencing WebSocket connection problems:
-1. Verify your user_id, user_session, and user_key match the values from your logged-in browser
-2. Check network connectivity
-3. Use `wstest` to diagnose connection issues
-4. Ensure your WebSocket headers match the expected format
-
-#### CAPTCHA Solving Issues
-
-If CAPTCHA solving isn't working:
-1. Verify your API key with `captchatest`
-2. Check your service balance
-3. Ensure you haven't exceeded rate limits
-4. Try resetting with `captchareset`
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+MIT

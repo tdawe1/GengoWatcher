@@ -1,5 +1,6 @@
 import configparser
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -130,6 +131,16 @@ class AppConfig:
             "headless": True,
             "session_cookie": "",
         },
+    }
+
+    ENV_VAR_OVERRIDES = {
+        ("WebSocket", "user_id"): "GENGO_USER_ID",
+        ("WebSocket", "user_session"): "GENGO_USER_SESSION",
+        ("WebSocket", "user_key"): "GENGO_USER_KEY",
+        ("WebServer", "auth_token"): "GENGOWATCHER_API_TOKEN",
+        ("EmailMonitor", "client_id"): "GMAIL_CLIENT_ID",
+        ("EmailMonitor", "client_secret"): "GMAIL_CLIENT_SECRET",
+        ("EmailMonitor", "refresh_token"): "GMAIL_REFRESH_TOKEN",
     }
 
     def __init__(self):
@@ -356,8 +367,18 @@ class AppConfig:
                     return fallback
                 raise
 
+    def _get_env_or_config(self, section: str, key: str, env_var: str) -> Any:
+        """Return the environment override for a key or fall back to config."""
+        env_value = os.environ.get(env_var)
+        if env_value is not None and env_value.strip():
+            return env_value
+        return self.config.get(section, {}).get(key)
+
     def get(self, section, key):
+        env_override = self.ENV_VAR_OVERRIDES.get((section, key))
         with self._lock:
+            if env_override:
+                return self._get_env_or_config(section, key, env_override)
             try:
                 return self.config[section][key]
             except KeyError:
