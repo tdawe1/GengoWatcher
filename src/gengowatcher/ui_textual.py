@@ -758,7 +758,7 @@ class JobsPanel(Static):
             )
             dt.cursor_type = "row"
         except NoMatches:
-            pass
+            pass  # Widget not mounted yet
         self.refresh_jobs()
 
     def compose(self) -> ComposeResult:
