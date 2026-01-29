@@ -121,6 +121,9 @@ async def test_config_preview_render_uses_constants():
         assert websocket_pos >= 0
         assert watcher_pos < websocket_pos
         
-        # Check that long values are truncated
-        assert "..." in result_str or len(result_str) > 0
+        # Check that long values are truncated to MAX_VALUE_LENGTH_SHORT + "..."
+        # The 30-character value should be truncated
+        assert "..." in result_str
+        # Verify the full 30-character value is not present
+        assert "x" * 30 not in result_str
 
