@@ -45,6 +45,8 @@ PLACEHOLDER_CONFIG_VALUES = {
     "REPLACE_WITH_YOUR_USER_KEY",
 }
 
+SENSITIVE_KEYWORDS = {"password", "session", "key"}
+
 
 class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
@@ -1287,11 +1289,7 @@ class GengoWatcher:
 
                 prompt = f"  {option} (current: {display_current}){desc_text}: "
 
-                is_sensitive = (
-                    "password" in option.lower()
-                    or "session" in option.lower()
-                    or "key" in option.lower()
-                )
+                is_sensitive = any(keyword in option.lower() for keyword in SENSITIVE_KEYWORDS)
 
                 if is_sensitive:
                     value = getpass.getpass(prompt)
