@@ -497,7 +497,11 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
     def refresh_jobs(self):
-        """Refresh jobs table with recent jobs from state."""
+        """
+        Refresh the jobs preview table from the current application state.
+        
+        Populates the jobs DataTable with up to 10 most recent jobs from state, showing a truncated job ID (first 8 chars), language pair, word count and formatted reward. If the state is unavailable the method returns immediately. If the table widget is not mounted yet, the method quietly does nothing.
+        """
         if not self.state:
             return
         try:
@@ -522,19 +526,41 @@ class JobsHourChart(DashboardQuadrant):
     MAX_BAR_WIDTH = 12  # Maximum bar width in characters
 
     def __init__(self, stats: "StatsManager | None" = None, **kwargs):
+        """
+        Initialise the Jobs/Hour chart panel with an optional statistics source.
+        
+        Parameters:
+        	stats (StatsManager | None): Optional StatsManager used to obtain hourly counts and peak hour; pass `None` to start with no data.
+        	**kwargs: Additional keyword arguments forwarded to the parent DashboardQuadrant initializer.
+        """
         super().__init__("Jobs/Hour", **kwargs)
         self.stats = stats
 
     def compose(self) -> ComposeResult:
+        """
+        Yield the chart content container for the jobs-per-hour panel.
+        
+        Returns:
+            ComposeResult: A single `Static` widget with id "chart-content" and class "chart-ascii" that serves as the chart rendering container.
+        """
         yield Static(id="chart-content", classes="chart-ascii")
 
     def on_mount(self):
+        """
+        Initialise the chart by rendering it once and scheduling periodic updates.
+        
+        Calls refresh_chart immediately to populate the chart content, then schedules refresh_chart to run every 30 seconds.
+        """
         self.refresh_chart()
         # Refresh chart every 30 seconds
         self.set_interval(30.0, self.refresh_chart)
 
     def refresh_chart(self):
-        """Refresh the chart with current hourly data."""
+        """
+        Refresh the jobs-per-hour chart panel.
+        
+        If the chart widget is mounted, generate the current chart text and replace the widget content; if the widget is not yet mounted the method does nothing.
+        """
         try:
             content = self.query_one("#chart-content", Static)
             chart_text = self._render_chart()
@@ -543,7 +569,14 @@ class JobsHourChart(DashboardQuadrant):
             pass  # Widget not mounted yet
 
     def _render_chart(self) -> Text:
-        """Render ASCII bar chart for hourly job distribution."""
+        """
+        Render an ASCII bar chart showing jobs aggregated into six 4-hour periods and highlight the peak period.
+        
+        The chart displays six labelled periods (00-03 … 20-23) with scaled block bars and counts; the period containing the peak hour is rendered with emphasis.
+        
+        Returns:
+            Text: A Rich Text object containing the rendered ASCII bar chart.
+        """
         text = Text()
 
         # Get hourly counts from stats or use empty data
@@ -776,6 +809,12 @@ class GengoWatcherApp(App):
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
+        """
+        Builds and yields the application's main UI layout: title bar, tabbed content (Dashboard, Jobs, Activity, Output, Charts, Stats), and the bottom input and footer.
+        
+        Returns:
+            ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
+        """
         yield TitleBar(config=self.config)
 
         # 2. Tabs
