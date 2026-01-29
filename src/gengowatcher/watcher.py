@@ -2,6 +2,7 @@ __version__ = "2.1.5"
 __release_date__ = "2025-06-22"
 
 import asyncio
+import concurrent.futures
 import csv
 import datetime
 import json
@@ -543,9 +544,19 @@ class GengoWatcher:
             f"Fetching RSS feed: {self.config.get('Watcher', 'feed_url')} with headers: {headers}"
         )
         try:
-            feed = feedparser.parse(
-                self.config.get("Watcher", "feed_url"), request_headers=headers
-            )
+            feed_url = self.config.get("Watcher", "feed_url")
+            # Wrap feedparser in thread with timeout to prevent blocking
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    feedparser.parse,
+                    feed_url,
+                    request_headers=headers,
+                )
+                try:
+                    feed = future.result(timeout=30)
+                except concurrent.futures.TimeoutError:
+                    self.logger.warning("RSS feed fetch timed out after 30 seconds")
+                    return None
             # Check HTTP status first (feedparser stores it in feed.status)
             http_status = getattr(feed, "status", None)
             if http_status == 429:
@@ -1289,7 +1300,9 @@ class GengoWatcher:
 
                 prompt = f"  {option} (current: {display_current}){desc_text}: "
 
-                is_sensitive = any(keyword in option.lower() for keyword in SENSITIVE_KEYWORDS)
+                is_sensitive = any(
+                    keyword in option.lower() for keyword in SENSITIVE_KEYWORDS
+                )
 
                 if is_sensitive:
                     value = getpass.getpass(prompt)
