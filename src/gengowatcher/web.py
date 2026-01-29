@@ -538,7 +538,16 @@ class WebAPI:
             else:
                 return {"status": "error", "message": f"Unknown command: {command}"}
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            # Log full details server-side, but return a generic error message
+            self.logger.exception(
+                f"Unexpected error executing watcher command '%s': %s",
+                command,
+                e,
+            )
+            return {
+                "status": "error",
+                "message": "Internal command execution error",
+            }
 
     async def broadcast_status_update(self):
         """Broadcast status update to all connected WebSocket clients."""
@@ -965,7 +974,12 @@ async def health_check():
             "timestamp": time.time(),
         }
     except Exception as e:
-        return {"status": "unhealthy", "detail": str(e), "timestamp": time.time()}
+        api_instance.logger.exception(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "detail": "Internal error",
+            "timestamp": time.time(),
+        }
 
 
 @app.get("/web/{path:path}")
