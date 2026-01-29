@@ -1,4 +1,5 @@
 import configparser
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -195,7 +196,7 @@ class AppConfig:
                     # Add missing sections
                     if not self._config_parser.has_section(section):
                         self._config_parser.add_section(section)
-                        print(f"Added missing config section: [{section}]")
+                        print(f"WARNING: Added missing config section: [{section}]")
                         config_modified = True
 
                     if section not in self.config:
@@ -237,7 +238,7 @@ class AppConfig:
                             self._config_parser.set(section, key, str(default_val))
                             self.config[section][key] = default_val
                             print(
-                                f"Added missing config option: [{section}]{key} = {default_val}"
+                                f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
                             )
                             config_modified = True
 
@@ -246,7 +247,9 @@ class AppConfig:
                     try:
                         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                             self._config_parser.write(f)
-                        print(f"Config file updated with missing sections/options")
+                        print(
+                            f"WARNING: Config file updated with missing sections/options"
+                        )
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 
@@ -272,11 +275,15 @@ class AppConfig:
                     else:
                         serialized = str(value)
                     self._config_parser.set(section, key, serialized)
-            try:
-                with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+        try:
+            with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
                     self._config_parser.write(f)
-            except IOError as e:
-                print(f"Error saving config: {e}")
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except IOError as e:
+            print(f"Error saving config: {e}")
 
     def list_all(self) -> Dict[str, Dict[str, Any]]:
         """Return all config values as a nested dictionary.
