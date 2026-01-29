@@ -789,6 +789,8 @@ class JobsPanel(Static):
                     elif " " in timestamp:
                         timestamp = timestamp.split(" ")[1][:8]
                     else:
+                        # Fallback: timestamp is assumed to already be a time-like string
+                        # (e.g. "12:34:56"); truncate to 8 chars to enforce "HH:MM:SS".
                         timestamp = timestamp[:8]
                 else:
                     timestamp = ""
