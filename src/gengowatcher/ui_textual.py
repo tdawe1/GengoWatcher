@@ -743,7 +743,7 @@ class SourcesBreakdown(DashboardQuadrant):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        yield Static("WS: 0%\nEmail: 0%\nWeb: 0%\nRSS: 0%", id="sources-content")
+        yield Static("WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%", id="sources-content")
 
     def refresh_sources(self):
         """Refresh sources breakdown with job source statistics."""
@@ -754,18 +754,24 @@ class SourcesBreakdown(DashboardQuadrant):
             total = len(jobs) if jobs else 1  # Avoid division by zero
 
             # Count jobs by source
-            ws_count = sum(1 for j in jobs if j.get("source") == "websocket")
-            email_count = sum(1 for j in jobs if j.get("source") == "email")
-            web_count = sum(1 for j in jobs if j.get("source") == "web")
-            rss_count = sum(1 for j in jobs if j.get("source") == "rss")
+            counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0}
+            for job in jobs:
+                bucket = _normalize_source(job.get("source"))
+                if bucket in counts:
+                    counts[bucket] += 1
 
             # Calculate percentages
-            ws_pct = (ws_count / total) * 100 if total > 0 else 0
-            email_pct = (email_count / total) * 100 if total > 0 else 0
-            web_pct = (web_count / total) * 100 if total > 0 else 0
-            rss_pct = (rss_count / total) * 100 if total > 0 else 0
+            ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
+            email_pct = (counts["email"] / total) * 100 if total > 0 else 0
+            website_pct = (counts["website"] / total) * 100 if total > 0 else 0
+            rss_pct = (counts["rss"] / total) * 100 if total > 0 else 0
 
-            content = f"WS: {ws_pct:.0f}%\nEmail: {email_pct:.0f}%\nWeb: {web_pct:.0f}%\nRSS: {rss_pct:.0f}%"
+            content = (
+                f"WS: {ws_pct:.0f}%\n"
+                f"Email: {email_pct:.0f}%\n"
+                f"Website: {website_pct:.0f}%\n"
+                f"RSS: {rss_pct:.0f}%"
+            )
             self.query_one("#sources-content", Static).update(content)
         except NoMatches:
             pass  # Widget not mounted yet
@@ -1223,27 +1229,22 @@ class TextualLogHandler(logging.Handler):
         except Exception:
             pass  # Logging failures should not crash the app
 
-    def write_log(self, msg: str, level: int = logging.INFO):
-        colored_text = self._colorize_message(msg, level)
-        # Write to dashboard activity log
+    def _write_to_log(self, widget_id: str, colored_text: Text) -> None:
         try:
-            log = self.app.query_one("#activity-log", RichLog)
+            log = self.app.query_one(widget_id, RichLog)
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
+
+    def write_log(self, msg: str, level: int = logging.INFO):
+        colored_text = self._colorize_message(msg, level)
+        # Write to dashboard activity log
+        self._write_to_log("#activity-log", colored_text)
         # Also write to full activity log tab
-        try:
-            log_full = self.app.query_one("#activity-log-full", RichLog)
-            log_full.write(colored_text)
-        except NoMatches:
-            pass  # Widget not mounted yet
+        self._write_to_log("#activity-log-full", colored_text)
         # Also write to output log for system output
         if level >= logging.WARNING:
-            try:
-                output_log = self.app.query_one("#output-log", RichLog)
-                output_log.write(colored_text)
-            except NoMatches:
-                pass  # Widget not mounted yet
+            self._write_to_log("#output-log", colored_text)
 
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""
