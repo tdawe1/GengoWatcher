@@ -835,7 +835,11 @@ class ChartsPanel(Static):
             value_text = self._render_value_trend()
             self.query_one("#chart-value", Static).update(value_text)
         except NoMatches:
-            pass
+            # Chart widgets may not be present yet (e.g., during initial layout);
+            # safely ignore missing targets when refreshing charts.
+            logging.getLogger(__name__).debug(
+                "ChartsPanel.refresh_charts: chart widgets not found; skipping update"
+            )
 
     def _render_hourly_chart(self) -> Text:
         """Render hourly job distribution chart."""
