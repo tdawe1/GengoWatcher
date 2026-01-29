@@ -80,7 +80,7 @@ def test_sources_breakdown_normalizes_sources():
     panel.refresh_sources()
 
     mock_static.update.assert_called_once_with(
-        "WS: 20%\nEmail: 20%\nWebsite: 20%\nRSS: 20%"
+        "WS: 20%\nEmail: 20%\nWebsite: 20%\nRSS: 20%\nUnknown: 20%"
     )
 
 
