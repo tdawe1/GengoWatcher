@@ -140,3 +140,76 @@ async def test_dashboard_contains_panels():
         assert config is not None
         assert metrics is not None
         assert status is not None
+
+
+@pytest.mark.asyncio
+async def test_hourly_activity_with_empty_data():
+    """Verify HourlyActivity handles empty data correctly (no misleading peak highlight)."""
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        from gengowatcher.ui_textual import HourlyActivity
+        from textual.widgets import Static
+
+        # Get the HourlyActivity widget
+        hourly = pilot.app.query_one(HourlyActivity)
+        assert hourly is not None
+
+        # Refresh with empty stats (no jobs recorded)
+        hourly.refresh_hourly()
+        await pilot.pause()
+
+        # Should show "No activity yet" instead of highlighting a false peak
+        content = hourly.query_one("#hourly-content", Static)
+        # Get the rendered text
+        text = str(content.render())
+        assert "No activity yet" in text
+
+
+@pytest.mark.asyncio
+async def test_hourly_activity_with_data():
+    """Verify HourlyActivity shows peak period when there's actual data."""
+    from gengowatcher.ui_textual import GengoWatcherApp, HourlyActivity
+    from gengowatcher.stats import StatsManager
+    from unittest.mock import MagicMock
+    import datetime
+    from unittest.mock import patch
+
+    # Create app with stats that has actual data
+    mock_watcher = MagicMock()
+    mock_watcher.start_time = 0
+    mock_watcher.get_monitor_status.return_value = {}
+
+    mock_config = MagicMock()
+    mock_state = MagicMock()
+    mock_state.get_recent_jobs.return_value = []
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stats_path = pathlib.Path(tmpdir) / "stats.json"
+        stats = StatsManager(stats_path=stats_path)
+
+        # Add jobs at specific hours using mock
+        with patch('gengowatcher.stats.datetime') as mock_datetime:
+            # Add 5 jobs at hour 14
+            mock_datetime.datetime.now.return_value = datetime.datetime(2024, 1, 1, 14, 0, 0)
+            for _ in range(5):
+                stats.record_job(10.0, "WebSocket", "JA→EN", accepted=True)
+
+        app = GengoWatcherApp(
+            watcher=mock_watcher,
+            config=mock_config,
+            state=mock_state,
+            stats=stats,
+        )
+
+        async with app.run_test() as pilot:
+            hourly = pilot.app.query_one(HourlyActivity)
+            hourly.refresh_hourly()
+            await pilot.pause()
+
+            # Should show peak period (12-15) with 5 jobs
+            from textual.widgets import Static
+            content = hourly.query_one("#hourly-content", Static)
+            text = str(content.render())
+            assert "12-15" in text  # Peak period containing hour 14
+            assert "5" in text  # 5 jobs
