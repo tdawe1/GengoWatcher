@@ -404,8 +404,10 @@ class GengoWatcher:
             "lang_pair": lang_pair,
             "word_count": word_count,
         }
+        job_added = False
         try:
             self.state.add_job(job_data)
+            job_added = True
         except Exception as e:
             self.logger.warning(f"Failed to store job in state: {e}")
 
@@ -442,37 +444,16 @@ class GengoWatcher:
         self.state.save_state()
 
         # Notify UI that a new job was added, but only if it was stored in state
-        job_in_state = self.job_in_state(job_id)
-
-        if self.on_job_added_callback and job_in_state:
+        if self.on_job_added_callback and job_added:
             try:
                 self.on_job_added_callback(job_data)
             except Exception as e:
                 self.logger.debug(f"Error in job added callback: {e}")
-        elif self.on_job_added_callback and not job_in_state:
+        elif self.on_job_added_callback and not job_added:
             # This can happen if storing the job in state failed earlier.
             self.logger.debug(
                 f"Skipping job added callback for job {job_id} because it was not stored in state"
             )
-
-    def job_in_state(self, job_id) -> bool:
-        """Return True if the job ID is present in the persisted state."""
-
-        try:
-            target_id = str(job_id)
-        except Exception:
-            return False
-
-        try:
-            jobs = self.state.get_recent_jobs(limit=AppState.MAX_STORED_JOBS)
-        except Exception as error:
-            self.logger.debug(f"Failed to load recent jobs for lookup: {error}")
-            return False
-
-        for job in jobs:
-            if str(job.get("id")) == target_id:
-                return True
-        return False
 
     def _normalize_meta(self, meta) -> dict:
         if meta is None or not hasattr(meta, "get"):
@@ -1212,12 +1193,14 @@ class GengoWatcher:
     def _run_rss_monitor(self):
         self.logger.debug("Starting RSS monitor thread.")
         self.logger.info("RSS monitor thread started.")
+        state_updated = False
         if not self.state.last_seen_rss_link:
             if self.state.last_seen_link:
                 self.state.last_seen_rss_link = self.state.last_seen_link
                 self.logger.debug(
                     "Migrated legacy last_seen_link value to last_seen_rss_link."
                 )
+                state_updated = True
             else:
                 self.rss_action = "Priming feed"
                 initial_feed = self.fetch_rss()
@@ -1226,7 +1209,9 @@ class GengoWatcher:
                     self.state.last_seen_rss_link = first_link
                     self.state.last_seen_link = first_link
                     self.logger.info("Initial RSS feed primed successfully.")
-        self.state.save_state()
+                    state_updated = True
+        if state_updated:
+            self.state.save_state()
 
         while not self.shutdown_event.is_set():
             is_paused = os.path.exists(self.PAUSE_FILE)

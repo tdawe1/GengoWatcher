@@ -220,14 +220,44 @@ def test_process_new_job_callback_order(watcher_instance):
     assert recorded_job_data[0] is callback.call_args[0][0]
 
 
-def test_job_in_state_uses_get_recent_jobs(watcher_instance):
-    """job_in_state should rely on the public AppState API."""
+def test_process_new_job_skips_callback_when_add_fails(watcher_instance):
+    """Callback should not run if add_job raises an exception."""
     w = watcher_instance
-    job_id = "abc123"
-    w.state.get_recent_jobs = MagicMock(return_value=[{"id": job_id}])
+    w.show_notification = MagicMock()
+    mock_callback = MagicMock()
+    w.on_job_added_callback = mock_callback
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.add_job = MagicMock(side_effect=Exception("boom"))
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
 
-    assert w.job_in_state(job_id)
-    w.state.get_recent_jobs.assert_called_once_with(limit=AppState.MAX_STORED_JOBS)
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
+
+    assert mock_callback.call_count == 0
+
+
+def test_rss_monitor_saves_state_on_migration_only(watcher_instance):
+    """save_state should only run when priming or migrating RSS state."""
+    w = watcher_instance
+    w.shutdown_event.set()
+
+    w.state.last_seen_rss_link = "https://gengo.com/t/jobs/details/1/"
+    w.state.last_seen_link = None
+    w.state.save_state = MagicMock()
+
+    w._run_rss_monitor()
+
+    w.state.save_state.assert_not_called()
+
+    w.shutdown_event.clear()
+    w.shutdown_event.set()
+
+    w.state.last_seen_rss_link = None
+    w.state.last_seen_link = "https://gengo.com/t/jobs/details/2/"
+
+    w._run_rss_monitor()
+
+    w.state.save_state.assert_called_once()
 
 
 def test_process_new_job_callback_exception_handling(watcher_instance):
