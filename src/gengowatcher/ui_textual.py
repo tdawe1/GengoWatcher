@@ -655,6 +655,28 @@ class ConfigPreview(DashboardQuadrant):
         "token",
     }
 
+    # Section display order for configuration
+    SECTION_ORDER = [
+        "Watcher",
+        "WebSocket",
+        "EmailMonitor",
+        "WebsiteMonitor",
+        "AutoAccept",
+        "HighValue",
+        "Cancellation",
+        "Network",
+        "Paths",
+        "Logging",
+        "DebugCategories",
+        "RateLimit",
+        "WebServer",
+    ]
+
+    # Layout constants for _render_config
+    SECTION_HEADER_WIDTH = 18
+    MAX_VALUE_LENGTH = 20
+    MAX_VALUE_LENGTH_SHORT = 17
+
     def __init__(self, config: "AppConfig", **kwargs):
         super().__init__("Configuration", **kwargs)
         self.config = config
@@ -706,24 +728,7 @@ class ConfigPreview(DashboardQuadrant):
         text = Text()
         all_config = self.config.list_all()
 
-        # Define section display order and which sections to show
-        section_order = [
-            "Watcher",
-            "WebSocket",
-            "EmailMonitor",
-            "WebsiteMonitor",
-            "AutoAccept",
-            "HighValue",
-            "Cancellation",
-            "Network",
-            "Paths",
-            "Logging",
-            "DebugCategories",
-            "RateLimit",
-            "WebServer",
-        ]
-
-        for section in section_order:
+        for section in self.SECTION_ORDER:
             if section not in all_config:
                 continue
             options = all_config[section]
@@ -732,15 +737,15 @@ class ConfigPreview(DashboardQuadrant):
 
             # Section header
             text.append(f"─ {section} ", style="bold #7E9CD8")
-            text.append("─" * max(1, 18 - len(section)), style="#727169")
+            text.append("─" * max(1, self.SECTION_HEADER_WIDTH - len(section)), style="#727169")
             text.append("\n")
 
             # Options
             for key, value in options.items():
                 formatted_value = self._format_value(key, value)
                 # Truncate long values
-                if len(formatted_value) > 20:
-                    formatted_value = formatted_value[:17] + "..."
+                if len(formatted_value) > self.MAX_VALUE_LENGTH:
+                    formatted_value = formatted_value[:self.MAX_VALUE_LENGTH_SHORT] + "..."
 
                 # Key styling
                 text.append(f"  {key}: ", style="#727169")
