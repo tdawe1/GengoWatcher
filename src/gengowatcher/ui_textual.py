@@ -910,7 +910,7 @@ class ChartsPanel(Static):
         # Calculate cumulative value over last N jobs
         cumulative = 0
         values = []
-        for job in reversed(jobs[-20:]):  # Last 20 jobs
+        for job in reversed(jobs[:20]):  # Last 20 jobs
             cumulative += job.get("reward", 0)
             values.append(cumulative)
 
