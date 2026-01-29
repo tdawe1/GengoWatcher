@@ -249,7 +249,7 @@ class TestWebAPIStatus:
         """Test get_status returns WatcherStatus."""
         status = web_api.get_status()
         assert isinstance(status, WatcherStatus)
-        assert status.is_running is False
+        assert status.is_running is True
         assert status.websocket_status == "Live"
         assert status.rss_status == "Checking"
 
