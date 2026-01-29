@@ -9,6 +9,7 @@ import logging
 import re
 import time
 from collections import deque
+from typing import Any, ClassVar, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -176,17 +177,20 @@ class TitleBar(Static):
             pass  # Widget not mounted yet
 
         # Session timer
-        app = self.app
-        watcher = getattr(app, "watcher", None)
-        if watcher:
-            elapsed = int(time.time() - watcher.start_time)
-            h, m = divmod(elapsed // 60, 60)
-            try:
-                self.query_one("#session-timer", Static).update(
-                    f"Session: {h}h {m:02d}m"
-                )
-            except NoMatches:
-                pass  # Widget not mounted yet
+        try:
+            app = self.app
+            watcher = getattr(app, "watcher", None)
+            if watcher:
+                elapsed = int(time.time() - watcher.start_time)
+                h, m = divmod(elapsed // 60, 60)
+                try:
+                    self.query_one("#session-timer", Static).update(
+                        f"Session: {h}h {m:02d}m"
+                    )
+                except NoMatches:
+                    pass  # Widget not mounted yet
+        except Exception:
+            pass  # app might not be ready
 
 
 class MetricCard(Static):
@@ -236,24 +240,31 @@ class MetricsRow(Horizontal):
     def refresh_metrics(self) -> None:
         if not self.state:
             return
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total_value = sum(j.get("reward", 0) for j in jobs)
+        try:
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total_value = sum(j.get("reward", 0) for j in jobs)
 
-        # Rate calculation using session duration
-        session_start = getattr(self.state, "session_start", None)
-        if session_start:
-            elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
-        else:
-            elapsed_hours = 1.0  # Default to 1 hour if no session start
-        rate = found / elapsed_hours
+            # Rate calculation using session duration
+            session_start = getattr(self.state, "session_start", None)
+            if session_start:
+                elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
+            else:
+                elapsed_hours = 1.0  # Default to 1 hour if no session start
+            rate = found / elapsed_hours
 
-        self.query_one("#card-found", MetricCard).update_value(str(found))
-        self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
-        self.query_one("#card-value", MetricCard).update_value(f"${total_value:.2f}")
-        self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
-        self.query_one("#card-today", MetricCard).update_value(f"${total_value:.2f}")
+            self.query_one("#card-found", MetricCard).update_value(str(found))
+            self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
+            self.query_one("#card-value", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+            self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
+            self.query_one("#card-today", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+        except NoMatches:
+            pass
 
 
 class StatusIndicator(Static):
@@ -641,7 +652,7 @@ class ConfigPreview(DashboardQuadrant):
     """Configuration preview showing all config.ini options."""
 
     # Keys that should be masked for security
-    SENSITIVE_KEYS = {
+    SENSITIVE_KEYS: ClassVar[set[str]] = {
         "user_session",
         "user_key",
         "client_id",
@@ -653,7 +664,30 @@ class ConfigPreview(DashboardQuadrant):
         "password",
         "secret",
         "token",
+        "api_key",
     }
+
+    # Section display order for configuration
+    SECTION_ORDER: ClassVar[list[str]] = [
+        "Watcher",
+        "WebSocket",
+        "EmailMonitor",
+        "WebsiteMonitor",
+        "AutoAccept",
+        "HighValue",
+        "Cancellation",
+        "Network",
+        "Paths",
+        "Logging",
+        "DebugCategories",
+        "RateLimit",
+        "WebServer",
+    ]
+
+    # Layout constants for _render_config
+    SECTION_HEADER_WIDTH = 18
+    MAX_VALUE_LENGTH = 20
+    MAX_VALUE_LENGTH_SHORT = 17
 
     def __init__(self, config: "AppConfig", **kwargs):
         super().__init__("Configuration", **kwargs)
@@ -675,55 +709,57 @@ class ConfigPreview(DashboardQuadrant):
             config_text = self._render_config()
             content.update(config_text)
         except NoMatches:
-            pass
+            logging.getLogger(__name__).debug(
+                "ConfigPreview.refresh_config: '#config-content' widget not found; skipping update."
+            )
 
     def _is_sensitive(self, key: str) -> bool:
         """Check if a key contains sensitive information."""
         key_lower = key.lower()
         return any(s in key_lower for s in self.SENSITIVE_KEYS)
 
-    def _mask_value(self, value: str) -> str:
+    def _mask_value(self, value: object) -> str:
         """Mask a sensitive value, showing only first/last chars."""
-        if not value or len(str(value)) < 4:
+        if not value or len(str(value)) <= 4:
             return "****"
         val_str = str(value)
         return f"{val_str[:2]}...{val_str[-2:]}"
 
     def _format_value(self, key: str, value) -> str:
-        """Format a config value for display."""
+        """Format a config value for display.
+
+        Only None or empty string render as em dash. Numeric zero is preserved.
+        """
         if self._is_sensitive(key) and value:
             return self._mask_value(value)
         if isinstance(value, bool):
             return "✓" if value else "✗"
         if isinstance(value, list):
+            if not value:
+                return "—"
             return ", ".join(str(v) for v in value)
         if isinstance(value, float):
             return f"{value:.2f}" if value != int(value) else str(int(value))
-        return str(value) if value else "—"
+        if value is None or value == "":
+            return "—"
+        return str(value)
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
         text = Text()
-        all_config = self.config.list_all()
+        config = getattr(self, "config", None)
+        list_all = getattr(config, "list_all", None)
+        if not callable(list_all):
+            # Gracefully handle cases where config is a mock or non-AppConfig without list_all()
+            return text
+        all_config = cast(dict[str, dict[str, Any]], list_all())
 
-        # Define section display order and which sections to show
-        section_order = [
-            "Watcher",
-            "WebSocket",
-            "EmailMonitor",
-            "WebsiteMonitor",
-            "AutoAccept",
-            "HighValue",
-            "Cancellation",
-            "Network",
-            "Paths",
-            "Logging",
-            "DebugCategories",
-            "RateLimit",
-            "WebServer",
+        # Render known sections first in preferred order, then any additional sections
+        sections_to_render = list(self.SECTION_ORDER) + [
+            s for s in all_config if s not in self.SECTION_ORDER
         ]
 
-        for section in section_order:
+        for section in sections_to_render:
             if section not in all_config:
                 continue
             options = all_config[section]
@@ -732,26 +768,30 @@ class ConfigPreview(DashboardQuadrant):
 
             # Section header
             text.append(f"─ {section} ", style="bold #7E9CD8")
-            text.append("─" * max(1, 18 - len(section)), style="#727169")
+            text.append(
+                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)), style="#727169"
+            )
             text.append("\n")
 
             # Options
             for key, value in options.items():
                 formatted_value = self._format_value(key, value)
                 # Truncate long values
-                if len(formatted_value) > 20:
-                    formatted_value = formatted_value[:17] + "..."
+                if len(formatted_value) > self.MAX_VALUE_LENGTH:
+                    formatted_value = (
+                        formatted_value[: self.MAX_VALUE_LENGTH_SHORT] + "..."
+                    )
 
                 # Key styling
                 text.append(f"  {key}: ", style="#727169")
 
                 # Value styling based on type/content
-                if isinstance(value, bool):
+                if self._is_sensitive(key):
+                    text.append(formatted_value, style="#957FB8")
+                elif isinstance(value, bool):
                     text.append(
                         formatted_value, style="#98BB6C" if value else "#C34043"
                     )
-                elif self._is_sensitive(key):
-                    text.append(formatted_value, style="#957FB8")
                 elif isinstance(value, (int, float)):
                     text.append(formatted_value, style="#D27E99")
                 else:
@@ -779,17 +819,20 @@ class SessionStats(DashboardQuadrant):
     def refresh_stats(self):
         if not self.watcher or not self.state:
             return
-        elapsed = int(time.time() - self.watcher.start_time)
-        h, m = divmod(elapsed // 60, 60)
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total = sum(j.get("reward", 0) for j in jobs)
+        try:
+            elapsed = int(time.time() - self.watcher.start_time)
+            h, m = divmod(elapsed // 60, 60)
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total = sum(j.get("reward", 0) for j in jobs)
 
-        self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
-        self.query_one("#stat-found", Static).update(f"Found: {found}")
-        self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
-        self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+            self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
+            self.query_one("#stat-found", Static).update(f"Found: {found}")
+            self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
+            self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+        except NoMatches:
+            pass
 
 
 class SourcesBreakdown(DashboardQuadrant):
@@ -931,8 +974,7 @@ class GengoWatcherApp(App):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
                         yield HourlyActivity(stats=self.stats)
-                        yield ConfigPreview()  # Keep as bottom-right per doc
-                        yield JobsHourChart(stats=self.stats)
+                        yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
                     yield ActivityPreview()
@@ -1086,4 +1128,3 @@ class TextualLogHandler(logging.Handler):
             text.stylize(self.COLORS["bracket"], start, end)
 
         return text
-
