@@ -524,6 +524,10 @@ class HourlyActivity(DashboardQuadrant):
     def compose(self) -> ComposeResult:
         yield Static("No activity data", id="hourly-content")
 
+    def on_mount(self) -> None:
+        """Initialize widget with current data."""
+        self.refresh_hourly()
+
     def refresh_hourly(self):
         """Refresh hourly activity display."""
         if not self.stats:
@@ -543,7 +547,6 @@ class HourlyActivity(DashboardQuadrant):
                 content = f"Peak: {peak_period}\nJobs: {int(peak_rate)}"
             else:
                 # No activity - don't highlight any period
-                peak_hour = -1  # Set to -1 to indicate no peak
                 content = "No activity yet"
             
             self.query_one("#hourly-content", Static).update(content)
