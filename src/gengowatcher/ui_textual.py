@@ -758,7 +758,7 @@ class JobsPanel(Static):
             )
             dt.cursor_type = "row"
         except NoMatches:
-            pass
+            pass  # Widget not mounted yet
         self.refresh_jobs()
 
     def compose(self) -> ComposeResult:
@@ -780,14 +780,18 @@ class JobsPanel(Static):
                 source = job.get("source", "unknown")
                 status = "✓" if job.get("accepted", False) else "○"
                 timestamp = job.get("timestamp", job.get("found_at", ""))
-                if timestamp:
+                if isinstance(timestamp, (int, float)):
+                    timestamp = datetime.datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
+                elif isinstance(timestamp, str):
                     # Extract just the time portion if it's a full timestamp
-                    if "T" in str(timestamp):
-                        timestamp = str(timestamp).split("T")[1][:8]
-                    elif " " in str(timestamp):
-                        timestamp = str(timestamp).split(" ")[1][:8]
+                    if "T" in timestamp:
+                        timestamp = timestamp.split("T")[1][:8]
+                    elif " " in timestamp:
+                        timestamp = timestamp.split(" ")[1][:8]
                     else:
-                        timestamp = str(timestamp)[:8]
+                        timestamp = timestamp[:8]
+                else:
+                    timestamp = ""
                 dt.add_row(job_id, pair, words, reward, source, status, timestamp)
         except NoMatches:
             pass  # Widget not mounted yet
@@ -906,7 +910,7 @@ class ChartsPanel(Static):
         # Calculate cumulative value over last N jobs
         cumulative = 0
         values = []
-        for job in reversed(jobs[-20:]):  # Last 20 jobs
+        for job in reversed(jobs[:20]):  # Last 20 jobs
             cumulative += job.get("reward", 0)
             values.append(cumulative)
 
@@ -965,22 +969,21 @@ class GengoWatcherApp(App):
 
     def _refresh_all_panels(self):
         """Refresh all data panels when a new job is detected."""
-        try:
-            # Dashboard widgets
-            self.query_one(MetricsRow).refresh_metrics()
-            self.query_one(JobsPreview).refresh_jobs()
-            self.query_one(JobsHourChart).refresh_chart()
-            self.query_one(SessionStats).refresh_stats()
-        except NoMatches:
-            pass
-
-        try:
-            # Tab panels
-            self.query_one(JobsPanel).refresh_jobs()
-            self.query_one(ChartsPanel).refresh_charts()
-            self.query_one(StatsPanel).refresh_stats()
-        except NoMatches:
-            pass
+        widgets_to_refresh = [
+            (MetricsRow, "refresh_metrics"),
+            (JobsPreview, "refresh_jobs"),
+            (JobsHourChart, "refresh_chart"),
+            (SessionStats, "refresh_stats"),
+            (JobsPanel, "refresh_jobs"),
+            (ChartsPanel, "refresh_charts"),
+            (StatsPanel, "refresh_stats"),
+        ]
+        for widget_class, method_name in widgets_to_refresh:
+            try:
+                widget = self.query_one(widget_class)
+                getattr(widget, method_name)()
+            except NoMatches:
+                pass
 
     def _setup_logging(self):
         handler = TextualLogHandler(self)
