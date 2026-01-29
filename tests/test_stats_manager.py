@@ -120,10 +120,10 @@ class TestStatsManagerMultipleJobs:
             manager.record_job(20.0, "Email", "JA→EN", accepted=True)
             manager.record_job(25.0, "Web", "EN→JA", accepted=True)
 
-            assert manager.by_source.rss == 1
+            # "RSS" and "Web" sources are both counted under the `website` bucket
             assert manager.by_source.websocket == 1
             assert manager.by_source.email == 1
-            assert manager.by_source.web == 1
+            assert manager.by_source.website == 2
 
     def test_record_jobs_different_languages(self):
         """Test recording jobs with different language pairs."""
