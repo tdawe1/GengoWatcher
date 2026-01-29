@@ -249,6 +249,7 @@ async def test_hourly_activity_with_data():
             assert "5" in text  # 5 jobs
 
 
+@pytest.mark.asyncio
 async def test_dashboard_contains_chart():
     """Verify Dashboard contains chart widget."""
     app = create_mock_app()
