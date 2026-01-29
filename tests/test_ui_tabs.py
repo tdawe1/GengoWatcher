@@ -220,9 +220,11 @@ async def test_hourly_activity_with_data():
         stats = StatsManager(stats_path=stats_path)
 
         # Add jobs at specific hours using mock
-        with patch('gengowatcher.stats.datetime') as mock_datetime:
+        with patch("gengowatcher.stats.datetime") as mock_datetime:
             # Add 5 jobs at hour 14
-            mock_datetime.datetime.now.return_value = datetime.datetime(2024, 1, 1, 14, 0, 0)
+            mock_datetime.datetime.now.return_value = datetime.datetime(
+                2024, 1, 1, 14, 0, 0
+            )
             for _ in range(5):
                 stats.record_job(10.0, "WebSocket", "JA→EN", accepted=True)
 
@@ -240,18 +242,21 @@ async def test_hourly_activity_with_data():
 
             # Should show peak period (12-15) with 5 jobs
             from textual.widgets import Static
+
             content = hourly.query_one("#hourly-content", Static)
             text = str(content.render())
             assert "12-15" in text  # Peak period containing hour 14
             assert "5" in text  # 5 jobs
+
+
 async def test_dashboard_contains_chart():
     """Verify Dashboard contains chart widget."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from gengowatcher.ui_textual import JobsHourChart
+        from gengowatcher.ui_textual import HourlyActivity
 
-        chart = pilot.app.query_one(JobsHourChart)
+        chart = pilot.app.query_one(HourlyActivity)
         assert chart is not None
 
 
@@ -413,14 +418,14 @@ async def test_dashboard_quadrants_exist():
     async with app.run_test() as pilot:
         from gengowatcher.ui_textual import (
             JobsPreview,
-            JobsHourChart,
+            HourlyActivity,
             ConfigPreview,
             SessionStats,
         )
 
         # All four quadrants should exist
         jobs_preview = pilot.app.query_one(JobsPreview)
-        chart = pilot.app.query_one(JobsHourChart)
+        chart = pilot.app.query_one(HourlyActivity)
         config = pilot.app.query_one(ConfigPreview)
         session = pilot.app.query_one(SessionStats)
 

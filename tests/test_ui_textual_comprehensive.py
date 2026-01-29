@@ -16,7 +16,7 @@ from gengowatcher.ui_textual import (
     StatusRow,
     ActivityPreview,
     JobsPreview,
-    JobsHourChart,
+    HourlyActivity,
     ConfigPreview,
     SessionStats as SessionStatsWidget,
     SourcesBreakdown,
@@ -373,41 +373,44 @@ class TestJobsPreview:
         preview.refresh_jobs()
 
 
-class TestJobsHourChart:
-    """Test JobsHourChart widget."""
+class TestHourlyActivity:
+    """Test HourlyActivity widget."""
 
-    def test_chart_initialization(self, mock_stats):
-        """Test chart initialization."""
-        chart = JobsHourChart(stats=mock_stats)
+    def test_hourly_activity_initialization(self, mock_stats):
+        """Test HourlyActivity initialization."""
+        chart = HourlyActivity(stats=mock_stats)
         assert chart.stats == mock_stats
         assert chart.border_title == "Jobs/Hour"
 
-    def test_chart_constants(self):
-        """Test chart constants are defined."""
-        assert hasattr(JobsHourChart, "BAR_CHARS")
-        assert hasattr(JobsHourChart, "MAX_BAR_WIDTH")
-        assert JobsHourChart.MAX_BAR_WIDTH > 0
+    @pytest.mark.asyncio
+    async def test_hourly_activity_refresh(self, mock_stats):
+        """Test HourlyActivity refresh with stats data."""
+        from textual.app import App
 
-    def test_render_chart_with_stats(self, mock_stats):
-        """Test chart rendering with stats data."""
-        chart = JobsHourChart(stats=mock_stats)
-        text = chart._render_chart()
-        assert text is not None
+        class TestApp(App):
+            def compose(self):
+                yield HourlyActivity(stats=mock_stats)
 
-    def test_render_chart_without_stats(self):
-        """Test chart rendering without stats."""
-        chart = JobsHourChart(stats=None)
-        text = chart._render_chart()
-        assert text is not None
+        app = TestApp()
+        async with app.run_test() as pilot:
+            chart = app.query_one(HourlyActivity)
+            chart.refresh_hourly()
+            await pilot.pause(0.1)
 
-    def test_render_chart_empty_data(self):
-        """Test chart with empty hourly data."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            stats_path = pathlib.Path(tmpdir) / "stats.json"
-            stats = StatsManager(stats_path=stats_path)
-            chart = JobsHourChart(stats=stats)
-            text = chart._render_chart()
-            assert text is not None
+    @pytest.mark.asyncio
+    async def test_hourly_activity_without_stats(self):
+        """Test HourlyActivity without stats."""
+        from textual.app import App
+
+        class TestApp(App):
+            def compose(self):
+                yield HourlyActivity(stats=None)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            chart = app.query_one(HourlyActivity)
+            chart.refresh_hourly()
+            await pilot.pause(0.1)
 
 
 class TestConfigPreview:
@@ -589,7 +592,9 @@ class TestGengoWatcherApp:
     """Test main GengoWatcherApp."""
 
     @pytest.mark.asyncio
-    async def test_app_initialization(self, mock_config, mock_state, mock_watcher, mock_stats):
+    async def test_app_initialization(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
         """Test app initialization."""
         app = GengoWatcherApp(
             config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
@@ -600,7 +605,9 @@ class TestGengoWatcherApp:
         assert app.stats == mock_stats
 
     @pytest.mark.asyncio
-    async def test_app_has_bindings(self, mock_config, mock_state, mock_watcher, mock_stats):
+    async def test_app_has_bindings(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
         """Test that app has key bindings."""
         app = GengoWatcherApp(
             config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats

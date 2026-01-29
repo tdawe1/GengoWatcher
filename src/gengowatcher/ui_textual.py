@@ -745,7 +745,9 @@ class ConfigPreview(DashboardQuadrant):
 
             # Section header
             text.append(f"─ {section} ", style="bold #7E9CD8")
-            text.append("─" * max(1, self.SECTION_HEADER_WIDTH - len(section)), style="#727169")
+            text.append(
+                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)), style="#727169"
+            )
             text.append("\n")
 
             # Options
@@ -753,7 +755,9 @@ class ConfigPreview(DashboardQuadrant):
                 formatted_value = self._format_value(key, value)
                 # Truncate long values
                 if len(formatted_value) > self.MAX_VALUE_LENGTH:
-                    formatted_value = formatted_value[:self.MAX_VALUE_LENGTH_SHORT] + "..."
+                    formatted_value = (
+                        formatted_value[: self.MAX_VALUE_LENGTH_SHORT] + "..."
+                    )
 
                 # Key styling
                 text.append(f"  {key}: ", style="#727169")
@@ -944,8 +948,7 @@ class GengoWatcherApp(App):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
                         yield HourlyActivity(stats=self.stats)
-                        yield ConfigPreview()  # Keep as bottom-right per doc
-                        yield JobsHourChart(stats=self.stats)
+                        yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
                     yield ActivityPreview()
@@ -1099,4 +1102,3 @@ class TextualLogHandler(logging.Handler):
             text.stylize(self.COLORS["bracket"], start, end)
 
         return text
-
