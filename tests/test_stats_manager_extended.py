@@ -328,8 +328,9 @@ class TestStatsManagerEdgeCases:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(999999.99, "RSS", "JA→EN", accepted=False)
+            manager.record_job(999999.99, "Website", "JA→EN", accepted=True)
 
+            assert manager.session.total_value == 999999.99
             assert manager.all_time.total_value == 999999.99
 
     def test_record_job_empty_language_pair(self):
