@@ -66,4 +66,7 @@ def test_stats_manager_accepted_vs_total():
         assert manager.all_time.total_jobs_accepted == 3
         # Check that total_value only includes accepted jobs (10 + 15 + 25 = 50)
         assert manager.all_time.total_value == 50.0
+        # Check that avg_job_value is calculated correctly (50 / 3 = 16.666...)
+        assert abs(manager.all_time.avg_job_value - 16.666666666666668) < 0.001
+
 
