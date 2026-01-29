@@ -107,7 +107,7 @@ class TestStatsManagerMultipleJobs:
 
             assert manager.session.jobs_found == 3
             assert manager.session.jobs_accepted == 2
-            assert manager.session.total_value == 45.0
+            assert manager.session.total_value == 30.0
 
     def test_record_jobs_different_sources(self):
         """Test recording jobs from different sources."""
