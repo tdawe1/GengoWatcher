@@ -65,23 +65,23 @@ BAR_CHARS = " ▁▂▃▄▅▆▇█"
 def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
     """
     Render a bar chart using fractional block characters.
-    
+
     Args:
         values: List of numeric values to display
         width: Width of the chart in characters
         height: Height of the chart in lines
-        
+
     Returns:
         String representation of the chart with newlines
     """
     if not values or width <= 0 or height <= 0:
         return ""
-    
+
     # Normalize values to fit within the height
     max_val = max(values) if values else 1.0
     if max_val == 0:
         max_val = 1.0
-    
+
     # Resample values to fit width if needed
     if len(values) > width:
         # Downsample by averaging buckets
@@ -96,12 +96,12 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
     elif len(values) < width:
         # Pad with zeros on the right
         values = list(values) + [0.0] * (width - len(values))
-    
+
     # Normalize to chart height (using fractional blocks)
     # Each position can be 0 to (height * 8) where 8 is the number of fractional states
     max_units = height * 8
     normalized = [(v / max_val) * max_units for v in values]
-    
+
     # Build chart from top to bottom
     lines = []
     for row in range(height - 1, -1, -1):
@@ -111,7 +111,7 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
             # row represents height from bottom (0 = bottom row, height-1 = top row)
             units_at_col = col_val
             units_needed_for_row = row * 8
-            
+
             if units_at_col > units_needed_for_row + 8:
                 # Full block for this row
                 line += BAR_CHARS[-1]  # █
@@ -123,7 +123,7 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
                 # Empty for this row
                 line += BAR_CHARS[0]  # space
         lines.append(line)
-    
+
     return "\n".join(lines)
 
 
@@ -578,7 +578,7 @@ class JobsPreview(DashboardQuadrant):
     def refresh_jobs(self):
         """
         Refresh the jobs preview table from the current application state.
-        
+
         Populates the jobs DataTable with up to 10 most recent jobs from state, showing a truncated job ID (first 8 chars), language pair, word count and formatted reward. If the state is unavailable the method returns immediately. If the table widget is not mounted yet, the method quietly does nothing.
         """
         if not self.state:
@@ -618,7 +618,7 @@ class HourlyActivity(DashboardQuadrant):
         try:
             # Get peak hour info - unpacking both values as per fix
             peak_hour, peak_rate = self.stats.get_peak_hour()
-            
+
             # FIX: Only treat as valid peak if peak_rate > 0
             # This prevents highlighting "12-15" period with zero activity
             if peak_rate > 0:
@@ -626,25 +626,139 @@ class HourlyActivity(DashboardQuadrant):
                 peak_period_start = (peak_hour // 3) * 3
                 peak_period_end = peak_period_start + 3
                 peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
-                
+
                 content = f"Peak: {peak_period}\nJobs: {int(peak_rate)}"
             else:
                 # No activity - don't highlight any period
                 content = "No activity yet"
-            
+
             self.query_one("#hourly-content", Static).update(content)
         except Exception:
             pass  # Widget not mounted yet
 
 
 class ConfigPreview(DashboardQuadrant):
-    def __init__(self, **kwargs):
+    """Configuration preview showing all config.ini options."""
+
+    # Keys that should be masked for security
+    SENSITIVE_KEYS = {
+        "user_session",
+        "user_key",
+        "client_id",
+        "client_secret",
+        "refresh_token",
+        "access_token",
+        "auth_token",
+        "session_cookie",
+        "password",
+        "secret",
+        "token",
+    }
+
+    def __init__(self, config: "AppConfig", **kwargs):
         super().__init__("Configuration", **kwargs)
+        self.config = config
 
     def compose(self) -> ComposeResult:
-        # This panel is now redundant if config is in TitleBar,
-        # but user might want detailed config here.
-        yield Static("Languages: JA↔EN\nCheck Interval: 60s")
+        yield Static(id="config-content", classes="config-display")
+
+    def on_mount(self):
+        """Populate config display on mount."""
+        self.refresh_config()
+
+    def refresh_config(self):
+        """Refresh the configuration display."""
+        if not self.config:
+            return
+        try:
+            content = self.query_one("#config-content", Static)
+            config_text = self._render_config()
+            content.update(config_text)
+        except NoMatches:
+            pass
+
+    def _is_sensitive(self, key: str) -> bool:
+        """Check if a key contains sensitive information."""
+        key_lower = key.lower()
+        return any(s in key_lower for s in self.SENSITIVE_KEYS)
+
+    def _mask_value(self, value: str) -> str:
+        """Mask a sensitive value, showing only first/last chars."""
+        if not value or len(str(value)) < 4:
+            return "****"
+        val_str = str(value)
+        return f"{val_str[:2]}...{val_str[-2:]}"
+
+    def _format_value(self, key: str, value) -> str:
+        """Format a config value for display."""
+        if self._is_sensitive(key) and value:
+            return self._mask_value(value)
+        if isinstance(value, bool):
+            return "✓" if value else "✗"
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value)
+        if isinstance(value, float):
+            return f"{value:.2f}" if value != int(value) else str(int(value))
+        return str(value) if value else "—"
+
+    def _render_config(self) -> Text:
+        """Render all config sections and options."""
+        text = Text()
+        all_config = self.config.list_all()
+
+        # Define section display order and which sections to show
+        section_order = [
+            "Watcher",
+            "WebSocket",
+            "EmailMonitor",
+            "WebsiteMonitor",
+            "AutoAccept",
+            "HighValue",
+            "Cancellation",
+            "Network",
+            "Paths",
+            "Logging",
+            "DebugCategories",
+            "RateLimit",
+            "WebServer",
+        ]
+
+        for section in section_order:
+            if section not in all_config:
+                continue
+            options = all_config[section]
+            if not options:
+                continue
+
+            # Section header
+            text.append(f"─ {section} ", style="bold #7E9CD8")
+            text.append("─" * max(1, 18 - len(section)), style="#727169")
+            text.append("\n")
+
+            # Options
+            for key, value in options.items():
+                formatted_value = self._format_value(key, value)
+                # Truncate long values
+                if len(formatted_value) > 20:
+                    formatted_value = formatted_value[:17] + "..."
+
+                # Key styling
+                text.append(f"  {key}: ", style="#727169")
+
+                # Value styling based on type/content
+                if isinstance(value, bool):
+                    text.append(
+                        formatted_value, style="#98BB6C" if value else "#C34043"
+                    )
+                elif self._is_sensitive(key):
+                    text.append(formatted_value, style="#957FB8")
+                elif isinstance(value, (int, float)):
+                    text.append(formatted_value, style="#D27E99")
+                else:
+                    text.append(formatted_value, style="#DCD7BA")
+                text.append("\n")
+
+        return text
 
 
 class SessionStats(DashboardQuadrant):
@@ -800,7 +914,7 @@ class GengoWatcherApp(App):
         # 1. Title Bar
         """
         Builds and yields the application's main UI layout: title bar, tabbed content (Dashboard, Jobs, Activity, Output, Charts, Stats), and the bottom input and footer.
-        
+
         Returns:
             ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
         """
@@ -818,6 +932,7 @@ class GengoWatcherApp(App):
                         yield JobsPreview(state=self.state)
                         yield HourlyActivity(stats=self.stats)
                         yield ConfigPreview()  # Keep as bottom-right per doc
+                        yield JobsHourChart(stats=self.stats)
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
                     yield ActivityPreview()
@@ -971,3 +1086,4 @@ class TextualLogHandler(logging.Handler):
             text.stylize(self.COLORS["bracket"], start, end)
 
         return text
+
