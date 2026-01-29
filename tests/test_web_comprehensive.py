@@ -6,7 +6,6 @@ import json
 import tempfile
 import pathlib
 from unittest.mock import MagicMock, patch, AsyncMock
-from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
 from gengowatcher.web import (
