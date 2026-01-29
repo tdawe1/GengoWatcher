@@ -16,8 +16,6 @@ from gengowatcher.web import (
     ConfigSection,
     CommandRequest,
     PaginationParams,
-    app,
-    authenticator,
 )
 from gengowatcher.config import AppConfig
 from gengowatcher.state import AppState
