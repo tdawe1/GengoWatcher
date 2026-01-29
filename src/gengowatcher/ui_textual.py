@@ -179,7 +179,7 @@ class TitleBar(Static):
             self.query_one("#clock", Static).update(now.strftime("%H:%M:%S"))
         except NoMatches:
             logging.getLogger(__name__).debug(
-                "SourcesBreakdown.refresh_sources: widget not mounted yet"
+                "TitleBar.update_clock: widget not mounted yet"
             )
 
         # Session timer
@@ -224,7 +224,7 @@ class MetricCard(Static):
             self.query_one(f"#val-{self.label.lower()}", Static).update(value)
         except NoMatches:
             logging.getLogger(__name__).debug(
-                "StatsPanel.refresh_stats: stats widgets not mounted yet"
+                "MetricCard.update_value: metric value widget not mounted yet"
             )
 
 
@@ -757,10 +757,7 @@ class SourcesBreakdown(DashboardQuadrant):
             counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0, "unknown": 0}
             for job in jobs:
                 bucket = _normalize_source(job.get("source"))
-                if bucket in counts:
-                    counts[bucket] += 1
-                else:
-                    counts["unknown"] += 1
+                counts[bucket] += 1
 
             # Calculate percentages
             ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0

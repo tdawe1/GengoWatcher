@@ -428,12 +428,26 @@ class GengoWatcher:
 
         self.state.save_state()
 
-        # Notify UI that a new job was added
-        if self.on_job_added_callback:
+        # Notify UI that a new job was added, but only if it was stored in state
+        job_in_state = False
+        try:
+            jobs_attr = getattr(self.state, "jobs", None)
+            if isinstance(jobs_attr, dict):
+                job_in_state = job_id in jobs_attr or str(job_id) in jobs_attr
+        except Exception as e:
+            self.logger.debug(f"Error while verifying job presence in state: {e}")
+            job_in_state = False
+
+        if self.on_job_added_callback and job_in_state:
             try:
                 self.on_job_added_callback(job_data)
             except Exception as e:
                 self.logger.debug(f"Error in job added callback: {e}")
+        elif self.on_job_added_callback and not job_in_state:
+            # This can happen if storing the job in state failed earlier.
+            self.logger.debug(
+                f"Skipping job added callback for job {job_id} because it was not stored in state"
+            )
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
