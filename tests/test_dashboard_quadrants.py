@@ -4,7 +4,12 @@ import pytest
 from unittest.mock import MagicMock
 from textual.app import App, ComposeResult
 
-from gengowatcher.ui_textual import ActivityPreview, JobsPreview, ConfigPreview
+from gengowatcher.ui_textual import (
+    ActivityPreview,
+    JobsPreview,
+    ConfigPreview,
+    JobsPanel,
+)
 
 
 class ActivityPreviewTestApp(App):
@@ -30,7 +35,15 @@ class ConfigPreviewTestApp(App):
         yield ConfigPreview(self._config)
 
 
-@pytest.mark.asyncio
+class JobsPanelTestApp(App):
+    def __init__(self, state):
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield JobsPanel(self._state)
+
+
 async def test_activity_preview_has_log():
     """ActivityPreview should have a RichLog widget."""
     app = ActivityPreviewTestApp()
@@ -246,7 +259,12 @@ async def test_config_preview_truncates_long_values():
         {
             "Paths": {"feed_url": "https://example.com/very/long/path/to/resource"},
         }
-    )
+    )src/gengowatcher/ui_textual.py (1)
+
+    914-954: Remove unused SourcesBreakdown class.
+
+    This widget is defined but never instantiated or yielded. The sources breakdown functionality has been migrated to ChartsPanel._render_sources_chart (lines 1086, 1119). Delete the class entirely.
+
 
     app = ConfigPreviewTestApp(config)
     async with app.run_test() as pilot:
