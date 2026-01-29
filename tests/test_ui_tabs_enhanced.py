@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock
 import tempfile
 import pathlib
+from textual.css.query import NoMatches
 
 
 def create_mock_app():
@@ -113,7 +114,7 @@ async def test_jobs_tab_contains_table():
         try:
             jobs_table = pilot.app.query_one("#jobs-table-full", DataTable)
             assert jobs_table is not None
-        except:
+        except NoMatches:
             tables = list(pilot.app.query(DataTable))
             assert len(tables) > 0
 
@@ -133,7 +134,7 @@ async def test_activity_tab_contains_log():
         try:
             activity_log = pilot.app.query_one("#activity-log-full", RichLog)
             assert activity_log is not None
-        except:
+        except NoMatches:
             logs = list(pilot.app.query(RichLog))
             assert len(logs) > 0
 
