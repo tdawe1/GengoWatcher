@@ -20,8 +20,8 @@ class SessionStats:
     total_value: float = 0.0
 
     @property
-    def duration_seconds(self) -> int:
-        return int(time.time() - self.start_time)
+    def duration_seconds(self) -> float:
+        return time.time() - self.start_time
 
     @property
     def rate_per_hour(self) -> float:
@@ -51,10 +51,11 @@ class SourceStats:
     websocket: int = 0
     email: int = 0
     website: int = 0
+    rss: int = 0
 
     @property
     def total(self) -> int:
-        return self.websocket + self.email + self.website
+        return self.websocket + self.email + self.website + self.rss
 
     def percentages(self) -> Dict[str, float]:
         total = max(self.total, 1)
@@ -62,6 +63,7 @@ class SourceStats:
             "websocket": self.websocket / total * 100,
             "email": self.email / total * 100,
             "website": self.website / total * 100,
+            "rss": self.rss / total * 100,
         }
 
 
@@ -116,6 +118,8 @@ class StatsManager:
                 "daily_counts": dict(self.daily_counts),
                 "daily_earnings": dict(self.daily_earnings),
             }
+            if not self._stats_path.parent.exists():
+                self._stats_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._stats_path, "w") as f:
                 json.dump(data, f, indent=2)
 
@@ -128,14 +132,13 @@ class StatsManager:
 
             # Session stats
             self.session.jobs_found += 1
+            self.session.total_value += reward
             if accepted:
                 self.session.jobs_accepted += 1
-                self.session.total_value += reward
 
             # All-time stats
             self.all_time.total_jobs += 1
-            if accepted:
-                self.all_time.total_value += reward
+            self.all_time.total_value += reward
 
             # Source stats
             source_lower = source.lower()
@@ -145,6 +148,8 @@ class StatsManager:
                 self.by_source.email += 1
             elif "web" in source_lower:
                 self.by_source.website += 1
+            elif "rss" in source_lower:
+                self.by_source.rss += 1
 
             # Language stats
             self.by_language[lang_pair] += 1
@@ -171,15 +176,15 @@ class StatsManager:
         """Return (hour, rate) for peak activity."""
         if not self.hourly_counts:
             return (12, 0.0)
-        peak_hour = max(self.hourly_counts, key=self.hourly_counts.get)
-        return (peak_hour, self.hourly_counts[peak_hour])
+        peak_hour = max(self.hourly_counts, key=lambda k: self.hourly_counts[k])
+        return (peak_hour, float(self.hourly_counts[peak_hour]))
 
     def get_slowest_hour(self) -> tuple[int, float]:
         """Return (hour, rate) for slowest activity."""
         if not self.hourly_counts:
             return (4, 0.0)
-        slow_hour = min(self.hourly_counts, key=self.hourly_counts.get)
-        return (slow_hour, self.hourly_counts[slow_hour])
+        slow_hour = min(self.hourly_counts, key=lambda k: self.hourly_counts[k])
+        return (slow_hour, float(self.hourly_counts[slow_hour]))
 
     def get_recent_earnings(self, days: int = 7) -> Dict[str, float]:
         """Get earnings for the last N days."""
