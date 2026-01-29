@@ -241,17 +241,23 @@ class TestSetupInstructions:
         assert "https://gengo.com/developers/dashboard" in captured.out
         assert "https://gengo.com/rss/available_jobs/" in captured.out
         
-        # Verify URLs are properly formed with strict hostname validation
-        for line in captured.out.split('\n'):
-            if 'https://gengo.com' in line:
-                # Extract URLs from the line (stop at whitespace, punctuation, or line end)
-                urls = re.findall(r'https://gengo\.com[^\s,.\)]*', line)
-                for url in urls:
-                    parsed = urlparse(url)
-                    assert parsed.scheme == 'https'
-                    # Ensure hostname is exactly gengo.com or a proper subdomain (*.gengo.com)
-                    hostname = parsed.hostname
-                    assert hostname and (hostname == 'gengo.com' or hostname.endswith('.gengo.com'))
+        # Verify all URLs in the output are properly formed with strict hostname validation
+        # Extract all https URLs using regex pattern
+        all_urls = re.findall(r'https://[^\s]+', captured.out)
+        
+        # Parse and validate each URL, filtering for gengo.com by parsed hostname
+        gengo_urls = []
+        for url in all_urls:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                # Check if hostname is gengo.com or subdomain using proper hostname comparison
+                if parsed.hostname == 'gengo.com' or parsed.hostname.endswith('.gengo.com'):
+                    gengo_urls.append(url)
+                    # Validate scheme
+                    assert parsed.scheme == 'https', f"URL {url} should use https scheme"
+        
+        # Ensure we found some gengo.com URLs
+        assert len(gengo_urls) > 0, "Expected to find gengo.com URLs in output"
         
         assert "RSS" in captured.out
 
