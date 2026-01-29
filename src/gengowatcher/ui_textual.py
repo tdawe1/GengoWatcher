@@ -634,18 +634,37 @@ class ConfigPreview(DashboardQuadrant):
     }
 
     def __init__(self, config: "AppConfig", **kwargs):
+        """
+        Initialise the ConfigPreview panel with the provided application configuration.
+        
+        Parameters:
+            config (AppConfig): The application configuration used to render and mask displayed values.
+            **kwargs: Additional keyword arguments forwarded to the parent DashboardQuadrant initializer.
+        """
         super().__init__("Configuration", **kwargs)
         self.config = config
 
     def compose(self) -> ComposeResult:
+        """
+        Provide the Static container that hosts the rendered configuration preview.
+        
+        Returns:
+        	ComposeResult: A generator yielding a single Static widget with id "config-content" and class "config-display".
+        """
         yield Static(id="config-content", classes="config-display")
 
     def on_mount(self):
-        """Populate config display on mount."""
+        """
+        Initialise the config preview so it displays the current configuration when the widget is mounted.
+        """
         self.refresh_config()
 
     def refresh_config(self):
-        """Refresh the configuration display."""
+        """
+        Update the on-screen configuration preview from the stored AppConfig.
+        
+        If no config is available this method does nothing. If the config display widget is not mounted or cannot be found, the method returns silently.
+        """
         if not self.config:
             return
         try:
@@ -656,19 +675,47 @@ class ConfigPreview(DashboardQuadrant):
             pass
 
     def _is_sensitive(self, key: str) -> bool:
-        """Check if a key contains sensitive information."""
+        """
+        Return whether the given configuration key name indicates sensitive data.
+        
+        Returns:
+            True if the key name matches any configured sensitive keywords, False otherwise.
+        """
         key_lower = key.lower()
         return any(s in key_lower for s in self.SENSITIVE_KEYS)
 
     def _mask_value(self, value: str) -> str:
-        """Mask a sensitive value, showing only first/last chars."""
+        """
+        Produce a masked representation of a sensitive string, exposing only the first two and last two characters.
+        
+        Parameters:
+            value (str): The value to mask.
+        
+        Returns:
+            str: The masked value showing the first two and last two characters separated by ellipses (e.g. `ab...yz`), or `"****"` if the input is empty or shorter than four characters.
+        """
         if not value or len(str(value)) < 4:
             return "****"
         val_str = str(value)
         return f"{val_str[:2]}...{val_str[-2:]}"
 
     def _format_value(self, key: str, value) -> str:
-        """Format a config value for display."""
+        """
+        Format a configuration value for display in the UI.
+        
+        Parameters:
+            key (str): Configuration option name; used to determine if the value is sensitive and should be masked.
+            value: The configuration value to format; may be any type.
+        
+        Returns:
+            str: A display-ready string:
+                - Masked sensitive values (if present).
+                - "✓" or "✗" for booleans.
+                - Comma-separated string for lists.
+                - Floats shown with two decimal places unless they are whole numbers (then shown as an integer).
+                - String representation for other truthy values.
+                - "—" for empty or falsy values (None, empty string, empty list, etc.).
+        """
         if self._is_sensitive(key) and value:
             return self._mask_value(value)
         if isinstance(value, bool):
@@ -680,7 +727,14 @@ class ConfigPreview(DashboardQuadrant):
         return str(value) if value else "—"
 
     def _render_config(self) -> Text:
-        """Render all config sections and options."""
+        """
+        Render a styled, masked representation of selected configuration sections for display.
+        
+        This builds a Rich Text object containing each configured section (in a fixed display order) and its options. Sensitive keys are masked, very long formatted values are truncated to 20 characters, empty sections are omitted, and values are styled differently for booleans, numeric types and general text.
+        
+        Returns:
+            Text: Rich Text containing the rendered, styled configuration view ready for display.
+        """
         text = Text()
         all_config = self.config.list_all()
 
@@ -890,6 +944,11 @@ class GengoWatcherApp(App):
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
+        """
+        Build and yield the application's primary UI structure including the title bar, tabbed views (Dashboard, Jobs, Activity, Output, Charts, Stats), and bottom input/footer.
+        
+        Yields a ComposeResult of Textual widgets that form the main application layout: a TitleBar, a TabbedContent containing the Dashboard (with MetricsRow, StatusRow, a 2×2 dashboard grid of JobsPreview, JobsHourChart, ConfigPreview, SessionStats, and an ActivityPreview) plus additional tab panes, followed by the command Input and Footer.
+        """
         yield TitleBar(config=self.config)
 
         # 2. Tabs
