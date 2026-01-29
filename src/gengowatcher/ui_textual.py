@@ -715,12 +715,17 @@ class ConfigPreview(DashboardQuadrant):
         return f"{val_str[:2]}...{val_str[-2:]}"
 
     def _format_value(self, key: str, value) -> str:
-        """Format a config value for display."""
+        """Format a config value for display.
+
+        Empty or falsy values (None, empty string, empty list) render as em dash.
+        """
         if self._is_sensitive(key) and value:
             return self._mask_value(value)
         if isinstance(value, bool):
             return "✓" if value else "✗"
         if isinstance(value, list):
+            if not value:
+                return "—"
             return ", ".join(str(v) for v in value)
         if isinstance(value, float):
             return f"{value:.2f}" if value != int(value) else str(int(value))
@@ -738,7 +743,12 @@ class ConfigPreview(DashboardQuadrant):
             return text
         all_config = cast(dict[str, dict[str, Any]], list_all())
 
-        for section in self.SECTION_ORDER:
+        # Render known sections first in preferred order, then any additional sections
+        sections_to_render = list(self.SECTION_ORDER) + [
+            s for s in all_config if s not in self.SECTION_ORDER
+        ]
+
+        for section in sections_to_render:
             if section not in all_config:
                 continue
             options = all_config[section]
