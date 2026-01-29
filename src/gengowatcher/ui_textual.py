@@ -587,9 +587,6 @@ class JobsHourChart(DashboardQuadrant):
             hourly = {}
             peak_hour = -1
 
-        # Find max value for scaling
-        max_count = max(hourly.values()) if hourly else 1
-
         # Show 6 time periods (4-hour blocks) to fit in quadrant
         periods = [
             ("00-03", range(0, 4)),
@@ -599,10 +596,14 @@ class JobsHourChart(DashboardQuadrant):
             ("16-19", range(16, 20)),
             ("20-23", range(20, 24)),
         ]
+        period_counts = [
+            (label, hours, sum(hourly.get(h, 0) for h in hours))
+            for label, hours in periods
+        ]
+        # Find max value for scaling (use period totals)
+        max_count = max((count for _, _, count in period_counts), default=1)
 
-        for label, hours in periods:
-            # Sum jobs in this period
-            period_count = sum(hourly.get(h, 0) for h in hours)
+        for label, hours, period_count in period_counts:
             # Check if peak hour is in this period
             is_peak = peak_hour in hours
 
