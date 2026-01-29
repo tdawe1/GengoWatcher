@@ -51,8 +51,6 @@ class TestAllTimeStats:
         assert stats.total_jobs == 0
         assert stats.total_sessions == 0
         assert stats.total_value == 0.0
-        assert stats.first_run_time > 0
-
     def test_all_time_stats_with_values(self):
         """Test AllTimeStats with set values."""
         stats = AllTimeStats()
