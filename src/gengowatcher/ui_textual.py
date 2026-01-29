@@ -605,7 +605,7 @@ class ChartPlaceholder(DashboardQuadrant):
             except NoMatches:
                 pass
             return
-        
+
         try:
             jobs = self.state.get_recent_jobs(limit=1000)
             if not jobs:
@@ -613,23 +613,12 @@ class ChartPlaceholder(DashboardQuadrant):
                     "\n    (No jobs yet)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────"
                 )
                 return
-            
-            # Count jobs per hour for the last 24 hours
-            from collections import defaultdict
-            hourly_counts = defaultdict(int)
-            current_hour = int(time.time() / 3600)
-            
-            for job in jobs:
-                # Assuming jobs have a timestamp or we can estimate from recent activity
-                # For now, distribute recent jobs across the last 24 hours
-                # This is a simplified implementation - could be enhanced with actual timestamps
-                pass
-            
+
             # For demo purposes, generate sample data based on job count
             # In a real implementation, this would use actual hourly timestamps
             num_hours = min(24, len(jobs))
             jobs_per_hour = [len(jobs) / max(num_hours, 1)] * 20
-            
+
             # Generate chart
             chart_text = _render_chart(jobs_per_hour, width=20, height=4)
             self.query_one("#chart-display", Static).update(chart_text)
