@@ -216,6 +216,8 @@ class TestMetricsRow:
         """Test metrics calculation logic."""
         mock_state.session_start = time.time() - 7200  # 2 hours ago
         row = MetricsRow(state=mock_state)
+        # Exercise MetricsRow's metric refresh logic
+        row.refresh_metrics()
 
         jobs = mock_state.get_recent_jobs(limit=1000)
         found = len(jobs)
@@ -264,6 +266,7 @@ class TestStatusIndicator:
         initial_index = indicator._pulse_index
         # Pulse tick shouldn't change anything in idle state
         indicator._pulse_tick()
+        assert indicator._pulse_index == initial_index
 
 
 class TestStatusRow:

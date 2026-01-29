@@ -92,7 +92,7 @@ class TestConfigValidation:
         with patch("scripts.test_high_value_setup.AppConfig", return_value=mock_config):
             from scripts.test_high_value_setup import test_configuration
 
-            result = test_configuration()
+            test_configuration()
             captured = capsys.readouterr()
             assert "RSS feed URL needs configuration" in captured.out
 
@@ -189,7 +189,7 @@ class TestHighValueManager:
         with patch("scripts.test_high_value_setup.AppConfig", return_value=mock_config):
             from scripts.test_high_value_setup import test_high_value_manager
 
-            result = await test_high_value_manager()
+            await test_high_value_manager()
             captured = capsys.readouterr()
 
             # Verify that different job values are classified
@@ -337,7 +337,7 @@ class TestEdgeCases:
         with patch("scripts.test_high_value_setup.AppConfig", return_value=mock_config):
             from scripts.test_high_value_setup import test_configuration
 
-            result = test_configuration()
+            test_configuration()
             captured = capsys.readouterr()
             assert "WebSocket needs configuration" in captured.out
 
