@@ -1089,13 +1089,6 @@ class GengoWatcher:
                     self.logger.info("Initial RSS feed primed successfully.")
         self.state.save_state()
 
-        # Notify UI that a new job was added
-        if self.on_job_added_callback:
-            try:
-                self.on_job_added_callback(job_data)
-            except Exception as e:
-                self.logger.debug(f"Error in job added callback: {e}")
-
         while not self.shutdown_event.is_set():
             is_paused = os.path.exists(self.PAUSE_FILE)
             time_to_next_check = self.next_check_time - time.time()
