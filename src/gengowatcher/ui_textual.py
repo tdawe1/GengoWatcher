@@ -567,7 +567,11 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
     def refresh_jobs(self):
-        """Refresh jobs table with recent jobs from state."""
+        """
+        Refresh the jobs preview table from the current application state.
+        
+        Populates the jobs DataTable with up to 10 most recent jobs from state, showing a truncated job ID (first 8 chars), language pair, word count and formatted reward. If the state is unavailable the method returns immediately. If the table widget is not mounted yet, the method quietly does nothing.
+        """
         if not self.state:
             return
         try:
@@ -584,6 +588,135 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
 
+class JobsHourChart(DashboardQuadrant):
+    """ASCII bar chart showing jobs per hour distribution."""
+
+    # Bar characters for different fill levels
+    BAR_CHARS = "▏▎▍▌▋▊▉█"
+    MAX_BAR_WIDTH = 12  # Maximum bar width in characters
+
+    def __init__(self, stats: "StatsManager | None" = None, **kwargs):
+        """
+        Initialise the Jobs/Hour chart panel with an optional statistics source.
+        
+        Parameters:
+        	stats (StatsManager | None): Optional StatsManager used to obtain hourly counts and peak hour; pass `None` to start with no data.
+        	**kwargs: Additional keyword arguments forwarded to the parent DashboardQuadrant initializer.
+        """
+        super().__init__("Jobs/Hour", **kwargs)
+        self.stats = stats
+
+    def compose(self) -> ComposeResult:
+        """
+        Yield the chart content container for the jobs-per-hour panel.
+        
+        Returns:
+            ComposeResult: A single `Static` widget with id "chart-content" and class "chart-ascii" that serves as the chart rendering container.
+        """
+        yield Static(id="chart-content", classes="chart-ascii")
+
+    def on_mount(self):
+        """
+        Initialise the chart by rendering it once and scheduling periodic updates.
+        
+        Calls refresh_chart immediately to populate the chart content, then schedules refresh_chart to run every 30 seconds.
+        """
+        self.refresh_chart()
+        # Refresh chart every 30 seconds
+        self.set_interval(30.0, self.refresh_chart)
+
+    def refresh_chart(self):
+        """
+        Refresh the jobs-per-hour chart panel.
+        
+        If the chart widget is mounted, generate the current chart text and replace the widget content; if the widget is not yet mounted the method does nothing.
+        """
+        try:
+            content = self.query_one("#chart-content", Static)
+            chart_text = self._render_chart()
+            content.update(chart_text)
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+    def _render_chart(self) -> Text:
+        """
+        Render an ASCII bar chart showing jobs aggregated into six 4-hour periods and highlight the peak period.
+        
+        The chart displays six labelled periods (00-03 … 20-23) with scaled block bars and counts; the period containing the peak hour is rendered with emphasis.
+        
+        Returns:
+            Text: A Rich Text object containing the rendered ASCII bar chart.
+        """
+        text = Text()
+
+        # Get hourly counts from stats or use empty data
+        if self.stats:
+            hourly = dict(self.stats.hourly_counts)
+            peak_hour, _ = self.stats.get_peak_hour()
+        else:
+            hourly = {}
+            peak_hour = -1
+
+        # Show 6 time periods (4-hour blocks) to fit in quadrant
+        periods = [
+            ("00-03", range(0, 4)),
+            ("04-07", range(4, 8)),
+            ("08-11", range(8, 12)),
+            ("12-15", range(12, 16)),
+            ("16-19", range(16, 20)),
+            ("20-23", range(20, 24)),
+        ]
+        period_counts = [
+            (label, hours, sum(hourly.get(h, 0) for h in hours))
+            for label, hours in periods
+        ]
+        # Find max value for scaling (use period totals)
+        max_count = max((count for _, _, count in period_counts), default=1)
+
+        for label, hours, period_count in period_counts:
+            # Check if peak hour is in this period
+            is_peak = peak_hour in hours
+
+            # Calculate bar width
+            if max_count > 0:
+                bar_width = int((period_count / max_count) * self.MAX_BAR_WIDTH)
+            else:
+                bar_width = 0
+
+            # Build the bar
+            full_blocks = bar_width
+            bar = "█" * full_blocks
+
+            # Pad to consistent width
+            bar_padded = bar.ljust(self.MAX_BAR_WIDTH, "░")
+
+            # Format: "00-03 ████████░░░░ 12"
+            count_str = f"{period_count:3d}" if period_count > 0 else "  0"
+
+            # Add label
+            text.append(f"{label} ", style="#737c73")  # Dragon Gray
+
+            # Add bar with appropriate color
+            if is_peak and period_count > 0:
+                text.append(bar_padded, style="bold #8ba4b0")  # Dragon Blue (peak)
+            elif period_count > 0:
+                text.append(bar_padded, style="#8a9a7b")  # Dragon Green
+            else:
+                text.append(bar_padded, style="#393836")  # Dragon Black 5 (empty)
+
+            # Add count
+            if is_peak and period_count > 0:
+                text.append(f" {count_str}", style="bold #8ba4b0")
+            else:
+                text.append(f" {count_str}", style="#737c73")
+
+            text.append("\n")
+
+        return text
+
+
+# Keep for backwards compatibility
+ChartPlaceholder = JobsHourChart
 class ChartPlaceholder(DashboardQuadrant):
     """Bar chart showing jobs per hour activity."""
     
@@ -787,6 +920,12 @@ class GengoWatcherApp(App):
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
+        """
+        Builds and yields the application's main UI layout: title bar, tabbed content (Dashboard, Jobs, Activity, Output, Charts, Stats), and the bottom input and footer.
+        
+        Returns:
+            ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
+        """
         yield TitleBar(config=self.config)
 
         # 2. Tabs
