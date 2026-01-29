@@ -616,13 +616,127 @@ ChartPlaceholder = JobsHourChart
 
 
 class ConfigPreview(DashboardQuadrant):
-    def __init__(self, **kwargs):
+    """Configuration preview showing all config.ini options."""
+
+    # Keys that should be masked for security
+    SENSITIVE_KEYS = {
+        "user_session",
+        "user_key",
+        "client_id",
+        "client_secret",
+        "refresh_token",
+        "access_token",
+        "auth_token",
+        "session_cookie",
+        "password",
+        "secret",
+        "token",
+    }
+
+    def __init__(self, config: "AppConfig", **kwargs):
         super().__init__("Configuration", **kwargs)
+        self.config = config
 
     def compose(self) -> ComposeResult:
-        # This panel is now redundant if config is in TitleBar,
-        # but user might want detailed config here.
-        yield Static("Languages: JA↔EN\nCheck Interval: 60s")
+        yield Static(id="config-content", classes="config-display")
+
+    def on_mount(self):
+        """Populate config display on mount."""
+        self.refresh_config()
+
+    def refresh_config(self):
+        """Refresh the configuration display."""
+        if not self.config:
+            return
+        try:
+            content = self.query_one("#config-content", Static)
+            config_text = self._render_config()
+            content.update(config_text)
+        except NoMatches:
+            pass
+
+    def _is_sensitive(self, key: str) -> bool:
+        """Check if a key contains sensitive information."""
+        key_lower = key.lower()
+        return any(s in key_lower for s in self.SENSITIVE_KEYS)
+
+    def _mask_value(self, value: str) -> str:
+        """Mask a sensitive value, showing only first/last chars."""
+        if not value or len(str(value)) < 4:
+            return "****"
+        val_str = str(value)
+        return f"{val_str[:2]}...{val_str[-2:]}"
+
+    def _format_value(self, key: str, value) -> str:
+        """Format a config value for display."""
+        if self._is_sensitive(key) and value:
+            return self._mask_value(value)
+        if isinstance(value, bool):
+            return "✓" if value else "✗"
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value)
+        if isinstance(value, float):
+            return f"{value:.2f}" if value != int(value) else str(int(value))
+        return str(value) if value else "—"
+
+    def _render_config(self) -> Text:
+        """Render all config sections and options."""
+        text = Text()
+        all_config = self.config.list_all()
+
+        # Define section display order and which sections to show
+        section_order = [
+            "Watcher",
+            "WebSocket",
+            "EmailMonitor",
+            "WebsiteMonitor",
+            "AutoAccept",
+            "HighValue",
+            "Cancellation",
+            "Network",
+            "Paths",
+            "Logging",
+            "DebugCategories",
+            "RateLimit",
+            "WebServer",
+        ]
+
+        for section in section_order:
+            if section not in all_config:
+                continue
+            options = all_config[section]
+            if not options:
+                continue
+
+            # Section header
+            text.append(f"─ {section} ", style="bold #7E9CD8")
+            text.append("─" * max(1, 18 - len(section)), style="#727169")
+            text.append("\n")
+
+            # Options
+            for key, value in options.items():
+                formatted_value = self._format_value(key, value)
+                # Truncate long values
+                if len(formatted_value) > 20:
+                    formatted_value = formatted_value[:17] + "..."
+
+                # Key styling
+                text.append(f"  {key}: ", style="#727169")
+
+                # Value styling based on type/content
+                if isinstance(value, bool):
+                    text.append(
+                        formatted_value, style="#98BB6C" if value else "#C34043"
+                    )
+                elif self._is_sensitive(key):
+                    text.append(formatted_value, style="#957FB8")
+                elif isinstance(value, (int, float)):
+                    text.append(formatted_value, style="#D27E99")
+                else:
+                    text.append(formatted_value, style="#DCD7BA")
+                text.append("\n")
+
+        return text
 
 
 class SessionStats(DashboardQuadrant):
@@ -789,7 +903,7 @@ class GengoWatcherApp(App):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
                         yield JobsHourChart(stats=self.stats)
-                        yield ConfigPreview()  # Keep as bottom-right per doc
+                        yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
                     yield ActivityPreview()
