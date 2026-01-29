@@ -865,20 +865,19 @@ class ChartsPanel(Static):
         jobs = self.state.get_recent_jobs(limit=1000)
         total = len(jobs) if jobs else 1
 
-        sources = {"websocket": 0, "email": 0, "web": 0, "rss": 0, "unknown": 0}
+        sources = {"WebSocket": 0, "email": 0, "website": 0, "RSS": 0, "unknown": 0}
         for job in jobs:
             src = job.get("source", "unknown")
-            if src in sources:
-                sources[src] += 1
-            else:
-                sources["unknown"] += 1
+            if src not in sources:
+                src = "unknown"
+            sources[src] += 1
 
         max_count = max(sources.values()) if sources else 1
         colors = {
-            "websocket": "#957FB8",
+            "WebSocket": "#957FB8",
             "email": "#FFA066",
-            "web": "#7E9CD8",
-            "rss": "#7AA89F",
+            "website": "#7E9CD8",
+            "RSS": "#7AA89F",
             "unknown": "#727169",
         }
 
