@@ -442,22 +442,9 @@ class TestConfigPreview:
             await pilot.pause(0.1)
             # Config should be displayed
 
-    SENSITIVE_KEYS = {
-        "user_session",
-        "user_key",
-        "api_key",
-        "client_id",
-        "client_secret",
-        "refresh_token",
-        "access_token",
-        "auth_token",
-        "session_cookie",
-        "password",
-        "secret",
-        "token",
-    }
-
-        # Test masking
+    def test_config_preview_masks_sensitive_data(self, mock_config):
+        """Test masking behaviour for sensitive values."""
+        preview = ConfigPreview(config=mock_config)
         masked = preview._mask_value("supersecrettoken123")
         assert "su" in masked
         assert "23" in masked
