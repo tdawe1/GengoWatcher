@@ -584,13 +584,13 @@ class JobsPreview(DashboardQuadrant):
         yield DataTable(id="jobs-table")
 
     def on_mount(self):
+        """Initialize table columns and start periodic refresh."""
+        self.set_interval(2.0, self.refresh_jobs)
         try:
             dt = self.query_one(DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$")
         except NoMatches:
             pass  # Widget not mounted yet
-        # Start periodic jobs refresh
-        self.set_interval(2.0, self.refresh_jobs)
 
     def refresh_jobs(self):
         """
