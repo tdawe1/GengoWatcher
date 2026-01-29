@@ -42,7 +42,7 @@ class AllTimeStats:
 
     @property
     def avg_job_value(self) -> float:
-        return self.total_value / max(self.total_jobs, 1)
+        return self.total_value / max(self.total_jobs_accepted, 1)
 
 
 @dataclass
