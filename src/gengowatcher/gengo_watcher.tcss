@@ -1,17 +1,20 @@
-/* Kanagawa Theme Colors (Corrected Palette) */
-$surface: #1F1F28;          /* Sumi Ink 1 */
-$surface-lighten-1: #2A2A37; /* Sumi Ink 2 */
-$text: #DCD7BA;             /* Fuji White */
-$text-muted: #727169;       /* Fuji Gray */
+/* Kanagawa Dragon Theme Colors */
+/* Dragon variant - darker, more muted tones */
+$surface: #181616;            /* Dragon Black 3 - main background */
+$surface-highlight: #282727;  /* Dragon Black 4 - subtle highlight */
+$surface-muted: #393836;      /* Dragon Black 5 - borders */
+$text: #c5c9c5;               /* Dragon White */
+$text-muted: #737c73;         /* Dragon Gray (muted) */
 
-/* Accents */
-$accent-blue: #7E9CD8;      /* Crystal Blue */
-$accent-green: #98BB6C;     /* Spring Green */
-$accent-red: #C34043;       /* Samurai Red */
-$accent-orange: #FFA066;    /* Surimi Orange */
-$accent-yellow: #E6C384;    /* Carp Yellow */
-$accent-violet: #957FB8;    /* Oni Violet */
-$accent-aqua: #7AA89F;      /* Wave Aqua 1 */
+/* Dragon Accents - more muted than Wave */
+$accent-blue: #8ba4b0;        /* Dragon Blue */
+$accent-green: #8a9a7b;       /* Dragon Green */
+$accent-red: #c4746e;         /* Dragon Red */
+$accent-orange: #b6927b;      /* Dragon Orange */
+$accent-yellow: #c4b28a;      /* Dragon Yellow */
+$accent-violet: #8992a7;      /* Dragon Violet (Ash) */
+$accent-aqua: #8ea4a2;        /* Dragon Aqua */
+$accent-pink: #a292a3;        /* Dragon Pink */
 
 Screen {
     background: $surface;
@@ -22,14 +25,14 @@ Screen {
    Layout Components
    ============================================================================ */
 
-/* Title Bar */
+/* Title Bar - seamless, no box */
 TitleBar {
     height: 3;
-    background: $surface-lighten-1;
-    border-bottom: solid $surface;
+    background: $surface;
     dock: top;
     layout: vertical;
     align: center middle;
+    border: none;
 }
 
 .brand {
@@ -38,7 +41,8 @@ TitleBar {
 }
 
 .separator {
-    color: $text-muted;
+    color: $surface-muted;
+    display: none;
 }
 
 .info-row {
@@ -47,10 +51,18 @@ TitleBar {
     color: $text-muted;
 }
 
+.config-info {
+    color: $text-muted;
+}
+
+.dim {
+    color: $surface-muted;
+}
+
 /* Metrics Row */
 MetricsRow {
     height: 5;
-    margin: 1 0;
+    margin: 0 1;
     align: center middle;
     layout: horizontal;
 }
@@ -58,24 +70,24 @@ MetricsRow {
 MetricCard {
     width: 1fr;
     height: 100%;
-    background: $surface-lighten-1;
-    border: round #727169;
+    background: $surface;
+    border: round $surface-muted;
     layout: vertical;
     align: center middle;
     margin: 0 1;
     padding: 0 1;
 }
 
-/* Color diversity for cards */
+/* Color diversity for cards - using Dragon accents */
 MetricCard.found { 
     border-left: tall $accent-green; 
     border-title-color: $accent-green;
     color: $accent-green;
 }
 MetricCard.accepted { 
-    border-left: tall $accent-green; 
-    border-title-color: $accent-green;
-    color: $accent-green;
+    border-left: tall $accent-aqua; 
+    border-title-color: $accent-aqua;
+    color: $accent-aqua;
 }
 MetricCard.value { 
     border-left: tall $accent-yellow; 
@@ -125,16 +137,16 @@ MetricCard:focus {
     padding-bottom: 0;
 }
 
-/* Status Row */
+/* Status Row - seamless, matches surface */
 StatusRow {
     height: 3;
     width: 100%;
     layout: horizontal;
-    background: $surface-lighten-1;
+    background: $surface;
     align: center middle;
     margin: 0 1 1 1;
     padding: 0 2;
-    border: round #727169;
+    border: round $surface-muted;
 }
 
 StatusIndicator {
@@ -147,10 +159,10 @@ StatusIndicator {
 
 .status-label {
     width: auto;
-    color: $text-muted; /* Default color */
+    color: $text-muted;
 }
 
-/* Status Colors - applied to indicator and inherited by label */
+/* Status Colors - Dragon palette */
 .status-live { 
     color: $accent-green; 
     text-style: bold;
@@ -166,13 +178,10 @@ StatusIndicator {
     color: $text-muted; 
 }
 
-/* Pulsing animation for live status */
 .status-live .status-label {
     color: $accent-green;
     text-style: bold;
 }
-
-/* Ensure label inherits color */
 .status-working .status-label { color: $accent-orange; }
 .status-error .status-label { color: $accent-red; }
 .status-idle .status-label { color: $text-muted; }
@@ -180,8 +189,6 @@ StatusIndicator {
 .status-icon {
     margin-right: 1;
 }
-
-/* ... */
 
 /* Dashboard Grid */
 .dashboard-grid {
@@ -194,10 +201,10 @@ StatusIndicator {
     min-height: 20;
 }
 
-/* Panel styling */
+/* Panel styling - unified with surface */
 .dashboard-panel {
     background: $surface;
-    border: round $surface-lighten-1;
+    border: round $surface-muted;
     padding: 0 1;
     height: 100%;
     margin: 0 1 1 1;
@@ -205,21 +212,17 @@ StatusIndicator {
     border-title-background: $surface;
 }
 
-/* Remove old quadrant title styling */
-/* .quadrant-title { ... } - REMOVED */
-
 /* Specific panel accents */
 .dashboard-panel.jobs { border-left: tall $accent-blue; border-title-color: $accent-blue; }
-/* ... */
 .dashboard-panel.chart { border-left: tall $accent-green; border-title-color: $accent-green; }
 .dashboard-panel.session { border-left: tall $accent-orange; border-title-color: $accent-orange; }
 .dashboard-panel.sources { border-left: tall $accent-red; border-title-color: $accent-red; }
 
-/* Activity log at bottom - grows to fill space */
+/* Activity log at bottom */
 .activity-panel {
     background: $surface;
-    border: round $surface-lighten-1;
-    border-left: tall $accent-orange;
+    border: round $surface-muted;
+    border-left: tall $accent-aqua;
     padding: 0 1;
     height: 1fr;
     min-height: 6;
@@ -228,22 +231,23 @@ StatusIndicator {
 
 .activity-panel .panel-title {
     color: $accent-blue;
-    background: $surface-lighten-1;
+    background: $surface;
     text-style: bold;
     dock: top;
     padding: 0 1;
 }
 
 DashboardQuadrant {
-    border: round $surface-lighten-1;
+    border: round $surface-muted;
     background: $surface;
     margin: 0 1 1 1;
     padding: 0 1;
     height: 100%;
+    border-title-color: $accent-blue;
 }
 
 .quadrant-title {
-    background: $surface-lighten-1;
+    background: $surface;
     color: $accent-blue;
     dock: top;
     padding: 0 1;
@@ -252,17 +256,40 @@ DashboardQuadrant {
 /* Specific Quadrants */
 JobsPreview {
     height: 100%;
+    border-title-color: $accent-blue;
 }
 
 ActivityPreview {
     height: 100%;
+    border-title-color: $accent-aqua;
+}
+
+ChartPlaceholder {
+    border-title-color: $accent-green;
+}
+
+JobsHourChart {
+    border-title-color: $accent-green;
+}
+
+.chart-ascii {
+    padding: 0 1;
+    height: 100%;
+}
+
+ConfigPreview {
+    border-title-color: $accent-violet;
+}
+
+SessionStats {
+    border-title-color: $accent-orange;
 }
 
 RichLog {
     background: $surface;
     border: none;
     scrollbar-background: $surface;
-    scrollbar-color: $surface-lighten-1;
+    scrollbar-color: $surface-muted;
 }
 
 DataTable {
@@ -272,7 +299,7 @@ DataTable {
 }
 
 DataTable > .datatable--header {
-    background: $surface-lighten-1;
+    background: $surface-highlight;
     color: $accent-blue;
 }
 
@@ -290,16 +317,45 @@ Tabs {
     background: $surface;
 }
 
+Tab {
+    background: $surface;
+    color: $text-muted;
+}
+
+Tab:hover {
+    background: $surface-highlight;
+}
+
+Tab.-active {
+    background: $surface;
+    color: $text;
+    text-style: bold;
+}
+
+Underline {
+    color: $accent-blue;
+}
+
 /* Footer & Input */
 Input {
     dock: bottom;
     height: 3;
-    border: round $surface-lighten-1;
+    border: round $surface-muted;
     background: $surface;
 }
 
 Footer {
     dock: bottom;
-    background: $surface-lighten-1;
+    background: $surface;
     color: $text-muted;
+}
+
+FooterKey {
+    background: $surface-highlight;
+    color: $text;
+}
+
+FooterKey > .footer-key--key {
+    background: $surface-muted;
+    color: $accent-blue;
 }
