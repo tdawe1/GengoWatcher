@@ -743,7 +743,7 @@ class SourcesBreakdown(DashboardQuadrant):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        yield Static("WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%", id="sources-content")
+        yield Static("WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%", id="sources-content")
 
     def refresh_sources(self):
         """Refresh sources breakdown with job source statistics."""
@@ -754,23 +754,27 @@ class SourcesBreakdown(DashboardQuadrant):
             total = len(jobs) if jobs else 1  # Avoid division by zero
 
             # Count jobs by source
-            counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0}
+            counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0, "unknown": 0}
             for job in jobs:
                 bucket = _normalize_source(job.get("source"))
                 if bucket in counts:
                     counts[bucket] += 1
+                else:
+                    counts["unknown"] += 1
 
             # Calculate percentages
             ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
             email_pct = (counts["email"] / total) * 100 if total > 0 else 0
             website_pct = (counts["website"] / total) * 100 if total > 0 else 0
             rss_pct = (counts["rss"] / total) * 100 if total > 0 else 0
+            unknown_pct = (counts["unknown"] / total) * 100 if total > 0 else 0
 
             content = (
                 f"WS: {ws_pct:.0f}%\n"
                 f"Email: {email_pct:.0f}%\n"
                 f"Website: {website_pct:.0f}%\n"
-                f"RSS: {rss_pct:.0f}%"
+                f"RSS: {rss_pct:.0f}%\n"
+                f"Unknown: {unknown_pct:.0f}%"
             )
             self.query_one("#sources-content", Static).update(content)
         except NoMatches:
