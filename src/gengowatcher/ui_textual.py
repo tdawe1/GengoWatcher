@@ -1010,6 +1010,9 @@ class GengoWatcherApp(App):
                 widget = self.query_one(widget_class)
                 getattr(widget, method_name)()
             except NoMatches:
+                # It is expected that some widgets may not be present in the UI
+                # at certain times (e.g., different tabs or layouts). In those
+                # cases, we simply skip refreshing that widget.
                 logging.getLogger(__name__).debug(
                     "Widget %s not found while refreshing panels.", widget_class.__name__
                 )
