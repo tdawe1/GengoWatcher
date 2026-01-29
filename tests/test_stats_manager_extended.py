@@ -274,9 +274,9 @@ class TestStatsManagerAverages:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(10.0, "RSS", "JA→EN", accepted=False)
-            manager.record_job(20.0, "WebSocket", "EN→JA", accepted=False)
-            manager.record_job(30.0, "Email", "FR→EN", accepted=False)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
+            manager.record_job(20.0, "WebSocket", "EN→JA", accepted=True)
+            manager.record_job(30.0, "Email", "FR→EN", accepted=True)
 
             avg = manager.session.total_value / manager.session.jobs_found
             assert avg == 20.0
