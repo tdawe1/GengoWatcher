@@ -724,7 +724,13 @@ class ConfigPreview(DashboardQuadrant):
             return ", ".join(str(v) for v in value)
         if isinstance(value, float):
             return f"{value:.2f}" if value != int(value) else str(int(value))
-        return str(value) if value else "—"
+        if isinstance(value, int):
+            # Ensure integer 0 and other ints are displayed correctly
+            return str(value)
+        # Treat only explicit "no value" as em dash; preserve legitimate falsy values
+        if value is None or value == "":
+            return "—"
+        return str(value)
 
     def _render_config(self) -> Text:
         """
