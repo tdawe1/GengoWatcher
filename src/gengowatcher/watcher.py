@@ -381,17 +381,17 @@ class GengoWatcher:
             url=url,
         )
 
-        # Store job in state for web API access
+        # Prepare job data for storage, callbacks, and acceptance checks
+        job_data = {
+            "id": str(job_id),
+            "title": title,
+            "reward": float(reward),
+            "currency": "USD",
+            "url": url,
+            "timestamp": time.time(),
+            "source": source,
+        }
         try:
-            job_data = {
-                "id": str(job_id),
-                "title": title,
-                "reward": float(reward),
-                "currency": "USD",
-                "url": url,
-                "timestamp": time.time(),
-                "source": source,
-            }
             self.state.add_job(job_data)
         except Exception as e:
             self.logger.warning(f"Failed to store job in state: {e}")
