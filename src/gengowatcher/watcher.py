@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import webbrowser
+from typing import Callable, Optional
 from collections import deque
 from pathlib import Path
 
@@ -120,6 +121,9 @@ class GengoWatcher:
         )
         if self.config.get("Logging", "log_all_entries_enabled"):
             self._setup_csv_logging()
+
+        # Callback for UI notification when a new job is added (set by UI)
+        self.on_job_added_callback: Optional[Callable[[dict], None]] = None
 
         # Initialize job acceptance engine (without CAPTCHA support)
         self.job_acceptance_engine = JobAcceptanceEngine(
@@ -1083,7 +1087,14 @@ class GengoWatcher:
                     self.state.last_seen_rss_link = first_link
                     self.state.last_seen_link = first_link
                     self.logger.info("Initial RSS feed primed successfully.")
-                    self.state.save_state()
+        self.state.save_state()
+
+        # Notify UI that a new job was added
+        if self.on_job_added_callback:
+            try:
+                self.on_job_added_callback(job_data)
+            except Exception as e:
+                self.logger.debug(f"Error in job added callback: {e}")
 
         while not self.shutdown_event.is_set():
             is_paused = os.path.exists(self.PAUSE_FILE)
