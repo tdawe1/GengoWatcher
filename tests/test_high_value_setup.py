@@ -3,8 +3,10 @@
 import pytest
 import tempfile
 import pathlib
+import re
 from unittest.mock import MagicMock, patch, mock_open
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 @pytest.fixture
@@ -41,6 +43,13 @@ def mock_config():
 
     config.get.side_effect = get_side_effect
     return config
+
+
+@pytest.fixture
+def mock_high_value_manager():
+    """Mock the high_value_job_manager module to allow imports."""
+    with patch.dict('sys.modules', {'gengowatcher.high_value_job_manager': MagicMock()}):
+        yield
 
 
 class TestConfigValidation:
@@ -206,62 +215,55 @@ class TestHighValueManager:
 class TestSetupInstructions:
     """Tests for setup instructions display."""
 
-    def test_show_setup_instructions_output(self, capsys):
+    def test_show_setup_instructions_output(self, capsys, mock_high_value_manager):
         """Test that setup instructions are displayed correctly."""
-        # Mock the missing module to allow import
-        with patch.dict('sys.modules', {'gengowatcher.high_value_job_manager': MagicMock()}):
-            from scripts.test_high_value_setup import show_setup_instructions
+        from scripts.test_high_value_setup import show_setup_instructions
 
-            show_setup_instructions()
-            captured = capsys.readouterr()
+        show_setup_instructions()
+        captured = capsys.readouterr()
 
-            # Check for key instruction sections
-            assert "HIGH-VALUE JOB SETUP INSTRUCTIONS" in captured.out
-            assert "CONFIGURATION" in captured.out
-            assert "RSS FEED" in captured.out
-            assert "WEBSOCKET" in captured.out
-            assert "RUNNING" in captured.out
-            assert "SAFETY LIMITS" in captured.out
+        # Check for key instruction sections
+        assert "HIGH-VALUE JOB SETUP INSTRUCTIONS" in captured.out
+        assert "CONFIGURATION" in captured.out
+        assert "RSS FEED" in captured.out
+        assert "WEBSOCKET" in captured.out
+        assert "RUNNING" in captured.out
+        assert "SAFETY LIMITS" in captured.out
 
-    def test_setup_instructions_contains_urls(self, capsys):
+    def test_setup_instructions_contains_urls(self, capsys, mock_high_value_manager):
         """Test that setup instructions contain necessary URLs."""
-        from urllib.parse import urlparse
-        import re
+        from scripts.test_high_value_setup import show_setup_instructions
+
+        show_setup_instructions()
+        captured = capsys.readouterr()
+
+        # Validate complete URLs instead of substrings to ensure proper sanitization
+        assert "https://gengo.com/developers/dashboard" in captured.out
+        assert "https://gengo.com/rss/available_jobs/" in captured.out
         
-        # Mock the missing module to allow import
-        with patch.dict('sys.modules', {'gengowatcher.high_value_job_manager': MagicMock()}):
-            from scripts.test_high_value_setup import show_setup_instructions
+        # Verify URLs are properly formed with strict hostname validation
+        for line in captured.out.split('\n'):
+            if 'https://gengo.com' in line:
+                # Extract URLs from the line (stop at whitespace, punctuation, or line end)
+                urls = re.findall(r'https://gengo\.com[^\s,.\)]*', line)
+                for url in urls:
+                    parsed = urlparse(url)
+                    assert parsed.scheme == 'https'
+                    # Ensure hostname is exactly gengo.com or a proper subdomain (*.gengo.com)
+                    hostname = parsed.hostname
+                    assert hostname and (hostname == 'gengo.com' or hostname.endswith('.gengo.com'))
+        
+        assert "RSS" in captured.out
 
-            show_setup_instructions()
-            captured = capsys.readouterr()
-
-            # Validate complete URLs instead of substrings to ensure proper sanitization
-            assert "https://gengo.com/developers/dashboard" in captured.out
-            assert "https://gengo.com/rss/available_jobs/" in captured.out
-            
-            # Verify URLs are properly formed
-            for line in captured.out.split('\n'):
-                if 'https://gengo.com' in line:
-                    # Extract URL from the line and validate it
-                    urls = re.findall(r'https://gengo\.com[^\s\)]*', line)
-                    for url in urls:
-                        parsed = urlparse(url)
-                        assert parsed.scheme == 'https'
-                        assert parsed.hostname and parsed.hostname.endswith('gengo.com')
-            
-            assert "RSS" in captured.out
-
-    def test_setup_instructions_contains_limits(self, capsys):
+    def test_setup_instructions_contains_limits(self, capsys, mock_high_value_manager):
         """Test that safety limits are documented."""
-        # Mock the missing module to allow import
-        with patch.dict('sys.modules', {'gengowatcher.high_value_job_manager': MagicMock()}):
-            from scripts.test_high_value_setup import show_setup_instructions
+        from scripts.test_high_value_setup import show_setup_instructions
 
-            show_setup_instructions()
-            captured = capsys.readouterr()
+        show_setup_instructions()
+        captured = capsys.readouterr()
 
-            assert "3 high-value jobs per day" in captured.out or "per day" in captured.out
-            assert "6 hours" in captured.out or "hours between" in captured.out
+        assert "3 high-value jobs per day" in captured.out or "per day" in captured.out
+        assert "6 hours" in captured.out or "hours between" in captured.out
 
 
 class TestMainFunction:
