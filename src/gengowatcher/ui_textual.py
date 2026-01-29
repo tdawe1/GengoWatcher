@@ -514,15 +514,41 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
 
-class ChartPlaceholder(DashboardQuadrant):
-    def __init__(self, **kwargs):
+class HourlyActivity(DashboardQuadrant):
+    """Hourly activity stats with peak hour highlighting."""
+
+    def __init__(self, stats: "StatsManager", **kwargs):
         super().__init__("Jobs/Hour", **kwargs)
+        self.stats = stats
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "\n    (Chart Placeholder)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────",
-            classes="chart-ascii",
-        )
+        yield Static("No activity data", id="hourly-content")
+
+    def refresh_hourly(self):
+        """Refresh hourly activity display."""
+        if not self.stats:
+            return
+        try:
+            # Get peak hour info - unpacking both values as per fix
+            peak_hour, peak_rate = self.stats.get_peak_hour()
+            
+            # FIX: Only treat as valid peak if peak_rate > 0
+            # This prevents highlighting "12-15" period with zero activity
+            if peak_rate > 0:
+                # Valid peak hour with actual activity
+                peak_period_start = (peak_hour // 3) * 3
+                peak_period_end = peak_period_start + 3
+                peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
+                
+                content = f"Peak: {peak_period}\nJobs: {int(peak_rate)}"
+            else:
+                # No activity - don't highlight any period
+                peak_hour = -1  # Set to -1 to indicate no peak
+                content = "No activity yet"
+            
+            self.query_one("#hourly-content", Static).update(content)
+        except Exception:
+            pass  # Widget not mounted yet
 
 
 class ConfigPreview(DashboardQuadrant):
@@ -698,7 +724,7 @@ class GengoWatcherApp(App):
                 with Vertical(id="dashboard-content"):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
-                        yield ChartPlaceholder()
+                        yield HourlyActivity(stats=self.stats)
                         yield ConfigPreview()  # Keep as bottom-right per doc
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
