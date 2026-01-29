@@ -397,16 +397,22 @@ class ActivityPreview(DashboardQuadrant):
         "source_web": "#7E9CD8",  # Crystal Blue
         "url": "#7AA89F",  # Wave Aqua
         "default": "#DCD7BA",  # Fuji White
+        "level_debug": "#727169",  # Fuji Gray
+        "level_info": "#DCD7BA",  # Fuji White
+        "level_warning": "#E6C384",  # Carp Yellow
+        "level_error": "#C34043",  # Samurai Red
+        "level_success": "#98BB6C",  # Spring Green
+        "level_job": "#7E9CD8",  # Crystal Blue
     }
 
-    # Level colors for message styling
+    # Mapping of level names to color keys
     LEVEL_COLORS = {
-        "debug": "#727169",  # Fuji Gray
-        "info": "#DCD7BA",  # Fuji White
-        "warning": "#E6C384",  # Carp Yellow
-        "error": "#C34043",  # Samurai Red
-        "success": "#98BB6C",  # Spring Green
-        "job": "#7E9CD8",  # Crystal Blue
+        "debug": "level_debug",
+        "info": "level_info",
+        "warning": "level_warning",
+        "error": "level_error",
+        "success": "level_success",
+        "job": "level_job",
     }
 
     # Regex patterns for content types
@@ -464,7 +470,8 @@ class ActivityPreview(DashboardQuadrant):
     def _colorize_message(self, msg: str, level: str = "info") -> Text:
         """Apply Rich markup coloring based on content patterns."""
         # Determine base color from level
-        base_color = self.LEVEL_COLORS.get(level, self.COLORS["default"])
+        color_key = self.LEVEL_COLORS.get(level, "default")
+        base_color = self.COLORS[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
