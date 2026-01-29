@@ -780,14 +780,18 @@ class JobsPanel(Static):
                 source = job.get("source", "unknown")
                 status = "✓" if job.get("accepted", False) else "○"
                 timestamp = job.get("timestamp", job.get("found_at", ""))
-                if timestamp:
+                if isinstance(timestamp, (int, float)):
+                    timestamp = datetime.datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
+                elif isinstance(timestamp, str):
                     # Extract just the time portion if it's a full timestamp
-                    if "T" in str(timestamp):
-                        timestamp = str(timestamp).split("T")[1][:8]
-                    elif " " in str(timestamp):
-                        timestamp = str(timestamp).split(" ")[1][:8]
+                    if "T" in timestamp:
+                        timestamp = timestamp.split("T")[1][:8]
+                    elif " " in timestamp:
+                        timestamp = timestamp.split(" ")[1][:8]
                     else:
-                        timestamp = str(timestamp)[:8]
+                        timestamp = timestamp[:8]
+                else:
+                    timestamp = ""
                 dt.add_row(job_id, pair, words, reward, source, status, timestamp)
         except NoMatches:
             pass  # Widget not mounted yet
