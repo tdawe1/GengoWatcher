@@ -233,14 +233,14 @@ async def test_rapid_tab_switching():
 
 
 @pytest.mark.asyncio
-async def test_dashboard_jobs_hour_chart_exists():
-    """Test that dashboard contains JobsHourChart."""
+async def test_dashboard_hourly_activity_exists():
+    """Test that dashboard contains HourlyActivity."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from gengowatcher.ui_textual import JobsHourChart
+        from gengowatcher.ui_textual import HourlyActivity
 
-        chart = pilot.app.query_one(JobsHourChart)
+        chart = pilot.app.query_one(HourlyActivity)
         assert chart is not None
 
 

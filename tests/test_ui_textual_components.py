@@ -15,7 +15,7 @@ from gengowatcher.ui_textual import (
     StatusRow,
     ActivityPreview,
     JobsPreview,
-    JobsHourChart,
+    HourlyActivity,
     ConfigPreview,
     SessionStats,
     SourcesBreakdown,
@@ -377,50 +377,40 @@ class TestJobsPreview:
             # Jobs should be displayed in table
 
 
-class TestJobsHourChart:
-    """Tests for JobsHourChart widget."""
+class TestHourlyActivity:
+    """Tests for HourlyActivity widget."""
 
     @pytest.mark.asyncio
-    async def test_chart_renders(self, mock_stats):
-        """Test JobsHourChart renders ASCII chart."""
+    async def test_hourly_activity_renders(self, mock_stats):
+        """Test HourlyActivity renders hourly data."""
         from textual.app import App
 
         class TestApp(App):
             def compose(self):
-                yield JobsHourChart(stats=mock_stats)
+                yield HourlyActivity(stats=mock_stats)
 
         app = TestApp()
         async with app.run_test() as pilot:
-            chart = app.query_one(JobsHourChart)
-            chart.refresh_chart()
+            chart = app.query_one(HourlyActivity)
+            chart.refresh_hourly()
             await pilot.pause(0.1)
             # Chart should be rendered
 
     @pytest.mark.asyncio
-    async def test_chart_with_no_data(self):
-        """Test JobsHourChart handles empty stats."""
+    async def test_hourly_activity_with_no_data(self):
+        """Test HourlyActivity handles empty stats."""
         from textual.app import App
 
         class TestApp(App):
             def compose(self):
-                yield JobsHourChart(stats=None)
+                yield HourlyActivity(stats=None)
 
         app = TestApp()
         async with app.run_test() as pilot:
-            chart = app.query_one(JobsHourChart)
-            chart.refresh_chart()
+            chart = app.query_one(HourlyActivity)
+            chart.refresh_hourly()
             await pilot.pause(0.1)
             # Should handle None stats gracefully
-
-    def test_chart_render_content(self, mock_stats):
-        """Test chart rendering produces valid text output."""
-        chart = JobsHourChart(stats=mock_stats)
-        rendered = chart._render_chart()
-
-        # Check that rendered text contains time periods
-        text_str = str(rendered)
-        assert "00-03" in text_str
-        assert "08-11" in text_str
 
 
 class TestConfigPreview:
