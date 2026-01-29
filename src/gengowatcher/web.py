@@ -538,7 +538,16 @@ class WebAPI:
             else:
                 return {"status": "error", "message": f"Unknown command: {command}"}
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            # Log full details server-side, but return a generic error message
+            self.logger.exception(
+                f"Unexpected error executing watcher command '%s': %s",
+                command,
+                e,
+            )
+            return {
+                "status": "error",
+                "message": "Internal command execution error",
+            }
 
     async def broadcast_status_update(self):
         """Broadcast status update to all connected WebSocket clients."""
