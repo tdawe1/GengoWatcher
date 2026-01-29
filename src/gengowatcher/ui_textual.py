@@ -967,22 +967,46 @@ class GengoWatcherApp(App):
         self.call_from_thread(self._refresh_all_panels)
 
     def _refresh_all_panels(self):
-        """Refresh all data panels when a new job is detected."""
-        widgets_to_refresh = [
+        """Refresh relevant data panels when a new job is detected."""
+        # Determine which tab is currently active so we only refresh visible panels.
+        try:
+            tabbed_content = self.query_one(TabbedContent)
+            active_tab_id = tabbed_content.active
+        except NoMatches:
+            # If TabbedContent can't be found, fall back to refreshing dashboard widgets.
+            active_tab_id = None
+
+        # Widgets that live on the dashboard tab.
+        dashboard_widgets = [
             (MetricsRow, "refresh_metrics"),
             (JobsPreview, "refresh_jobs"),
             (JobsHourChart, "refresh_chart"),
             (SessionStats, "refresh_stats"),
-            (JobsPanel, "refresh_jobs"),
-            (ChartsPanel, "refresh_charts"),
-            (StatsPanel, "refresh_stats"),
         ]
+
+        widgets_to_refresh = []
+
+        # When no active tab is known, or when the dashboard is active,
+        # refresh the dashboard widgets to keep the main view up to date.
+        if active_tab_id in (None, "dashboard"):
+            widgets_to_refresh.extend(dashboard_widgets)
+
+        # Only refresh widgets belonging to the currently active non-dashboard tab.
+        if active_tab_id == "jobs":
+            widgets_to_refresh.append((JobsPanel, "refresh_jobs"))
+        elif active_tab_id == "charts":
+            widgets_to_refresh.append((ChartsPanel, "refresh_charts"))
+        elif active_tab_id == "stats":
+            widgets_to_refresh.append((StatsPanel, "refresh_stats"))
+
         for widget_class, method_name in widgets_to_refresh:
             try:
                 widget = self.query_one(widget_class)
                 getattr(widget, method_name)()
             except NoMatches:
-                pass
+                logging.getLogger(__name__).debug(
+                    "Widget %s not found while refreshing panels.", widget_class.__name__
+                )
 
     def _setup_logging(self):
         handler = TextualLogHandler(self)
