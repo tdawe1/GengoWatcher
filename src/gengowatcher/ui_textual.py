@@ -530,8 +530,6 @@ class JobsHourChart(DashboardQuadrant):
 
     def on_mount(self):
         self.refresh_chart()
-        # Refresh chart every 30 seconds
-        self.set_interval(30.0, self.refresh_chart)
 
     def refresh_chart(self):
         """Refresh the chart with current hourly data."""
@@ -699,6 +697,10 @@ class StatsPanel(Static):
         super().__init__(**kwargs)
         self.stats = stats
 
+    def on_mount(self):
+        """Initialize stats display."""
+        self.refresh_stats()
+
     def compose(self) -> ComposeResult:
         with Vertical():
             # Session Stats Section
@@ -740,6 +742,189 @@ class StatsPanel(Static):
             pass  # Widget not mounted yet
 
 
+class JobsPanel(Static):
+    """Full jobs panel for the Jobs tab with detailed job listing."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__(**kwargs)
+        self.state = state
+
+    def on_mount(self):
+        """Initialize the jobs table with columns."""
+        try:
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.add_columns(
+                "ID", "Lang Pair", "Words", "Reward", "Source", "Status", "Time"
+            )
+            dt.cursor_type = "row"
+        except NoMatches:
+            pass
+        self.refresh_jobs()
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="jobs-table-full")
+
+    def refresh_jobs(self):
+        """Refresh the full jobs table with all recent jobs."""
+        if not self.state:
+            return
+        try:
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.clear()
+            jobs = self.state.get_recent_jobs(limit=100)
+            for job in jobs:
+                job_id = str(job.get("id", "N/A"))[:12]
+                pair = job.get("lang_pair", "??→??")
+                words = str(job.get("word_count", job.get("words", 0)))
+                reward = f"${job.get('reward', 0):.2f}"
+                source = job.get("source", "unknown")
+                status = "✓" if job.get("accepted", False) else "○"
+                timestamp = job.get("timestamp", job.get("found_at", ""))
+                if timestamp:
+                    # Extract just the time portion if it's a full timestamp
+                    if "T" in str(timestamp):
+                        timestamp = str(timestamp).split("T")[1][:8]
+                    elif " " in str(timestamp):
+                        timestamp = str(timestamp).split(" ")[1][:8]
+                    else:
+                        timestamp = str(timestamp)[:8]
+                dt.add_row(job_id, pair, words, reward, source, status, timestamp)
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+
+class ChartsPanel(Static):
+    """Charts panel showing various job statistics visualizations."""
+
+    def __init__(self, stats: "StatsManager", state: "AppState", **kwargs):
+        super().__init__(**kwargs)
+        self.stats = stats
+        self.state = state
+
+    def on_mount(self):
+        """Initialize charts display."""
+        self.refresh_charts()
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("── Jobs by Hour ──", classes="chart-section-header")
+            yield Static(id="chart-hourly", classes="chart-ascii")
+            yield Static("── Jobs by Source ──", classes="chart-section-header")
+            yield Static(id="chart-sources", classes="chart-ascii")
+            yield Static("── Value Trend ──", classes="chart-section-header")
+            yield Static(id="chart-value", classes="chart-ascii")
+
+    def refresh_charts(self):
+        """Refresh all charts with current data."""
+        try:
+            # Hourly chart
+            hourly_text = self._render_hourly_chart()
+            self.query_one("#chart-hourly", Static).update(hourly_text)
+
+            # Sources chart
+            sources_text = self._render_sources_chart()
+            self.query_one("#chart-sources", Static).update(sources_text)
+
+            # Value trend
+            value_text = self._render_value_trend()
+            self.query_one("#chart-value", Static).update(value_text)
+        except NoMatches:
+            pass
+
+    def _render_hourly_chart(self) -> Text:
+        """Render hourly job distribution chart."""
+        text = Text()
+        if self.stats:
+            hourly = dict(self.stats.hourly_counts)
+            max_count = max(hourly.values()) if hourly else 1
+        else:
+            hourly = {}
+            max_count = 1
+
+        for hour in range(24):
+            count = hourly.get(hour, 0)
+            bar_width = int((count / max_count) * 20) if max_count > 0 else 0
+            bar = "█" * bar_width
+            bar_padded = bar.ljust(20, "░")
+            text.append(f"{hour:02d}:00 ", style="#737c73")
+            text.append(bar_padded, style="#8a9a7b" if count > 0 else "#393836")
+            text.append(f" {count:3d}\n", style="#737c73")
+        return text
+
+    def _render_sources_chart(self) -> Text:
+        """Render job sources distribution chart."""
+        text = Text()
+        if not self.state:
+            text.append("No data available")
+            return text
+
+        jobs = self.state.get_recent_jobs(limit=1000)
+        total = len(jobs) if jobs else 1
+
+        sources = {"websocket": 0, "email": 0, "web": 0, "rss": 0, "unknown": 0}
+        for job in jobs:
+            src = job.get("source", "unknown")
+            if src in sources:
+                sources[src] += 1
+            else:
+                sources["unknown"] += 1
+
+        max_count = max(sources.values()) if sources else 1
+        colors = {
+            "websocket": "#957FB8",
+            "email": "#FFA066",
+            "web": "#7E9CD8",
+            "rss": "#7AA89F",
+            "unknown": "#727169",
+        }
+
+        for source, count in sources.items():
+            pct = (count / total) * 100 if total > 0 else 0
+            bar_width = int((count / max_count) * 15) if max_count > 0 else 0
+            bar = "█" * bar_width
+            bar_padded = bar.ljust(15, "░")
+            text.append(f"{source:10s} ", style="#737c73")
+            text.append(
+                bar_padded,
+                style=colors.get(source, "#727169") if count > 0 else "#393836",
+            )
+            text.append(f" {count:4d} ({pct:5.1f}%)\n", style="#737c73")
+        return text
+
+    def _render_value_trend(self) -> Text:
+        """Render value accumulation trend."""
+        text = Text()
+        if not self.state:
+            text.append("No data available")
+            return text
+
+        jobs = self.state.get_recent_jobs(limit=50)
+        if not jobs:
+            text.append("No jobs recorded yet")
+            return text
+
+        # Calculate cumulative value over last N jobs
+        cumulative = 0
+        values = []
+        for job in reversed(jobs[-20:]):  # Last 20 jobs
+            cumulative += job.get("reward", 0)
+            values.append(cumulative)
+
+        if not values:
+            text.append("No value data")
+            return text
+
+        max_val = max(values) if values else 1
+        for i, val in enumerate(values):
+            bar_width = int((val / max_val) * 25) if max_val > 0 else 0
+            bar = "▓" * bar_width
+            bar_padded = bar.ljust(25, "░")
+            text.append(f"{i + 1:2d} ", style="#737c73")
+            text.append(bar_padded, style="#E6C384")
+            text.append(f" ${val:.2f}\n", style="#E6C384")
+        return text
+
+
 # =============================================================================
 # Main App
 # =============================================================================
@@ -770,6 +955,33 @@ class GengoWatcherApp(App):
         # Setup logging redirection
         self._setup_logging()
 
+        # Register callback for when new jobs are detected
+        self.watcher.on_job_added_callback = self._on_job_added_from_thread
+
+    def _on_job_added_from_thread(self, job_data: dict):
+        """Called from watcher thread when a new job is added."""
+        # Use call_from_thread to safely update UI from watcher thread
+        self.call_from_thread(self._refresh_all_panels)
+
+    def _refresh_all_panels(self):
+        """Refresh all data panels when a new job is detected."""
+        try:
+            # Dashboard widgets
+            self.query_one(MetricsRow).refresh_metrics()
+            self.query_one(JobsPreview).refresh_jobs()
+            self.query_one(JobsHourChart).refresh_chart()
+            self.query_one(SessionStats).refresh_stats()
+        except NoMatches:
+            pass
+
+        try:
+            # Tab panels
+            self.query_one(JobsPanel).refresh_jobs()
+            self.query_one(ChartsPanel).refresh_charts()
+            self.query_one(StatsPanel).refresh_stats()
+        except NoMatches:
+            pass
+
     def _setup_logging(self):
         handler = TextualLogHandler(self)
         logging.getLogger().addHandler(handler)
@@ -795,15 +1007,15 @@ class GengoWatcherApp(App):
                     yield ActivityPreview()
 
             with TabPane("Jobs", id="jobs"):
-                yield DataTable(id="jobs-table-full")
+                yield JobsPanel(state=self.state)
             with TabPane("Activity", id="activity"):
                 yield RichLog(id="activity-log-full", markup=True)
             with TabPane("Output", id="output"):
                 yield RichLog(id="output-log", markup=True)
             with TabPane("Charts", id="charts"):
-                yield Static("Charts Content")
+                yield ChartsPanel(stats=self.stats, state=self.state)
             with TabPane("Stats", id="stats"):
-                yield Static("Stats Content")
+                yield StatsPanel(stats=self.stats)
 
         # 3. Input & Footer
         yield Input(placeholder="> help_")
@@ -901,12 +1113,26 @@ class TextualLogHandler(logging.Handler):
             pass  # Logging failures should not crash the app
 
     def write_log(self, msg: str, level: int = logging.INFO):
+        colored_text = self._colorize_message(msg, level)
+        # Write to dashboard activity log
         try:
             log = self.app.query_one("#activity-log", RichLog)
-            colored_text = self._colorize_message(msg, level)
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
+        # Also write to full activity log tab
+        try:
+            log_full = self.app.query_one("#activity-log-full", RichLog)
+            log_full.write(colored_text)
+        except NoMatches:
+            pass  # Widget not mounted yet
+        # Also write to output log for system output
+        if level >= logging.WARNING:
+            try:
+                output_log = self.app.query_one("#output-log", RichLog)
+                output_log.write(colored_text)
+            except NoMatches:
+                pass  # Widget not mounted yet
 
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""
