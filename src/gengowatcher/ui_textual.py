@@ -9,6 +9,7 @@ import logging
 import re
 import time
 from collections import deque
+from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -619,7 +620,7 @@ class ConfigPreview(DashboardQuadrant):
     """Configuration preview showing all config.ini options."""
 
     # Keys that should be masked for security
-    SENSITIVE_KEYS = {
+    SENSITIVE_KEYS: ClassVar[set[str]] = {
         "user_session",
         "user_key",
         "client_id",
