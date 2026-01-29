@@ -65,22 +65,22 @@ async def test_jobs_preview_displays_jobs():
 def test_config_preview_constants():
     """ConfigPreview should have all required class constants defined."""
     # Test that constants exist
-    assert hasattr(ConfigPreview, 'SECTION_ORDER')
-    assert hasattr(ConfigPreview, 'SECTION_HEADER_WIDTH')
-    assert hasattr(ConfigPreview, 'MAX_VALUE_LENGTH')
-    assert hasattr(ConfigPreview, 'MAX_VALUE_LENGTH_SHORT')
-    
+    assert hasattr(ConfigPreview, "SECTION_ORDER")
+    assert hasattr(ConfigPreview, "SECTION_HEADER_WIDTH")
+    assert hasattr(ConfigPreview, "MAX_VALUE_LENGTH")
+    assert hasattr(ConfigPreview, "MAX_VALUE_LENGTH_SHORT")
+
     # Test constant types
     assert isinstance(ConfigPreview.SECTION_ORDER, list)
     assert isinstance(ConfigPreview.SECTION_HEADER_WIDTH, int)
     assert isinstance(ConfigPreview.MAX_VALUE_LENGTH, int)
     assert isinstance(ConfigPreview.MAX_VALUE_LENGTH_SHORT, int)
-    
+
     # Test constant values
     assert ConfigPreview.SECTION_HEADER_WIDTH == 18
     assert ConfigPreview.MAX_VALUE_LENGTH == 20
     assert ConfigPreview.MAX_VALUE_LENGTH_SHORT == 17
-    
+
     # Test SECTION_ORDER contains expected sections
     assert "Watcher" in ConfigPreview.SECTION_ORDER
     assert "WebSocket" in ConfigPreview.SECTION_ORDER
@@ -101,18 +101,18 @@ async def test_config_preview_render_uses_constants():
         },
         "WebSocket": {
             "enabled": False,
-        }
+        },
     }
-    
+
     app = ConfigPreviewTestApp(config)
     async with app.run_test() as pilot:
         preview = app.query_one(ConfigPreview)
         result = preview._render_config()
-        
+
         # Check that the result is a Text object
         assert result is not None
         result_str = result.plain
-        
+
         # Check that sections appear in the order defined by SECTION_ORDER
         # Watcher should appear before WebSocket
         watcher_pos = result_str.find("Watcher")
@@ -120,10 +120,9 @@ async def test_config_preview_render_uses_constants():
         assert watcher_pos >= 0
         assert websocket_pos >= 0
         assert watcher_pos < websocket_pos
-        
+
         # Check that long values are truncated to MAX_VALUE_LENGTH_SHORT + "..."
         # The 30-character value should be truncated
         assert "..." in result_str
         # Verify the full 30-character value is not present
         assert "x" * 30 not in result_str
-
