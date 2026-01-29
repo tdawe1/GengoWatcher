@@ -99,6 +99,9 @@ def mock_state():
     state.seen_job_ids = collections.deque(maxlen=50)
     state.accepted_jobs = []
     state.failed_jobs = []
+    state.total_new_entries_found = 0
+    state.total_jobs_accepted = 0
+    state.total_value_found = 0.0
     return state
 
 
