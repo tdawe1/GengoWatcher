@@ -694,9 +694,9 @@ class ConfigPreview(DashboardQuadrant):
             value (str): The value to mask.
         
         Returns:
-            str: The masked value showing the first two and last two characters separated by ellipses (e.g. `ab...yz`), or `"****"` if the input is empty or shorter than four characters.
-        """
-        if not value or len(str(value)) < 4:
+    def _mask_value(self, value: str) -> str:
+        """Mask a sensitive value, showing only first/last chars."""
+        if not value or len(str(value)) <= 4:
             return "****"
         val_str = str(value)
         return f"{val_str[:2]}...{val_str[-2:]}"
