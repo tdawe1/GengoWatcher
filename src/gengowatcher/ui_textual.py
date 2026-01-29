@@ -825,7 +825,7 @@ class StatsPanel(Static):
             alltime = self.stats.all_time
             alltime_text = (
                 f"Total Jobs: {alltime.total_jobs}\n"
-                f"Total Accepted: {alltime.total_sessions}\n"
+                f"Total Accepted: {alltime.total_jobs_accepted}\n"
                 f"Total Value: ${alltime.total_value:.2f}"
             )
             self.query_one("#stats-alltime-content", Static).update(alltime_text)
