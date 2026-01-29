@@ -46,6 +46,8 @@ PLACEHOLDER_CONFIG_VALUES = {
     "REPLACE_WITH_YOUR_USER_KEY",
 }
 
+SENSITIVE_KEYWORDS = {"password", "session", "key"}
+
 
 class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
@@ -230,10 +232,10 @@ class GengoWatcher:
         self.logger.debug("Setting up CSV logging.")
         try:
             log_path_str = self.config.get("Paths", "all_entries_log")
-            if not log_path_str:
-                self.logger.error("all_entries_log path not configured")
+            if not log_path_str or not isinstance(log_path_str, (str, Path)):
+                self.logger.error("all_entries_log path not configured or invalid")
                 return
-            log_path = Path(log_path_str)
+            log_path = Path(str(log_path_str))
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._all_entries_log_file = open(
                 log_path, "a", newline="", encoding="utf-8"
@@ -428,12 +430,39 @@ class GengoWatcher:
 
         self.state.save_state()
 
-        # Notify UI that a new job was added
-        if self.on_job_added_callback:
+        # Notify UI that a new job was added, but only if it was stored in state
+        job_in_state = False
+        try:
+            jobs_attr = getattr(self.state, "jobs", None)
+            if isinstance(jobs_attr, dict):
+                job_in_state = job_id in jobs_attr or str(job_id) in jobs_attr
+            elif isinstance(jobs_attr, list):
+                for job in jobs_attr:
+                    job_id_in_state = None
+                    if isinstance(job, dict):
+                        job_id_in_state = job.get("id")
+                    else:
+                        job_id_in_state = getattr(job, "id", None)
+                    if job_id_in_state is not None and (
+                        job_id_in_state == job_id
+                        or str(job_id_in_state) == str(job_id)
+                    ):
+                        job_in_state = True
+                        break
+        except Exception as e:
+            self.logger.debug(f"Error while verifying job presence in state: {e}")
+            job_in_state = False
+
+        if self.on_job_added_callback and job_in_state:
             try:
                 self.on_job_added_callback(job_data)
             except Exception as e:
                 self.logger.debug(f"Error in job added callback: {e}")
+        elif self.on_job_added_callback and not job_in_state:
+            # This can happen if storing the job in state failed earlier.
+            self.logger.debug(
+                f"Skipping job added callback for job {job_id} because it was not stored in state"
+            )
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
@@ -1298,18 +1327,21 @@ class GengoWatcher:
 
                 prompt = f"  {option} (current: {display_current}){desc_text}: "
 
-                if (
-                    "password" in option.lower()
-                    or "session" in option.lower()
-                    or "key" in option.lower()
-                ):
+                is_sensitive = any(
+                    keyword in option.lower() for keyword in SENSITIVE_KEYWORDS
+                )
+
+                if is_sensitive:
                     value = getpass.getpass(prompt)
                 else:
                     value = input(prompt).strip()
 
                 if value:
                     self.set_config_value(section, option, value)
-                    print(f"  ✅ Set {option} = {value}")
+                    if is_sensitive:
+                        print(f"  ✅ Set {option} (value stored securely)")
+                    else:
+                        print(f"  ✅ Set {option} = {value}")
                 else:
                     print(f"  ⚠️  Skipped {option} (keeping current value)")
 
