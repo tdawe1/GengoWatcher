@@ -234,8 +234,9 @@ async def test_config_preview_refresh_updates_content():
         preview.refresh_config()
         await pilot.pause()
 
-        text = preview._render_config()
-        assert "60" in text.plain
+        # Query the Static widget to verify it was actually updated
+        content = preview.query_one("#config-content")
+        assert "60" in content.content.plain
 
 
 @pytest.mark.asyncio
