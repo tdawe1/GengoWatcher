@@ -363,14 +363,8 @@ class TestStatisticsAggregation:
 
     def test_hourly_aggregation(self, stats_system):
         """Test hourly statistics aggregation."""
-        # Record jobs across multiple hours
-        for hour in range(24):
-            for _ in range(hour):  # More jobs in later hours
-                stats_system.record_job(10.0, "RSS", "JA→EN", accepted=False)
-                # Manually set hour for testing
-                if hour not in stats_system.hourly_counts:
-                    stats_system.hourly_counts[hour] = 0
-                stats_system.hourly_counts[hour] += 1
+        # Deterministic distribution for peak‑hour calculation
+        stats_system.hourly_counts = {hour: hour + 1 for hour in range(24)}
 
         peak_hour, peak_count = stats_system.get_peak_hour()
         assert peak_hour == 23  # Last hour should have most jobs
