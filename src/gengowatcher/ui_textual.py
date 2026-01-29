@@ -57,6 +57,76 @@ class Icons:
     POLLING = "↻"
 
 
+# Fractional block characters for bar chart rendering
+# Characters arranged from empty to full: ▁▂▃▄▅▆▇█
+BAR_CHARS = " ▁▂▃▄▅▆▇█"
+
+
+def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
+    """
+    Render a bar chart using fractional block characters.
+    
+    Args:
+        values: List of numeric values to display
+        width: Width of the chart in characters
+        height: Height of the chart in lines
+        
+    Returns:
+        String representation of the chart with newlines
+    """
+    if not values or width <= 0 or height <= 0:
+        return ""
+    
+    # Normalize values to fit within the height
+    max_val = max(values) if values else 1.0
+    if max_val == 0:
+        max_val = 1.0
+    
+    # Resample values to fit width if needed
+    if len(values) > width:
+        # Downsample by averaging buckets
+        step = len(values) / width
+        resampled = []
+        for i in range(width):
+            start_idx = int(i * step)
+            end_idx = int((i + 1) * step)
+            bucket = values[start_idx:end_idx]
+            resampled.append(sum(bucket) / len(bucket) if bucket else 0)
+        values = resampled
+    elif len(values) < width:
+        # Pad with zeros on the right
+        values = list(values) + [0.0] * (width - len(values))
+    
+    # Normalize to chart height (using fractional blocks)
+    # Each position can be 0 to (height * 8) where 8 is the number of fractional states
+    max_units = height * 8
+    normalized = [(v / max_val) * max_units for v in values]
+    
+    # Build chart from top to bottom
+    lines = []
+    for row in range(height - 1, -1, -1):
+        line = ""
+        for col_val in normalized:
+            # Determine which character to use for this row
+            # row represents height from bottom (0 = bottom row, height-1 = top row)
+            units_at_col = col_val
+            units_needed_for_row = row * 8
+            
+            if units_at_col > units_needed_for_row + 8:
+                # Full block for this row
+                line += BAR_CHARS[-1]  # █
+            elif units_at_col > units_needed_for_row:
+                # Partial block for this row
+                fraction = int(units_at_col - units_needed_for_row)
+                line += BAR_CHARS[min(fraction, len(BAR_CHARS) - 1)]
+            else:
+                # Empty for this row
+                line += BAR_CHARS[0]  # space
+        lines.append(line)
+    
+    return "\n".join(lines)
+
+
 # =============================================================================
 # Widgets
 # =============================================================================
@@ -397,6 +467,22 @@ class ActivityPreview(DashboardQuadrant):
         "source_web": "#7E9CD8",  # Crystal Blue
         "url": "#7AA89F",  # Wave Aqua
         "default": "#DCD7BA",  # Fuji White
+        "level_debug": "#727169",  # Fuji Gray
+        "level_info": "#DCD7BA",  # Fuji White
+        "level_warning": "#E6C384",  # Carp Yellow
+        "level_error": "#C34043",  # Samurai Red
+        "level_success": "#98BB6C",  # Spring Green
+        "level_job": "#7E9CD8",  # Crystal Blue
+    }
+
+    # Mapping of level names to color keys
+    LEVEL_COLORS = {
+        "debug": "level_debug",
+        "info": "level_info",
+        "warning": "level_warning",
+        "error": "level_error",
+        "success": "level_success",
+        "job": "level_job",
     }
 
     # Regex patterns for content types
@@ -454,15 +540,8 @@ class ActivityPreview(DashboardQuadrant):
     def _colorize_message(self, msg: str, level: str = "info") -> Text:
         """Apply Rich markup coloring based on content patterns."""
         # Determine base color from level
-        level_colors = {
-            "debug": "#727169",
-            "info": "#DCD7BA",
-            "warning": "#E6C384",
-            "error": "#C34043",
-            "success": "#98BB6C",
-            "job": "#7E9CD8",
-        }
-        base_color = level_colors.get(level, self.COLORS["default"])
+        color_key = self.LEVEL_COLORS.get(level, "default")
+        base_color = self.COLORS[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
@@ -497,7 +576,11 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
     def refresh_jobs(self):
-        """Refresh jobs table with recent jobs from state."""
+        """
+        Refresh the jobs preview table from the current application state.
+        
+        Populates the jobs DataTable with up to 10 most recent jobs from state, showing a truncated job ID (first 8 chars), language pair, word count and formatted reward. If the state is unavailable the method returns immediately. If the table widget is not mounted yet, the method quietly does nothing.
+        """
         if not self.state:
             return
         try:
@@ -715,6 +798,12 @@ class GengoWatcherApp(App):
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
+        """
+        Builds and yields the application's main UI layout: title bar, tabbed content (Dashboard, Jobs, Activity, Output, Charts, Stats), and the bottom input and footer.
+        
+        Returns:
+            ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
+        """
         yield TitleBar(config=self.config)
 
         # 2. Tabs
@@ -778,6 +867,15 @@ class TextualLogHandler(logging.Handler):
         "url": "#7AA89F",  # Wave Aqua
         "bracket": "#727169",  # Fuji Gray
         "punctuation": "#727169",  # Fuji Gray
+    }
+
+    # Mapping of logging levels to color keys
+    LEVEL_COLORS = {
+        logging.DEBUG: "level_debug",
+        logging.INFO: "level_info",
+        logging.WARNING: "level_warning",
+        logging.ERROR: "level_error",
+        logging.CRITICAL: "level_critical",
     }
 
     # Regex patterns for different content types
@@ -850,14 +948,8 @@ class TextualLogHandler(logging.Handler):
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""
         # Determine base color from log level
-        level_colors = {
-            logging.DEBUG: self.COLORS["level_debug"],
-            logging.INFO: self.COLORS["level_info"],
-            logging.WARNING: self.COLORS["level_warning"],
-            logging.ERROR: self.COLORS["level_error"],
-            logging.CRITICAL: self.COLORS["level_critical"],
-        }
-        base_color = level_colors.get(level, self.COLORS["level_info"])
+        color_key = self.LEVEL_COLORS.get(level, "level_info")
+        base_color = self.COLORS[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
