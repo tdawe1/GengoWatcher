@@ -969,22 +969,21 @@ class GengoWatcherApp(App):
 
     def _refresh_all_panels(self):
         """Refresh all data panels when a new job is detected."""
-        try:
-            # Dashboard widgets
-            self.query_one(MetricsRow).refresh_metrics()
-            self.query_one(JobsPreview).refresh_jobs()
-            self.query_one(JobsHourChart).refresh_chart()
-            self.query_one(SessionStats).refresh_stats()
-        except NoMatches:
-            pass
-
-        try:
-            # Tab panels
-            self.query_one(JobsPanel).refresh_jobs()
-            self.query_one(ChartsPanel).refresh_charts()
-            self.query_one(StatsPanel).refresh_stats()
-        except NoMatches:
-            pass
+        widgets_to_refresh = [
+            (MetricsRow, "refresh_metrics"),
+            (JobsPreview, "refresh_jobs"),
+            (JobsHourChart, "refresh_chart"),
+            (SessionStats, "refresh_stats"),
+            (JobsPanel, "refresh_jobs"),
+            (ChartsPanel, "refresh_charts"),
+            (StatsPanel, "refresh_stats"),
+        ]
+        for widget_class, method_name in widgets_to_refresh:
+            try:
+                widget = self.query_one(widget_class)
+                getattr(widget, method_name)()
+            except NoMatches:
+                pass
 
     def _setup_logging(self):
         handler = TextualLogHandler(self)
