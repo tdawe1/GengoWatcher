@@ -653,7 +653,10 @@ class ConfigPreview(DashboardQuadrant):
             config_text = self._render_config()
             content.update(config_text)
         except NoMatches:
-            pass
+            logging.debug(
+                "ConfigPreview.refresh_config: '#config-content' widget not found; "
+                "skipping configuration preview update."
+            )
 
     def _is_sensitive(self, key: str) -> bool:
         """Check if a key contains sensitive information."""
@@ -669,7 +672,9 @@ class ConfigPreview(DashboardQuadrant):
 
     def _format_value(self, key: str, value) -> str:
         """Format a config value for display."""
-        if self._is_sensitive(key) and value:
+        if self._is_sensitive(key):
+            if value is None or value == "":
+                return "—"
             return self._mask_value(value)
         if isinstance(value, bool):
             return "✓" if value else "✗"
@@ -677,7 +682,9 @@ class ConfigPreview(DashboardQuadrant):
             return ", ".join(str(v) for v in value)
         if isinstance(value, float):
             return f"{value:.2f}" if value != int(value) else str(int(value))
-        return str(value) if value else "—"
+        if value is None or value == "":
+            return "—"
+        return str(value)
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
