@@ -45,12 +45,12 @@ def test_configuration():
 
         # Check RSS feed URL
         feed_url = config.get("Watcher", "feed_url")
-        parsed_feed = urlparse(feed_url or "")
+        parsed_feed = urlparse(feed_url)
         host = parsed_feed.hostname
         if (
             host
             and (host == "gengo.com" or host.endswith(".gengo.com"))
-            and "YOUR_RSS_KEY" not in (feed_url or "")
+            and "YOUR_RSS_KEY" not in feed_url
         ):
             print("✅ RSS feed URL appears to be configured")
         else:
