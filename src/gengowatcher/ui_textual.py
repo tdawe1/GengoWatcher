@@ -9,7 +9,7 @@ import logging
 import re
 import time
 from collections import deque
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -707,9 +707,9 @@ class ConfigPreview(DashboardQuadrant):
         key_lower = key.lower()
         return any(s in key_lower for s in self.SENSITIVE_KEYS)
 
-    def _mask_value(self, value: str) -> str:
+    def _mask_value(self, value: object) -> str:
         """Mask a sensitive value, showing only first/last chars."""
-        if not value or len(str(value)) < 4:
+        if not value or len(str(value)) <= 4:
             return "****"
         val_str = str(value)
         return f"{val_str[:2]}...{val_str[-2:]}"
@@ -724,7 +724,9 @@ class ConfigPreview(DashboardQuadrant):
             return ", ".join(str(v) for v in value)
         if isinstance(value, float):
             return f"{value:.2f}" if value != int(value) else str(int(value))
-        return str(value) if value else "—"
+        if value is None or value == "":
+            return "—"
+        return str(value)
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
@@ -734,7 +736,7 @@ class ConfigPreview(DashboardQuadrant):
         if not callable(list_all):
             # Gracefully handle cases where config is a mock or non-AppConfig without list_all()
             return text
-        all_config = list_all()
+        all_config = cast(dict[str, dict[str, Any]], list_all())
 
         for section in self.SECTION_ORDER:
             if section not in all_config:
@@ -763,12 +765,12 @@ class ConfigPreview(DashboardQuadrant):
                 text.append(f"  {key}: ", style="#727169")
 
                 # Value styling based on type/content
-                if isinstance(value, bool):
+                if self._is_sensitive(key):
+                    text.append(formatted_value, style="#957FB8")
+                elif isinstance(value, bool):
                     text.append(
                         formatted_value, style="#98BB6C" if value else "#C34043"
                     )
-                elif self._is_sensitive(key):
-                    text.append(formatted_value, style="#957FB8")
                 elif isinstance(value, (int, float)):
                     text.append(formatted_value, style="#D27E99")
                 else:
