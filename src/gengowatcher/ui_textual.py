@@ -9,6 +9,7 @@ import logging
 import re
 import time
 from collections import deque
+from typing import Any, ClassVar, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -55,6 +56,76 @@ class Icons:
     IDLE = "○"
     LIVE = "∿∿∿"
     POLLING = "↻"
+
+
+# Fractional block characters for bar chart rendering
+# Characters arranged from empty to full: ▁▂▃▄▅▆▇█
+BAR_CHARS = " ▁▂▃▄▅▆▇█"
+
+
+def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
+    """
+    Render a bar chart using fractional block characters.
+
+    Args:
+        values: List of numeric values to display
+        width: Width of the chart in characters
+        height: Height of the chart in lines
+
+    Returns:
+        String representation of the chart with newlines
+    """
+    if not values or width <= 0 or height <= 0:
+        return ""
+
+    # Normalize values to fit within the height
+    max_val = max(values) if values else 1.0
+    if max_val == 0:
+        max_val = 1.0
+
+    # Resample values to fit width if needed
+    if len(values) > width:
+        # Downsample by averaging buckets
+        step = len(values) / width
+        resampled = []
+        for i in range(width):
+            start_idx = int(i * step)
+            end_idx = int((i + 1) * step)
+            bucket = values[start_idx:end_idx]
+            resampled.append(sum(bucket) / len(bucket) if bucket else 0)
+        values = resampled
+    elif len(values) < width:
+        # Pad with zeros on the right
+        values = list(values) + [0.0] * (width - len(values))
+
+    # Normalize to chart height (using fractional blocks)
+    # Each position can be 0 to (height * 8) where 8 is the number of fractional states
+    max_units = height * 8
+    normalized = [(v / max_val) * max_units for v in values]
+
+    # Build chart from top to bottom
+    lines = []
+    for row in range(height - 1, -1, -1):
+        line = ""
+        for col_val in normalized:
+            # Determine which character to use for this row
+            # row represents height from bottom (0 = bottom row, height-1 = top row)
+            units_at_col = col_val
+            units_needed_for_row = row * 8
+
+            if units_at_col > units_needed_for_row + 8:
+                # Full block for this row
+                line += BAR_CHARS[-1]  # █
+            elif units_at_col > units_needed_for_row:
+                # Partial block for this row
+                fraction = int(units_at_col - units_needed_for_row)
+                line += BAR_CHARS[min(fraction, len(BAR_CHARS) - 1)]
+            else:
+                # Empty for this row
+                line += BAR_CHARS[0]  # space
+        lines.append(line)
+
+    return "\n".join(lines)
 
 
 # =============================================================================
@@ -106,17 +177,20 @@ class TitleBar(Static):
             pass  # Widget not mounted yet
 
         # Session timer
-        app = self.app
-        watcher = getattr(app, "watcher", None)
-        if watcher:
-            elapsed = int(time.time() - watcher.start_time)
-            h, m = divmod(elapsed // 60, 60)
-            try:
-                self.query_one("#session-timer", Static).update(
-                    f"Session: {h}h {m:02d}m"
-                )
-            except NoMatches:
-                pass  # Widget not mounted yet
+        try:
+            app = self.app
+            watcher = getattr(app, "watcher", None)
+            if watcher:
+                elapsed = int(time.time() - watcher.start_time)
+                h, m = divmod(elapsed // 60, 60)
+                try:
+                    self.query_one("#session-timer", Static).update(
+                        f"Session: {h}h {m:02d}m"
+                    )
+                except NoMatches:
+                    pass  # Widget not mounted yet
+        except Exception:
+            pass  # app might not be ready
 
 
 class MetricCard(Static):
@@ -156,6 +230,10 @@ class MetricsRow(Horizontal):
         super().__init__(**kwargs)
         self.state = state
 
+    def on_mount(self) -> None:
+        """Start periodic metrics refresh."""
+        self.set_interval(1.0, self.refresh_metrics)
+
     def compose(self) -> ComposeResult:
         yield MetricCard("Found", "▲", id="card-found", classes="found")
         yield MetricCard("Accepted", "✓", id="card-accepted", classes="accepted")
@@ -166,24 +244,31 @@ class MetricsRow(Horizontal):
     def refresh_metrics(self) -> None:
         if not self.state:
             return
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total_value = sum(j.get("reward", 0) for j in jobs)
+        try:
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total_value = sum(j.get("reward", 0) for j in jobs)
 
-        # Rate calculation using session duration
-        session_start = getattr(self.state, "session_start", None)
-        if session_start:
-            elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
-        else:
-            elapsed_hours = 1.0  # Default to 1 hour if no session start
-        rate = found / elapsed_hours
+            # Rate calculation using session duration
+            session_start = getattr(self.state, "session_start", None)
+            if session_start:
+                elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
+            else:
+                elapsed_hours = 1.0  # Default to 1 hour if no session start
+            rate = found / elapsed_hours
 
-        self.query_one("#card-found", MetricCard).update_value(str(found))
-        self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
-        self.query_one("#card-value", MetricCard).update_value(f"${total_value:.2f}")
-        self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
-        self.query_one("#card-today", MetricCard).update_value(f"${total_value:.2f}")
+            self.query_one("#card-found", MetricCard).update_value(str(found))
+            self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
+            self.query_one("#card-value", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+            self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
+            self.query_one("#card-today", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+        except NoMatches:
+            pass
 
 
 class StatusIndicator(Static):
@@ -397,6 +482,22 @@ class ActivityPreview(DashboardQuadrant):
         "source_web": "#7E9CD8",  # Crystal Blue
         "url": "#7AA89F",  # Wave Aqua
         "default": "#DCD7BA",  # Fuji White
+        "level_debug": "#727169",  # Fuji Gray
+        "level_info": "#DCD7BA",  # Fuji White
+        "level_warning": "#E6C384",  # Carp Yellow
+        "level_error": "#C34043",  # Samurai Red
+        "level_success": "#98BB6C",  # Spring Green
+        "level_job": "#7E9CD8",  # Crystal Blue
+    }
+
+    # Mapping of level names to color keys
+    LEVEL_COLORS = {
+        "debug": "level_debug",
+        "info": "level_info",
+        "warning": "level_warning",
+        "error": "level_error",
+        "success": "level_success",
+        "job": "level_job",
     }
 
     # Regex patterns for content types
@@ -454,15 +555,8 @@ class ActivityPreview(DashboardQuadrant):
     def _colorize_message(self, msg: str, level: str = "info") -> Text:
         """Apply Rich markup coloring based on content patterns."""
         # Determine base color from level
-        level_colors = {
-            "debug": "#727169",
-            "info": "#DCD7BA",
-            "warning": "#E6C384",
-            "error": "#C34043",
-            "success": "#98BB6C",
-            "job": "#7E9CD8",
-        }
-        base_color = level_colors.get(level, self.COLORS["default"])
+        color_key = self.LEVEL_COLORS.get(level, "default")
+        base_color = self.COLORS[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
@@ -490,6 +584,8 @@ class JobsPreview(DashboardQuadrant):
         yield DataTable(id="jobs-table")
 
     def on_mount(self):
+        """Initialize table columns and start periodic refresh."""
+        self.set_interval(2.0, self.refresh_jobs)
         try:
             dt = self.query_one(DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$")
@@ -497,7 +593,11 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
     def refresh_jobs(self):
-        """Refresh jobs table with recent jobs from state."""
+        """
+        Refresh the jobs preview table from the current application state.
+
+        Populates the jobs DataTable with up to 10 most recent jobs from state, showing a truncated job ID (first 8 chars), language pair, word count and formatted reward. If the state is unavailable the method returns immediately. If the table widget is not mounted yet, the method quietly does nothing.
+        """
         if not self.state:
             return
         try:
@@ -514,112 +614,52 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
 
-class JobsHourChart(DashboardQuadrant):
-    """ASCII bar chart showing jobs per hour distribution."""
+class HourlyActivity(DashboardQuadrant):
+    """Hourly activity stats with peak hour highlighting."""
 
-    # Bar characters for different fill levels
-    BAR_CHARS = "▏▎▍▌▋▊▉█"
-    MAX_BAR_WIDTH = 12  # Maximum bar width in characters
-
-    def __init__(self, stats: "StatsManager | None" = None, **kwargs):
+    def __init__(self, stats: "StatsManager", **kwargs):
         super().__init__("Jobs/Hour", **kwargs)
         self.stats = stats
 
     def compose(self) -> ComposeResult:
-        yield Static(id="chart-content", classes="chart-ascii")
+        yield Static("No activity data", id="hourly-content")
 
-    def on_mount(self):
-        self.refresh_chart()
-        # Refresh chart every 30 seconds
-        self.set_interval(30.0, self.refresh_chart)
+    def on_mount(self) -> None:
+        """Initialize widget with current data and start periodic refresh."""
+        self.refresh_hourly()
+        self.set_interval(5.0, self.refresh_hourly)
 
-    def refresh_chart(self):
-        """Refresh the chart with current hourly data."""
+    def refresh_hourly(self):
+        """Refresh hourly activity display."""
+        if not self.stats:
+            return
         try:
-            content = self.query_one("#chart-content", Static)
-            chart_text = self._render_chart()
-            content.update(chart_text)
-        except NoMatches:
+            # Get peak hour info - unpacking both values as per fix
+            peak_hour, peak_rate = self.stats.get_peak_hour()
+
+            # FIX: Only treat as valid peak if peak_rate > 0
+            # This prevents highlighting "12-15" period with zero activity
+            if peak_rate > 0:
+                # Valid peak hour with actual activity
+                peak_period_start = (peak_hour // 3) * 3
+                peak_period_end = peak_period_start + 3
+                peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
+
+                content = f"Peak: {peak_period}\nJobs: {int(peak_rate)}"
+            else:
+                # No activity - don't highlight any period
+                content = "No activity yet"
+
+            self.query_one("#hourly-content", Static).update(content)
+        except Exception:
             pass  # Widget not mounted yet
-
-    def _render_chart(self) -> Text:
-        """Render ASCII bar chart for hourly job distribution."""
-        text = Text()
-
-        # Get hourly counts from stats or use empty data
-        if self.stats:
-            hourly = dict(self.stats.hourly_counts)
-            peak_hour, _ = self.stats.get_peak_hour()
-        else:
-            hourly = {}
-            peak_hour = -1
-
-        # Find max value for scaling
-        max_count = max(hourly.values()) if hourly else 1
-
-        # Show 6 time periods (4-hour blocks) to fit in quadrant
-        periods = [
-            ("00-03", range(0, 4)),
-            ("04-07", range(4, 8)),
-            ("08-11", range(8, 12)),
-            ("12-15", range(12, 16)),
-            ("16-19", range(16, 20)),
-            ("20-23", range(20, 24)),
-        ]
-
-        for label, hours in periods:
-            # Sum jobs in this period
-            period_count = sum(hourly.get(h, 0) for h in hours)
-            # Check if peak hour is in this period
-            is_peak = peak_hour in hours
-
-            # Calculate bar width
-            if max_count > 0:
-                bar_width = int((period_count / max_count) * self.MAX_BAR_WIDTH)
-            else:
-                bar_width = 0
-
-            # Build the bar
-            full_blocks = bar_width
-            bar = "█" * full_blocks
-
-            # Pad to consistent width
-            bar_padded = bar.ljust(self.MAX_BAR_WIDTH, "░")
-
-            # Format: "00-03 ████████░░░░ 12"
-            count_str = f"{period_count:3d}" if period_count > 0 else "  0"
-
-            # Add label
-            text.append(f"{label} ", style="#737c73")  # Dragon Gray
-
-            # Add bar with appropriate color
-            if is_peak and period_count > 0:
-                text.append(bar_padded, style="bold #8ba4b0")  # Dragon Blue (peak)
-            elif period_count > 0:
-                text.append(bar_padded, style="#8a9a7b")  # Dragon Green
-            else:
-                text.append(bar_padded, style="#393836")  # Dragon Black 5 (empty)
-
-            # Add count
-            if is_peak and period_count > 0:
-                text.append(f" {count_str}", style="bold #8ba4b0")
-            else:
-                text.append(f" {count_str}", style="#737c73")
-
-            text.append("\n")
-
-        return text
-
-
-# Keep for backwards compatibility
-ChartPlaceholder = JobsHourChart
 
 
 class ConfigPreview(DashboardQuadrant):
     """Configuration preview showing all config.ini options."""
 
     # Keys that should be masked for security
-    SENSITIVE_KEYS = {
+    SENSITIVE_KEYS: ClassVar[set[str]] = {
         "user_session",
         "user_key",
         "client_id",
@@ -631,7 +671,30 @@ class ConfigPreview(DashboardQuadrant):
         "password",
         "secret",
         "token",
+        "api_key",
     }
+
+    # Section display order for configuration
+    SECTION_ORDER: ClassVar[list[str]] = [
+        "Watcher",
+        "WebSocket",
+        "EmailMonitor",
+        "WebsiteMonitor",
+        "AutoAccept",
+        "HighValue",
+        "Cancellation",
+        "Network",
+        "Paths",
+        "Logging",
+        "DebugCategories",
+        "RateLimit",
+        "WebServer",
+    ]
+
+    # Layout constants for _render_config
+    SECTION_HEADER_WIDTH = 18
+    MAX_VALUE_LENGTH = 20
+    MAX_VALUE_LENGTH_SHORT = 17
 
     def __init__(self, config: "AppConfig", **kwargs):
         super().__init__("Configuration", **kwargs)
@@ -653,9 +716,8 @@ class ConfigPreview(DashboardQuadrant):
             config_text = self._render_config()
             content.update(config_text)
         except NoMatches:
-            logging.debug(
-                "ConfigPreview.refresh_config: '#config-content' widget not found; "
-                "skipping configuration preview update."
+            logging.getLogger(__name__).debug(
+                "ConfigPreview.refresh_config: '#config-content' widget not found; skipping update."
             )
 
     def _is_sensitive(self, key: str) -> bool:
@@ -663,22 +725,25 @@ class ConfigPreview(DashboardQuadrant):
         key_lower = key.lower()
         return any(s in key_lower for s in self.SENSITIVE_KEYS)
 
-    def _mask_value(self, value: str) -> str:
+    def _mask_value(self, value: object) -> str:
         """Mask a sensitive value, showing only first/last chars."""
-        if not value or len(str(value)) < 4:
+        if not value or len(str(value)) <= 4:
             return "****"
         val_str = str(value)
         return f"{val_str[:2]}...{val_str[-2:]}"
 
     def _format_value(self, key: str, value) -> str:
-        """Format a config value for display."""
-        if self._is_sensitive(key):
-            if value is None or value == "":
-                return "—"
+        """Format a config value for display.
+
+        Only None or empty string render as em dash. Numeric zero is preserved.
+        """
+        if self._is_sensitive(key) and value:
             return self._mask_value(value)
         if isinstance(value, bool):
             return "✓" if value else "✗"
         if isinstance(value, list):
+            if not value:
+                return "—"
             return ", ".join(str(v) for v in value)
         if isinstance(value, float):
             return f"{value:.2f}" if value != int(value) else str(int(value))
@@ -689,26 +754,19 @@ class ConfigPreview(DashboardQuadrant):
     def _render_config(self) -> Text:
         """Render all config sections and options."""
         text = Text()
-        all_config = self.config.list_all()
+        config = getattr(self, "config", None)
+        list_all = getattr(config, "list_all", None)
+        if not callable(list_all):
+            # Gracefully handle cases where config is a mock or non-AppConfig without list_all()
+            return text
+        all_config = cast(dict[str, dict[str, Any]], list_all())
 
-        # Define section display order and which sections to show
-        section_order = [
-            "Watcher",
-            "WebSocket",
-            "EmailMonitor",
-            "WebsiteMonitor",
-            "AutoAccept",
-            "HighValue",
-            "Cancellation",
-            "Network",
-            "Paths",
-            "Logging",
-            "DebugCategories",
-            "RateLimit",
-            "WebServer",
+        # Render known sections first in preferred order, then any additional sections
+        sections_to_render = list(self.SECTION_ORDER) + [
+            s for s in all_config if s not in self.SECTION_ORDER
         ]
 
-        for section in section_order:
+        for section in sections_to_render:
             if section not in all_config:
                 continue
             options = all_config[section]
@@ -717,26 +775,30 @@ class ConfigPreview(DashboardQuadrant):
 
             # Section header
             text.append(f"─ {section} ", style="bold #7E9CD8")
-            text.append("─" * max(1, 18 - len(section)), style="#727169")
+            text.append(
+                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)), style="#727169"
+            )
             text.append("\n")
 
             # Options
             for key, value in options.items():
                 formatted_value = self._format_value(key, value)
                 # Truncate long values
-                if len(formatted_value) > 20:
-                    formatted_value = formatted_value[:17] + "..."
+                if len(formatted_value) > self.MAX_VALUE_LENGTH:
+                    formatted_value = (
+                        formatted_value[: self.MAX_VALUE_LENGTH_SHORT] + "..."
+                    )
 
                 # Key styling
                 text.append(f"  {key}: ", style="#727169")
 
                 # Value styling based on type/content
-                if isinstance(value, bool):
+                if self._is_sensitive(key):
+                    text.append(formatted_value, style="#957FB8")
+                elif isinstance(value, bool):
                     text.append(
                         formatted_value, style="#98BB6C" if value else "#C34043"
                     )
-                elif self._is_sensitive(key):
-                    text.append(formatted_value, style="#957FB8")
                 elif isinstance(value, (int, float)):
                     text.append(formatted_value, style="#D27E99")
                 else:
@@ -761,20 +823,27 @@ class SessionStats(DashboardQuadrant):
             yield Static("Accepted: 0", id="stat-accepted")
             yield Static("Value: $0.00", id="stat-value")
 
+    def on_mount(self) -> None:
+        """Start periodic stats refresh."""
+        self.set_interval(1.0, self.refresh_stats)
+
     def refresh_stats(self):
         if not self.watcher or not self.state:
             return
-        elapsed = int(time.time() - self.watcher.start_time)
-        h, m = divmod(elapsed // 60, 60)
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total = sum(j.get("reward", 0) for j in jobs)
+        try:
+            elapsed = int(time.time() - self.watcher.start_time)
+            h, m = divmod(elapsed // 60, 60)
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total = sum(j.get("reward", 0) for j in jobs)
 
-        self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
-        self.query_one("#stat-found", Static).update(f"Found: {found}")
-        self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
-        self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+            self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
+            self.query_one("#stat-found", Static).update(f"Found: {found}")
+            self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
+            self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+        except NoMatches:
+            pass
 
 
 class SourcesBreakdown(DashboardQuadrant):
@@ -786,6 +855,10 @@ class SourcesBreakdown(DashboardQuadrant):
 
     def compose(self) -> ComposeResult:
         yield Static("WS: 0%\nEmail: 0%\nWeb: 0%\nRSS: 0%", id="sources-content")
+
+    def on_mount(self) -> None:
+        """Start periodic sources refresh."""
+        self.set_interval(5.0, self.refresh_sources)
 
     def refresh_sources(self):
         """Refresh sources breakdown with job source statistics."""
@@ -897,6 +970,12 @@ class GengoWatcherApp(App):
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
+        """
+        Builds and yields the application's main UI layout: title bar, tabbed content (Dashboard, Jobs, Activity, Output, Charts, Stats), and the bottom input and footer.
+
+        Returns:
+            ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
+        """
         yield TitleBar(config=self.config)
 
         # 2. Tabs
@@ -909,7 +988,7 @@ class GengoWatcherApp(App):
                 with Vertical(id="dashboard-content"):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
-                        yield JobsHourChart(stats=self.stats)
+                        yield HourlyActivity(stats=self.stats)
                         yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
@@ -960,6 +1039,15 @@ class TextualLogHandler(logging.Handler):
         "url": "#7AA89F",  # Wave Aqua
         "bracket": "#727169",  # Fuji Gray
         "punctuation": "#727169",  # Fuji Gray
+    }
+
+    # Mapping of logging levels to color keys
+    LEVEL_COLORS = {
+        logging.DEBUG: "level_debug",
+        logging.INFO: "level_info",
+        logging.WARNING: "level_warning",
+        logging.ERROR: "level_error",
+        logging.CRITICAL: "level_critical",
     }
 
     # Regex patterns for different content types
@@ -1032,14 +1120,8 @@ class TextualLogHandler(logging.Handler):
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""
         # Determine base color from log level
-        level_colors = {
-            logging.DEBUG: self.COLORS["level_debug"],
-            logging.INFO: self.COLORS["level_info"],
-            logging.WARNING: self.COLORS["level_warning"],
-            logging.ERROR: self.COLORS["level_error"],
-            logging.CRITICAL: self.COLORS["level_critical"],
-        }
-        base_color = level_colors.get(level, self.COLORS["level_info"])
+        color_key = self.LEVEL_COLORS.get(level, "level_info")
+        base_color = self.COLORS[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
