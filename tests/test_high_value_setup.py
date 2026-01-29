@@ -3,8 +3,10 @@
 import pytest
 import tempfile
 import pathlib
+import re
 from unittest.mock import MagicMock, patch, mock_open
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 @pytest.fixture
@@ -41,6 +43,13 @@ def mock_config():
 
     config.get.side_effect = get_side_effect
     return config
+
+
+@pytest.fixture
+def mock_high_value_manager():
+    """Mock the high_value_job_manager module to allow imports."""
+    with patch.dict('sys.modules', {'gengowatcher.high_value_job_manager': MagicMock()}):
+        yield
 
 
 class TestConfigValidation:
@@ -206,7 +215,7 @@ class TestHighValueManager:
 class TestSetupInstructions:
     """Tests for setup instructions display."""
 
-    def test_show_setup_instructions_output(self, capsys):
+    def test_show_setup_instructions_output(self, capsys, mock_high_value_manager):
         """Test that setup instructions are displayed correctly."""
         from scripts.test_high_value_setup import show_setup_instructions
 
@@ -221,17 +230,38 @@ class TestSetupInstructions:
         assert "RUNNING" in captured.out
         assert "SAFETY LIMITS" in captured.out
 
-    def test_setup_instructions_contains_urls(self, capsys):
+    def test_setup_instructions_contains_urls(self, capsys, mock_high_value_manager):
         """Test that setup instructions contain necessary URLs."""
         from scripts.test_high_value_setup import show_setup_instructions
 
         show_setup_instructions()
         captured = capsys.readouterr()
 
-        assert "gengo.com" in captured.out
+        # Validate complete URLs instead of substrings to ensure proper sanitization
+        assert "https://gengo.com/developers/dashboard" in captured.out
+        assert "https://gengo.com/rss/available_jobs/" in captured.out
+        
+        # Verify all URLs in the output are properly formed with strict hostname validation
+        # Extract all https URLs using regex pattern
+        all_urls = re.findall(r'https://[^\s]+', captured.out)
+        
+        # Parse and validate each URL, filtering for gengo.com by parsed hostname
+        gengo_urls = []
+        for url in all_urls:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                # Check if hostname is gengo.com or subdomain using proper hostname comparison
+                if parsed.hostname == 'gengo.com' or parsed.hostname.endswith('.gengo.com'):
+                    gengo_urls.append(url)
+                    # Validate scheme
+                    assert parsed.scheme == 'https', f"URL {url} should use https scheme"
+        
+        # Ensure we found some gengo.com URLs
+        assert len(gengo_urls) > 0, "Expected to find gengo.com URLs in output"
+        
         assert "RSS" in captured.out
 
-    def test_setup_instructions_contains_limits(self, capsys):
+    def test_setup_instructions_contains_limits(self, capsys, mock_high_value_manager):
         """Test that safety limits are documented."""
         from scripts.test_high_value_setup import show_setup_instructions
 
