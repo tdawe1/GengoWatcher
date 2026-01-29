@@ -77,14 +77,18 @@ def test_get_peak_hour_with_data():
         from unittest.mock import patch
 
         # Mock time to record jobs at specific hours
-        with patch('gengowatcher.stats.datetime') as mock_datetime:
+        with patch("gengowatcher.stats.datetime") as mock_datetime:
             # Record 5 jobs at hour 14
-            mock_datetime.datetime.now.return_value = datetime.datetime(2024, 1, 1, 14, 0, 0)
+            mock_datetime.datetime.now.return_value = datetime.datetime(
+                2024, 1, 1, 14, 0, 0
+            )
             for _ in range(5):
                 manager.record_job(10.0, "WebSocket", "JA→EN", accepted=True)
 
             # Record 3 jobs at hour 10
-            mock_datetime.datetime.now.return_value = datetime.datetime(2024, 1, 1, 10, 0, 0)
+            mock_datetime.datetime.now.return_value = datetime.datetime(
+                2024, 1, 1, 10, 0, 0
+            )
             for _ in range(3):
                 manager.record_job(10.0, "WebSocket", "JA→EN", accepted=True)
 
@@ -92,6 +96,8 @@ def test_get_peak_hour_with_data():
         peak_hour, peak_rate = manager.get_peak_hour()
         assert peak_hour == 14
         assert peak_rate == 5
+
+
 class TestStatsManagerMultipleJobs:
     """Test recording multiple jobs."""
 
@@ -149,7 +155,7 @@ class TestStatsManagerHourlyCounts:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            assert hasattr(manager, 'hourly_counts')
+            assert hasattr(manager, "hourly_counts")
             # Accessing any hour should yield a non-negative count
             for hour in range(24):
                 assert manager.hourly_counts[hour] >= 0
@@ -178,8 +184,8 @@ class TestStatsManagerHourlyCounts:
 
             peak_hour, peak_count = manager.get_peak_hour()
 
-            assert peak_hour == -1 or peak_hour >= 0
-            assert peak_count >= 0
+            assert peak_hour == 12
+            assert peak_count == 0.0
 
 
 class TestStatsManagerPersistence:
@@ -316,7 +322,7 @@ class TestStatsManagerReset:
             assert manager.session.jobs_found == 2
 
             # Reset session (if method exists)
-            if hasattr(manager, 'reset_session'):
+            if hasattr(manager, "reset_session"):
                 manager.reset_session()
                 assert manager.session.jobs_found == 0
 
@@ -328,7 +334,7 @@ class TestSessionStatsTimestamp:
         """Test that SessionStats tracks start time."""
         stats = SessionStats()
 
-        assert hasattr(stats, 'start_time')
+        assert hasattr(stats, "start_time")
         # Start time should be recent (within last second)
         assert abs(time.time() - stats.start_time) < 2
 
@@ -358,7 +364,7 @@ class TestStatsManagerConcurrency:
                     float(i),
                     "Website" if i % 2 == 0 else "WebSocket",
                     "JA→EN" if i % 3 == 0 else "EN→JA",
-                    accepted=(i % 2 == 0)
+                    accepted=(i % 2 == 0),
                 )
 
             assert manager.session.jobs_found == 100
@@ -378,7 +384,7 @@ class TestStatsManagerExport:
             manager.save()
 
             # Read and verify JSON format
-            with open(path, 'r') as f:
+            with open(path, "r") as f:
                 data = json.load(f)
 
             assert isinstance(data, dict)
@@ -393,7 +399,7 @@ class TestStatsManagerExport:
             manager.hourly_counts[12] = 5
             manager.save()
 
-            with open(path, 'r') as f:
+            with open(path, "r") as f:
                 data = json.load(f)
 
             # This hard-coded section_order list mea
