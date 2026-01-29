@@ -436,6 +436,19 @@ class GengoWatcher:
             jobs_attr = getattr(self.state, "jobs", None)
             if isinstance(jobs_attr, dict):
                 job_in_state = job_id in jobs_attr or str(job_id) in jobs_attr
+            elif isinstance(jobs_attr, list):
+                for job in jobs_attr:
+                    job_id_in_state = None
+                    if isinstance(job, dict):
+                        job_id_in_state = job.get("id")
+                    else:
+                        job_id_in_state = getattr(job, "id", None)
+                    if job_id_in_state is not None and (
+                        job_id_in_state == job_id
+                        or str(job_id_in_state) == str(job_id)
+                    ):
+                        job_in_state = True
+                        break
         except Exception as e:
             self.logger.debug(f"Error while verifying job presence in state: {e}")
             job_in_state = False
