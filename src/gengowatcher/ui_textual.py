@@ -724,12 +724,12 @@ class ConfigPreview(DashboardQuadrant):
                 text.append(f"  {key}: ", style="#727169")
 
                 # Value styling based on type/content
-                if isinstance(value, bool):
+                if self._is_sensitive(key):
+                    text.append(formatted_value, style="#957FB8")
+                elif isinstance(value, bool):
                     text.append(
                         formatted_value, style="#98BB6C" if value else "#C34043"
                     )
-                elif self._is_sensitive(key):
-                    text.append(formatted_value, style="#957FB8")
                 elif isinstance(value, (int, float)):
                     text.append(formatted_value, style="#D27E99")
                 else:
