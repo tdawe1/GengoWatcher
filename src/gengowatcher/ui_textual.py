@@ -467,6 +467,22 @@ class ActivityPreview(DashboardQuadrant):
         "source_web": "#7E9CD8",  # Crystal Blue
         "url": "#7AA89F",  # Wave Aqua
         "default": "#DCD7BA",  # Fuji White
+        "level_debug": "#727169",  # Fuji Gray
+        "level_info": "#DCD7BA",  # Fuji White
+        "level_warning": "#E6C384",  # Carp Yellow
+        "level_error": "#C34043",  # Samurai Red
+        "level_success": "#98BB6C",  # Spring Green
+        "level_job": "#7E9CD8",  # Crystal Blue
+    }
+
+    # Mapping of level names to color keys
+    LEVEL_COLORS = {
+        "debug": "level_debug",
+        "info": "level_info",
+        "warning": "level_warning",
+        "error": "level_error",
+        "success": "level_success",
+        "job": "level_job",
     }
 
     # Regex patterns for content types
@@ -524,15 +540,8 @@ class ActivityPreview(DashboardQuadrant):
     def _colorize_message(self, msg: str, level: str = "info") -> Text:
         """Apply Rich markup coloring based on content patterns."""
         # Determine base color from level
-        level_colors = {
-            "debug": "#727169",
-            "info": "#DCD7BA",
-            "warning": "#E6C384",
-            "error": "#C34043",
-            "success": "#98BB6C",
-            "job": "#7E9CD8",
-        }
-        base_color = level_colors.get(level, self.COLORS["default"])
+        color_key = self.LEVEL_COLORS.get(level, "default")
+        base_color = self.COLORS[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
@@ -991,6 +1000,15 @@ class TextualLogHandler(logging.Handler):
         "punctuation": "#727169",  # Fuji Gray
     }
 
+    # Mapping of logging levels to color keys
+    LEVEL_COLORS = {
+        logging.DEBUG: "level_debug",
+        logging.INFO: "level_info",
+        logging.WARNING: "level_warning",
+        logging.ERROR: "level_error",
+        logging.CRITICAL: "level_critical",
+    }
+
     # Regex patterns for different content types
     PATTERNS = [
         # Timestamps: [2024-01-15 12:34:56] or 2024-01-15 12:34:56
@@ -1061,14 +1079,8 @@ class TextualLogHandler(logging.Handler):
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""
         # Determine base color from log level
-        level_colors = {
-            logging.DEBUG: self.COLORS["level_debug"],
-            logging.INFO: self.COLORS["level_info"],
-            logging.WARNING: self.COLORS["level_warning"],
-            logging.ERROR: self.COLORS["level_error"],
-            logging.CRITICAL: self.COLORS["level_critical"],
-        }
-        base_color = level_colors.get(level, self.COLORS["level_info"])
+        color_key = self.LEVEL_COLORS.get(level, "level_info")
+        base_color = self.COLORS[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
