@@ -672,6 +672,8 @@ class ConfigPreview(DashboardQuadrant):
             config_text = self._render_config()
             content.update(config_text)
         except NoMatches:
+            # The config content widget may not exist or be mounted yet;
+            # in that case we simply skip updating the preview.
             pass
 
     def _is_sensitive(self, key: str) -> bool:
