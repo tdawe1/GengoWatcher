@@ -660,7 +660,7 @@ class ConfigPreview(DashboardQuadrant):
         key_lower = key.lower()
         return any(s in key_lower for s in self.SENSITIVE_KEYS)
 
-    def _mask_value(self, value: str) -> str:
+    def _mask_value(self, value: object) -> str:
         """Mask a sensitive value, showing only first/last chars."""
         if not value or len(str(value)) < 4:
             return "****"
