@@ -228,10 +228,10 @@ class GengoWatcher:
         self.logger.debug("Setting up CSV logging.")
         try:
             log_path_str = self.config.get("Paths", "all_entries_log")
-            if not log_path_str:
-                self.logger.error("all_entries_log path not configured")
+            if not log_path_str or not isinstance(log_path_str, (str, Path)):
+                self.logger.error("all_entries_log path not configured or invalid")
                 return
-            log_path = Path(log_path_str)
+            log_path = Path(str(log_path_str))
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._all_entries_log_file = open(
                 log_path, "a", newline="", encoding="utf-8"
@@ -1289,7 +1289,9 @@ class GengoWatcher:
 
                 prompt = f"  {option} (current: {display_current}){desc_text}: "
 
-                is_sensitive = any(keyword in option.lower() for keyword in SENSITIVE_KEYWORDS)
+                is_sensitive = any(
+                    keyword in option.lower() for keyword in SENSITIVE_KEYWORDS
+                )
 
                 if is_sensitive:
                     value = getpass.getpass(prompt)
