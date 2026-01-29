@@ -168,6 +168,32 @@ def test_process_new_job_callback(watcher_instance):
     assert call_args["source"] == "WebSocket"
 
 
+def test_process_new_job_populates_lang_pair_and_word_count(watcher_instance):
+    """Job data should contain normalized lang_pair and word_count."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    recorded = []
+    w.state.add_job = MagicMock(side_effect=lambda data: recorded.append(data))
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    source_meta = {"lc_src": "English", "lc_tgt": "Japanese", "word_count": "320"}
+    w._process_new_job(
+        999,
+        "English > Japanese | Sample",
+        15.0,
+        "http://example.com/999",
+        "RSS",
+        source_meta=source_meta,
+    )
+
+    assert recorded
+    job_data = recorded[0]
+    assert job_data["lang_pair"] == "EN→JA"
+    assert job_data["word_count"] == 320
+
+
 def test_process_new_job_callback_order(watcher_instance):
     """Ensure the job callback runs after the job is added to state."""
     w = watcher_instance
@@ -192,6 +218,16 @@ def test_process_new_job_callback_order(watcher_instance):
     assert recorded_job_data
     callback.assert_called_once()
     assert recorded_job_data[0] is callback.call_args[0][0]
+
+
+def test_job_in_state_uses_get_recent_jobs(watcher_instance):
+    """job_in_state should rely on the public AppState API."""
+    w = watcher_instance
+    job_id = "abc123"
+    w.state.get_recent_jobs = MagicMock(return_value=[{"id": job_id}])
+
+    assert w.job_in_state(job_id)
+    w.state.get_recent_jobs.assert_called_once_with(limit=AppState.MAX_STORED_JOBS)
 
 
 def test_process_new_job_callback_exception_handling(watcher_instance):

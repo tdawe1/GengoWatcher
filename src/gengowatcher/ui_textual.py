@@ -200,6 +200,28 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
     return "\n".join(lines)
 
 
+def _parse_job_title_fallback(title: Any) -> tuple[str, str]:
+    """Fallback parser for language pair and word count from job title."""
+
+    default_pair = "??→??"
+    default_words = "0"
+    if not title:
+        return default_pair, default_words
+
+    text = str(title)
+    pair_match = re.search(
+        r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", text, re.IGNORECASE
+    )
+    if pair_match:
+        pair = f"{pair_match.group(1).upper()}→{pair_match.group(2).upper()}"
+    else:
+        pair = default_pair
+
+    words_match = re.search(r"\b(\d{1,6})\s*words?\b", text, re.IGNORECASE)
+    words = words_match.group(1) if words_match else default_words
+    return pair, words
+
+
 # =============================================================================
 # Widgets
 # =============================================================================
@@ -676,8 +698,16 @@ class JobsPreview(DashboardQuadrant):
             jobs = self.state.get_recent_jobs(limit=10)
             for job in jobs:
                 job_id = str(job.get("id", "N/A"))[:8]
-                pair = job.get("lang_pair", "??→??")
-                words = str(job.get("word_count", job.get("words", 0)))
+                fallback_pair, fallback_words = _parse_job_title_fallback(
+                    job.get("title", "")
+                )
+                pair = job.get("lang_pair") or fallback_pair
+                word_count = job.get("word_count")
+                if word_count is None:
+                    word_count = job.get("words")
+                if word_count is None:
+                    word_count = fallback_words
+                words = str(word_count)
                 reward = f"${job.get('reward', 0):.2f}"
                 dt.add_row(job_id, pair, words, reward)
         except NoMatches:
@@ -919,7 +949,9 @@ class SourcesBreakdown(DashboardQuadrant):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        yield Static("WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%", id="sources-content")
+        yield Static(
+            "WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%", id="sources-content"
+        )
 
     def refresh_sources(self):
         """Refresh sources breakdown with job source statistics."""
@@ -1040,8 +1072,16 @@ class JobsPanel(Static):
             jobs = self.state.get_recent_jobs(limit=100)
             for job in jobs:
                 job_id = str(job.get("id", "N/A"))[:12]
-                pair = job.get("lang_pair", "??→??")
-                words = str(job.get("word_count", job.get("words", 0)))
+                fallback_pair, fallback_words = _parse_job_title_fallback(
+                    job.get("title", "")
+                )
+                pair = job.get("lang_pair") or fallback_pair
+                word_count = job.get("word_count")
+                if word_count is None:
+                    word_count = job.get("words")
+                if word_count is None:
+                    word_count = fallback_words
+                words = str(word_count)
                 reward = f"${job.get('reward', 0):.2f}"
                 source = job.get("source", "unknown")
                 status = "✓" if job.get("accepted", False) else "○"
