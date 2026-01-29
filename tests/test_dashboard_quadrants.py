@@ -4,7 +4,12 @@ import pytest
 from unittest.mock import MagicMock
 from textual.app import App, ComposeResult
 
-from gengowatcher.ui_textual import ActivityPreview, JobsPreview, ConfigPreview
+from gengowatcher.ui_textual import (
+    ActivityPreview,
+    JobsPreview,
+    ConfigPreview,
+    JobsPanel,
+)
 
 
 class ActivityPreviewTestApp(App):
@@ -30,7 +35,15 @@ class ConfigPreviewTestApp(App):
         yield ConfigPreview(self._config)
 
 
-@pytest.mark.asyncio
+class JobsPanelTestApp(App):
+    def __init__(self, state):
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield JobsPanel(self._state)
+
+
 async def test_activity_preview_has_log():
     """ActivityPreview should have a RichLog widget."""
     app = ActivityPreviewTestApp()
@@ -126,3 +139,52 @@ async def test_config_preview_render_uses_constants():
         assert "..." in result_str
         # Verify the full 30-character value is not present
         assert "x" * 30 not in result_str
+
+
+@pytest.mark.asyncio
+async def test_jobs_preview_falls_back_to_title_fields():
+    state = MagicMock()
+    state.get_recent_jobs.return_value = [
+        {
+            "id": "123456",
+            "title": "JA→EN | 120 words | Sample",
+            "reward": 12.50,
+        }
+    ]
+
+    app = JobsPreviewTestApp(state)
+    async with app.run_test() as pilot:
+        preview = app.query_one(JobsPreview)
+        table = preview.query_one("#jobs-table")
+        table.add_row = MagicMock()
+        preview.refresh_jobs()
+        await pilot.pause()
+
+        args = table.add_row.call_args[0]
+        assert args[1] == "JA→EN"
+        assert args[2] == "120"
+
+
+@pytest.mark.asyncio
+async def test_jobs_panel_falls_back_to_title_fields():
+    state = MagicMock()
+    state.get_recent_jobs.return_value = [
+        {
+            "id": "1234567890",
+            "title": "EN-JA 350 words | Sample",
+            "reward": 8.25,
+            "source": "rss",
+        }
+    ]
+
+    app = JobsPanelTestApp(state)
+    async with app.run_test() as pilot:
+        panel = app.query_one(JobsPanel)
+        table = panel.query_one("#jobs-table-full")
+        table.add_row = MagicMock()
+        panel.refresh_jobs()
+        await pilot.pause()
+
+        args = table.add_row.call_args[0]
+        assert args[1] == "EN→JA"
+        assert args[2] == "350"
