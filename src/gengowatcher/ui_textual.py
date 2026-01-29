@@ -177,17 +177,20 @@ class TitleBar(Static):
             pass  # Widget not mounted yet
 
         # Session timer
-        app = self.app
-        watcher = getattr(app, "watcher", None)
-        if watcher:
-            elapsed = int(time.time() - watcher.start_time)
-            h, m = divmod(elapsed // 60, 60)
-            try:
-                self.query_one("#session-timer", Static).update(
-                    f"Session: {h}h {m:02d}m"
-                )
-            except NoMatches:
-                pass  # Widget not mounted yet
+        try:
+            app = self.app
+            watcher = getattr(app, "watcher", None)
+            if watcher:
+                elapsed = int(time.time() - watcher.start_time)
+                h, m = divmod(elapsed // 60, 60)
+                try:
+                    self.query_one("#session-timer", Static).update(
+                        f"Session: {h}h {m:02d}m"
+                    )
+                except NoMatches:
+                    pass  # Widget not mounted yet
+        except Exception:
+            pass  # app might not be ready
 
 
 class MetricCard(Static):
@@ -237,24 +240,31 @@ class MetricsRow(Horizontal):
     def refresh_metrics(self) -> None:
         if not self.state:
             return
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total_value = sum(j.get("reward", 0) for j in jobs)
+        try:
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total_value = sum(j.get("reward", 0) for j in jobs)
 
-        # Rate calculation using session duration
-        session_start = getattr(self.state, "session_start", None)
-        if session_start:
-            elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
-        else:
-            elapsed_hours = 1.0  # Default to 1 hour if no session start
-        rate = found / elapsed_hours
+            # Rate calculation using session duration
+            session_start = getattr(self.state, "session_start", None)
+            if session_start:
+                elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
+            else:
+                elapsed_hours = 1.0  # Default to 1 hour if no session start
+            rate = found / elapsed_hours
 
-        self.query_one("#card-found", MetricCard).update_value(str(found))
-        self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
-        self.query_one("#card-value", MetricCard).update_value(f"${total_value:.2f}")
-        self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
-        self.query_one("#card-today", MetricCard).update_value(f"${total_value:.2f}")
+            self.query_one("#card-found", MetricCard).update_value(str(found))
+            self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
+            self.query_one("#card-value", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+            self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
+            self.query_one("#card-today", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+        except NoMatches:
+            pass
 
 
 class StatusIndicator(Static):
@@ -654,6 +664,7 @@ class ConfigPreview(DashboardQuadrant):
         "password",
         "secret",
         "token",
+        "api_key",
     }
 
     # Section display order for configuration
@@ -717,7 +728,7 @@ class ConfigPreview(DashboardQuadrant):
     def _format_value(self, key: str, value) -> str:
         """Format a config value for display.
 
-        Empty or falsy values (None, empty string, empty list) render as em dash.
+        Only None or empty string render as em dash. Numeric zero is preserved.
         """
         if self._is_sensitive(key) and value:
             return self._mask_value(value)
@@ -808,17 +819,20 @@ class SessionStats(DashboardQuadrant):
     def refresh_stats(self):
         if not self.watcher or not self.state:
             return
-        elapsed = int(time.time() - self.watcher.start_time)
-        h, m = divmod(elapsed // 60, 60)
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total = sum(j.get("reward", 0) for j in jobs)
+        try:
+            elapsed = int(time.time() - self.watcher.start_time)
+            h, m = divmod(elapsed // 60, 60)
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total = sum(j.get("reward", 0) for j in jobs)
 
-        self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
-        self.query_one("#stat-found", Static).update(f"Found: {found}")
-        self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
-        self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+            self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
+            self.query_one("#stat-found", Static).update(f"Found: {found}")
+            self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
+            self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+        except NoMatches:
+            pass
 
 
 class SourcesBreakdown(DashboardQuadrant):
