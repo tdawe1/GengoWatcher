@@ -339,7 +339,7 @@ class TestWebAPIIntegration:
             }
         )
 
-        async def mock_accept(job):
+        async def mock_accept(_job):
             return True
 
         watcher.job_acceptance_engine._attempt_job_acceptance = mock_accept
