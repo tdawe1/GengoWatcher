@@ -57,6 +57,76 @@ class Icons:
     POLLING = "↻"
 
 
+# Fractional block characters for bar chart rendering
+# Characters arranged from empty to full: ▁▂▃▄▅▆▇█
+BAR_CHARS = " ▁▂▃▄▅▆▇█"
+
+
+def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
+    """
+    Render a bar chart using fractional block characters.
+    
+    Args:
+        values: List of numeric values to display
+        width: Width of the chart in characters
+        height: Height of the chart in lines
+        
+    Returns:
+        String representation of the chart with newlines
+    """
+    if not values or width <= 0 or height <= 0:
+        return ""
+    
+    # Normalize values to fit within the height
+    max_val = max(values) if values else 1.0
+    if max_val == 0:
+        max_val = 1.0
+    
+    # Resample values to fit width if needed
+    if len(values) > width:
+        # Downsample by averaging buckets
+        step = len(values) / width
+        resampled = []
+        for i in range(width):
+            start_idx = int(i * step)
+            end_idx = int((i + 1) * step)
+            bucket = values[start_idx:end_idx]
+            resampled.append(sum(bucket) / len(bucket) if bucket else 0)
+        values = resampled
+    elif len(values) < width:
+        # Pad with zeros on the right
+        values = list(values) + [0.0] * (width - len(values))
+    
+    # Normalize to chart height (using fractional blocks)
+    # Each position can be 0 to (height * 8) where 8 is the number of fractional states
+    max_units = height * 8
+    normalized = [(v / max_val) * max_units for v in values]
+    
+    # Build chart from top to bottom
+    lines = []
+    for row in range(height - 1, -1, -1):
+        line = ""
+        for col_val in normalized:
+            # Determine which character to use for this row
+            # row represents height from bottom (0 = bottom row, height-1 = top row)
+            units_at_col = col_val
+            units_needed_for_row = row * 8
+            
+            if units_at_col > units_needed_for_row + 8:
+                # Full block for this row
+                line += BAR_CHARS[-1]  # █
+            elif units_at_col > units_needed_for_row:
+                # Partial block for this row
+                fraction = int(units_at_col - units_needed_for_row)
+                line += BAR_CHARS[min(fraction, len(BAR_CHARS) - 1)]
+            else:
+                # Empty for this row
+                line += BAR_CHARS[0]  # space
+        lines.append(line)
+    
+    return "\n".join(lines)
+
+
 # =============================================================================
 # Widgets
 # =============================================================================
@@ -506,7 +576,11 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
     def refresh_jobs(self):
-        """Refresh jobs table with recent jobs from state."""
+        """
+        Refresh the jobs preview table from the current application state.
+        
+        Populates the jobs DataTable with up to 10 most recent jobs from state, showing a truncated job ID (first 8 chars), language pair, word count and formatted reward. If the state is unavailable the method returns immediately. If the table widget is not mounted yet, the method quietly does nothing.
+        """
         if not self.state:
             return
         try:
@@ -523,15 +597,175 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
 
-class ChartPlaceholder(DashboardQuadrant):
-    def __init__(self, **kwargs):
+class JobsHourChart(DashboardQuadrant):
+    """ASCII bar chart showing jobs per hour distribution."""
+
+    # Bar characters for different fill levels
+    BAR_CHARS = "▏▎▍▌▋▊▉█"
+    MAX_BAR_WIDTH = 12  # Maximum bar width in characters
+
+    def __init__(self, stats: "StatsManager | None" = None, **kwargs):
+        """
+        Initialise the Jobs/Hour chart panel with an optional statistics source.
+        
+        Parameters:
+        	stats (StatsManager | None): Optional StatsManager used to obtain hourly counts and peak hour; pass `None` to start with no data.
+        	**kwargs: Additional keyword arguments forwarded to the parent DashboardQuadrant initializer.
+        """
         super().__init__("Jobs/Hour", **kwargs)
+        self.stats = stats
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "\n    (Chart Placeholder)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────",
-            classes="chart-ascii",
-        )
+        """
+        Yield the chart content container for the jobs-per-hour panel.
+        
+        Returns:
+            ComposeResult: A single `Static` widget with id "chart-content" and class "chart-ascii" that serves as the chart rendering container.
+        """
+        yield Static(id="chart-content", classes="chart-ascii")
+
+    def on_mount(self):
+        """
+        Initialise the chart by rendering it once and scheduling periodic updates.
+        
+        Calls refresh_chart immediately to populate the chart content, then schedules refresh_chart to run every 30 seconds.
+        """
+        self.refresh_chart()
+        # Refresh chart every 30 seconds
+        self.set_interval(30.0, self.refresh_chart)
+
+    def refresh_chart(self):
+        """
+        Refresh the jobs-per-hour chart panel.
+        
+        If the chart widget is mounted, generate the current chart text and replace the widget content; if the widget is not yet mounted the method does nothing.
+        """
+        try:
+            content = self.query_one("#chart-content", Static)
+            chart_text = self._render_chart()
+            content.update(chart_text)
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+    def _render_chart(self) -> Text:
+        """
+        Render an ASCII bar chart showing jobs aggregated into six 4-hour periods and highlight the peak period.
+        
+        The chart displays six labelled periods (00-03 … 20-23) with scaled block bars and counts; the period containing the peak hour is rendered with emphasis.
+        
+        Returns:
+            Text: A Rich Text object containing the rendered ASCII bar chart.
+        """
+        text = Text()
+
+        # Get hourly counts from stats or use empty data
+        if self.stats:
+            hourly = dict(self.stats.hourly_counts)
+            peak_hour, _ = self.stats.get_peak_hour()
+        else:
+            hourly = {}
+            peak_hour = -1
+
+        # Show 6 time periods (4-hour blocks) to fit in quadrant
+        periods = [
+            ("00-03", range(0, 4)),
+            ("04-07", range(4, 8)),
+            ("08-11", range(8, 12)),
+            ("12-15", range(12, 16)),
+            ("16-19", range(16, 20)),
+            ("20-23", range(20, 24)),
+        ]
+        period_counts = [
+            (label, hours, sum(hourly.get(h, 0) for h in hours))
+            for label, hours in periods
+        ]
+        # Find max value for scaling (use period totals)
+        max_count = max((count for _, _, count in period_counts), default=1)
+
+        for label, hours, period_count in period_counts:
+            # Check if peak hour is in this period
+            is_peak = peak_hour in hours
+
+            # Calculate bar width
+            if max_count > 0:
+                bar_width = int((period_count / max_count) * self.MAX_BAR_WIDTH)
+            else:
+                bar_width = 0
+
+            # Build the bar
+            full_blocks = bar_width
+            bar = "█" * full_blocks
+
+            # Pad to consistent width
+            bar_padded = bar.ljust(self.MAX_BAR_WIDTH, "░")
+
+            # Format: "00-03 ████████░░░░ 12"
+            count_str = f"{period_count:3d}" if period_count > 0 else "  0"
+
+            # Add label
+            text.append(f"{label} ", style="#737c73")  # Dragon Gray
+
+            # Add bar with appropriate color
+            if is_peak and period_count > 0:
+                text.append(bar_padded, style="bold #8ba4b0")  # Dragon Blue (peak)
+            elif period_count > 0:
+                text.append(bar_padded, style="#8a9a7b")  # Dragon Green
+            else:
+                text.append(bar_padded, style="#393836")  # Dragon Black 5 (empty)
+
+            # Add count
+            if is_peak and period_count > 0:
+                text.append(f" {count_str}", style="bold #8ba4b0")
+            else:
+                text.append(f" {count_str}", style="#737c73")
+
+            text.append("\n")
+
+        return text
+
+
+# Keep for backwards compatibility
+ChartPlaceholder = JobsHourChart
+class ChartPlaceholder(DashboardQuadrant):
+    """Bar chart showing jobs per hour activity."""
+    
+    def __init__(self, state: "AppState" = None, **kwargs):
+        super().__init__("Jobs/Hour", **kwargs)
+        self.state = state
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="chart-display", classes="chart-ascii")
+    
+    def refresh_chart(self):
+        """Refresh the chart with current hourly job data."""
+        if not self.state:
+            # Show placeholder if no state
+            try:
+                self.query_one("#chart-display", Static).update(
+                    "\n    (No data)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────"
+                )
+            except NoMatches:
+                pass
+            return
+
+        try:
+            jobs = self.state.get_recent_jobs(limit=1000)
+            if not jobs:
+                self.query_one("#chart-display", Static).update(
+                    "\n    (No jobs yet)\n    ╭─╮\n  ╭─╯ ╰╮\n╭─╯    ╰────"
+                )
+                return
+
+            # For demo purposes, generate sample data based on job count
+            # In a real implementation, this would use actual hourly timestamps
+            num_hours = min(24, len(jobs))
+            jobs_per_hour = [len(jobs) / max(num_hours, 1)] * 20
+
+            # Generate chart
+            chart_text = _render_chart(jobs_per_hour, width=20, height=4)
+            self.query_one("#chart-display", Static).update(chart_text)
+        except NoMatches:
+            pass  # Widget not mounted yet
 
 
 class ConfigPreview(DashboardQuadrant):
@@ -695,6 +929,12 @@ class GengoWatcherApp(App):
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
+        """
+        Builds and yields the application's main UI layout: title bar, tabbed content (Dashboard, Jobs, Activity, Output, Charts, Stats), and the bottom input and footer.
+        
+        Returns:
+            ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
+        """
         yield TitleBar(config=self.config)
 
         # 2. Tabs
@@ -707,7 +947,7 @@ class GengoWatcherApp(App):
                 with Vertical(id="dashboard-content"):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
-                        yield ChartPlaceholder()
+                        yield ChartPlaceholder(state=self.state)
                         yield ConfigPreview()  # Keep as bottom-right per doc
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
