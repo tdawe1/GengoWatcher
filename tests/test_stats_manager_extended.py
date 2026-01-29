@@ -51,6 +51,7 @@ class TestAllTimeStats:
         assert stats.total_jobs == 0
         assert stats.total_sessions == 0
         assert stats.total_value == 0.0
+
     def test_all_time_stats_with_values(self):
         """Test AllTimeStats with set values."""
         stats = AllTimeStats()
@@ -69,23 +70,20 @@ class TestSourceStats:
     def test_source_stats_initialization(self):
         """Test SourceStats initializes with zeros."""
         stats = SourceStats()
-        assert stats.rss == 0
         assert stats.websocket == 0
         assert stats.email == 0
-        assert stats.web == 0
+        assert stats.website == 0
 
     def test_source_stats_increment(self):
         """Test incrementing source counters."""
         stats = SourceStats()
-        stats.rss = 10
         stats.websocket = 5
         stats.email = 3
-        stats.web = 2
+        stats.website = 2
 
-        assert stats.rss == 10
         assert stats.websocket == 5
         assert stats.email == 3
-        assert stats.web == 2
+        assert stats.website == 2
 
 
 class TestStatsManagerRecording:
