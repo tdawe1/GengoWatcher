@@ -5,7 +5,6 @@ import tempfile
 import pathlib
 import re
 from unittest.mock import MagicMock, patch
-from pathlib import Path
 from urllib.parse import urlparse
 
 
