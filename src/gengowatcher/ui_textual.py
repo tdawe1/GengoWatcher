@@ -9,6 +9,7 @@ import logging
 import re
 import time
 from collections import deque
+from typing import Any
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -57,6 +58,80 @@ class Icons:
     POLLING = "↻"
 
 
+def _format_timestamp(timestamp: Any) -> str:
+    """Normalize a timestamp value to "HH:MM:SS" for display."""
+
+    if timestamp is None:
+        return ""
+
+    if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+        try:
+            dt = datetime.datetime.fromtimestamp(timestamp)
+        except (OSError, OverflowError, ValueError):
+            return ""
+        return dt.strftime("%H:%M:%S")
+
+    if isinstance(timestamp, str):
+        cleaned = timestamp.strip()
+        if not cleaned:
+            return ""
+
+        iso_candidate = cleaned
+        if iso_candidate.endswith("Z"):
+            iso_candidate = iso_candidate[:-1] + "+00:00"
+        try:
+            dt = datetime.datetime.fromisoformat(iso_candidate)
+            return dt.strftime("%H:%M:%S")
+        except ValueError:
+            pass
+
+        for sep in ("T", " "):
+            if sep in cleaned:
+                _, _, tail = cleaned.partition(sep)
+                match = re.match(r"(\d{2}:\d{2}:\d{2})", tail)
+                if match:
+                    return match.group(1)
+
+        match = re.match(r"(\d{2}:\d{2}:\d{2})", cleaned)
+        if match:
+            return match.group(1)
+        return ""
+
+    return ""
+
+
+SOURCE_BUCKET_CONFIG = {
+    "websocket": {"label": "WebSocket", "color": "#957FB8"},
+    "email": {"label": "Email", "color": "#FFA066"},
+    "website": {"label": "Website", "color": "#7E9CD8"},
+    "rss": {"label": "RSS", "color": "#7AA89F"},
+    "unknown": {"label": "Unknown", "color": "#727169"},
+}
+
+
+def _normalize_source(source: Any) -> str:
+    """Map incoming source strings into the normalized buckets."""
+
+    if source is None:
+        return "unknown"
+
+    normalized = str(source).strip().lower()
+    if not normalized:
+        return "unknown"
+
+    if "websocket" in normalized or normalized in ("ws", "socket"):
+        return "websocket"
+    if any(token in normalized for token in ("email", "imap", "mail")):
+        return "email"
+    if any(token in normalized for token in ("rss", "feed")):
+        return "rss"
+    if any(
+        token in normalized for token in ("web", "http", "browser", "scrape", "website")
+    ):
+        return "website"
+    return "unknown"
+
+
 # =============================================================================
 # Widgets
 # =============================================================================
@@ -103,7 +178,9 @@ class TitleBar(Static):
         try:
             self.query_one("#clock", Static).update(now.strftime("%H:%M:%S"))
         except NoMatches:
-            pass  # Widget not mounted yet
+            logging.getLogger(__name__).debug(
+                "SourcesBreakdown.refresh_sources: widget not mounted yet"
+            )
 
         # Session timer
         app = self.app
@@ -146,7 +223,9 @@ class MetricCard(Static):
         try:
             self.query_one(f"#val-{self.label.lower()}", Static).update(value)
         except NoMatches:
-            pass  # Widget not mounted yet
+            logging.getLogger(__name__).debug(
+                "StatsPanel.refresh_stats: stats widgets not mounted yet"
+            )
 
 
 class MetricsRow(Horizontal):
@@ -538,7 +617,9 @@ class JobsHourChart(DashboardQuadrant):
             chart_text = self._render_chart()
             content.update(chart_text)
         except NoMatches:
-            pass  # Widget not mounted yet
+            logging.getLogger(__name__).debug(
+                "JobsHourChart.refresh_chart: chart content not mounted yet"
+            )
 
     def _render_chart(self) -> Text:
         """Render ASCII bar chart for hourly job distribution."""
@@ -758,7 +839,9 @@ class JobsPanel(Static):
             )
             dt.cursor_type = "row"
         except NoMatches:
-            pass  # Widget not mounted yet
+            logging.getLogger(__name__).debug(
+                "JobsPanel.on_mount: full jobs table not yet mounted"
+            )
         self.refresh_jobs()
 
     def compose(self) -> ComposeResult:
@@ -779,24 +862,13 @@ class JobsPanel(Static):
                 reward = f"${job.get('reward', 0):.2f}"
                 source = job.get("source", "unknown")
                 status = "✓" if job.get("accepted", False) else "○"
-                timestamp = job.get("timestamp", job.get("found_at", ""))
-                if isinstance(timestamp, (int, float)):
-                    timestamp = datetime.datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
-                elif isinstance(timestamp, str):
-                    # Extract just the time portion if it's a full timestamp
-                    if "T" in timestamp:
-                        timestamp = timestamp.split("T")[1][:8]
-                    elif " " in timestamp:
-                        timestamp = timestamp.split(" ")[1][:8]
-                    else:
-                        # Fallback: timestamp is assumed to already be a time-like string
-                        # (e.g. "12:34:56"); truncate to 8 chars to enforce "HH:MM:SS".
-                        timestamp = timestamp[:8]
-                else:
-                    timestamp = ""
+                timestamp_raw = job.get("timestamp", job.get("found_at"))
+                timestamp = _format_timestamp(timestamp_raw)
                 dt.add_row(job_id, pair, words, reward, source, status, timestamp)
         except NoMatches:
-            pass  # Widget not mounted yet
+            logging.getLogger(__name__).debug(
+                "JobsPanel.refresh_jobs: full jobs table missing during refresh"
+            )
 
 
 class ChartsPanel(Static):
@@ -869,34 +941,26 @@ class ChartsPanel(Static):
             return text
 
         jobs = self.state.get_recent_jobs(limit=1000)
-        total = len(jobs) if jobs else 1
-
-        sources = {"WebSocket": 0, "email": 0, "website": 0, "RSS": 0, "unknown": 0}
+        sources = {key: 0 for key in SOURCE_BUCKET_CONFIG}
         for job in jobs:
-            src = job.get("source", "unknown")
-            if src not in sources:
-                src = "unknown"
-            sources[src] += 1
+            bucket = _normalize_source(job.get("source"))
+            sources[bucket] += 1
 
+        total = sum(sources.values()) or 1
         max_count = max(sources.values()) if sources else 1
-        colors = {
-            "WebSocket": "#957FB8",
-            "email": "#FFA066",
-            "website": "#7E9CD8",
-            "RSS": "#7AA89F",
-            "unknown": "#727169",
-        }
+        if max_count == 0:
+            max_count = 1
 
-        for source, count in sources.items():
+        for bucket_key, bucket in SOURCE_BUCKET_CONFIG.items():
+            count = sources.get(bucket_key, 0)
             pct = (count / total) * 100 if total > 0 else 0
             bar_width = int((count / max_count) * 15) if max_count > 0 else 0
             bar = "█" * bar_width
             bar_padded = bar.ljust(15, "░")
-            text.append(f"{source:10s} ", style="#737c73")
-            text.append(
-                bar_padded,
-                style=colors.get(source, "#727169") if count > 0 else "#393836",
-            )
+            label = bucket["label"]
+            color = bucket["color"] if count > 0 else "#393836"
+            text.append(f"{label:10s} ", style="#737c73")
+            text.append(bar_padded, style=color)
             text.append(f" {count:4d} ({pct:5.1f}%)\n", style="#737c73")
         return text
 
@@ -912,10 +976,11 @@ class ChartsPanel(Static):
             text.append("No jobs recorded yet")
             return text
 
-        # Calculate cumulative value over last N jobs
+        # Calculate cumulative value over the most recent 20 jobs
         cumulative = 0
         values = []
-        for job in reversed(jobs[:20]):  # Last 20 jobs
+        recent_jobs = jobs[:20]
+        for job in reversed(recent_jobs):
             cumulative += job.get("reward", 0)
             values.append(cumulative)
 
@@ -967,7 +1032,7 @@ class GengoWatcherApp(App):
         # Register callback for when new jobs are detected
         self.watcher.on_job_added_callback = self._on_job_added_from_thread
 
-    def _on_job_added_from_thread(self, job_data: dict):
+    def _on_job_added_from_thread(self, _job_data: dict):
         """Called from watcher thread when a new job is added."""
         # Use call_from_thread to safely update UI from watcher thread
         self.call_from_thread(self._refresh_all_panels)
@@ -1006,16 +1071,27 @@ class GengoWatcherApp(App):
             widgets_to_refresh.append((StatsPanel, "refresh_stats"))
 
         for widget_class, method_name in widgets_to_refresh:
-            try:
-                widget = self.query_one(widget_class)
-                getattr(widget, method_name)()
-            except NoMatches:
-                # It is expected that some widgets may not be present in the UI
-                # at certain times (e.g., different tabs or layouts). In those
-                # cases, we simply skip refreshing that widget.
-                logging.getLogger(__name__).debug(
-                    "Widget %s not found while refreshing panels.", widget_class.__name__
-                )
+            self._refresh_widget(widget_class, method_name)
+
+    def _refresh_widget(self, widget_class, method_name: str) -> None:
+        """Attempt to refresh a specific widget and log when it's missing."""
+        try:
+            widget = self.query_one(widget_class)
+        except NoMatches:
+            logging.getLogger(__name__).debug(
+                "Widget %s missing while refreshing %s",
+                widget_class.__name__,
+                method_name,
+            )
+            return
+
+        method = getattr(widget, method_name, None)
+        if callable(method):
+            method()
+        else:
+            logging.getLogger(__name__).warning(
+                "Widget %s has no method %s", widget_class.__name__, method_name
+            )
 
     def _setup_logging(self):
         handler = TextualLogHandler(self)

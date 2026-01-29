@@ -139,13 +139,13 @@ def test_process_new_job_callback(watcher_instance):
     w.on_job_added_callback = mock_callback
     w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
     mock_state = w.state
-    
+
     mock_state.total_new_entries_found = 0
     mock_state.seen_job_ids = collections.deque(maxlen=50)
-    
+
     # Process a new job
     w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
-    
+
     # Verify callback was called with correct job_data
     assert mock_callback.call_count == 1
     call_args = mock_callback.call_args[0][0]
@@ -155,17 +155,43 @@ def test_process_new_job_callback(watcher_instance):
     assert call_args["url"] == "http://example.com/123"
     assert call_args["source"] == "RSS"
     assert "timestamp" in call_args
-    
+
     # Process a duplicate job - callback should not be called again
     w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
     assert mock_callback.call_count == 1
-    
+
     # Process another new job - callback should be called again
     w._process_new_job(456, "Another Job", 5.0, "http://example.com/456", "WebSocket")
     assert mock_callback.call_count == 2
     call_args = mock_callback.call_args[0][0]
     assert call_args["id"] == "456"
     assert call_args["source"] == "WebSocket"
+
+
+def test_process_new_job_callback_order(watcher_instance):
+    """Ensure the job callback runs after the job is added to state."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    events = []
+    recorded_job_data = []
+
+    def record_job_add(job_data):
+        events.append("add")
+        recorded_job_data.append(job_data)
+
+    callback = MagicMock(side_effect=lambda job_data: events.append("callback"))
+    w.state.add_job = MagicMock(side_effect=record_job_add)
+    w.on_job_added_callback = callback
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    w._process_new_job(123, "Ordered Job", 8.0, "http://example.com/123", "RSS")
+
+    assert events == ["add", "callback"]
+    assert recorded_job_data
+    callback.assert_called_once()
+    assert recorded_job_data[0] is callback.call_args[0][0]
 
 
 def test_process_new_job_callback_exception_handling(watcher_instance):
@@ -176,13 +202,13 @@ def test_process_new_job_callback_exception_handling(watcher_instance):
     w.on_job_added_callback = mock_callback
     w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
     mock_state = w.state
-    
+
     mock_state.total_new_entries_found = 0
     mock_state.seen_job_ids = collections.deque(maxlen=50)
-    
+
     # Process a new job - should not raise exception despite callback error
     w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
-    
+
     # Verify callback was called
     assert mock_callback.call_count == 1
     # Verify job was still processed successfully
