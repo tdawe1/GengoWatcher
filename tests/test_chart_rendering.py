@@ -79,7 +79,6 @@ def test_render_chart_ascending_values():
     
     # The top line should have more empty spaces on the left (lower values)
     # and more filled blocks on the right (higher values)
-    top_line = lines[0]
     bottom_line = lines[-1]
     
     # Bottom line should have more filled content
