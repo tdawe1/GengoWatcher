@@ -657,7 +657,7 @@ class ConfigPreview(DashboardQuadrant):
     }
 
     # Section display order for configuration
-    SECTION_ORDER = [
+    SECTION_ORDER: ClassVar[list[str]] = [
         "Watcher",
         "WebSocket",
         "EmailMonitor",
