@@ -34,6 +34,7 @@ class AllTimeStats:
     """Aggregate statistics across all sessions."""
 
     total_jobs: int = 0
+    total_jobs_accepted: int = 0
     total_value: float = 0.0
     total_sessions: int = 0
     best_day_value: float = 0.0
@@ -41,7 +42,7 @@ class AllTimeStats:
 
     @property
     def avg_job_value(self) -> float:
-        return self.total_value / max(self.total_jobs, 1)
+        return self.total_value / max(self.total_jobs_accepted, 1)
 
 
 @dataclass
@@ -138,7 +139,9 @@ class StatsManager:
 
             # All-time stats
             self.all_time.total_jobs += 1
-            self.all_time.total_value += reward
+            if accepted:
+                self.all_time.total_jobs_accepted += 1
+                self.all_time.total_value += reward
 
             # Source stats
             source_lower = source.lower()

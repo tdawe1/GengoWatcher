@@ -129,3 +129,154 @@ def test_process_new_job_deduplication(watcher_instance):
     assert mock_state.save_state.call_count == 2
     assert 456 in mock_state.seen_job_ids
     assert mock_state.total_new_entries_found == 2
+
+
+def test_process_new_job_callback(watcher_instance):
+    """Test that on_job_added_callback is invoked correctly with job_data."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    mock_callback = MagicMock()
+    w.on_job_added_callback = mock_callback
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    mock_state = w.state
+
+    mock_state.total_new_entries_found = 0
+    mock_state.seen_job_ids = collections.deque(maxlen=50)
+
+    # Process a new job
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
+
+    # Verify callback was called with correct job_data
+    assert mock_callback.call_count == 1
+    call_args = mock_callback.call_args[0][0]
+    assert call_args["id"] == "123"
+    assert call_args["title"] == "New Job"
+    assert call_args["reward"] == 10.0
+    assert call_args["url"] == "http://example.com/123"
+    assert call_args["source"] == "RSS"
+    assert "timestamp" in call_args
+
+    # Process a duplicate job - callback should not be called again
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
+    assert mock_callback.call_count == 1
+
+    # Process another new job - callback should be called again
+    w._process_new_job(456, "Another Job", 5.0, "http://example.com/456", "WebSocket")
+    assert mock_callback.call_count == 2
+    call_args = mock_callback.call_args[0][0]
+    assert call_args["id"] == "456"
+    assert call_args["source"] == "WebSocket"
+
+
+def test_process_new_job_populates_lang_pair_and_word_count(watcher_instance):
+    """Job data should contain normalized lang_pair and word_count."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    recorded = []
+    w.state.add_job = MagicMock(side_effect=lambda data: recorded.append(data))
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    source_meta = {"lc_src": "English", "lc_tgt": "Japanese", "word_count": "320"}
+    w._process_new_job(
+        999,
+        "English > Japanese | Sample",
+        15.0,
+        "http://example.com/999",
+        "RSS",
+        source_meta=source_meta,
+    )
+
+    assert recorded
+    job_data = recorded[0]
+    assert job_data["lang_pair"] == "EN→JA"
+    assert job_data["word_count"] == 320
+
+
+def test_process_new_job_callback_order(watcher_instance):
+    """Ensure the job callback runs after the job is added to state."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    events = []
+    recorded_job_data = []
+
+    def record_job_add(job_data):
+        events.append("add")
+        recorded_job_data.append(job_data)
+
+    callback = MagicMock(side_effect=lambda job_data: events.append("callback"))
+    w.state.add_job = MagicMock(side_effect=record_job_add)
+    w.on_job_added_callback = callback
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    w._process_new_job(123, "Ordered Job", 8.0, "http://example.com/123", "RSS")
+
+    assert events == ["add", "callback"]
+    assert recorded_job_data
+    callback.assert_called_once()
+    assert recorded_job_data[0] is callback.call_args[0][0]
+
+
+def test_process_new_job_skips_callback_when_add_fails(watcher_instance):
+    """Callback should not run if add_job raises an exception."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    mock_callback = MagicMock()
+    w.on_job_added_callback = mock_callback
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.add_job = MagicMock(side_effect=Exception("boom"))
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
+
+    assert mock_callback.call_count == 0
+
+
+def test_rss_monitor_saves_state_on_migration_only(watcher_instance):
+    """save_state should only run when priming or migrating RSS state."""
+    w = watcher_instance
+    w.shutdown_event.set()
+
+    w.state.last_seen_rss_link = "https://gengo.com/t/jobs/details/1/"
+    w.state.last_seen_link = None
+    w.state.save_state = MagicMock()
+
+    w._run_rss_monitor()
+
+    w.state.save_state.assert_not_called()
+
+    w.shutdown_event.clear()
+    w.shutdown_event.set()
+
+    w.state.last_seen_rss_link = None
+    w.state.last_seen_link = "https://gengo.com/t/jobs/details/2/"
+
+    w._run_rss_monitor()
+
+    w.state.save_state.assert_called_once()
+
+
+def test_process_new_job_callback_exception_handling(watcher_instance):
+    """Test that exceptions in callback are caught and logged."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    mock_callback = MagicMock(side_effect=Exception("Callback error"))
+    w.on_job_added_callback = mock_callback
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    mock_state = w.state
+
+    mock_state.total_new_entries_found = 0
+    mock_state.seen_job_ids = collections.deque(maxlen=50)
+
+    # Process a new job - should not raise exception despite callback error
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
+
+    # Verify callback was called
+    assert mock_callback.call_count == 1
+    # Verify job was still processed successfully
+    assert 123 in mock_state.seen_job_ids
+    assert mock_state.total_new_entries_found == 1
