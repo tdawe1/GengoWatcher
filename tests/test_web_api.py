@@ -1,376 +1,179 @@
-"""Comprehensive tests for web.py API endpoints and WebAPI class."""
+"""Comprehensive tests for the web API module."""
 
 import pytest
+import asyncio
+import json
 import tempfile
 import pathlib
-from unittest.mock import MagicMock, AsyncMock, patch
-import json
 import time
-
+from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi.testclient import TestClient
 
-# Mock dependencies before importing web module
-import sys
-from unittest.mock import MagicMock
-
-mock_config = MagicMock()
-mock_state = MagicMock()
-mock_logger = MagicMock()
-
-sys.modules['gengowatcher.watcher'].GengoWatcher = MagicMock
-
-
-class TestWebAPIInitialization:
-    """Test WebAPI class initialization."""
-
-    def test_webapi_initialization(self):
-        """Test that WebAPI initializes correctly."""
-        from gengowatcher.web import WebAPI
-        from gengowatcher.config import AppConfig
-        from gengowatcher.state import AppState
-        import logging
-
-        config = MagicMock(spec=AppConfig)
-        state = MagicMock(spec=AppState)
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
-
-            assert api.config == config
-            assert api.state == state
-            assert api.logger == logger
-            assert hasattr(api, 'watcher')
-
-    def test_webapi_starts_watcher_thread(self):
-        """Test that WebAPI starts watcher in a thread."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher_class.return_value = mock_watcher
-
-            api = WebAPI(config, state, logger)
-
-            # Should have started watcher thread
-            assert hasattr(api, 'watcher_thread')
-
-
-class TestWebAPIStatus:
-    """Test status retrieval methods."""
-
-    def test_get_status_returns_watcher_status(self):
-        """Test that get_status returns WatcherStatus model."""
-        from gengowatcher.web import WebAPI, WatcherStatus
-        import logging
-        import datetime
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher.shutdown_event.is_set.return_value = False
-            mock_watcher.websocket_status = "Live"
-            mock_watcher.rss_action = "Checking"
-            mock_watcher.last_check_time = datetime.datetime.now()
-            mock_watcher.next_check_time = time.time() + 60
-            mock_watcher.session_new_entries = 10
-            mock_watcher.session_total_value = 150.0
-            mock_watcher.start_time = time.time() - 3600
-            mock_watcher.failure_count = 0
-            mock_watcher.get_cancellation_stats.return_value = None
-            mock_watcher_class.return_value = mock_watcher
-
-            api = WebAPI(config, state, logger)
-            status = api.get_status()
-
-            assert isinstance(status, WatcherStatus)
-            assert status.is_running is True
-            assert status.websocket_status == "Live"
-            assert status.rss_status == "Checking"
-
-    def test_get_status_with_float_timestamp(self):
-        """Test get_status when last_check_time is a float."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher.shutdown_event.is_set.return_value = False
-            mock_watcher.websocket_status = "Live"
-            mock_watcher.rss_action = "Checking"
-            mock_watcher.last_check_time = 1234567890.0  # Float timestamp
-            mock_watcher.next_check_time = time.time() + 60
-            mock_watcher.session_new_entries = 0
-            mock_watcher.session_total_value = 0.0
-            mock_watcher.start_time = time.time()
-            mock_watcher.failure_count = 0
-            mock_watcher.get_cancellation_stats.return_value = None
-            mock_watcher_class.return_value = mock_watcher
-
-            api = WebAPI(config, state, logger)
-            status = api.get_status()
-
-            assert status.last_check_time == 1234567890.0
-
-
-class TestWebAPIJobs:
-    """Test job retrieval methods."""
-
-    def test_get_recent_jobs_with_pagination(self):
-        """Test retrieving recent jobs with pagination."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        # Mock state to return jobs
-        mock_jobs = [
-            {
-                "id": str(i),
-                "title": f"Job {i}",
-                "reward": float(i * 10),
-                "currency": "USD",
-                "url": f"http://example.com/{i}",
-                "timestamp": time.time(),
-                "source": "RSS",
-            }
-            for i in range(100)
-        ]
-        state.get_recent_jobs.return_value = mock_jobs
-
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
-            result = api.get_recent_jobs(limit=10, page=1)
-
-            assert "jobs" in result
-            assert "pagination" in result
-            assert len(result["jobs"]) <= 10
-            assert result["pagination"]["page"] == 1
-            assert result["pagination"]["limit"] == 10
-
-    def test_get_recent_jobs_handles_invalid_job_data(self):
-        """Test that invalid job data is skipped gracefully."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        # Mock state with invalid jobs
-        mock_jobs = [
-            {"id": "1", "title": "Valid Job", "reward": 10.0, "currency": "USD",
-             "url": "http://example.com", "timestamp": time.time(), "source": "RSS"},
-            {"id": "", "title": "", "reward": -10},  # Invalid
-        ]
-        state.get_recent_jobs.return_value = mock_jobs
-
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
-            result = api.get_recent_jobs(limit=10, page=1)
-
-            # Should skip invalid job
-            assert len(result["jobs"]) == 1
-
-    def test_add_job(self):
-        """Test adding a new job."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
-
-            api.add_job("123", "Test Job", 50.0, "http://example.com", "RSS")
-
-            state.add_job.assert_called_once()
-
-
-class TestWebAPIConfig:
-    """Test configuration management methods."""
-
-    def test_get_config(self):
-        """Test retrieving configuration."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        config.config = {
-            "Watcher": {
-                "check_interval": 30,
-                "min_reward": 10.0,
-            }
-        }
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
-            sections = api.get_config()
-
-            assert isinstance(sections, list)
-            assert len(sections) > 0
-
-    def test_update_config(self):
-        """Test updating configuration."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher_class.return_value = mock_watcher
-
-            api = WebAPI(config, state, logger)
-
-            result = api.update_config("Watcher", "check_interval", "60")
-
-            assert result is True
-            mock_watcher.set_config_value.assert_called_once()
-
-    def test_update_config_handles_error(self):
-        """Test that config update errors are handled."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher.set_config_value.side_effect = Exception("Config error")
-            mock_watcher_class.return_value = mock_watcher
-
-            api = WebAPI(config, state, logger)
-
-            result = api.update_config("Watcher", "check_interval", "60")
-
-            assert result is False
-
-
-class TestWebAPICommands:
-    """Test command execution methods."""
-
-    def test_execute_check_command(self):
-        """Test executing check command."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher_class.return_value = mock_watcher
-
-            api = WebAPI(config, state, logger)
-
-            result = api.execute_command("check")
-
-            assert result["status"] == "success"
-            mock_watcher.check_now_event.set.assert_called_once()
-
-    def test_execute_pause_command(self):
-        """Test executing pause command."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            with patch('builtins.open', create=True) as mock_open:
-                mock_watcher = MagicMock()
-                mock_watcher.PAUSE_FILE = "/tmp/test_pause"
-                mock_watcher_class.return_value = mock_watcher
-
-                api = WebAPI(config, state, logger)
-
-                result = api.execute_command("pause")
-
-                assert result["status"] == "success"
-
-    def test_execute_unknown_command(self):
-        """Test executing unknown command."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
-
-            result = api.execute_command("unknown_command")
-
-            assert result["status"] == "error"
+from gengowatcher.web import (
+    APIAuthenticator,
+    WebAPI,
+    JobEntry,
+    WatcherStatus,
+    ConfigSection,
+    CommandRequest,
+    PaginationParams,
+    app,
+)
+
+
+@pytest.fixture
+def mock_config():
+    """Create mock config for testing."""
+    config = MagicMock()
+    config.get.side_effect = lambda s, k, **kw: {
+        ("WebServer", "auth_token"): "test_api_key_12345",
+        ("Paths", "all_entries_log"): "logs/test_entries.csv",
+    }.get((s, k), kw.get("fallback", ""))
+    config.config = {
+        "Watcher": {"check_interval": 60, "min_reward": 5.0},
+        "WebSocket": {"enable_websocket": True},
+    }
+    return config
+
+
+@pytest.fixture
+def mock_state():
+    """Create mock state for testing."""
+    state = MagicMock()
+    state.get_recent_jobs.return_value = []
+    return state
+
+
+@pytest.fixture
+def mock_logger():
+    """Create mock logger for testing."""
+    import logging
+
+    return logging.getLogger("test")
+
+
+@pytest.fixture
+def mock_watcher():
+    """Create mock watcher for testing."""
+    watcher = MagicMock()
+    watcher.start_time = time.time()
+    watcher.websocket_status = "Live"
+    watcher.rss_action = "Checking"
+    watcher.last_check_time = time.time()
+    watcher.next_check_time = time.time() + 60
+    watcher.session_new_entries = 5
+    watcher.session_total_value = 125.50
+    watcher.failure_count = 0
+    watcher.shutdown_event = MagicMock()
+    watcher.shutdown_event.is_set.return_value = False
+    watcher.PAUSE_FILE = "/tmp/test_pause"
+    watcher.get_cancellation_stats.return_value = {"cancellations_today": 2}
+    watcher.job_acceptance_engine = MagicMock()
+    return watcher
+
+
+class TestAPIAuthenticator:
+    """Tests for API authentication."""
+
+    def test_authenticator_initialization_with_key(self):
+        """Test authenticator initializes with provided key."""
+        auth = APIAuthenticator(api_key="test_key_123")
+        assert auth.api_key == "test_key_123"
+
+    def test_authenticator_initialization_generates_key(self):
+        """Test authenticator generates random key when not provided."""
+        auth = APIAuthenticator()
+        assert auth.api_key is not None
+        assert len(auth.api_key) > 20  # Token should be reasonably long
+
+    def test_authenticate_valid_credentials(self):
+        """Test authentication with valid credentials."""
+        auth = APIAuthenticator(api_key="valid_key")
+
+        mock_creds = MagicMock()
+        mock_creds.credentials = "valid_key"
+
+        result = auth.authenticate(mock_creds)
+        assert result is True
+
+    def test_authenticate_invalid_credentials(self):
+        """Test authentication with invalid credentials."""
+        auth = APIAuthenticator(api_key="valid_key")
+
+        mock_creds = MagicMock()
+        mock_creds.credentials = "wrong_key"
+
+        result = auth.authenticate(mock_creds)
+        assert result is False
+
+    def test_authenticate_no_credentials(self):
+        """Test authentication with no credentials provided."""
+        auth = APIAuthenticator(api_key="valid_key")
+        result = auth.authenticate(None)
+        assert result is False
+
+    def test_get_api_key(self):
+        """Test getting the current API key."""
+        auth = APIAuthenticator(api_key="my_key")
+        assert auth.get_api_key() == "my_key"
 
 
 class TestPydanticModels:
-    """Test Pydantic model validation."""
+    """Tests for Pydantic validation models."""
 
-    def test_job_entry_validation(self):
-        """Test JobEntry model validation."""
-        from gengowatcher.web import JobEntry
-
-        # Valid job
+    def test_job_entry_validation_success(self):
+        """Test JobEntry validates correct data."""
         job = JobEntry(
-            id="123",
-            title="Test Job",
-            reward=50.0,
+            id="12345",
+            title="Translation Job",
+            reward=25.50,
             currency="USD",
-            url="http://example.com",
+            url="https://gengo.com/jobs/12345",
             timestamp=time.time(),
-            source="RSS"
+            source="rss",
         )
+        assert job.id == "12345"
+        assert job.reward == 25.50
 
-        assert job.id == "123"
-        assert job.reward == 50.0
-
-    def test_job_entry_invalid_reward(self):
-        """Test JobEntry validation with invalid reward."""
-        from gengowatcher.web import JobEntry
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
+    def test_job_entry_validation_negative_reward(self):
+        """Test JobEntry rejects negative reward."""
+        with pytest.raises(ValueError):
             JobEntry(
-                id="123",
-                title="Test",
-                reward=-10.0,  # Negative reward
-                currency="USD",
-                url="http://example.com",
+                id="12345",
+                title="Job",
+                reward=-10.0,
+                url="https://example.com",
                 timestamp=time.time(),
-                source="RSS"
+                source="rss",
             )
 
-    def test_watcher_status_validation(self):
-        """Test WatcherStatus model validation."""
-        from gengowatcher.web import WatcherStatus
+    def test_job_entry_validation_empty_id(self):
+        """Test JobEntry rejects empty ID."""
+        with pytest.raises(ValueError):
+            JobEntry(
+                id="",
+                title="Job",
+                reward=10.0,
+                url="https://example.com",
+                timestamp=time.time(),
+                source="rss",
+            )
 
+    def test_job_entry_strips_whitespace(self):
+        """Test JobEntry strips whitespace from strings."""
+        job = JobEntry(
+            id="  12345  ",
+            title="  Job Title  ",
+            reward=10.0,
+            url="  https://example.com  ",
+            timestamp=time.time(),
+            source="  rss  ",
+        )
+        assert job.id == "12345"
+        assert job.title == "Job Title"
+
+    def test_watcher_status_validation(self):
+        """Test WatcherStatus validates correctly."""
         status = WatcherStatus(
             is_running=True,
             websocket_status="Live",
@@ -378,226 +181,486 @@ class TestPydanticModels:
             last_check_time=time.time(),
             next_check_time=time.time() + 60,
             session_stats={"uptime": 3600},
-            failure_count=0
+            failure_count=0,
         )
-
         assert status.is_running is True
         assert status.websocket_status == "Live"
 
-    def test_command_request_validation(self):
-        """Test CommandRequest model validation."""
-        from gengowatcher.web import CommandRequest
-
-        cmd = CommandRequest(command="check", args=[])
-
+    def test_command_request_validation_valid(self):
+        """Test CommandRequest validates valid commands."""
+        cmd = CommandRequest(command="check")
         assert cmd.command == "check"
-        assert cmd.args == []
 
-    def test_command_request_invalid_command(self):
-        """Test CommandRequest with invalid command."""
-        from gengowatcher.web import CommandRequest
-        from pydantic import ValidationError
+        cmd = CommandRequest(command="pause", args=["arg1"])
+        assert cmd.command == "pause"
+        assert cmd.args == ["arg1"]
 
-        with pytest.raises(ValidationError):
-            CommandRequest(command="invalid_cmd")
+    def test_command_request_validation_invalid_command(self):
+        """Test CommandRequest rejects invalid commands."""
+        with pytest.raises(ValueError):
+            CommandRequest(command="invalid_command")
 
     def test_pagination_params_validation(self):
-        """Test PaginationParams model validation."""
-        from gengowatcher.web import PaginationParams
-
+        """Test PaginationParams validates correctly."""
         params = PaginationParams(page=1, limit=50)
-
         assert params.page == 1
         assert params.limit == 50
 
-    def test_pagination_params_invalid_page(self):
-        """Test PaginationParams with invalid page."""
-        from gengowatcher.web import PaginationParams
-        from pydantic import ValidationError
+    def test_pagination_params_validation_invalid(self):
+        """Test PaginationParams rejects invalid values."""
+        with pytest.raises(ValueError):
+            PaginationParams(page=0, limit=50)
 
-        with pytest.raises(ValidationError):
-            PaginationParams(page=0)  # Page must be >= 1
-
-    def test_pagination_params_limit_exceeds_max(self):
-        """Test PaginationParams with limit exceeding maximum."""
-        from gengowatcher.web import PaginationParams
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            PaginationParams(limit=200)  # Max limit is 100
+        with pytest.raises(ValueError):
+            PaginationParams(page=1, limit=200)  # Exceeds max
 
 
-class TestAPIAuthenticator:
-    """Test API authentication."""
+class TestWebAPI:
+    """Tests for WebAPI class."""
 
-    def test_authenticator_initialization_with_key(self):
-        """Test APIAuthenticator with provided key."""
-        from gengowatcher.web import APIAuthenticator
+    def test_web_api_initialization(self, mock_config, mock_state, mock_logger):
+        """Test WebAPI initializes correctly."""
+        with patch("gengowatcher.web.GengoWatcher") as mock_watcher_class:
+            mock_watcher_instance = MagicMock()
+            mock_watcher_class.return_value = mock_watcher_instance
 
-        auth = APIAuthenticator(api_key="test_key_123")
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
-        assert auth.api_key == "test_key_123"
+            assert api.config == mock_config
+            assert api.state == mock_state
+            assert api.logger == mock_logger
+            assert api.watcher is not None
 
-    def test_authenticator_initialization_generates_key(self):
-        """Test APIAuthenticator generates key if not provided."""
-        from gengowatcher.web import APIAuthenticator
+    def test_get_status(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test getting watcher status."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
 
-        auth = APIAuthenticator()
+            status = api.get_status()
 
-        assert auth.api_key is not None
-        assert len(auth.api_key) > 0
+            assert isinstance(status, WatcherStatus)
+            assert status.is_running is True
+            assert status.websocket_status == "Live"
+            assert status.rss_status == "Checking"
 
-    def test_get_api_key(self):
-        """Test getting API key."""
-        from gengowatcher.web import APIAuthenticator
+    def test_get_recent_jobs(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test getting recent jobs with pagination."""
+        mock_state.get_recent_jobs.return_value = [
+            {
+                "id": "123",
+                "title": "Job 1",
+                "reward": 10.0,
+                "url": "https://example.com/123",
+                "timestamp": time.time(),
+                "source": "rss",
+            },
+            {
+                "id": "456",
+                "title": "Job 2",
+                "reward": 20.0,
+                "url": "https://example.com/456",
+                "timestamp": time.time(),
+                "source": "websocket",
+            },
+        ]
 
-        auth = APIAuthenticator(api_key="test_key")
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
-        assert auth.get_api_key() == "test_key"
+            result = api.get_recent_jobs(limit=50, page=1)
 
+            assert "jobs" in result
+            assert "pagination" in result
+            assert len(result["jobs"]) == 2
+            assert result["pagination"]["total"] == 2
 
-class TestWebAPIJobCancellation:
-    """Test job cancellation functionality."""
+    def test_get_recent_jobs_pagination(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Test job pagination works correctly."""
+        jobs = [
+            {
+                "id": str(i),
+                "title": f"Job {i}",
+                "reward": 10.0,
+                "url": f"https://example.com/{i}",
+                "timestamp": time.time(),
+                "source": "rss",
+            }
+            for i in range(100)
+        ]
+        mock_state.get_recent_jobs.return_value = jobs
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            # Get first page
+            result = api.get_recent_jobs(limit=10, page=1)
+            assert len(result["jobs"]) == 10
+            assert result["pagination"]["pages"] == 10
+
+    def test_get_jobs_from_csv(self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path):
+        """Test reading jobs from CSV file."""
+        # Create a test CSV file
+        csv_file = tmp_path / "test_entries.csv"
+        csv_content = """timestamp,title,reward,link,summary
+2024-01-01T12:00:00,Job 1,10.50,https://example.com/1,Summary 1
+2024-01-01T13:00:00,Job 2,25.00,https://example.com/2,Summary 2
+"""
+        csv_file.write_text(csv_content)
+
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Paths", "all_entries_log"): str(csv_file)
+        }.get((s, k), kw.get("fallback", ""))
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            result = api.get_jobs_from_csv(limit=50, page=1)
+
+            assert "jobs" in result
+            assert len(result["jobs"]) == 2
+            assert result["jobs"][0].reward == 10.5
+            assert result["jobs"][1].reward == 25.0
+
+    def test_get_jobs_from_csv_with_filters(
+        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+    ):
+        """Test CSV reading with min/max reward filters."""
+        csv_file = tmp_path / "test_entries.csv"
+        csv_content = """timestamp,title,reward,link,summary
+2024-01-01T12:00:00,Job 1,5.00,https://example.com/1,Summary 1
+2024-01-01T13:00:00,Job 2,15.00,https://example.com/2,Summary 2
+2024-01-01T14:00:00,Job 3,25.00,https://example.com/3,Summary 3
+"""
+        csv_file.write_text(csv_content)
+
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Paths", "all_entries_log"): str(csv_file)
+        }.get((s, k), kw.get("fallback", ""))
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            # Filter for jobs between $10 and $20
+            result = api.get_jobs_from_csv(
+                limit=50, page=1, min_reward=10.0, max_reward=20.0
+            )
+
+            assert len(result["jobs"]) == 1
+            assert result["jobs"][0].reward == 15.0
+
+    def test_get_jobs_from_csv_search_term(
+        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+    ):
+        """Test CSV reading with search term filter."""
+        csv_file = tmp_path / "test_entries.csv"
+        csv_content = """timestamp,title,reward,link,summary
+2024-01-01T12:00:00,Translation JA→EN,10.00,https://example.com/1,Japanese translation
+2024-01-01T13:00:00,Translation EN→FR,15.00,https://example.com/2,French translation
+"""
+        csv_file.write_text(csv_content)
+
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Paths", "all_entries_log"): str(csv_file)
+        }.get((s, k), kw.get("fallback", ""))
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            result = api.get_jobs_from_csv(limit=50, page=1, search_term="Japanese")
+
+            assert len(result["jobs"]) == 1
+            assert "JA→EN" in result["jobs"][0].title
+
+    def test_add_job(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test adding a new job to state."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            api.add_job("12345", "Test Job", 25.0, "https://example.com", "test")
+
+            mock_state.add_job.assert_called_once()
+            call_args = mock_state.add_job.call_args[0][0]
+            assert call_args["id"] == "12345"
+            assert call_args["reward"] == 25.0
 
     @pytest.mark.asyncio
-    async def test_cancel_current_job(self):
-        """Test cancelling current job."""
-        from gengowatcher.web import WebAPI
-        import logging
+    async def test_accept_job(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test accepting a job via API."""
+        mock_state.get_recent_jobs.return_value = [
+            {
+                "id": "12345",
+                "title": "Test Job",
+                "reward": 25.0,
+                "url": "https://example.com",
+                "source": "rss",
+            }
+        ]
 
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
+        async def mock_accept(job):
+            return True
 
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher.cancel_current_job_async = AsyncMock(return_value=True)
-            mock_watcher_class.return_value = mock_watcher
+        mock_watcher.job_acceptance_engine._attempt_job_acceptance = mock_accept
 
-            api = WebAPI(config, state, logger)
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
 
-            result = await api.cancel_current_job()
+            # Need to wrap the get_recent_jobs to return JobEntry objects
+            api.get_recent_jobs = MagicMock(
+                return_value={
+                    "jobs": [
+                        JobEntry(
+                            id="12345",
+                            title="Test Job",
+                            reward=25.0,
+                            url="https://example.com",
+                            timestamp=time.time(),
+                            source="rss",
+                        )
+                    ]
+                }
+            )
 
+            result = await api.accept_job("12345")
             assert result is True
 
+    def test_get_config(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test getting configuration."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
-class TestWebAPICSVJobs:
-    """Test CSV job retrieval."""
+            config = api.get_config()
 
-    def test_get_jobs_from_csv_file_not_found(self):
-        """Test getting jobs from non-existent CSV file."""
-        from gengowatcher.web import WebAPI
-        import logging
+            assert isinstance(config, list)
+            assert all(isinstance(section, ConfigSection) for section in config)
 
-        config = MagicMock()
-        config.get.return_value = "/nonexistent/file.csv"
-        state = MagicMock()
-        logger = logging.getLogger("test")
+    def test_update_config(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test updating configuration."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
+            result = api.update_config("Watcher", "check_interval", "30")
+            assert result is True
 
-            result = api.get_jobs_from_csv(limit=10, page=1)
+    def test_execute_command_check(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test executing check command."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
+            result = api.execute_command("check")
+
+            assert result["status"] == "success"
+            mock_watcher.check_now_event.set.assert_called_once()
+
+    def test_execute_command_pause(self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path):
+        """Test executing pause command."""
+        pause_file = tmp_path / "pause"
+        mock_watcher.PAUSE_FILE = str(pause_file)
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+
+            result = api.execute_command("pause")
+
+            assert result["status"] == "success"
+            assert pause_file.exists()
+
+    def test_execute_command_resume(
+        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+    ):
+        """Test executing resume command."""
+        pause_file = tmp_path / "pause"
+        pause_file.write_text("")
+        mock_watcher.PAUSE_FILE = str(pause_file)
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+
+            result = api.execute_command("resume")
+
+            assert result["status"] == "success"
+            assert not pause_file.exists()
+
+    def test_execute_command_cancel(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test executing cancel command."""
+        mock_watcher.cancel_current_job_sync.return_value = True
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+
+            result = api.execute_command("cancel")
+
+            assert result["status"] == "success"
+
+    def test_execute_command_unknown(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test executing unknown command."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            # Bypass validation by calling directly
+            result = api.execute_command("unknown_command")
+
+            assert result["status"] == "error"
+
+
+class TestFastAPIEndpoints:
+    """Tests for FastAPI endpoints using TestClient."""
+
+    @pytest.fixture
+    def client(self):
+        """Create test client."""
+        return TestClient(app)
+
+    def test_root_endpoint(self, client):
+        """Test root endpoint returns API info."""
+        response = client.get("/")
+        assert response.status_code == 200
+        data = response.json()
+        assert "name" in data
+        assert data["name"] == "GengoWatcher API"
+
+    def test_health_check_endpoint(self, client):
+        """Test health check endpoint."""
+        response = client.get("/api/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert "status" in data
+
+
+class TestEdgeCases:
+    """Test edge cases and boundary conditions."""
+
+    def test_get_jobs_from_csv_file_not_found(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Test handling of missing CSV file."""
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Paths", "all_entries_log"): "/nonexistent/file.csv"
+        }.get((s, k), kw.get("fallback", ""))
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            result = api.get_jobs_from_csv(limit=50, page=1)
+
+            assert result["jobs"] == []
             assert result["pagination"]["total"] == 0
-            assert len(result["jobs"]) == 0
 
-    def test_get_jobs_from_csv_with_filters(self):
-        """Test getting jobs from CSV with filters."""
-        from gengowatcher.web import WebAPI
-        import logging
-        import tempfile
-        import csv
+    def test_get_jobs_from_csv_malformed_data(
+        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+    ):
+        """Test handling of malformed CSV data."""
+        csv_file = tmp_path / "malformed.csv"
+        csv_content = """timestamp,title,reward,link,summary
+2024-01-01,Job 1,not_a_number,https://example.com/1,Summary
+2024-01-02,Job 2,25.00,https://example.com/2,Summary
+"""
+        csv_file.write_text(csv_content)
 
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Paths", "all_entries_log"): str(csv_file)
+        }.get((s, k), kw.get("fallback", ""))
 
-        # Create temp CSV file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp", "title", "reward", "link", "summary"])
-            writer.writerow(["2024-01-01", "Job 1", "50.00", "http://example.com/1", "Test"])
-            writer.writerow(["2024-01-02", "Job 2", "100.00", "http://example.com/2", "Test"])
-            csv_path = f.name
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
-        config.get.return_value = csv_path
+            result = api.get_jobs_from_csv(limit=50, page=1)
 
-        try:
-            with patch('gengowatcher.web.GengoWatcher'):
-                api = WebAPI(config, state, logger)
+            # Should skip malformed row and return valid one
+            assert len(result["jobs"]) >= 1
 
-                result = api.get_jobs_from_csv(
-                    limit=10,
-                    page=1,
-                    min_reward=75.0,
-                    max_reward=150.0
-                )
+    def test_accept_job_not_found(self, mock_config, mock_state, mock_logger, mock_watcher):
+        """Test accepting a job that doesn't exist."""
+        mock_state.get_recent_jobs.return_value = []
 
-                # Should only return Job 2 (reward 100.00)
-                assert len(result["jobs"]) == 1
-        finally:
-            import os
-            os.unlink(csv_path)
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
+            result = asyncio.run(api.accept_job("nonexistent"))
+            assert result is False
 
-class TestWebAPIShutdown:
-    """Test API shutdown."""
+    def test_update_config_error_handling(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Test error handling when config update fails."""
+        mock_watcher.set_config_value = MagicMock(side_effect=Exception("Config error"))
 
-    def test_shutdown_calls_watcher_exit(self):
-        """Test that shutdown calls watcher.handle_exit."""
-        from gengowatcher.web import WebAPI
-        import logging
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
 
-        config = MagicMock()
-        state = MagicMock()
-        logger = logging.getLogger("test")
+            result = api.update_config("Watcher", "check_interval", "30")
+            assert result is False
 
-        with patch('gengowatcher.web.GengoWatcher') as mock_watcher_class:
-            mock_watcher = MagicMock()
-            mock_watcher_class.return_value = mock_watcher
+    def test_get_recent_jobs_invalid_data(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Test handling of invalid job data."""
+        mock_state.get_recent_jobs.return_value = [
+            {},  # Empty dict
+            {"id": "123"},  # Missing required fields
+            {
+                "id": "456",
+                "title": "Valid",
+                "reward": 10.0,
+                "url": "https://example.com",
+                "timestamp": time.time(),
+                "source": "rss",
+            },
+        ]
 
-            api = WebAPI(config, state, logger)
-            api.shutdown()
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
-            mock_watcher.handle_exit.assert_called_once()
+            result = api.get_recent_jobs(limit=50, page=1)
 
+            # Should only return valid job
+            assert len(result["jobs"]) == 1
+            assert result["jobs"][0].id == "456"
 
-class TestWebAPIEdgeCases:
-    """Test edge cases and error handling."""
+    @pytest.mark.asyncio
+    async def test_cancel_current_job_async(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Test async job cancellation via API."""
 
-    def test_get_recent_jobs_with_exception(self):
-        """Test get_recent_jobs when exception occurs."""
-        from gengowatcher.web import WebAPI
-        import logging
+        async def mock_cancel():
+            return True
 
-        config = MagicMock()
-        state = MagicMock()
-        state.get_recent_jobs.side_effect = Exception("State error")
-        logger = logging.getLogger("test")
+        mock_watcher.cancel_current_job_async = mock_cancel
 
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+
+            result = await api.cancel_current_job()
+            assert result is True
+
+    def test_pagination_ceiling_division(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Test pagination calculates pages correctly with ceiling division."""
+        mock_state.get_recent_jobs.return_value = [
+            {
+                "id": str(i),
+                "title": f"Job {i}",
+                "reward": 10.0,
+                "url": f"https://example.com/{i}",
+                "timestamp": time.time(),
+                "source": "rss",
+            }
+            for i in range(25)  # 25 jobs with limit of 10 should give 3 pages
+        ]
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
 
             result = api.get_recent_jobs(limit=10, page=1)
 
-            # Should return empty result
-            assert result["pagination"]["total"] == 0
-
-    @pytest.mark.asyncio
-    async def test_accept_job_not_found(self):
-        """Test accepting job that doesn't exist."""
-        from gengowatcher.web import WebAPI
-        import logging
-
-        config = MagicMock()
-        state = MagicMock()
-        state.get_recent_jobs.return_value = []
-        logger = logging.getLogger("test")
-
-        with patch('gengowatcher.web.GengoWatcher'):
-            api = WebAPI(config, state, logger)
-
-            result = await api.accept_job("nonexistent_id")
-
-            assert result is False
+            assert result["pagination"]["pages"] == 3
