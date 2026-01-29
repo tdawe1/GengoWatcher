@@ -698,7 +698,9 @@ class ConfigPreview(DashboardQuadrant):
             config_text = self._render_config()
             content.update(config_text)
         except NoMatches:
-            pass
+            logging.getLogger(__name__).debug(
+                "ConfigPreview.refresh_config: '#config-content' widget not found; skipping update."
+            )
 
     def _is_sensitive(self, key: str) -> bool:
         """Check if a key contains sensitive information."""
@@ -727,7 +729,12 @@ class ConfigPreview(DashboardQuadrant):
     def _render_config(self) -> Text:
         """Render all config sections and options."""
         text = Text()
-        all_config = self.config.list_all()
+        config = getattr(self, "config", None)
+        list_all = getattr(config, "list_all", None)
+        if not callable(list_all):
+            # Gracefully handle cases where config is a mock or non-AppConfig without list_all()
+            return text
+        all_config = list_all()
 
         for section in self.SECTION_ORDER:
             if section not in all_config:
