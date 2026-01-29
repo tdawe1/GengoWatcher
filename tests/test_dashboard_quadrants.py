@@ -88,7 +88,7 @@ def test_config_preview_constants():
     assert len(ConfigPreview.SECTION_ORDER) == 13
 
 
-@pytest.mark.asyncio
+`@pytest.mark.asyncio`
 async def test_config_preview_render_uses_constants():
     """ConfigPreview._render_config should use class constants properly."""
     # Create a mock config
@@ -105,7 +105,7 @@ async def test_config_preview_render_uses_constants():
     }
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         preview = app.query_one(ConfigPreview)
         result = preview._render_config()
 
