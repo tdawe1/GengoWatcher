@@ -436,7 +436,7 @@ async def test_dashboard_quadrants_exist():
         assert session is not None
 
 
-@pytest.mark.asyncio
+`@pytest.mark.asyncio`
 async def test_app_bindings_defined():
     """Verify app has key bindings defined."""
     app = create_mock_app()
@@ -445,7 +445,7 @@ async def test_app_bindings_defined():
     assert len(app.BINDINGS) > 0
 
     # Check for expected bindings
-    binding_keys = [b.key for b in app.BINDINGS]
+    binding_keys = [b[0] if isinstance(b, tuple) else b.key for b in app.BINDINGS]
     assert "q" in binding_keys  # quit
     assert "c" in binding_keys  # check
     assert "p" in binding_keys  # pause
