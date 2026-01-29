@@ -648,8 +648,8 @@ class TestRegressionCases:
         preview = ConfigPreview(config=mock_config)
         long_value = "x" * 1000
         formatted = preview._format_value("test", long_value)
-        # Should be truncated
-        assert len(formatted) < 100
+        # _format_value should preserve the full value; truncation is handled later.
+        assert formatted == long_value
 
     def test_activity_preview_with_special_characters(self):
         """Test colorization with special regex characters."""
