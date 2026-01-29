@@ -1234,7 +1234,7 @@ class GengoWatcherApp(App):
         dashboard_widgets = [
             (MetricsRow, "refresh_metrics"),
             (JobsPreview, "refresh_jobs"),
-            (JobsHourChart, "refresh_chart"),
+            (HourlyActivity, "refresh_hourly"),
             (SessionStats, "refresh_stats"),
         ]
 
