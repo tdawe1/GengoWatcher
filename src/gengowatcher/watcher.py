@@ -45,6 +45,8 @@ PLACEHOLDER_CONFIG_VALUES = {
     "REPLACE_WITH_YOUR_USER_KEY",
 }
 
+SENSITIVE_KEYWORDS = {"password", "session", "key"}
+
 
 class GengoWatcher:
     PAUSE_FILE = "gengowatcher.pause"
@@ -226,10 +228,10 @@ class GengoWatcher:
         self.logger.debug("Setting up CSV logging.")
         try:
             log_path_str = self.config.get("Paths", "all_entries_log")
-            if not log_path_str:
-                self.logger.error("all_entries_log path not configured")
+            if not log_path_str or not isinstance(log_path_str, (str, Path)):
+                self.logger.error("all_entries_log path not configured or invalid")
                 return
-            log_path = Path(log_path_str)
+            log_path = Path(str(log_path_str))
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._all_entries_log_file = open(
                 log_path, "a", newline="", encoding="utf-8"
@@ -1287,18 +1289,21 @@ class GengoWatcher:
 
                 prompt = f"  {option} (current: {display_current}){desc_text}: "
 
-                if (
-                    "password" in option.lower()
-                    or "session" in option.lower()
-                    or "key" in option.lower()
-                ):
+                is_sensitive = any(
+                    keyword in option.lower() for keyword in SENSITIVE_KEYWORDS
+                )
+
+                if is_sensitive:
                     value = getpass.getpass(prompt)
                 else:
                     value = input(prompt).strip()
 
                 if value:
                     self.set_config_value(section, option, value)
-                    print(f"  ✅ Set {option} = {value}")
+                    if is_sensitive:
+                        print(f"  ✅ Set {option} (value stored securely)")
+                    else:
+                        print(f"  ✅ Set {option} = {value}")
                 else:
                     print(f"  ⚠️  Skipped {option} (keeping current value)")
 
