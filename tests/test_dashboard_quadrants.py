@@ -88,7 +88,7 @@ def test_config_preview_constants():
     assert len(ConfigPreview.SECTION_ORDER) == 13
 
 
-`@pytest.mark.asyncio`
+@pytest.mark.asyncio
 async def test_config_preview_render_uses_constants():
     """ConfigPreview._render_config should use class constants properly."""
     # Create a mock config

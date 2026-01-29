@@ -127,7 +127,7 @@ class TestWatcherInitialization:
         """Test that check_interval is validated."""
         mock_config.get.side_effect = lambda s, k, **kw: 0 if (s, k) == ("Watcher", "check_interval") else mock_config.config.get(s, {}).get(k)
 
-        watcher = GengoWatcher(mock_config, mock_state, logger)
+        GengoWatcher(mock_config, mock_state, logger)
         # Should have been corrected to minimum of 5
         mock_config.set.assert_called()
 

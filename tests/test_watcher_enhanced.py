@@ -34,7 +34,7 @@ class TestWatcherInitialization:
         # Set check_interval to invalid low value
         mock_config.get.return_value = 0
 
-        watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        GengoWatcher(mock_config, mock_state, mock_logger)
 
         # Should have been corrected to minimum
         mock_config.set.assert_called()

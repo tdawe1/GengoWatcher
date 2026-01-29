@@ -74,7 +74,7 @@ async def test_chart_placeholder_renders_with_jobs():
         assert "\n" in content or len(content) > 0
 
 
-`@pytest.mark.asyncio`
+@pytest.mark.asyncio
 async def test_chart_placeholder_has_chart_display():
     """ChartPlaceholder should have a chart-display element."""
     app = ChartPlaceholderTestApp()
