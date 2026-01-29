@@ -513,7 +513,7 @@ class TestEdgeCases:
             ("Watcher", "check_interval"): 0
         }.get((s, k), kw.get("fallback", 60))
 
-        watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        GengoWatcher(mock_config, mock_state, mock_logger)
 
         # Should have been corrected to minimum
         assert mock_config.set.called

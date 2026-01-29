@@ -485,6 +485,6 @@ async def test_sources_breakdown_exists():
 
         # SourcesBreakdown might not be in dashboard, but should be queryable
         # Check if it exists in the app structure
-        breakdowns = pilot.app.query(SourcesBreakdown)
+        breakdowns = list(pilot.app.query(SourcesBreakdown))
         # May be 0 or 1 depending on layout
-        assert isinstance(breakdowns, list)
+        assert len(breakdowns) in (0, 1)
