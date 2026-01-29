@@ -9,10 +9,7 @@ from unittest.mock import MagicMock, patch, mock_open
 from collections import deque
 
 from gengowatcher.watcher import GengoWatcher
-from gengowatcher.config import AppConfig
 from gengowatcher.state import AppState
-
-
 @pytest.fixture
 def watcher_with_mocks(mock_config, mock_state, mock_logger):
     """Create a watcher instance with mocked dependencies."""
