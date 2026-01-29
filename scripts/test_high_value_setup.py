@@ -7,6 +7,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -44,7 +45,13 @@ def test_configuration():
 
         # Check RSS feed URL
         feed_url = config.get("Watcher", "feed_url")
-        if "gengo.com" in feed_url and "YOUR_RSS_KEY" not in feed_url:
+        parsed_feed = urlparse(feed_url)
+        host = parsed_feed.hostname
+        if (
+            host
+            and (host == "gengo.com" or host.endswith(".gengo.com"))
+            and "YOUR_RSS_KEY" not in feed_url
+        ):
             print("✅ RSS feed URL appears to be configured")
         else:
             print("❌ RSS feed URL needs configuration")
