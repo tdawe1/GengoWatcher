@@ -59,6 +59,7 @@ archives/logs-*/
 
 # Temporary / Session files
 .tmp/
+.worktrees/
 
 # Legacy files
 gengo_rss_log.txt
