@@ -397,7 +397,7 @@ class TestStatsManagerExport:
             with open(path, 'r') as f:
                 data = json.load(f)
 
-            # This hard-coded section_order list mea
+            # This hard-coded section_order list ensures the JSON structure remains stable over time.
 
             # Verify key sections exist
             assert isinstance(data, dict)
