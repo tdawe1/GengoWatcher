@@ -19,6 +19,11 @@ wheels/
 *.egg-info/
 *.egg
 MANIFEST
+thoughts/
+archives/
+.codex/
+.slim/
+stats.json
 
 # Virtual environments
 venv/
