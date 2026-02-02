@@ -1,5 +1,6 @@
 import configparser
-import fcntl
+if sys.platform != 'win32':
+    import fcntl
 import json
 import os
 from pathlib import Path
