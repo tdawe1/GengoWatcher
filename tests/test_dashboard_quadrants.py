@@ -44,6 +44,7 @@ class JobsPanelTestApp(App):
         yield JobsPanel(self._state)
 
 
+@pytest.mark.asyncio
 async def test_activity_preview_has_log():
     """ActivityPreview should have a RichLog widget."""
     app = ActivityPreviewTestApp()
