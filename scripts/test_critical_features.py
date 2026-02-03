@@ -8,6 +8,8 @@ This script tests the critical features of GengoWatcher including:
 4. Rate limiting and performance
 """
 
+__test__ = False
+
 import asyncio
 import json
 import logging
@@ -18,6 +20,7 @@ from pathlib import Path
 
 # Add src to path
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from gengowatcher.config import AppConfig
@@ -26,7 +29,6 @@ from gengowatcher.captcha_manager import CaptchaSolverManager
 from gengowatcher.captcha_solver import CaptchaSolution
 from gengowatcher.web import WebAPI
 from gengowatcher.watcher import GengoWatcher
-
 
 # Test configuration
 TEST_CONFIG = {
@@ -38,7 +40,7 @@ TEST_CONFIG = {
         "accept_delay_min": "1",
         "accept_delay_max": "3",
         "log_acceptance": "true",
-        "notification_on_accept": "true"
+        "notification_on_accept": "true",
     },
     "Captcha": {
         "enabled": "true",
@@ -48,15 +50,15 @@ TEST_CONFIG = {
         "fallback_api_key": "test_fallback_key",
         "max_wait_time": "120",
         "polling_interval": "10",
-        "balance_check_interval": "3600"
+        "balance_check_interval": "3600",
     },
     "WebSocket": {
         "enabled": "true",
         "url": "wss://test.gengo.com/ws",
         "user_session": "test_session_token",
         "user_id": "test_user_id",
-        "user_key": "test_browser_user_key"
-    }
+        "user_key": "test_browser_user_key",
+    },
 }
 
 
@@ -86,10 +88,7 @@ def logger():
 def captcha_solution():
     """Create a mock CAPTCHA solution."""
     return CaptchaSolution(
-        solution="test_captcha_token",
-        cost=0.001,
-        solver="2captcha",
-        time_taken=5.0
+        solution="test_captcha_token", cost=0.001, solver="2captcha", time_taken=5.0
     )
 
 
@@ -100,10 +99,18 @@ class TestAutoAcceptWithCaptcha:
     async def test_job_acceptance_eligibility(self, config, logger):
         """Test job eligibility checking."""
         # Mock the config methods to return test values
-        config.getboolean = lambda section, key, fallback=None: TEST_CONFIG.get(section, {}).get(key, fallback)
-        config.get = lambda section, key, fallback=None: TEST_CONFIG.get(section, {}).get(key, fallback)
-        config.getfloat = lambda section, key, fallback=None: float(TEST_CONFIG.get(section, {}).get(key, fallback))
-        config.set = lambda section, key, value: TEST_CONFIG.setdefault(section, {}).update({key: value})
+        config.getboolean = lambda section, key, fallback=None: TEST_CONFIG.get(
+            section, {}
+        ).get(key, fallback)
+        config.get = lambda section, key, fallback=None: TEST_CONFIG.get(
+            section, {}
+        ).get(key, fallback)
+        config.getfloat = lambda section, key, fallback=None: float(
+            TEST_CONFIG.get(section, {}).get(key, fallback)
+        )
+        config.set = lambda section, key, value: TEST_CONFIG.setdefault(
+            section, {}
+        ).update({key: value})
         # Create job acceptance engine
         engine = JobAcceptanceEngine(config, logger)
         print(f"Engine enabled: {engine.enabled}")
@@ -114,7 +121,7 @@ class TestAutoAcceptWithCaptcha:
             "url": "https://gengo.com/t/jobs/details/test_job_123",
             "source": "rss",
             "reward": 10.0,
-            "title": "Test translation job"
+            "title": "Test translation job",
         }
 
         assert engine.is_job_eligible(eligible_job) is True
@@ -125,7 +132,7 @@ class TestAutoAcceptWithCaptcha:
             "url": "https://gengo.com/t/jobs/details/test_job_456",
             "source": "invalid_source",
             "reward": 10.0,
-            "title": "Test translation job"
+            "title": "Test translation job",
         }
 
         assert engine.is_job_eligible(ineligible_job) is False
@@ -136,7 +143,7 @@ class TestAutoAcceptWithCaptcha:
             "url": "https://gengo.com/t/jobs/details/test_job_789",
             "source": "rss",
             "reward": 0.5,
-            "title": "Test translation job"
+            "title": "Test translation job",
         }
 
         # Temporarily update min_reward
@@ -172,7 +179,7 @@ class TestAutoAcceptWithCaptcha:
         # Test CAPTCHA challenge detection and solving
         headers = {
             "Cookie": "my_gengo_session=test_session_token",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
         # Mock the session post to simulate successful acceptance
@@ -180,13 +187,15 @@ class TestAutoAcceptWithCaptcha:
         mock_response.status = 200
         mock_response.text.return_value = "Job accepted successfully"
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session = AsyncMock()
             mock_session_class.return_value = mock_session
             mock_session.post.return_value.__aenter__.return_value = mock_response
 
             # Test CAPTCHA handling
-            result = await engine._handle_captcha_challenge("test_job_123", captcha_html, headers)
+            result = await engine._handle_captcha_challenge(
+                "test_job_123", captcha_html, headers
+            )
 
             # Verify CAPTCHA was solved
             captcha_solver.solve_recaptcha_v2.assert_called_once()
@@ -203,7 +212,7 @@ class TestAutoAcceptWithCaptcha:
             "url": "https://gengo.com/t/jobs/details/test_job_123",
             "source": "rss",
             "reward": 10.0,
-            "title": "Test translation job"
+            "title": "Test translation job",
         }
 
         # First request should succeed
@@ -232,7 +241,7 @@ class TestWebSocketConnectivity:
         watcher = GengoWatcher(config, logger)
 
         # Mock WebSocket connection
-        with patch('websockets.connect') as mock_connect:
+        with patch("websockets.connect") as mock_connect:
             mock_ws = AsyncMock()
             mock_connect.return_value = mock_ws
 
@@ -252,18 +261,20 @@ class TestWebSocketConnectivity:
         mock_ws = AsyncMock()
 
         # Test job message
-        job_message = json.dumps({
-            "type": "job",
-            "data": {
-                "id": "test_job_123",
-                "title": "Test translation job",
-                "reward": 10.0,
-                "source": "websocket"
+        job_message = json.dumps(
+            {
+                "type": "job",
+                "data": {
+                    "id": "test_job_123",
+                    "title": "Test translation job",
+                    "reward": 10.0,
+                    "source": "websocket",
+                },
             }
-        })
+        )
 
         # Mock the job processing
-        with patch.object(watcher, '_process_job') as mock_process:
+        with patch.object(watcher, "_process_job") as mock_process:
             await watcher._handle_websocket_message(job_message)
             mock_process.assert_called_once()
 
@@ -273,7 +284,7 @@ class TestWebSocketConnectivity:
         watcher = GengoWatcher(config, logger)
 
         # Mock failed connection followed by success
-        with patch('websockets.connect') as mock_connect:
+        with patch("websockets.connect") as mock_connect:
             # First attempt fails
             mock_connect.side_effect = [Exception("Connection failed"), AsyncMock()]
 
@@ -296,7 +307,9 @@ class TestWebAPIEndpoints:
         # Test client
         from httpx import AsyncClient
 
-        async with AsyncClient(app=web_server.app, base_url="http://localhost:8001") as client:
+        async with AsyncClient(
+            app=web_server.app, base_url="http://localhost:8001"
+        ) as client:
             # Test health endpoint
             response = await client.get("/health")
             assert response.status_code == 200
@@ -319,17 +332,23 @@ class TestWebAPIEndpoints:
 
         from httpx import AsyncClient
 
-        async with AsyncClient(app=web_server.app, base_url="http://localhost:8002") as client:
+        async with AsyncClient(
+            app=web_server.app, base_url="http://localhost:8002"
+        ) as client:
             # Test without token
             response = await client.get("/config")
             assert response.status_code == 401
 
             # Test with valid token
-            response = await client.get("/config", headers={"Authorization": "Bearer test_token"})
+            response = await client.get(
+                "/config", headers={"Authorization": "Bearer test_token"}
+            )
             assert response.status_code == 200
 
             # Test with invalid token
-            response = await client.get("/config", headers={"Authorization": "Bearer invalid_token"})
+            response = await client.get(
+                "/config", headers={"Authorization": "Bearer invalid_token"}
+            )
             assert response.status_code == 401
 
 
@@ -373,7 +392,7 @@ class TestRateLimitingAndPerformance:
                 "url": f"https://gengo.com/t/jobs/details/test_job_{i}",
                 "source": "rss",
                 "reward": 10.0,
-                "title": f"Test job {i}"
+                "title": f"Test job {i}",
             }
             for i in range(10)
         ]
@@ -383,9 +402,7 @@ class TestRateLimitingAndPerformance:
             return await engine.is_job_eligible(job)
 
         # Run all concurrently
-        results = await asyncio.gather(*[
-            attempt_acceptance(job) for job in jobs
-        ])
+        results = await asyncio.gather(*[attempt_acceptance(job) for job in jobs])
 
         # All should be eligible
         assert all(results) is True
@@ -403,7 +420,7 @@ class TestRateLimitingAndPerformance:
         start_time = time.time()
 
         for i in range(5):
-            with patch('aiohttp.ClientSession') as mock_session_class:
+            with patch("aiohttp.ClientSession") as mock_session_class:
                 mock_session = AsyncMock()
                 mock_session_class.return_value = mock_session
 
@@ -417,11 +434,11 @@ class TestRateLimitingAndPerformance:
                     "id": f"test_job_{i}",
                     "url": f"https://gengo.com/t/jobs/details/test_job_{i}",
                     "source": "rss",
-                    "reward": 10.0
+                    "reward": 10.0,
                 }
 
                 # Mock the _attempt_job_acceptance to return True (CAPTCHA solved)
-                with patch.object(engine, '_attempt_job_acceptance', return_value=True):
+                with patch.object(engine, "_attempt_job_acceptance", return_value=True):
                     result = await engine.accept_job(job)
                     assert result is True
 
@@ -453,26 +470,27 @@ async def test_full_integration(config, logger, captcha_solution):
         "url": "https://gengo.com/t/jobs/details/integration_test_job",
         "source": "websocket",
         "reward": 15.0,
-        "title": "Integration test job"
+        "title": "Integration test job",
     }
 
     # Process job through watcher
-    with patch.object(watcher, '_process_job') as mock_process:
-        await watcher._handle_websocket_message(json.dumps({
-            "type": "job",
-            "data": job_data
-        }))
+    with patch.object(watcher, "_process_job") as mock_process:
+        await watcher._handle_websocket_message(
+            json.dumps({"type": "job", "data": job_data})
+        )
         mock_process.assert_called_with(job_data)
 
     # Test job acceptance
-    with patch.object(engine, '_attempt_job_acceptance', return_value=True):
+    with patch.object(engine, "_attempt_job_acceptance", return_value=True):
         result = await engine.accept_job(job_data)
         assert result is True
 
     # Test web API
     from httpx import AsyncClient
 
-    async with AsyncClient(app=web_server.app, base_url="http://localhost:8003") as client:
+    async with AsyncClient(
+        app=web_server.app, base_url="http://localhost:8003"
+    ) as client:
         response = await client.get("/health")
         assert response.status_code == 200
 

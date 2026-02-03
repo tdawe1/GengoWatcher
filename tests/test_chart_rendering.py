@@ -61,7 +61,7 @@ def test_render_chart_uses_fractional_blocks():
     # Create values that should produce fractional blocks
     values = [0.5, 1.0, 1.5, 2.0, 2.5]
     result = _render_chart(values, width=5, height=3)
-    
+
     # The result should contain characters from BAR_CHARS
     for char in result:
         if char != "\n":
@@ -73,17 +73,20 @@ def test_render_chart_ascending_values():
     values = [1, 2, 3, 4, 5, 6, 7, 8]
     result = _render_chart(values, width=8, height=4)
     lines = result.split("\n")
-    
+
     # Check that we have the right number of lines
     assert len(lines) == 4
-    
+
     # The top line should have more empty spaces on the left (lower values)
     # and more filled blocks on the right (higher values)
+    top_line = lines[0]
     bottom_line = lines[-1]
-    
-    # Bottom line should have more filled content
+
+    # Bottom line should have more filled content than top line
+    top_filled = sum(1 for c in top_line if c != " ")
     bottom_filled = sum(1 for c in bottom_line if c != " ")
     assert bottom_filled > 0
+    assert bottom_filled >= top_filled
 
 
 def test_render_chart_all_zeros():
@@ -91,7 +94,7 @@ def test_render_chart_all_zeros():
     values = [0, 0, 0, 0, 0]
     result = _render_chart(values, width=5, height=3)
     lines = result.split("\n")
-    
+
     # All lines should be mostly empty (spaces or minimal blocks)
     assert len(lines) == 3
     for line in lines:
@@ -103,7 +106,7 @@ def test_render_chart_single_value():
     values = [5]
     result = _render_chart(values, width=5, height=3)
     lines = result.split("\n")
-    
+
     assert len(lines) == 3
     # First column should show the value, rest should be empty
     assert lines[-1][0] in BAR_CHARS  # Bottom line, first column should have a block
@@ -115,11 +118,11 @@ def test_render_chart_normalization():
     values = [100, 200, 300, 400, 500]
     result = _render_chart(values, width=5, height=3)
     lines = result.split("\n")
-    
+
     assert len(lines) == 3
     for line in lines:
         assert len(line) == 5
-    
+
     # The last value (500) should reach near the top
     # Check that the rightmost column has blocks in multiple rows
     rightmost_chars = [lines[i][-1] for i in range(len(lines))]
@@ -133,7 +136,7 @@ def test_render_chart_downsampling():
     values = list(range(1, 21))
     result = _render_chart(values, width=10, height=3)
     lines = result.split("\n")
-    
+
     assert len(lines) == 3
     for line in lines:
         assert len(line) == 10
@@ -145,11 +148,11 @@ def test_render_chart_padding():
     values = [5, 10, 15]
     result = _render_chart(values, width=10, height=3)
     lines = result.split("\n")
-    
+
     assert len(lines) == 3
     for line in lines:
         assert len(line) == 10
-    
+
     # Right side should be mostly empty (padded with zeros)
     for line in lines:
         # Last few characters should be empty (spaces)

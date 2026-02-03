@@ -31,7 +31,7 @@ class WebSocketWorker:
     async def connect_and_monitor(self):
         """
         Maintain a persistent WebSocket connection to the live-dashboard, authenticate with credentials from the instance config, and monitor incoming messages for job notifications.
-        
+
         This coroutine sets the worker's running and connection status, sends an authentication payload containing `user_id`, `user_session` and `user_key` from the WebSocket config, and processes incoming messages. On each received message it updates `last_message_time`, attempts to parse JSON, and when a message of type `"available_collection"` contains a job `id` it increments `jobs_processed` and logs job details. Connection closures and other errors are logged; on exit the method clears the running flag and sets the connection status to `"Disconnected"`.
         """
         ws_url = "wss://live-dashboard.gengo.com"
@@ -40,9 +40,15 @@ class WebSocketWorker:
 
         try:
             extra_headers = [
-                ("Cookie", f"my_gengo_session={self.config.get('WebSocket', 'user_session')}"),
+                (
+                    "Cookie",
+                    f"my_gengo_session={self.config.get('WebSocket', 'user_session')}",
+                ),
                 ("Origin", "https://gengo.com"),
-                ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
+                (
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                ),
             ]
 
             async with websockets.connect(
@@ -61,13 +67,18 @@ class WebSocketWorker:
 
                 await websocket.send(json.dumps(auth_payload))
                 self.connection_status = "Live"
-                self.logger.info(f"Worker {self.worker_id}: WebSocket connection established")
+                self.logger.info(
+                    f"Worker {self.worker_id}: WebSocket connection established"
+                )
 
                 async for message in websocket:
                     self.last_message_time = time.time()
                     try:
                         data = json.loads(message)
-                        if isinstance(data, dict) and data.get("type") == "available_collection":
+                        if (
+                            isinstance(data, dict)
+                            and data.get("type") == "available_collection"
+                        ):
                             job = data.get("collection", {})
                             if job.get("id"):
                                 self.jobs_processed += 1
@@ -78,7 +89,9 @@ class WebSocketWorker:
                                 )
                                 # Here you would integrate with job processing logic
                     except json.JSONDecodeError as e:
-                        self.logger.warning(f"Worker {self.worker_id}: Failed to parse message: {e}")
+                        self.logger.warning(
+                            f"Worker {self.worker_id}: Failed to parse message: {e}"
+                        )
 
         except websockets.exceptions.ConnectionClosed as e:
             self.logger.warning(f"Worker {self.worker_id}: Connection closed: {e}")
@@ -95,7 +108,7 @@ class WebSocketWorker:
             "status": self.connection_status,
             "jobs_processed": self.jobs_processed,
             "last_message": self.last_message_time,
-            "is_running": self.is_running
+            "is_running": self.is_running,
         }
 
 
@@ -107,7 +120,9 @@ class WebSocketScaler:
         self.logger = logger
         self.num_workers = num_workers
         self.workers: List[WebSocketWorker] = []
-        self.executor = ThreadPoolExecutor(max_workers=num_workers, thread_name_prefix="WS-Worker")
+        self.executor = ThreadPoolExecutor(
+            max_workers=num_workers, thread_name_prefix="WS-Worker"
+        )
         self.is_running = False
 
     def start(self):
@@ -139,7 +154,9 @@ class WebSocketScaler:
             try:
                 asyncio.run(worker.connect_and_monitor())
                 if self.is_running:
-                    self.logger.info(f"Worker {worker.worker_id}: Reconnecting in 20 seconds...")
+                    self.logger.info(
+                        f"Worker {worker.worker_id}: Reconnecting in 20 seconds..."
+                    )
                     time.sleep(20)
             except Exception as e:
                 self.logger.error(f"Worker {worker.worker_id}: Fatal error: {e}")
@@ -152,7 +169,7 @@ class WebSocketScaler:
             "total_workers": self.num_workers,
             "active_workers": sum(1 for w in self.workers if w.is_running),
             "total_jobs_processed": sum(w.jobs_processed for w in self.workers),
-            "workers": [w.get_status() for w in self.workers]
+            "workers": [w.get_status() for w in self.workers],
         }
 
     def scale_up(self, additional_workers: int = 1):

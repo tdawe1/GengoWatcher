@@ -113,6 +113,7 @@ class GengoWatcher:
         self._all_entries_log_file = None
         self._csv_writer = None
         self._shutdown_initiated = False
+        self._rss_executor = None
         # Thread references for health monitoring
         self._monitor_threads = {}  # name -> threading.Thread
         # Raw WebSocket message buffer for debug output
@@ -546,17 +547,20 @@ class GengoWatcher:
         try:
             feed_url = self.config.get("Watcher", "feed_url")
             # Wrap feedparser in thread with timeout to prevent blocking
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    feedparser.parse,
-                    feed_url,
-                    request_headers=headers,
+            if self._rss_executor is None:
+                self._rss_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1
                 )
-                try:
-                    feed = future.result(timeout=30)
-                except concurrent.futures.TimeoutError:
-                    self.logger.warning("RSS feed fetch timed out after 30 seconds")
-                    return None
+            future = self._rss_executor.submit(
+                feedparser.parse,
+                feed_url,
+                request_headers=headers,
+            )
+            try:
+                feed = future.result(timeout=30)
+            except concurrent.futures.TimeoutError:
+                self.logger.warning("RSS feed fetch timed out after 30 seconds")
+                return None
             # Check HTTP status first (feedparser stores it in feed.status)
             http_status = getattr(feed, "status", None)
             if http_status == 429:
@@ -1440,6 +1444,12 @@ class GengoWatcher:
             finally:
                 self._all_entries_log_file = None
                 self._csv_writer = None
+        if self._rss_executor is not None:
+            try:
+                self._rss_executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                self._rss_executor.shutdown(wait=False)
+            self._rss_executor = None
 
         try:
             self.state.save_state()

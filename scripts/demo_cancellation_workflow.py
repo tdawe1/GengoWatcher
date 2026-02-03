@@ -8,11 +8,13 @@ import os
 import asyncio
 import json
 from datetime import datetime
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from gengowatcher.config import AppConfig
 from gengowatcher.high_value_job_manager import HighValueJobManager
 import logging
+
 
 def demo_workflow():
     """Demonstrate the complete job cancellation workflow."""
@@ -29,7 +31,7 @@ def demo_workflow():
     # Set up logging
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger("Demo")
 
@@ -38,11 +40,17 @@ def demo_workflow():
 
     print("📋 Current Settings:")
     print(f"   • High-value threshold: ${config.get('HighValue', 'threshold')}")
-    print(f"   • Very-high threshold: ${config.get('HighValue', 'very_high_threshold')}")
+    print(
+        f"   • Very-high threshold: ${config.get('HighValue', 'very_high_threshold')}"
+    )
     print(f"   • Extreme threshold: ${config.get('HighValue', 'extreme_threshold')}")
     print(f"   • Cancellation enabled: {config.get('Cancellation', 'enabled')}")
-    print(f"   • Minimum improvement: {config.get('Cancellation', 'min_improvement_ratio')}x")
-    print(f"   • Auto-cancel for >${config.get('Cancellation', 'extreme_threshold')}: Yes")
+    print(
+        f"   • Minimum improvement: {config.get('Cancellation', 'min_improvement_ratio')}x"
+    )
+    print(
+        f"   • Auto-cancel for >${config.get('Cancellation', 'extreme_threshold')}: Yes"
+    )
     print()
 
     # Simulate job scenarios
@@ -69,14 +77,16 @@ def demo_workflow():
 
     # Scenario 4: An extreme value job appears
     print("\n4️⃣ EXTREME VALUE job appears: $5,000")
-    should_cancel = manager.cancellation_manager.should_cancel_for_job(5000.0, "job_extreme")
+    should_cancel = manager.cancellation_manager.should_cancel_for_job(
+        5000.0, "job_extreme"
+    )
     print(f"   → Decision: {'Cancel' if should_cancel else 'Keep current'}")
     print(f"   📝 Rationale: Always cancel for jobs > $1,000")
     print(f"   🚨 SYSTEM WOULD IMMEDIATELY CANCEL CURRENT JOB!")
 
     # Show statistics
     print("\n📊 Cancellation Statistics:")
-    stats = manager.get_stats()['cancellation']
+    stats = manager.get_stats()["cancellation"]
     print(f"   • Total cancellations: {stats['cancellations_count']}")
     print(f"   • Successful cancellations: {stats['successful_cancellations']}")
     print(f"   • Failed cancellations: {stats['failed_cancellations']}")
@@ -95,6 +105,7 @@ def demo_workflow():
     print("   • No CAPTCHA typically required for cancellation")
     print("   • Can accept new job immediately after cancellation")
     print("   • Extreme value jobs ($1,000+) always trigger cancellation")
+
 
 if __name__ == "__main__":
     demo_workflow()

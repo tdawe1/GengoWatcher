@@ -22,7 +22,6 @@ from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 from gengowatcher.website_monitor import WebsiteMonitor
 from gengowatcher.config import AppConfig
 
-
 # --- Fixtures ---
 
 
@@ -573,14 +572,12 @@ class TestScrapeJobIds:
         """
         # Arrange
         mock_page = AsyncMock()
-        mock_page.content = AsyncMock(
-            return_value="""
+        mock_page.content = AsyncMock(return_value="""
             <html>
                 <a href="/t/jobs/details/12345">Job 1</a>
                 <a href="/t/jobs/details/67890">Job 2</a>
             </html>
-        """
-        )
+        """)
         mock_page.query_selector_all = AsyncMock(return_value=[])
         website_monitor._page = mock_page
 

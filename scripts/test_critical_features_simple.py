@@ -21,6 +21,7 @@ try:
     from gengowatcher.captcha_manager import CaptchaSolverManager
     from gengowatcher.captcha_solver import CaptchaSolution
     from gengowatcher.watcher import GengoWatcher
+
     IMPORTS_AVAILABLE = True
 except ImportError as e:
     print(f"Import error: {e}")
@@ -31,7 +32,7 @@ def setup_logging():
     """Setup basic logging."""
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     return logging.getLogger("test")
 
@@ -104,7 +105,7 @@ async def test_captcha_solver():
             captcha_id="test_task_123",
             solution="test_token_123",
             solved_at=time.time(),
-            cost=0.002
+            cost=0.002,
         )
 
         solver.solve_recaptcha_v2.return_value = solution
@@ -140,11 +141,7 @@ async def test_job_acceptance_eligibility():
         engine = JobAcceptanceEngine(config, logger)
 
         # Test eligible job
-        eligible_job = {
-            "id": "test_job_123",
-            "source": "rss",
-            "reward": 10.0
-        }
+        eligible_job = {"id": "test_job_123", "source": "rss", "reward": 10.0}
 
         if engine.is_job_eligible(eligible_job):
             print("✅ Eligible job accepted")
@@ -153,11 +150,7 @@ async def test_job_acceptance_eligibility():
             return False
 
         # Test ineligible job (reward too low)
-        ineligible_job = {
-            "id": "test_job_456",
-            "source": "rss",
-            "reward": 3.0
-        }
+        ineligible_job = {"id": "test_job_456", "source": "rss", "reward": 3.0}
 
         if not engine.is_job_eligible(ineligible_job):
             print("✅ Ineligible job (low reward) rejected")
@@ -166,11 +159,7 @@ async def test_job_acceptance_eligibility():
             return False
 
         # Test ineligible job (wrong source)
-        wrong_source_job = {
-            "id": "test_job_789",
-            "source": "invalid",
-            "reward": 10.0
-        }
+        wrong_source_job = {"id": "test_job_789", "source": "invalid", "reward": 10.0}
 
         if not engine.is_job_eligible(wrong_source_job):
             print("✅ Ineligible job (wrong source) rejected")
@@ -200,7 +189,7 @@ async def test_websocket_simulation():
         state.last_seen_link = None
 
         # Mock WebSocket
-        with patch('websockets.connect') as mock_connect:
+        with patch("websockets.connect") as mock_connect:
             mock_ws = AsyncMock()
             mock_connect.return_value = mock_ws
 

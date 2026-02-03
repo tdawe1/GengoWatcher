@@ -34,7 +34,6 @@ from .config import AppConfig
 from .state import AppState
 from .watcher import GengoWatcher
 
-
 # Authentication
 security = HTTPBearer(auto_error=False)
 

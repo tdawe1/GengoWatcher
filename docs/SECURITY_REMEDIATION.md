@@ -20,7 +20,7 @@ Based on comprehensive codebase review (Jan 2026).
 1. Create `config.ini.example` with placeholder values only
 2. Add `.env` support via `python-dotenv` for sensitive values
 3. Migrate secrets to environment variables:
-   ```
+   ```bash
    GENGO_USER_ID=
    GENGO_USER_SESSION=
    GENGO_USER_KEY=

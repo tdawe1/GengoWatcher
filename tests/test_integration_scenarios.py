@@ -56,7 +56,9 @@ class TestJobProcessingPipeline:
 
         # Then from WebSocket - should be deduplicated
         full_system._process_new_job(job_id, title, reward, url, "WebSocket")
-        assert full_system.show_notification.call_count == 1  # No additional notification
+        assert (
+            full_system.show_notification.call_count == 1
+        )  # No additional notification
 
     def test_job_below_threshold_filtered(self, full_system, mock_config):
         """Test that jobs below min_reward are filtered."""
@@ -216,6 +218,7 @@ class TestConfigurationChanges:
         from gengowatcher.watcher import GengoWatcher
 
         watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        watcher.cancellation_manager.update_settings = MagicMock()
         return watcher
 
     def test_config_change_triggers_save(self, configurable_watcher):
@@ -262,7 +265,9 @@ class TestErrorRecovery:
 
     def test_state_save_error_handling(self, resilient_watcher):
         """Test handling of state save errors."""
-        resilient_watcher.state.save_state = MagicMock(side_effect=Exception("IO error"))
+        resilient_watcher.state.save_state = MagicMock(
+            side_effect=Exception("IO error")
+        )
 
         # Should handle error gracefully
         resilient_watcher.handle_exit()
@@ -374,13 +379,13 @@ class TestStatisticsAggregation:
         """Test tracking job distribution across sources."""
         # Record jobs from different sources
         for _ in range(10):
-            stats_system.record_job(10.0, "RSS", "JA→EN", accepted=False)
+            stats_system.record_job(10.0, "Web", "JA→EN", accepted=False)
         for _ in range(5):
             stats_system.record_job(10.0, "WebSocket", "EN→JA", accepted=False)
         for _ in range(3):
             stats_system.record_job(10.0, "Email", "FR→EN", accepted=False)
 
-        assert stats_system.by_source.rss == 10
+        assert stats_system.by_source.website == 10
         assert stats_system.by_source.websocket == 5
         assert stats_system.by_source.email == 3
 
@@ -406,21 +411,25 @@ class TestBoundaryConditions:
         from gengowatcher.watcher import GengoWatcher
 
         mock_config.get.side_effect = lambda s, k, **kw: {
-            ("Watcher", "check_interval"): 0
-        }.get((s, k), kw.get("fallback", 60))
+            ("Watcher", "check_interval"): 0,
+            ("Logging", "log_all_entries_enabled"): False,
+        }.get((s, k), kw.get("fallback"))
 
         watcher = GengoWatcher(mock_config, mock_state, mock_logger)
 
         # Should have been corrected to minimum
         assert mock_config.set.called
 
-    def test_negative_check_interval_validation(self, mock_config, mock_state, mock_logger):
+    def test_negative_check_interval_validation(
+        self, mock_config, mock_state, mock_logger
+    ):
         """Test that negative check interval is corrected."""
         from gengowatcher.watcher import GengoWatcher
 
         mock_config.get.side_effect = lambda s, k, **kw: {
-            ("Watcher", "check_interval"): -10
-        }.get((s, k), kw.get("fallback", 60))
+            ("Watcher", "check_interval"): -10,
+            ("Logging", "log_all_entries_enabled"): False,
+        }.get((s, k), kw.get("fallback"))
 
         watcher = GengoWatcher(mock_config, mock_state, mock_logger)
 
@@ -490,6 +499,16 @@ class TestConcurrencyAndThreadSafety:
         with patch("gengowatcher.web.GengoWatcher") as MockWatcher:
             mock_watcher = MagicMock()
             MockWatcher.return_value = mock_watcher
+            mock_watcher.shutdown_event.is_set.return_value = False
+            mock_watcher.websocket_status = "Live"
+            mock_watcher.rss_action = "Checking"
+            mock_watcher.last_check_time = 1234567890.0
+            mock_watcher.next_check_time = 1234567950.0
+            mock_watcher.session_new_entries = 0
+            mock_watcher.session_total_value = 0.0
+            mock_watcher.start_time = 1234567800.0
+            mock_watcher.failure_count = 0
+            mock_watcher.get_cancellation_stats.return_value = {}
 
             api = WebAPI(mock_config, mock_state, mock_logger)
 

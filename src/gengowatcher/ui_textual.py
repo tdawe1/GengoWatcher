@@ -4,7 +4,9 @@ Textual-based TUI for GengoWatcher.
 Strict implementation of the v2.0 Design Doc.
 """
 
+import asyncio
 import datetime
+import inspect
 import logging
 import re
 import time
@@ -24,7 +26,7 @@ from textual.widgets import (
     TabPane,
     DataTable,
 )
-from textual import work
+from textual import work, on
 from textual.css.query import NoMatches
 from rich.text import Text
 
@@ -56,6 +58,80 @@ class Icons:
     IDLE = "○"
     LIVE = "∿∿∿"
     POLLING = "↻"
+
+
+def _format_timestamp(timestamp: Any) -> str:
+    """Normalize a timestamp value to "HH:MM:SS" for display."""
+
+    if timestamp is None:
+        return ""
+
+    if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+        try:
+            dt = datetime.datetime.fromtimestamp(timestamp)
+        except (OSError, OverflowError, ValueError):
+            return ""
+        return dt.strftime("%H:%M:%S")
+
+    if isinstance(timestamp, str):
+        cleaned = timestamp.strip()
+        if not cleaned:
+            return ""
+
+        iso_candidate = cleaned
+        if iso_candidate.endswith("Z"):
+            iso_candidate = iso_candidate[:-1] + "+00:00"
+        try:
+            dt = datetime.datetime.fromisoformat(iso_candidate)
+            return dt.strftime("%H:%M:%S")
+        except ValueError:
+            pass
+
+        for sep in ("T", " "):
+            if sep in cleaned:
+                _, _, tail = cleaned.partition(sep)
+                match = re.match(r"(\d{2}:\d{2}:\d{2})", tail)
+                if match:
+                    return match.group(1)
+
+        match = re.match(r"(\d{2}:\d{2}:\d{2})", cleaned)
+        if match:
+            return match.group(1)
+        return ""
+
+    return ""
+
+
+SOURCE_BUCKET_CONFIG = {
+    "websocket": {"label": "WebSocket", "color": "#957FB8"},
+    "email": {"label": "Email", "color": "#FFA066"},
+    "website": {"label": "Website", "color": "#7E9CD8"},
+    "rss": {"label": "RSS", "color": "#7AA89F"},
+    "unknown": {"label": "Unknown", "color": "#727169"},
+}
+
+
+def _normalize_source(source: Any) -> str:
+    """Map incoming source strings into the normalized buckets."""
+
+    if source is None:
+        return "unknown"
+
+    normalized = str(source).strip().lower()
+    if not normalized:
+        return "unknown"
+
+    if "websocket" in normalized or normalized in ("ws", "socket"):
+        return "websocket"
+    if any(token in normalized for token in ("email", "imap", "mail")):
+        return "email"
+    if any(token in normalized for token in ("rss", "feed")):
+        return "rss"
+    if any(
+        token in normalized for token in ("web", "http", "browser", "scrape", "website")
+    ):
+        return "website"
+    return "unknown"
 
 
 # Fractional block characters for bar chart rendering
@@ -177,7 +253,10 @@ class TitleBar(Static):
             pass  # Widget not mounted yet
 
         # Session timer
-        app = self.app
+        try:
+            app = self.app
+        except Exception:
+            return
         watcher = getattr(app, "watcher", None)
         if watcher:
             elapsed = int(time.time() - watcher.start_time)
@@ -250,11 +329,18 @@ class MetricsRow(Horizontal):
             elapsed_hours = 1.0  # Default to 1 hour if no session start
         rate = found / elapsed_hours
 
-        self.query_one("#card-found", MetricCard).update_value(str(found))
-        self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
-        self.query_one("#card-value", MetricCard).update_value(f"${total_value:.2f}")
-        self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
-        self.query_one("#card-today", MetricCard).update_value(f"${total_value:.2f}")
+        updates = {
+            "#card-found": str(found),
+            "#card-accepted": str(accepted),
+            "#card-value": f"${total_value:.2f}",
+            "#card-rate": f"{rate:.1f}/hr",
+            "#card-today": f"${total_value:.2f}",
+        }
+        for selector, value in updates.items():
+            try:
+                self.query_one(selector, MetricCard).update_value(value)
+            except NoMatches:
+                pass  # Widget not mounted yet
 
 
 class StatusIndicator(Static):
@@ -575,6 +661,7 @@ class JobsPreview(DashboardQuadrant):
             dt.add_columns("ID", "Pair", "Words", "$$$")
         except NoMatches:
             pass  # Widget not mounted yet
+        self.refresh_jobs()
 
     def refresh_jobs(self):
         """
@@ -642,19 +729,21 @@ class ConfigPreview(DashboardQuadrant):
     """Configuration preview showing all config.ini options."""
 
     # Keys that should be masked for security
-    SENSITIVE_KEYS: ClassVar[set[str]] = {
-        "user_session",
-        "user_key",
-        "client_id",
-        "client_secret",
-        "refresh_token",
-        "access_token",
-        "auth_token",
-        "session_cookie",
-        "password",
-        "secret",
-        "token",
-    }
+    SENSITIVE_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "user_session",
+            "user_key",
+            "client_id",
+            "client_secret",
+            "refresh_token",
+            "access_token",
+            "auth_token",
+            "session_cookie",
+            "password",
+            "secret",
+            "token",
+        }
+    )
 
     # Section display order for configuration
     SECTION_ORDER: ClassVar[list[str]] = [
@@ -717,14 +806,19 @@ class ConfigPreview(DashboardQuadrant):
     def _format_value(self, key: str, value) -> str:
         """Format a config value for display."""
         if self._is_sensitive(key) and value:
-            return self._mask_value(value)
-        if isinstance(value, bool):
-            return "✓" if value else "✗"
-        if isinstance(value, list):
-            return ", ".join(str(v) for v in value)
-        if isinstance(value, float):
-            return f"{value:.2f}" if value != int(value) else str(int(value))
-        return str(value) if value else "—"
+            formatted = self._mask_value(value)
+        elif isinstance(value, bool):
+            formatted = "✓" if value else "✗"
+        elif isinstance(value, list):
+            formatted = ", ".join(str(v) for v in value)
+        elif isinstance(value, float):
+            formatted = f"{value:.2f}" if value != int(value) else str(int(value))
+        else:
+            formatted = str(value) if value else "—"
+
+        if len(formatted) > self.MAX_VALUE_LENGTH:
+            return formatted[: self.MAX_VALUE_LENGTH_SHORT] + "..."
+        return formatted
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
@@ -803,10 +897,17 @@ class SessionStats(DashboardQuadrant):
         accepted = sum(1 for j in jobs if j.get("accepted", False))
         total = sum(j.get("reward", 0) for j in jobs)
 
-        self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
-        self.query_one("#stat-found", Static).update(f"Found: {found}")
-        self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
-        self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+        updates = {
+            "#stat-duration": f"Duration: {h}h {m:02d}m",
+            "#stat-found": f"Found: {found}",
+            "#stat-accepted": f"Accepted: {accepted}",
+            "#stat-value": f"Value: ${total:.2f}",
+        }
+        for selector, value in updates.items():
+            try:
+                self.query_one(selector, Static).update(value)
+            except NoMatches:
+                pass  # Widget not mounted yet
 
 
 class SourcesBreakdown(DashboardQuadrant):
@@ -927,6 +1028,32 @@ class GengoWatcherApp(App):
         handler = TextualLogHandler(self)
         logging.getLogger().addHandler(handler)
 
+    def _refresh_widget(self, selector_or_type, method_name: str) -> None:
+        try:
+            widget = self.query_one(selector_or_type)
+        except NoMatches:
+            return
+        method = getattr(widget, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+
+    @on(TabbedContent.TabActivated)
+    def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
+        pane_id = event.pane.id
+        if pane_id == "jobs":
+            self._refresh_widget("#jobs-table-full", "refresh")
+        elif pane_id == "activity":
+            self._refresh_widget("#activity-log-full", "refresh")
+        elif pane_id == "output":
+            self._refresh_widget("#output-log", "refresh")
+        elif pane_id == "charts":
+            self._refresh_widget("#charts-content", "refresh")
+        elif pane_id == "stats":
+            self._refresh_widget("#stats-content", "refresh")
+
     def compose(self) -> ComposeResult:
         # 1. Title Bar
         """
@@ -960,9 +1087,9 @@ class GengoWatcherApp(App):
             with TabPane("Output", id="output"):
                 yield RichLog(id="output-log", markup=True)
             with TabPane("Charts", id="charts"):
-                yield Static("Charts Content")
+                yield Static("Charts Content", id="charts-content")
             with TabPane("Stats", id="stats"):
-                yield Static("Stats Content")
+                yield Static("Stats Content", id="stats-content")
 
         # 3. Input & Footer
         yield Input(placeholder="> help_")
@@ -1064,7 +1191,12 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self.format(record)
             level = record.levelno
-            self.app.call_from_thread(self.write_log, msg, level)
+            loop = getattr(self.app, "_loop", None) or getattr(self.app, "loop", None)
+            if loop is None or not loop.is_running():
+                return
+            result = self.app.call_from_thread(self.write_log, msg, level)
+            if inspect.isawaitable(result):
+                asyncio.run_coroutine_threadsafe(result, loop)
         except Exception:
             pass  # Logging failures should not crash the app
 

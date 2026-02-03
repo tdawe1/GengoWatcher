@@ -6,6 +6,7 @@ import json
 import tempfile
 import pathlib
 import time
+import tempfile as tf
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi.testclient import TestClient
 
@@ -66,7 +67,7 @@ def mock_watcher():
     watcher.failure_count = 0
     watcher.shutdown_event = MagicMock()
     watcher.shutdown_event.is_set.return_value = False
-    watcher.PAUSE_FILE = "/tmp/test_pause"
+    watcher.PAUSE_FILE = f"{tf.gettempdir()}/test_pause"
     watcher.get_cancellation_stats.return_value = {"cancellations_today": 2}
     watcher.job_acceptance_engine = MagicMock()
     return watcher
@@ -300,7 +301,9 @@ class TestWebAPI:
             assert len(result["jobs"]) == 10
             assert result["pagination"]["pages"] == 10
 
-    def test_get_jobs_from_csv(self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path):
+    def test_get_jobs_from_csv(
+        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+    ):
         """Test reading jobs from CSV file."""
         # Create a test CSV file
         csv_file = tmp_path / "test_entries.csv"
@@ -445,7 +448,9 @@ class TestWebAPI:
             result = api.update_config("Watcher", "check_interval", "30")
             assert result is True
 
-    def test_execute_command_check(self, mock_config, mock_state, mock_logger, mock_watcher):
+    def test_execute_command_check(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
         """Test executing check command."""
         with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
             api = WebAPI(mock_config, mock_state, mock_logger)
@@ -455,7 +460,9 @@ class TestWebAPI:
             assert result["status"] == "success"
             mock_watcher.check_now_event.set.assert_called_once()
 
-    def test_execute_command_pause(self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path):
+    def test_execute_command_pause(
+        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+    ):
         """Test executing pause command."""
         pause_file = tmp_path / "pause"
         mock_watcher.PAUSE_FILE = str(pause_file)
@@ -486,7 +493,9 @@ class TestWebAPI:
             assert result["status"] == "success"
             assert not pause_file.exists()
 
-    def test_execute_command_cancel(self, mock_config, mock_state, mock_logger, mock_watcher):
+    def test_execute_command_cancel(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
         """Test executing cancel command."""
         mock_watcher.cancel_current_job_sync.return_value = True
 
@@ -498,7 +507,9 @@ class TestWebAPI:
 
             assert result["status"] == "success"
 
-    def test_execute_command_unknown(self, mock_config, mock_state, mock_logger, mock_watcher):
+    def test_execute_command_unknown(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
         """Test executing unknown command."""
         with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
             api = WebAPI(mock_config, mock_state, mock_logger)
@@ -575,7 +586,9 @@ class TestEdgeCases:
             # Should skip malformed row and return valid one
             assert len(result["jobs"]) >= 1
 
-    def test_accept_job_not_found(self, mock_config, mock_state, mock_logger, mock_watcher):
+    def test_accept_job_not_found(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
         """Test accepting a job that doesn't exist."""
         mock_state.get_recent_jobs.return_value = []
 
