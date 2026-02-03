@@ -3,13 +3,17 @@
 Test script for the job cancellation system.
 """
 
+__test__ = False
+
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from gengowatcher.config import AppConfig
 from gengowatcher.high_value_job_manager import HighValueJobManager
 import logging
+
 
 def test_cancellation_system():
     """Test the job cancellation system integration."""
@@ -50,13 +54,19 @@ def test_cancellation_system():
     print(f"   Job $50 -> $100: Should cancel = {should_cancel} (should be True)")
 
     # Test 3: Should always cancel for extreme value
-    should_cancel = manager.cancellation_manager.should_cancel_for_job(1200.0, "test789")
+    should_cancel = manager.cancellation_manager.should_cancel_for_job(
+        1200.0, "test789"
+    )
     print(f"   Job $50 -> $1200: Should cancel = {should_cancel} (should be True)")
 
     # Test 4: Should not cancel if no current job
     manager.cancellation_manager.clear_current_job()
-    should_cancel = manager.cancellation_manager.should_cancel_for_job(1200.0, "test789")
-    print(f"   No current job -> $1200: Should cancel = {should_cancel} (should be False)")
+    should_cancel = manager.cancellation_manager.should_cancel_for_job(
+        1200.0, "test789"
+    )
+    print(
+        f"   No current job -> $1200: Should cancel = {should_cancel} (should be False)"
+    )
 
     # Show cancellation settings
     print("\n⚙️  Cancellation settings:")
@@ -73,6 +83,7 @@ def test_cancellation_system():
     print("   - Track cancellation statistics")
 
     return True
+
 
 if __name__ == "__main__":
     success = test_cancellation_system()

@@ -20,7 +20,7 @@ def create_mock_app():
     mock_watcher.next_check_time = 999999999
     mock_watcher.shutdown_event = MagicMock()
     mock_watcher.shutdown_event.is_set.return_value = True
-    mock_watcher.PAUSE_FILE = "/tmp/gw_pause_test"
+    mock_watcher.PAUSE_FILE = f"{tempfile.gettempdir()}/gw_pause_test"
     mock_watcher.get_monitor_status.return_value = {
         "websocket": "alive",
         "rss": "alive",
@@ -58,16 +58,18 @@ def create_mock_app():
     mock_state.get_recent_jobs.return_value = []
     mock_state.session_start = 0
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        stats_path = pathlib.Path(tmpdir) / "stats.json"
-        mock_stats = StatsManager(stats_path=stats_path)
+    temp_dir = tempfile.TemporaryDirectory()
+    stats_path = pathlib.Path(temp_dir.name) / "stats.json"
+    mock_stats = StatsManager(stats_path=stats_path)
 
-    return GengoWatcherApp(
+    app = GengoWatcherApp(
         watcher=mock_watcher,
         config=mock_config,
         state=mock_state,
         stats=mock_stats,
     )
+    app._temp_dir = temp_dir
+    return app
 
 
 @pytest.mark.asyncio
@@ -113,7 +115,7 @@ async def test_jobs_tab_contains_table():
         try:
             jobs_table = pilot.app.query_one("#jobs-table-full", DataTable)
             assert jobs_table is not None
-        except:
+        except Exception:
             tables = list(pilot.app.query(DataTable))
             assert len(tables) > 0
 
@@ -133,7 +135,7 @@ async def test_activity_tab_contains_log():
         try:
             activity_log = pilot.app.query_one("#activity-log-full", RichLog)
             assert activity_log is not None
-        except:
+        except Exception:
             logs = list(pilot.app.query(RichLog))
             assert len(logs) > 0
 

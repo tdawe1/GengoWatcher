@@ -132,6 +132,10 @@ class EmailMonitor:
                     ) as resp:
                         if resp.status != 200:
                             error_text = await resp.text()
+                            if resp.status >= 500:
+                                raise aiohttp.ClientError(
+                                    f"Server error {resp.status}: {error_text}"
+                                )
                             raise ValueError(
                                 f"OAuth token refresh failed: {error_text}"
                             )
@@ -150,7 +154,13 @@ class EmailMonitor:
                         )
                         self.config.save_config()
 
-                        self.logger.debug("OAuth token refreshed successfully")
+                        if attempt > 0:
+                            self.logger.info(
+                                "OAuth token refresh succeeded on attempt %s",
+                                attempt + 1,
+                            )
+                        else:
+                            self.logger.debug("OAuth token refreshed successfully")
                         return
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 last_error = e

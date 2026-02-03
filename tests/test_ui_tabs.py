@@ -249,6 +249,7 @@ async def test_hourly_activity_with_data():
             assert "5" in text  # 5 jobs
 
 
+@pytest.mark.asyncio
 async def test_dashboard_contains_chart():
     """Verify Dashboard contains chart widget."""
     app = create_mock_app()
@@ -444,7 +445,9 @@ async def test_app_bindings_defined():
     assert len(app.BINDINGS) > 0
 
     # Check for expected bindings
-    binding_keys = [b.key for b in app.BINDINGS]
+    binding_keys = [
+        b.key if hasattr(b, "key") else b[0] for b in app.BINDINGS if b is not None
+    ]
     assert "q" in binding_keys  # quit
     assert "c" in binding_keys  # check
     assert "p" in binding_keys  # pause

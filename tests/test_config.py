@@ -44,6 +44,4 @@ def test_config_loads_default_values(test_dir):
     assert (
         app_config.get("WebSocket", "user_session") == "REPLACE_WITH_YOUR_SESSION_TOKEN"
     )
-    assert (
-        app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"
-    )
+    assert app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"

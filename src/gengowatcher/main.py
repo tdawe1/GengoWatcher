@@ -162,21 +162,18 @@ def _interactive_configure(config: AppConfig, console: Console):
     )
 
     required_fields = [
-        ("WebSocket", "user_id", "Your Gengo user ID"),
-        ("WebSocket", "user_key", "Your Gengo API key (optional)"),
-        (
-            "WebSocket",
-            "user_session",
-            "Your session token from browser cookies",
-        ),
+        ("WebSocket", "user_id", "Your Gengo user ID", True),
+        ("WebSocket", "user_key", "Your Gengo API key", False),
+        ("WebSocket", "user_session", "Your session token from browser cookies", True),
     ]
 
-    for section, option, description in required_fields:
+    for section, option, description, required in required_fields:
         current = config.get(section, option)
         is_placeholder = current in PLACEHOLDER_CONFIG_VALUES
 
         if is_placeholder:
-            prompt_text = f"[label]{description}[/] [warning](required)[/]: "
+            label = "required" if required else "optional"
+            prompt_text = f"[label]{description}[/] [warning]({label})[/]: "
         else:
             # Mask sensitive values
             masked = str(current)[:4] + "..." if len(str(current)) > 8 else str(current)
