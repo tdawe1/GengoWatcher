@@ -259,13 +259,13 @@ async def test_config_preview_truncates_long_values():
         {
             "Paths": {"feed_url": "https://example.com/very/long/path/to/resource"},
         }
-    )src/gengowatcher/ui_textual.py (1)
+    )
 
-    914-954: Remove unused SourcesBreakdown class.
-
-    This widget is defined but never instantiated or yielded. The sources breakdown functionality has been migrated to ChartsPanel._render_sources_chart (lines 1086, 1119). Delete the class entirely.
-
-
+    # Note: src/gengowatcher/ui_textual.py (1)
+    # 914-954: Remove unused SourcesBreakdown class.
+    # This widget is defined but never instantiated or yielded. The sources
+    # breakdown functionality has been migrated to ChartsPanel._render_sources_chart
+    # (lines 1086, 1119). Delete the class entirely.
     app = ConfigPreviewTestApp(config)
     async with app.run_test() as pilot:
         preview = app.query_one(ConfigPreview)
