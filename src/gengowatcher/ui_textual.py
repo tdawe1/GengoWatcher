@@ -328,6 +328,10 @@ class MetricsRow(Horizontal):
         super().__init__(**kwargs)
         self.state = state
 
+    def on_mount(self) -> None:
+        """Start periodic metrics refresh."""
+        self.set_interval(1.0, self.refresh_metrics)
+
     def compose(self) -> ComposeResult:
         yield MetricCard("Found", "▲", id="card-found", classes="found")
         yield MetricCard("Accepted", "✓", id="card-accepted", classes="accepted")
@@ -678,6 +682,8 @@ class JobsPreview(DashboardQuadrant):
         yield DataTable(id="jobs-table")
 
     def on_mount(self):
+        """Initialize table columns and start periodic refresh."""
+        self.set_interval(2.0, self.refresh_jobs)
         try:
             dt = self.query_one(DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$")
@@ -725,8 +731,9 @@ class HourlyActivity(DashboardQuadrant):
         yield Static("No activity data", id="hourly-content")
 
     def on_mount(self) -> None:
-        """Initialize widget with current data."""
+        """Initialize widget with current data and start periodic refresh."""
         self.refresh_hourly()
+        self.set_interval(5.0, self.refresh_hourly)
 
     def refresh_hourly(self):
         """Refresh hourly activity display."""
@@ -922,6 +929,10 @@ class SessionStats(DashboardQuadrant):
             yield Static("Accepted: 0", id="stat-accepted")
             yield Static("Value: $0.00", id="stat-value")
 
+    def on_mount(self) -> None:
+        """Start periodic stats refresh."""
+        self.set_interval(1.0, self.refresh_stats)
+
     def refresh_stats(self):
         if not self.watcher or not self.state:
             return
@@ -952,6 +963,10 @@ class SourcesBreakdown(DashboardQuadrant):
         yield Static(
             "WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%", id="sources-content"
         )
+
+    def on_mount(self) -> None:
+        """Start periodic sources refresh."""
+        self.set_interval(5.0, self.refresh_sources)
 
     def refresh_sources(self):
         """Refresh sources breakdown with job source statistics."""
