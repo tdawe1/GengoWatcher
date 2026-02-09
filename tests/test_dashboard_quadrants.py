@@ -175,7 +175,7 @@ async def test_config_preview_masks_sensitive_keys():
         {
             "WebSocket": {
                 "user_session": "abc123xyz789secret",
-                "user_key": "my_secret_key_12345",
+                "user_key": "example_key_value",
             },
         }
     )
