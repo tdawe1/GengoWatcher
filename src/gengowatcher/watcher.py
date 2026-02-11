@@ -701,6 +701,7 @@ class GengoWatcher:
                 header_desc = (
                     "with custom headers" if headers else "with no custom headers"
                 )
+                messages_received = False
                 self.websocket_status = "Connecting"
                 self.logger.debug(
                     f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
@@ -712,6 +713,7 @@ class GengoWatcher:
                     ping_timeout=10,
                     compression=None,
                 ) as websocket:
+                    connected_at = time.time()
                     self.websocket_status = "Authenticating"
                     user_id = self.config.get("WebSocket", "user_id")
 
@@ -777,6 +779,7 @@ class GengoWatcher:
                         first_message = await asyncio.wait_for(
                             websocket.recv(), timeout=5
                         )
+                        messages_received = True
                         self.logger.debug(
                             f"WebSocket: First message received: {first_message[:100]}..."
                         )
@@ -851,6 +854,7 @@ class GengoWatcher:
                     test_monitor_task = asyncio.create_task(monitor_test_request())
                     try:
                         async for message in websocket:
+                            messages_received = True
                             self.logger.debug(
                                 f"WebSocket: Message received (len={len(message)})"
                             )
@@ -932,9 +936,20 @@ class GengoWatcher:
                         close_reason = getattr(websocket, "close_reason", None)
                         self.websocket_last_close_code = close_code
                         self.websocket_last_close_reason = close_reason
+                        connection_age = time.time() - connected_at
                         self.logger.info(
                             f"WebSocket: Socket Closed: code={close_code}, reason={close_reason}"
                         )
+                        if (
+                            close_code in (1000, 1001)
+                            and not messages_received
+                            and connection_age < 20
+                        ):
+                            self.logger.warning(
+                                "WebSocket closed cleanly %.1fs after auth with no messages. "
+                                "This can indicate session/auth mismatch or server-side filtering.",
+                                connection_age,
+                            )
 
             try:
                 await run_session(extra_headers)
