@@ -237,6 +237,11 @@ def main():
         action="store_true",
         help="Configure WebsiteMonitor for browser-based job scraping (interactive)",
     )
+    parser.add_argument(
+        "--stdio-logs",
+        action="store_true",
+        help="Also write watcher logs to stderr in addition to file/UI handlers",
+    )
     args, unknown = parser.parse_known_args()
 
     console = Console(theme=APP_THEME)
@@ -289,6 +294,13 @@ def main():
                 log.addHandler(file_handler)
             except IOError as e:
                 console.print(f"[error]Could not set up file logging: {e}[/]")
+        if args.stdio_logs or config.get("Logging", "log_stdio_enabled"):
+            stdio_handler = logging.StreamHandler(stream=sys.stderr)
+            stdio_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
+            stdio_handler.addFilter(category_filter)
+            log.addHandler(stdio_handler)
         state = AppState(logger=log)
         watcher = GengoWatcher(config=config, state=state, logger=log)
     except Exception as e:

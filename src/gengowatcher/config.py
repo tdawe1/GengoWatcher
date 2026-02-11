@@ -1,6 +1,7 @@
 import configparser
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import threading
@@ -55,6 +56,7 @@ class AppConfig:
             "log_max_bytes": 1000000,
             "log_backup_count": 3,
             "log_main_enabled": True,
+            "log_stdio_enabled": False,
             "log_all_entries_enabled": True,
         },
         "DebugCategories": {
@@ -175,6 +177,10 @@ class AppConfig:
 
         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
             parser.write(f)
+        try:
+            os.chmod(self.CONFIG_FILE, 0o600)
+        except OSError:
+            pass
 
         print(
             f"Created default '{self.CONFIG_FILE}'. You can now configure it interactively."
@@ -283,8 +289,11 @@ class AppConfig:
                         serialized = str(value)
                     self._config_parser.set(section, key, serialized)
             lock_file = None
+            config_path = Path(self.CONFIG_FILE)
+            lock_path = config_path.with_suffix(f"{config_path.suffix}.lock")
             try:
-                lock_file = open(self.CONFIG_FILE, "a+", encoding="utf-8")
+                # Use a sidecar lock file so Windows can atomically replace CONFIG_FILE.
+                lock_file = open(lock_path, "a+", encoding="utf-8")
                 if fcntl is not None:
                     try:
                         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
@@ -296,13 +305,21 @@ class AppConfig:
                     except OSError:
                         pass
 
-                config_path = Path(self.CONFIG_FILE)
                 tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     self._config_parser.write(f)
                     f.flush()
                     os.fsync(f.fileno())
+                if config_path.exists():
+                    try:
+                        shutil.copymode(config_path, tmp_path)
+                    except OSError:
+                        pass
                 tmp_path.replace(config_path)
+                try:
+                    os.chmod(self.CONFIG_FILE, 0o600)
+                except OSError:
+                    pass
             except IOError as e:
                 print(f"Error saving config: {e}")
             finally:
@@ -444,7 +461,7 @@ class AppConfig:
         """
         Validate and sanitise the AutoAccept section of the in-memory configuration.
 
-        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
+        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket", "email", "website"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
         """
         auto_accept = self.config["AutoAccept"]
 

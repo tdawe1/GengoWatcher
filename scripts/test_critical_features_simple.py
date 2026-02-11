@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
     from gengowatcher.config import AppConfig

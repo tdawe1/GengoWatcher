@@ -305,11 +305,8 @@ class TestInitBrowser:
                     # Act
                     await website_monitor._init_browser()
 
-        # Assert - verify browser was set up
-        # Note: Due to the import mocking complexity, we verify the pattern works
-        assert (
-            website_monitor._playwright is not None or True
-        )  # Import mocking is tricky
+        # Note: Import mocking here is intentionally shallow; we assert the path
+        # executes without raising and leave full browser setup to integration tests.
 
     @pytest.mark.asyncio
     async def test_init_browser_playwright_not_installed(self, website_monitor):
