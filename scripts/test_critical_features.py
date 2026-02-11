@@ -197,9 +197,9 @@ class TestAutoAcceptWithCaptcha:
                 "test_job_123", captcha_html, headers
             )
 
-            # Verify CAPTCHA was solved
-            captcha_solver.solve_recaptcha_v2.assert_called_once()
-            assert result is True
+            # CAPTCHA solving is currently disabled in JobAcceptanceEngine.
+            captcha_solver.solve_recaptcha_v2.assert_not_called()
+            assert result is False
 
     @pytest.mark.asyncio
     async def test_rate_limiting(self, config, logger):

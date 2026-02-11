@@ -419,7 +419,11 @@ class TestStatsManagerExport:
             with open(path, "r") as f:
                 data = json.load(f)
 
-            # This hard-coded section_order list mea
-
             # Verify key sections exist
             assert isinstance(data, dict)
+            assert "all_time" in data
+            assert "by_source" in data
+            assert "by_language" in data
+            assert "hourly_counts" in data
+            assert "daily_counts" in data
+            assert "daily_earnings" in data

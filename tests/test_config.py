@@ -45,3 +45,24 @@ def test_config_loads_default_values(test_dir):
         app_config.get("WebSocket", "user_session") == "REPLACE_WITH_YOUR_SESSION_TOKEN"
     )
     assert app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"
+
+
+def test_save_config_uses_sidecar_lock_file(test_dir):
+    """Test that save_config locks a sidecar file so atomic replace works on Windows."""
+    with patch("sys.exit"):
+        app_config = AppConfig()
+
+    app_config.set("Watcher", "check_interval", 42)
+
+    real_open = open
+    open_calls = []
+
+    def tracking_open(file, mode="r", *args, **kwargs):
+        open_calls.append((str(file), mode))
+        return real_open(file, mode, *args, **kwargs)
+
+    with patch("builtins.open", side_effect=tracking_open):
+        app_config.save_config()
+
+    assert ("config.ini.lock", "a+") in open_calls
+    assert ("config.ini", "a+") not in open_calls

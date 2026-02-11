@@ -114,6 +114,8 @@ class GengoWatcher:
         self._csv_writer = None
         self._shutdown_initiated = False
         self._rss_executor = None
+        self._rss_future = None
+        self._rss_future_started_at = None
         # Thread references for health monitoring
         self._monitor_threads = {}  # name -> threading.Thread
         # Raw WebSocket message buffer for debug output
@@ -551,16 +553,37 @@ class GengoWatcher:
                 self._rss_executor = concurrent.futures.ThreadPoolExecutor(
                     max_workers=1
                 )
+            if self._rss_future is not None:
+                if not self._rss_future.done():
+                    elapsed = (
+                        time.monotonic() - self._rss_future_started_at
+                        if self._rss_future_started_at is not None
+                        else 0.0
+                    )
+                    self.logger.warning(
+                        f"Skipping RSS fetch: previous fetch still running ({elapsed:.1f}s elapsed)"
+                    )
+                    return None
+                self._rss_future = None
+                self._rss_future_started_at = None
             future = self._rss_executor.submit(
                 feedparser.parse,
                 feed_url,
                 request_headers=headers,
             )
+            self._rss_future = future
+            self._rss_future_started_at = time.monotonic()
             try:
                 feed = future.result(timeout=30)
             except concurrent.futures.TimeoutError:
+                cancel_success = future.cancel()
                 self.logger.warning("RSS feed fetch timed out after 30 seconds")
+                self.logger.info(f"RSS fetch future cancelled: {cancel_success}")
                 return None
+            finally:
+                if future.done():
+                    self._rss_future = None
+                    self._rss_future_started_at = None
             # Check HTTP status first (feedparser stores it in feed.status)
             http_status = getattr(feed, "status", None)
             if http_status == 429:
@@ -1450,6 +1473,8 @@ class GengoWatcher:
             except TypeError:
                 self._rss_executor.shutdown(wait=False)
             self._rss_executor = None
+        self._rss_future = None
+        self._rss_future_started_at = None
 
         try:
             self.state.save_state()

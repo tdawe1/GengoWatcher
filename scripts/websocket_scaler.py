@@ -82,10 +82,15 @@ class WebSocketWorker:
                             job = data.get("collection", {})
                             if job.get("id"):
                                 self.jobs_processed += 1
+                                rewards = job.get("rewards", 0)
+                                try:
+                                    reward_value = float(rewards)
+                                except (TypeError, ValueError):
+                                    reward_value = 0.0
                                 self.logger.info(
                                     f"Worker {self.worker_id}: Job {job['id']} - "
                                     f"{job.get('lc_src', 'Unknown')} > {job.get('lc_tgt', 'Unknown')} "
-                                    f"(Reward: ${job.get('rewards', 0):.2f})"
+                                    f"(Reward: ${reward_value:.2f})"
                                 )
                                 # Here you would integrate with job processing logic
                     except json.JSONDecodeError as e:
@@ -150,6 +155,7 @@ class WebSocketScaler:
 
     def _run_worker(self, worker: WebSocketWorker):
         """Run a single worker"""
+        worker.is_running = True
         while self.is_running and worker.is_running:
             try:
                 asyncio.run(worker.connect_and_monitor())

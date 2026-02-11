@@ -311,7 +311,8 @@ class JobCancellationManager:
                 self.logger.error(
                     f"Job cancellation failed after {max_retries} attempts: {last_error}"
                 )
-                self.stats["failed_cancellations"] += 1
+                with self._lock:
+                    self.stats["failed_cancellations"] += 1
                 return False
 
             return False

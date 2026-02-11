@@ -7,6 +7,7 @@ have been properly implemented and are working as expected.
 
 import sys
 import os
+import importlib
 import importlib.util
 from pathlib import Path
 
@@ -50,7 +51,7 @@ def main():
 
     # Define paths relative to project root
     project_root = Path(__file__).parent.parent
-    src_path = project_root / "src" / "gengowatcher"
+    src_path = project_root / "src"
 
     print("\n1. Checking file structure:")
     files_to_check = [
@@ -77,7 +78,7 @@ def main():
     ]
 
     modules_exist = all(
-        check_file_exists(src_path / (m.split(".")[-1] + ".py"))
+        check_file_exists((src_path / Path(*m.split("."))).with_suffix(".py"))
         for m in modules_to_check
         if len(m.split(".")) > 2
     )

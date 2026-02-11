@@ -2,6 +2,7 @@
 
 import pytest
 import logging
+import concurrent.futures
 from unittest.mock import MagicMock, patch, mock_open, call
 import collections
 import time
@@ -416,6 +417,34 @@ class TestRSSFetching:
         call_args = mock_parse.call_args
         assert "request_headers" in call_args.kwargs
         assert "User-Agent" in call_args.kwargs["request_headers"]
+
+    def test_fetch_rss_timeout_does_not_spawn_new_worker_threads(self, watcher_instance):
+        """Test that repeated timeouts reuse the same in-flight future."""
+
+        class HangingFuture:
+            def cancel(self):
+                return False
+
+            def done(self):
+                return False
+
+            def result(self, timeout):
+                raise concurrent.futures.TimeoutError()
+
+        hanging_future = HangingFuture()
+        mock_executor = MagicMock()
+        mock_executor.submit.return_value = hanging_future
+
+        with patch(
+            "gengowatcher.watcher.concurrent.futures.ThreadPoolExecutor",
+            return_value=mock_executor,
+        ):
+            assert watcher_instance.fetch_rss() is None
+            assert watcher_instance.fetch_rss() is None
+
+        # Second call should detect the in-flight future and avoid submitting again.
+        assert mock_executor.submit.call_count == 1
+        mock_executor.shutdown.assert_not_called()
 
 
 class TestConfigManagement:
