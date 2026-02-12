@@ -179,10 +179,12 @@ class LogAnalyzer:
 
         # CAPTCHA types
         recaptcha_v2 = [
-            e for e in self.captcha_events if "recaptcha.*v2" in e["message"].lower()
+            e for e in self.captcha_events
+            if re.search(r"recaptcha.*v2", e["message"], flags=re.I)
         ]
         recaptcha_v3 = [
-            e for e in self.captcha_events if "recaptcha.*v3" in e["message"].lower()
+            e for e in self.captcha_events
+            if re.search(r"recaptcha.*v3", e["message"], flags=re.I)
         ]
         hcaptcha = [
             e for e in self.captcha_events if "hcaptcha" in e["message"].lower()

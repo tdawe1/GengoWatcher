@@ -11,7 +11,7 @@ import logging
 import re
 import time
 from collections import deque
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding

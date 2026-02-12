@@ -182,10 +182,10 @@ class JobCancellationManager:
 
                     async with session.get(job_url, headers=headers) as response:
                         if response.status != 200:
-                            self.logger.error(
-                                f"Cannot access job page: {response.status}"
+                            self.logger.warning(
+                                f"Cannot access job page: {response.status} (attempt {attempt + 1}/{max_retries})"
                             )
-                            return False
+                            continue
 
                         content = await response.text()
 
