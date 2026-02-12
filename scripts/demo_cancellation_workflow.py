@@ -81,8 +81,8 @@ def demo_workflow():
         5000.0, "job_extreme"
     )
     print(f"   → Decision: {'Cancel' if should_cancel else 'Keep current'}")
-    print(f"   📝 Rationale: Always cancel for jobs > $1,000")
-    print(f"   🚨 SYSTEM WOULD IMMEDIATELY CANCEL CURRENT JOB!")
+    print("   📝 Rationale: Always cancel for jobs > $1,000")
+    print("   🚨 SYSTEM WOULD IMMEDIATELY CANCEL CURRENT JOB!")
 
     # Show statistics
     print("\n📊 Cancellation Statistics:")
