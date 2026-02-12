@@ -10,8 +10,6 @@ pydantic
 python-multipart
 cryptography>=3.4.8
 requests>=2.25.1
-google-auth-oauthlib>=1.0.0
-google-auth-httplib2>=0.1.0
 imapclient>=2.3.0
 playwright>=1.40.0
 playwright-stealth>=1.0.6
