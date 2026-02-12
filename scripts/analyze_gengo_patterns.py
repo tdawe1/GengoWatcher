@@ -68,8 +68,16 @@ class GengoAnalyzer:
                 ),
             ]
 
+            ws_version = getattr(websockets, "__version__", "0")
+            ws_header_key = (
+                "additional_headers"
+                if int(ws_version.split(".")[0]) >= 12
+                else "extra_headers"
+            )
+            header_kwargs = {ws_header_key: extra_headers}
+
             async with websockets.connect(
-                ws_url, extra_headers=extra_headers, ping_interval=20, ping_timeout=10
+                ws_url, **header_kwargs, ping_interval=20, ping_timeout=10
             ) as websocket:
                 # Authenticate
                 auth_payload = {

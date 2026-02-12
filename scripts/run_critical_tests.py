@@ -47,7 +47,7 @@ async def test_captcha_solver():
     logger.info("\n=== Testing CAPTCHA Solver ===")
 
     # Test 1: Check CAPTCHA CLI exists
-    success, stdout, stderr = run_command(
+    success, _stdout, _stderr = run_command(
         "python -m src.gengowatcher.main captchasetup --help"
     )
     if success:
@@ -57,7 +57,7 @@ async def test_captcha_solver():
         return False
 
     # Test 2: Check CAPTCHA test command
-    success, stdout, stderr = run_command(
+    success, _stdout, _stderr = run_command(
         "python -m src.gengowatcher.main captchatest --help"
     )
     if success:
@@ -102,7 +102,7 @@ async def test_websocket_simulation():
                 return False
 
     # Test 2: Check WebSocket test command
-    success, stdout, stderr = run_command(
+    success, _stdout, _stderr = run_command(
         "python -c "
         "\"import sys; sys.path.insert(0, 'src'); "
         "from gengowatcher.ui import CommandLineInterface; "
@@ -155,7 +155,7 @@ async def test_web_api():
                 return False
 
     # Test 2: Check if web server can be imported
-    success, stdout, stderr = run_command(
+    success, _stdout, stderr = run_command(
         "python -c "
         "\"import sys; sys.path.insert(0, 'src'); "
         "from gengowatcher.web import WebAPI; "
@@ -284,7 +284,7 @@ async def test_auto_accept_with_captcha():
                 )
 
     # Test 3: Check if components can be imported together
-    success, stdout, stderr = run_command(
+    success, _stdout, stderr = run_command(
         "python -c "
         "\"import sys; sys.path.insert(0, 'src'); "
         "from gengowatcher.config import AppConfig; "

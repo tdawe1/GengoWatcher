@@ -298,7 +298,7 @@ DataTable {
     height: 100%;
 }
 
-JobsPanel {
+JobsPreview {
     height: 1fr;
 }
 
