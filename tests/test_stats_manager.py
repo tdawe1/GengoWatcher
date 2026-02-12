@@ -173,9 +173,9 @@ class TestStatsManagerHourlyCounts:
             manager = StatsManager(stats_path=path)
 
             assert hasattr(manager, "hourly_counts")
-            # Accessing any hour should yield a non-negative count
+            # Accessing any hour should yield a non-negative count (using .get to avoid mutating defaultdict)
             for hour in range(24):
-                assert manager.hourly_counts[hour] >= 0
+                assert manager.hourly_counts.get(hour, 0) >= 0
 
     def test_get_peak_hour(self):
         """Test get_peak_hour method."""

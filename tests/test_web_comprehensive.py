@@ -510,7 +510,7 @@ class TestWebAPICommands:
         assert result["status"] == "error"
 
 
-class TestWebAPISshutdown:
+class TestWebAPIShutdown:
     """Test shutdown."""
 
     def test_shutdown(self, web_api):

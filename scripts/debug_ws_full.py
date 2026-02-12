@@ -104,7 +104,7 @@ async def test_config(header_name, headers, payload_name, payload):
                 ssl=ssl_context,
                 compression=None,  # Disable compression as per previous attempt
             ) as websocket:
-                logger.info(f"  [Connected] Status: 101")
+                logger.info("  [Connected] Status: 101")
 
                 await websocket.send(json.dumps(payload))
                 logger.info(f"  [Sent] {json.dumps(payload)}")

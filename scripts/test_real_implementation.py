@@ -50,7 +50,8 @@ async def test_job_acceptance():
     Performs configuration checks (including AutoAccept and required WebSocket credentials), initialises application components, evaluates a synthetic test job for eligibility and, if eligible, attempts to accept it via the real Gengo API. The operation may perform network calls and produce side effects on the associated Gengo account.
 
     Returns:
-        bool: `True` if the test completed and the job was accepted, `False` otherwise.
+        bool | None: `True` if the test completed and the job was accepted, `False` if it ran but did not accept,
+        `None` when the test is skipped (for example, when GENGO_REAL_TEST is not set).
     """
     logger = setup_logging()
     logger.info("Starting real implementation test")
@@ -65,7 +66,7 @@ async def test_job_acceptance():
         logger.info("Configuration loaded successfully")
 
         # Check if auto-accept is enabled
-        if not config.get("AutoAccept", "enabled"):
+        if not config.getboolean("AutoAccept", "enabled"):
             logger.warning("Auto-accept is not enabled in configuration")
             print("Auto-accept disabled; skipping acceptance test")
             return None
