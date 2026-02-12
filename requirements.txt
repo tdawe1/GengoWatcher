@@ -3,7 +3,7 @@ feedparser
 rich
 textual>=0.40.0
 pytest
-websockets==11.0.3
+websockets>=16.0
 fastapi
 uvicorn[standard]
 pydantic
@@ -12,6 +12,6 @@ cryptography>=3.4.8
 requests>=2.25.1
 imapclient>=2.3.0
 playwright>=1.40.0
-playwright-stealth>=1.0.6
+tf-playwright-stealth>=1.0.0
 textual-plotext>=1.0.0
 textual-autocomplete>=3.0.0
