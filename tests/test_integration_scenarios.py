@@ -368,7 +368,7 @@ class TestStatisticsAggregation:
 
     def test_hourly_aggregation(self, stats_system):
         """Test hourly statistics aggregation."""
-        # Deterministic distribution for peak‑hour calculation
+        # Deterministic distribution for peak-hour calculation
         stats_system.hourly_counts = {hour: hour + 1 for hour in range(24)}
 
         peak_hour, peak_count = stats_system.get_peak_hour()
@@ -415,7 +415,7 @@ class TestBoundaryConditions:
             ("Logging", "log_all_entries_enabled"): False,
         }.get((s, k), kw.get("fallback"))
 
-        watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        _ = GengoWatcher(mock_config, mock_state, mock_logger)
 
         # Should have been corrected to minimum
         assert mock_config.set.called
@@ -431,7 +431,7 @@ class TestBoundaryConditions:
             ("Logging", "log_all_entries_enabled"): False,
         }.get((s, k), kw.get("fallback"))
 
-        watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        _ = GengoWatcher(mock_config, mock_state, mock_logger)
 
         # Should have been corrected
         assert mock_config.set.called
