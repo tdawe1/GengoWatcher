@@ -36,9 +36,7 @@ PYTHONPATH=src python -m gengowatcher.main
 On first run, you'll be guided through configuration setup.
 
 ## Configuration
-
-Settings are stored in `config.ini`. Key sections:
-
+Settings are stored in `config.ini`. Environment variables in `.env` (see `.env.example`) override sensitive values in `config.ini`. Key sections:
 ```ini
 [Watcher]
 feed_url = https://your-rss-feed-url

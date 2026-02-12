@@ -85,7 +85,6 @@ def test_config_preview_constants():
     assert "Watcher" in ConfigPreview.SECTION_ORDER
     assert "WebSocket" in ConfigPreview.SECTION_ORDER
     assert "AutoAccept" in ConfigPreview.SECTION_ORDER
-    # Ensure SECTION_ORDER is sufficiently populated without hardcoding an exact length
     assert len(ConfigPreview.SECTION_ORDER) >= 3
 
 

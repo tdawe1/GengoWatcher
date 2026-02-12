@@ -118,9 +118,11 @@ class AppState:
                             "id": job_id,
                             "title": title,
                             "source": "History",
-                            "lang_pair": title.split("|")[0].strip()
-                            if "|" in title
-                            else "Unknown",
+                            "lang_pair": (
+                                title.split("|")[0].strip()
+                                if "|" in title
+                                else "Unknown"
+                            ),
                             "reward": reward,
                             "currency": "USD",
                             "url": url,

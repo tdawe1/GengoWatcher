@@ -72,19 +72,40 @@ def test_get_peak_hour_with_data():
         path = pathlib.Path(tmpdir) / "stats.json"
         manager = StatsManager(stats_path=path)
 
+        # Record 5 jobs: 3 accepted, 2 not accepted
+        manager.record_job(10.0, "WebSocket", "JA→EN", accepted=True)
+        manager.record_job(15.0, "WebSocket", "JA→EN", accepted=True)
+        manager.record_job(20.0, "Email", "EN→JA", accepted=False)
+        manager.record_job(25.0, "WebSocket", "JA→EN", accepted=True)
+        manager.record_job(30.0, "Email", "EN→JA", accepted=False)
+
+        # Check that total_jobs counts all jobs (5)
+        assert manager.all_time.total_jobs == 5
+        # Check that total_value only includes accepted jobs (10 + 15 + 25 = 50)
+        assert manager.all_time.total_value == 50.0
+        # Check that avg_job_value is calculated correctly (50 / 5)
+        expected_avg = 50.0 / 5
+        assert abs(manager.all_time.avg_job_value - expected_avg) < 0.001
+
+        # Reset hourly counts to isolate peak hour assertions
+        manager.hourly_counts.clear()
         # Record jobs at different hours
         import datetime
         from unittest.mock import patch
 
         # Mock time to record jobs at specific hours
-        with patch('gengowatcher.stats.datetime') as mock_datetime:
+        with patch("gengowatcher.stats.datetime") as mock_datetime:
             # Record 5 jobs at hour 14
-            mock_datetime.datetime.now.return_value = datetime.datetime(2024, 1, 1, 14, 0, 0)
+            mock_datetime.datetime.now.return_value = datetime.datetime(
+                2024, 1, 1, 14, 0, 0
+            )
             for _ in range(5):
                 manager.record_job(10.0, "WebSocket", "JA→EN", accepted=True)
 
             # Record 3 jobs at hour 10
-            mock_datetime.datetime.now.return_value = datetime.datetime(2024, 1, 1, 10, 0, 0)
+            mock_datetime.datetime.now.return_value = datetime.datetime(
+                2024, 1, 1, 10, 0, 0
+            )
             for _ in range(3):
                 manager.record_job(10.0, "WebSocket", "JA→EN", accepted=True)
 
@@ -92,6 +113,8 @@ def test_get_peak_hour_with_data():
         peak_hour, peak_rate = manager.get_peak_hour()
         assert peak_hour == 14
         assert peak_rate == 5
+
+
 class TestStatsManagerMultipleJobs:
     """Test recording multiple jobs."""
 
@@ -101,13 +124,13 @@ class TestStatsManagerMultipleJobs:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
             manager.record_job(15.0, "WebSocket", "EN→JA", accepted=False)
             manager.record_job(20.0, "Email", "JA→EN", accepted=True)
 
             assert manager.session.jobs_found == 3
             assert manager.session.jobs_accepted == 2
-            assert manager.session.total_value == 45.0
+            assert manager.session.total_value == 30.0
 
     def test_record_jobs_different_sources(self):
         """Test recording jobs from different sources."""
@@ -115,15 +138,14 @@ class TestStatsManagerMultipleJobs:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
             manager.record_job(15.0, "WebSocket", "EN→JA", accepted=True)
             manager.record_job(20.0, "Email", "JA→EN", accepted=True)
-            manager.record_job(25.0, "Web", "EN→JA", accepted=True)
+            manager.record_job(25.0, "Website", "EN→JA", accepted=True)
 
-            assert manager.by_source.rss == 1
+            assert manager.by_source.website == 2
             assert manager.by_source.websocket == 1
             assert manager.by_source.email == 1
-            assert manager.by_source.web == 1
 
     def test_record_jobs_different_languages(self):
         """Test recording jobs with different language pairs."""
@@ -131,10 +153,10 @@ class TestStatsManagerMultipleJobs:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
-            manager.record_job(15.0, "RSS", "EN→JA", accepted=True)
-            manager.record_job(20.0, "RSS", "ZH→EN", accepted=True)
-            manager.record_job(25.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
+            manager.record_job(15.0, "Website", "EN→JA", accepted=True)
+            manager.record_job(20.0, "Website", "ZH→EN", accepted=True)
+            manager.record_job(25.0, "Website", "JA→EN", accepted=True)
 
             assert manager.by_language["JA→EN"] == 2
             assert manager.by_language["EN→JA"] == 1
@@ -150,7 +172,7 @@ class TestStatsManagerHourlyCounts:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            assert hasattr(manager, 'hourly_counts')
+            assert hasattr(manager, "hourly_counts")
             # Accessing any hour should yield a non-negative count
             for hour in range(24):
                 assert manager.hourly_counts[hour] >= 0
@@ -179,8 +201,8 @@ class TestStatsManagerHourlyCounts:
 
             peak_hour, peak_count = manager.get_peak_hour()
 
-            assert peak_hour == -1 or peak_hour >= 0
-            assert peak_count >= 0
+            assert peak_hour == 12
+            assert peak_count == 0.0
 
 
 class TestStatsManagerPersistence:
@@ -198,7 +220,7 @@ class TestStatsManagerPersistence:
 
             manager2 = StatsManager(stats_path=path)
             # Session stats should reset, but sources/languages should persist
-            assert manager2.by_source.rss == 1
+            assert manager2.by_source.website == 1
             assert manager2.by_source.websocket == 1
 
     def test_save_and_load_hourly_counts(self):
@@ -317,7 +339,7 @@ class TestStatsManagerReset:
             assert manager.session.jobs_found == 2
 
             # Reset session (if method exists)
-            if hasattr(manager, 'reset_session'):
+            if hasattr(manager, "reset_session"):
                 manager.reset_session()
                 assert manager.session.jobs_found == 0
 
@@ -329,7 +351,7 @@ class TestSessionStatsTimestamp:
         """Test that SessionStats tracks start time."""
         stats = SessionStats()
 
-        assert hasattr(stats, 'start_time')
+        assert hasattr(stats, "start_time")
         # Start time should be recent (within last second)
         assert abs(time.time() - stats.start_time) < 2
 
@@ -359,7 +381,7 @@ class TestStatsManagerConcurrency:
                     float(i),
                     "RSS" if i % 2 == 0 else "WebSocket",
                     "JA→EN" if i % 3 == 0 else "EN→JA",
-                    accepted=(i % 2 == 0)
+                    accepted=(i % 2 == 0),
                 )
 
             assert manager.session.jobs_found == 100
@@ -379,7 +401,7 @@ class TestStatsManagerExport:
             manager.save()
 
             # Read and verify JSON format
-            with open(path, 'r') as f:
+            with open(path, "r") as f:
                 data = json.load(f)
 
             assert isinstance(data, dict)
@@ -394,10 +416,14 @@ class TestStatsManagerExport:
             manager.hourly_counts[12] = 5
             manager.save()
 
-            with open(path, 'r') as f:
+            with open(path, "r") as f:
                 data = json.load(f)
-
-            # This hard-coded section_order list ensures the JSON structure remains stable over time.
 
             # Verify key sections exist
             assert isinstance(data, dict)
+            assert "all_time" in data
+            assert "by_source" in data
+            assert "by_language" in data
+            assert "hourly_counts" in data
+            assert "daily_counts" in data
+            assert "daily_earnings" in data

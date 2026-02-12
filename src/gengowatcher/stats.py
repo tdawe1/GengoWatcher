@@ -116,6 +116,7 @@ class StatsManager:
                 "daily_counts": dict(self.daily_counts),
                 "daily_earnings": dict(self.daily_earnings),
             }
+            self._stats_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._stats_path, "w") as f:
                 json.dump(data, f, indent=2)
 
@@ -143,7 +144,7 @@ class StatsManager:
                 self.by_source.websocket += 1
             elif "email" in source_lower:
                 self.by_source.email += 1
-            elif "web" in source_lower:
+            elif "web" in source_lower or "rss" in source_lower:
                 self.by_source.website += 1
 
             # Language stats

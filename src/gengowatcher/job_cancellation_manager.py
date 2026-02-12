@@ -240,23 +240,24 @@ class JobCancellationManager:
                                 )
 
                                 # Update stats
-                                self.stats["successful_cancellations"] += 1
-                                self.stats["total_lost_rewards"] += (
-                                    self.current_job_reward
-                                )
-
-                                # Record cancellation
-                                self.stats["jobs_saved"].append(
-                                    {
-                                        "cancelled_job_id": self.current_job_id,
-                                        "cancelled_reward": self.current_job_reward,
-                                        "timestamp": datetime.now().isoformat(),
-                                        "job_duration": time.time()
-                                        - self.job_start_time
-                                        if self.job_start_time
-                                        else 0,
-                                    }
-                                )
+                                with self._lock:
+                                    self.stats["successful_cancellations"] += 1
+                                    self.stats[
+                                        "total_lost_rewards"
+                                    ] += self.current_job_reward
+                                    # Record cancellation
+                                    self.stats["jobs_saved"].append(
+                                        {
+                                            "cancelled_job_id": self.current_job_id,
+                                            "cancelled_reward": self.current_job_reward,
+                                            "timestamp": datetime.now().isoformat(),
+                                            "job_duration": (
+                                                time.time() - self.job_start_time
+                                                if self.job_start_time
+                                                else 0
+                                            ),
+                                        }
+                                    )
 
                                 # Clear tracking
                                 self.clear_current_job()
@@ -265,9 +266,10 @@ class JobCancellationManager:
                                 return True
                             else:
                                 self.logger.error(
-                                    f"Cancellation may have failed - unexpected response"
+                                    "Cancellation may have failed - unexpected response"
                                 )
-                                self.stats["failed_cancellations"] += 1
+                                with self._lock:
+                                    self.stats["failed_cancellations"] += 1
                                 return False
 
                         elif response.status == 302 or response.status == 303:
@@ -277,8 +279,11 @@ class JobCancellationManager:
                             )
 
                             # Update stats
-                            self.stats["successful_cancellations"] += 1
-                            self.stats["total_lost_rewards"] += self.current_job_reward
+                            with self._lock:
+                                self.stats["successful_cancellations"] += 1
+                                self.stats[
+                                    "total_lost_rewards"
+                                ] += self.current_job_reward
 
                             self.clear_current_job()
                             self._save_job_state()
@@ -289,7 +294,8 @@ class JobCancellationManager:
                                 f"Failed to cancel job {self.current_job_id}, "
                                 f"status: {response.status}"
                             )
-                            self.stats["failed_cancellations"] += 1
+                            with self._lock:
+                                self.stats["failed_cancellations"] += 1
                             return False
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     last_error = e
@@ -305,21 +311,25 @@ class JobCancellationManager:
                 self.logger.error(
                     f"Job cancellation failed after {max_retries} attempts: {last_error}"
                 )
-                self.stats["failed_cancellations"] += 1
+                with self._lock:
+                    self.stats["failed_cancellations"] += 1
                 return False
 
             return False
         except aiohttp.ClientError as e:
             self.logger.error(f"HTTP client error cancelling job: {e}")
-            self.stats["failed_cancellations"] += 1
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
             return False
         except asyncio.TimeoutError as e:
             self.logger.error(f"Timeout error cancelling job: {e}")
-            self.stats["failed_cancellations"] += 1
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
             return False
         except Exception as e:
             self.logger.error(f"Unexpected error cancelling job: {e}")
-            self.stats["failed_cancellations"] += 1
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
             return False
 
     def get_stats(self) -> Dict[str, Any]:
@@ -329,9 +339,11 @@ class JobCancellationManager:
             current_job = {
                 "id": self.current_job_id,
                 "reward": self.current_job_reward,
-                "duration": time.time() - self.job_start_time
-                if self.job_start_time and self.current_job_id
-                else 0,
+                "duration": (
+                    time.time() - self.job_start_time
+                    if self.job_start_time and self.current_job_id
+                    else 0
+                ),
             }
         return {
             **stats_copy,

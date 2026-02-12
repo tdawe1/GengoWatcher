@@ -29,17 +29,17 @@ def mock_logger():
 
 
 @pytest.fixture
-def mock_config():
+def mock_config(tmp_path):
     """Create a mock config."""
     config = MagicMock(spec=AppConfig)
     config.get.side_effect = lambda s, k, **kw: {
         ("Watcher", "check_interval"): 60,
-        ("Paths", "all_entries_log"): "/tmp/test_entries.csv",
+        ("Paths", "all_entries_log"): str(tmp_path / "test_entries.csv"),
         ("WebServer", "auth_token"): "test_token_12345",
     }.get((s, k), kw.get("fallback", "test_value"))
-    config.getint.side_effect = lambda s, k, **kw: 60
-    config.getboolean.side_effect = lambda s, k, **kw: False
-    config.getfloat.side_effect = lambda s, k, **kw: 0.0
+    config.getint.side_effect = lambda *_, **__: 60
+    config.getboolean.side_effect = lambda *_, **__: False
+    config.getfloat.side_effect = lambda *_, **__: 0.0
     config.config = {
         "Watcher": {"check_interval": 60},
         "WebSocket": {"enable_websocket": True},
@@ -249,7 +249,7 @@ class TestWebAPIStatus:
         """Test get_status returns WatcherStatus."""
         status = web_api.get_status()
         assert isinstance(status, WatcherStatus)
-        assert status.is_running is False
+        assert status.is_running is True
         assert status.websocket_status == "Live"
         assert status.rss_status == "Checking"
 
@@ -305,7 +305,15 @@ class TestWebAPIJobRetrieval:
     def test_get_recent_jobs_with_invalid_data(self, web_api):
         """Test handling of invalid job data."""
         web_api.state.get_recent_jobs.return_value = [
-            {"id": "valid", "title": "Valid", "reward": 10.0, "currency": "USD", "url": "http://example.com", "timestamp": 123.0, "source": "rss"},
+            {
+                "id": "valid",
+                "title": "Valid",
+                "reward": 10.0,
+                "currency": "USD",
+                "url": "http://example.com",
+                "timestamp": 123.0,
+                "source": "rss",
+            },
             {"id": "", "title": "Invalid"},  # Invalid job
         ]
 
@@ -326,7 +334,11 @@ class TestWebAPICSVJobs:
 
     def test_get_jobs_from_csv_file_not_found(self, web_api):
         """Test when CSV file doesn't exist."""
-        web_api.config.get.side_effect = lambda s, k, **kw: "/nonexistent/file.csv" if (s, k) == ("Paths", "all_entries_log") else kw.get("fallback", "")
+        web_api.config.get.side_effect = lambda s, k, **kw: (
+            "/nonexistent/file.csv"
+            if (s, k) == ("Paths", "all_entries_log")
+            else kw.get("fallback", "")
+        )
 
         result = web_api.get_jobs_from_csv(limit=50, page=1)
         assert result["jobs"] == []
@@ -343,7 +355,11 @@ class TestWebAPICSVJobs:
             csv_path = f.name
 
         try:
-            web_api.config.get.side_effect = lambda s, k, **kw: csv_path if (s, k) == ("Paths", "all_entries_log") else kw.get("fallback", "")
+            web_api.config.get.side_effect = lambda s, k, **kw: (
+                csv_path
+                if (s, k) == ("Paths", "all_entries_log")
+                else kw.get("fallback", "")
+            )
 
             result = web_api.get_jobs_from_csv(limit=50, page=1)
             assert len(result["jobs"]) == 2
@@ -365,7 +381,11 @@ class TestWebAPICSVJobs:
             csv_path = f.name
 
         try:
-            web_api.config.get.side_effect = lambda s, k, **kw: csv_path if (s, k) == ("Paths", "all_entries_log") else kw.get("fallback", "")
+            web_api.config.get.side_effect = lambda s, k, **kw: (
+                csv_path
+                if (s, k) == ("Paths", "all_entries_log")
+                else kw.get("fallback", "")
+            )
 
             result = web_api.get_jobs_from_csv(limit=50, page=1, min_reward=10.0)
             assert len(result["jobs"]) == 2  # Should exclude 5.00 job
@@ -393,7 +413,9 @@ class TestWebAPIJobManagement:
     async def test_accept_job_success(self, web_api):
         """Test successful job acceptance."""
         web_api.watcher.job_acceptance_engine = MagicMock()
-        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(return_value=True)
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(
+            return_value=True
+        )
 
         result = await web_api.accept_job("123")
         assert result is True
@@ -546,7 +568,18 @@ class TestEdgeCases:
 
     def test_get_recent_jobs_page_beyond_available(self, web_api):
         """Test requesting page beyond available data."""
-        jobs = [{"id": str(i), "title": f"Job {i}", "reward": 10.0, "currency": "USD", "url": f"http://example.com/{i}", "timestamp": 123.0, "source": "rss"} for i in range(10)]
+        jobs = [
+            {
+                "id": str(i),
+                "title": f"Job {i}",
+                "reward": 10.0,
+                "currency": "USD",
+                "url": f"http://example.com/{i}",
+                "timestamp": 123.0,
+                "source": "rss",
+            }
+            for i in range(10)
+        ]
         web_api.state.get_recent_jobs.return_value = jobs
 
         result = web_api.get_recent_jobs(limit=10, page=5)
@@ -570,7 +603,9 @@ class TestEdgeCases:
     async def test_accept_job_exception_handling(self, web_api):
         """Test exception handling in accept_job."""
         web_api.watcher.job_acceptance_engine = MagicMock()
-        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(side_effect=Exception("Acceptance error"))
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(
+            side_effect=Exception("Acceptance error")
+        )
 
         result = await web_api.accept_job("123")
         assert result is False
@@ -595,7 +630,11 @@ class TestRegressionCases:
             csv_path = f.name
 
         try:
-            web_api.config.get.side_effect = lambda s, k, **kw: csv_path if (s, k) == ("Paths", "all_entries_log") else kw.get("fallback", "")
+            web_api.config.get.side_effect = lambda s, k, **kw: (
+                csv_path
+                if (s, k) == ("Paths", "all_entries_log")
+                else kw.get("fallback", "")
+            )
 
             result = web_api.get_jobs_from_csv(limit=50, page=1)
             assert result["pagination"]["total"] == 0

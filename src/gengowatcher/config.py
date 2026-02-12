@@ -3,10 +3,21 @@ if sys.platform != 'win32':
     import fcntl
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import threading
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not available on Windows
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - not available on POSIX
+    msvcrt = None
 
 
 # Values that indicate a config field has not been properly configured
@@ -47,6 +58,7 @@ class AppConfig:
             "log_max_bytes": 1000000,
             "log_backup_count": 3,
             "log_main_enabled": True,
+            "log_stdio_enabled": False,
             "log_all_entries_enabled": True,
         },
         "DebugCategories": {
@@ -167,6 +179,10 @@ class AppConfig:
 
         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
             parser.write(f)
+        try:
+            os.chmod(self.CONFIG_FILE, 0o600)
+        except OSError:
+            pass
 
         print(
             f"Created default '{self.CONFIG_FILE}'. You can now configure it interactively."
@@ -248,9 +264,7 @@ class AppConfig:
                     try:
                         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                             self._config_parser.write(f)
-                        print(
-                            f"WARNING: Config file updated with missing sections/options"
-                        )
+                        print("Config file updated with missing sections/options")
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 
@@ -276,15 +290,53 @@ class AppConfig:
                     else:
                         serialized = str(value)
                     self._config_parser.set(section, key, serialized)
-        try:
-            with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
+            lock_file = None
+            config_path = Path(self.CONFIG_FILE)
+            lock_path = config_path.with_suffix(f"{config_path.suffix}.lock")
+            try:
+                # Use a sidecar lock file so Windows can atomically replace CONFIG_FILE.
+                lock_file = open(lock_path, "a+", encoding="utf-8")
+                if fcntl is not None:
+                    try:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                    except OSError:
+                        pass
+                elif msvcrt is not None and sys.platform == "win32":
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                    except OSError:
+                        pass
+
+                tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     self._config_parser.write(f)
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        except IOError as e:
-            print(f"Error saving config: {e}")
+                    f.flush()
+                    os.fsync(f.fileno())
+                if config_path.exists():
+                    try:
+                        shutil.copymode(config_path, tmp_path)
+                    except OSError:
+                        pass
+                tmp_path.replace(config_path)
+                try:
+                    os.chmod(self.CONFIG_FILE, 0o600)
+                except OSError:
+                    pass
+            except IOError as e:
+                print(f"Error saving config: {e}")
+            finally:
+                if lock_file is not None:
+                    if fcntl is not None:
+                        try:
+                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                    elif msvcrt is not None and sys.platform == "win32":
+                        try:
+                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                        except OSError:
+                            pass
+                    lock_file.close()
 
     def list_all(self) -> Dict[str, Dict[str, Any]]:
         """Return all config values as a nested dictionary.
@@ -411,7 +463,7 @@ class AppConfig:
         """
         Validate and sanitise the AutoAccept section of the in-memory configuration.
 
-        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
+        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket", "email", "website"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
         """
         auto_accept = self.config["AutoAccept"]
 
@@ -423,7 +475,10 @@ class AppConfig:
             (
                 self.config["AutoAccept"]["min_reward"],
                 self.config["AutoAccept"]["max_reward"],
-            ) = auto_accept["max_reward"], auto_accept["min_reward"]
+            ) = (
+                auto_accept["max_reward"],
+                auto_accept["min_reward"],
+            )
 
         # Validate delay range
         if auto_accept["accept_delay_min"] > auto_accept["accept_delay_max"]:
@@ -433,7 +488,10 @@ class AppConfig:
             (
                 self.config["AutoAccept"]["accept_delay_min"],
                 self.config["AutoAccept"]["accept_delay_max"],
-            ) = auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
+            ) = (
+                auto_accept["accept_delay_max"],
+                auto_accept["accept_delay_min"],
+            )
 
         # Validate job sources
         valid_sources = {"rss", "websocket", "email", "website"}
