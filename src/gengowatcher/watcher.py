@@ -26,6 +26,7 @@ from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
+from .browser_detector import BrowserDetector
 
 from . import notifier
 
@@ -132,6 +133,9 @@ class GengoWatcher:
             config,
             logger,
         )
+
+        # Initialize browser detector
+        self.browser_detector = BrowserDetector(config, logger)
 
         # Initialize job cancellation manager
         self.cancellation_manager = JobCancellationManager(config, logger)
@@ -541,8 +545,7 @@ class GengoWatcher:
         """
         headers = {}
         if self.config.get("Watcher", "use_custom_user_agent"):
-            email = self.config.get("Network", "user_agent_email")
-            headers["User-Agent"] = f"GengoWatcher/{__version__} ({email})"
+            headers["User-Agent"] = self.browser_detector.get_user_agent()
         self.logger.debug(
             f"Fetching RSS feed: {self.config.get('Watcher', 'feed_url')} with headers: {headers}"
         )
