@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from urllib.parse import urljoin
 from pathlib import Path
-from .browser_detector import BrowserDetector
 
 try:
     from bs4 import BeautifulSoup  # type: ignore
@@ -142,15 +141,12 @@ class JobAcceptanceEngine:
         self.failed_acceptances = 0
         self.rate_limited_count = 0
 
-        # Initialize browser detector
-        self.browser_detector = BrowserDetector(config, logger)
-
     async def initialize_session(self):
         """Initialize the HTTP session for API requests."""
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
                 headers={
-                    "User-Agent": self.browser_detector.get_user_agent(),
+                    "User-Agent": "GengoWatcher/2.1.5",
                     "Content-Type": "application/json",
                 },
                 timeout=aiohttp.ClientTimeout(total=30),
