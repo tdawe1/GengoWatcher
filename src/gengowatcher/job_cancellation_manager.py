@@ -12,6 +12,7 @@ import time
 from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
+from .browser_detector import BrowserDetector
 
 
 class JobCancellationManager:
@@ -22,6 +23,11 @@ class JobCancellationManager:
         self.logger = logger
         self.session: Optional[aiohttp.ClientSession] = None
         self._lock = threading.Lock()  # Thread safety for state access
+
+        # Browser detector for dynamic User-Agent
+        self.browser_detector = BrowserDetector(
+            config.list_all() if hasattr(config, "list_all") else config, logger
+        )
 
         # Current job tracking (protected by _lock)
         self.current_job_id: Optional[str] = None
@@ -49,7 +55,7 @@ class JobCancellationManager:
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
                 headers={
-                    "User-Agent": "GengoWatcher/2.1.5",
+                    "User-Agent": self.browser_detector.get_user_agent(),
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 },
@@ -162,7 +168,7 @@ class JobCancellationManager:
             # Set up authentication headers
             headers = {
                 "Cookie": f"my_gengo_session={user_session}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                "User-Agent": self.browser_detector.get_user_agent(),
                 "Origin": "https://gengo.com",
                 "Referer": f"https://gengo.com/t/jobs/details/{self.current_job_id}",
                 "X-Requested-With": "XMLHttpRequest",
@@ -242,9 +248,9 @@ class JobCancellationManager:
                                 # Update stats
                                 with self._lock:
                                     self.stats["successful_cancellations"] += 1
-                                    self.stats[
-                                        "total_lost_rewards"
-                                    ] += self.current_job_reward
+                                    self.stats["total_lost_rewards"] += (
+                                        self.current_job_reward
+                                    )
                                     # Record cancellation
                                     self.stats["jobs_saved"].append(
                                         {
@@ -281,9 +287,9 @@ class JobCancellationManager:
                             # Update stats
                             with self._lock:
                                 self.stats["successful_cancellations"] += 1
-                                self.stats[
-                                    "total_lost_rewards"
-                                ] += self.current_job_reward
+                                self.stats["total_lost_rewards"] += (
+                                    self.current_job_reward
+                                )
 
                             self.clear_current_job()
                             self._save_job_state()
