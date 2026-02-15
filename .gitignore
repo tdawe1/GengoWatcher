@@ -25,6 +25,7 @@ venv/
 ENV/
 env/
 .venv/
+state.json
 
 # IDE / Editor
 .vscode/
