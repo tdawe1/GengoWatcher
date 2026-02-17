@@ -685,6 +685,55 @@ class JobsPreview(DashboardQuadrant):
             pass  # Widget not mounted yet
 
 
+class FullJobsTable(Widget):
+    """Full jobs table for the Jobs tab, showing all stored jobs."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__(**kwargs)
+        self.state = state
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="jobs-table-full")
+
+    def on_mount(self) -> None:
+        """Initialize the table with columns and load initial data."""
+        try:
+            dt = self.query_one(DataTable)
+            dt.add_columns("ID", "Language Pair", "Words", "Reward", "Source", "Time")
+        except NoMatches:
+            pass
+        self.refresh()
+
+    def refresh(self) -> None:
+        """
+        Refresh the full jobs table from the current application state.
+
+        Populates the jobs DataTable with all stored jobs from state, showing
+        job ID, language pair, word count, reward, source, and timestamp.
+        """
+        if not self.state:
+            return
+        try:
+            dt = self.query_one(DataTable)
+            dt.clear()
+            jobs = self.state.get_recent_jobs(limit=1000)  # Get all stored jobs
+            for job in jobs:
+                job_id = str(job.get("id", "N/A"))
+                pair = job.get("lang_pair", "??→??")
+                words = str(job.get("word_count", job.get("words", 0)))
+                reward = f"${job.get('reward', 0):.2f}"
+                source = job.get("source", "Unknown")
+                # Format timestamp as readable time
+                ts = job.get("timestamp", 0)
+                if ts:
+                    dt_str = datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+                else:
+                    dt_str = "??:??:??"
+                dt.add_row(job_id, pair, words, reward, source, dt_str)
+        except NoMatches:
+            pass  # Widget not mounted yet
+
+
 class HourlyActivity(DashboardQuadrant):
     """Hourly activity stats with peak hour highlighting."""
 
@@ -1081,7 +1130,7 @@ class GengoWatcherApp(App):
                     yield ActivityPreview()
 
             with TabPane("Jobs", id="jobs"):
-                yield DataTable(id="jobs-table-full")
+                yield FullJobsTable(state=self.state)
             with TabPane("Activity", id="activity"):
                 yield RichLog(id="activity-log-full", markup=True)
             with TabPane("Output", id="output"):
