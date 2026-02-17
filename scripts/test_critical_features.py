@@ -99,9 +99,20 @@ class TestAutoAcceptWithCaptcha:
     async def test_job_acceptance_eligibility(self, config, logger):
         """Test job eligibility checking."""
         # Mock the config methods to return test values
-        config.getboolean = lambda section, key, fallback=None: TEST_CONFIG.get(
-            section, {}
-        ).get(key, fallback)
+        def getboolean_mock(section, key, fallback=None):
+            """ConfigParser-style boolean parsing for test config."""
+            value = TEST_CONFIG.get(section, {}).get(key, fallback)
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                value_lower = value.lower().strip()
+                if value_lower in ("1", "yes", "true", "on"):
+                    return True
+                if value_lower in ("0", "no", "false", "off"):
+                    return False
+            return bool(value) if value is not None else bool(fallback)
+
+        config.getboolean = getboolean_mock
         config.get = lambda section, key, fallback=None: TEST_CONFIG.get(
             section, {}
         ).get(key, fallback)

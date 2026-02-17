@@ -289,10 +289,22 @@ class JobCancellationManager:
                             self._save_job_state()
 
                             return True
+                        elif 500 <= response.status < 600:
+                            # Server error - treat as transient and retry
+                            self.logger.warning(
+                                f"Server error cancelling job {self.current_job_id}, "
+                                f"status: {response.status} (attempt {attempt + 1}/{max_retries})"
+                            )
+                            # Continue to next iteration for retry
+                            if attempt < max_retries - 1:
+                                delay = 2**attempt
+                                await asyncio.sleep(delay)
+                            continue
                         else:
+                            # Client error (4xx) - don't retry
                             self.logger.error(
                                 f"Failed to cancel job {self.current_job_id}, "
-                                f"status: {response.status}"
+                                f"status: {response.status} (client error, not retrying)"
                             )
                             with self._lock:
                                 self.stats["failed_cancellations"] += 1

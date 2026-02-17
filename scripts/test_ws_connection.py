@@ -50,12 +50,13 @@ async def test_connection():
 
     try:
         # Handle websockets version difference for headers kwarg
+        # websockets < 14 uses "extra_headers", >= 14 uses "additional_headers"
         ws_version = getattr(websockets, "__version__", "0")
         logger.info(f"websockets version: {ws_version}")
 
         ws_header_key = (
             "additional_headers"
-            if int(ws_version.split(".")[0]) >= 12
+            if int(ws_version.split(".")[0]) >= 14
             else "extra_headers"
         )
         connect_kwargs = {

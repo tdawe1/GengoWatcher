@@ -36,7 +36,19 @@ PYTHONPATH=src python -m gengowatcher.main
 On first run, you'll be guided through configuration setup.
 
 ## Configuration
-Settings are stored in `config.ini`. Environment variables in `.env` (see `.env.example`) override sensitive values in `config.ini`. Key sections:
+Settings are stored in `config.ini`. Environment variables override sensitive values in `config.ini`:
+
+| Environment Variable | Config Section | Description |
+|---------------------|----------------|-------------|
+| `GENGO_USER_ID` | WebSocket | Your Gengo user ID |
+| `GENGO_USER_SESSION` | WebSocket | Your session token (from cookies) |
+| `GENGO_USER_KEY` | WebSocket | Your user key (from local storage) |
+| `GENGOWATCHER_API_TOKEN` | WebServer | API token for the web interface |
+| `GMAIL_CLIENT_ID` | EmailMonitor | Gmail OAuth client ID |
+| `GMAIL_CLIENT_SECRET` | EmailMonitor | Gmail OAuth client secret |
+| `GMAIL_REFRESH_TOKEN` | EmailMonitor | Gmail OAuth refresh token |
+
+Key sections:
 ```ini
 [Watcher]
 feed_url = https://your-rss-feed-url

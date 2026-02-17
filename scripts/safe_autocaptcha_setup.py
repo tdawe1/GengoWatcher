@@ -39,7 +39,9 @@ class SafeAutoCaptchaSetup:
                 "rate_limit": "30",  # Conservative rate limit
                 "rate_limit_window": "60",  # 1 minute window
                 "skip_on_v3_extraction_failure": "true",
-                "recaptcha_v3_fallback_site_key": "6Lc6BAAAAAAAAAChqR2QwNcAAAAA",
+                # reCAPTCHA site key should be extracted from the page or configured
+                # via environment variable GENGO_RECAPTCHA_SITE_KEY for production use
+                "recaptcha_v3_fallback_site_key": "",
                 "recaptcha_v3_default_action": "job_acceptance",
                 "enable_browser_automation_fallback": "false",  # Disable for safety
             },
