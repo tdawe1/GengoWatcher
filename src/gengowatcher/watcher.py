@@ -943,7 +943,7 @@ class GengoWatcher:
                             )
 
             try:
-                await run_session(extra_headers)
+                await run_session(additional_headers)
             except (InvalidStatusCode, InvalidHandshake) as e:
                 # Some load balancers/proxies reject any custom headers; retry without them.
                 message = str(e).lower()

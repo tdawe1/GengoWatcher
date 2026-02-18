@@ -19,6 +19,7 @@ wheels/
 *.egg-info/
 *.egg
 MANIFEST
+wakapi_db.db
 
 # Virtual environments
 venv/
