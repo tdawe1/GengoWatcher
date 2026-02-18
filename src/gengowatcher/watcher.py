@@ -656,14 +656,11 @@ class GengoWatcher:
             )
 
             # Build headers as dict for websockets 13+ (additional_headers)
+            # Only essential headers - Cookie for auth, Origin for CORS, User-Agent for identification
             additional_headers = {
                 "Cookie": f"myG_myGSession_={session_token}; myG_rdsessID={session_token}",
                 "Origin": "https://gengo.com",
-                "Pragma": "no-cache",
-                "Cache-Control": "no-cache",
                 "User-Agent": user_agent,
-                "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
-                "Accept-Encoding": "gzip, deflate, br, zstd",
             }
 
             # Log headers (masking sensitive info)
