@@ -720,6 +720,11 @@ class FullJobsTable(Widget):
         try:
             dt = self.query_one(DataTable)
             dt.clear()
+
+            # Ensure columns exist (they might be cleared during widget remounting)
+            if len(dt.ordered_columns) == 0:
+                dt.add_columns("ID", "Language Pair", "Words", "Reward", "Source", "Time")
+
             jobs = self.state.get_recent_jobs(limit=1000)  # Get all stored jobs
             for job in jobs:
                 job_id = str(job.get("id", "N/A"))
