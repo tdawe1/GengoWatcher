@@ -1293,7 +1293,7 @@ class GengoWatcherApp(App):
         event.input.value = ""
 
         # Log the command
-        self.logger.info(f"Command: {command}")
+        logging.getLogger(__name__).info(f"Command: {command}")
 
         # Process commands
         if command in ("quit", "exit", "q"):
@@ -1303,15 +1303,15 @@ class GengoWatcherApp(App):
         elif command == "check" or command == "c":
             if self.watcher:
                 self.watcher.trigger_rss_check()
-                self.logger.info("RSS check triggered")
+                logging.getLogger(__name__).info("RSS check triggered")
         elif command == "pause" or command == "p":
             if self.watcher:
                 if self.watcher.paused:
                     self.watcher.resume()
-                    self.logger.info("Resumed monitoring")
+                    logging.getLogger(__name__).info("Resumed monitoring")
                 else:
                     self.watcher.pause()
-                    self.logger.info("Paused monitoring")
+                    logging.getLogger(__name__).info("Paused monitoring")
         elif command == "stats":
             self._show_stats()
         elif command == "jobs":
@@ -1323,7 +1323,7 @@ class GengoWatcherApp(App):
         elif command.startswith("test"):
             self._handle_test_command(command)
         else:
-            self.logger.warning(f"Unknown command: {command}")
+            logging.getLogger(__name__).warning(f"Unknown command: {command}")
             self._show_help()
 
     def _show_help(self) -> None:
@@ -1339,37 +1339,37 @@ Available commands:
   quit, exit, q     - Exit the application
   test <cmd>        - Run test (ping, notify)
         """
-        self.logger.info(help_text.strip())
+        logging.getLogger(__name__).info(help_text.strip())
 
     def _show_stats(self) -> None:
         """Show current statistics."""
         if self.stats:
             session = self.stats.session
-            self.logger.info(
+            logging.getLogger(__name__).info(
                 f"Stats - Found: {session.jobs_found}, "
                 f"Accepted: {session.jobs_accepted}, "
                 f"Value: ${session.total_value:.2f}"
             )
         if self.state:
             job_count = self.state.get_job_count()
-            self.logger.info(f"Stored jobs: {job_count}")
+            logging.getLogger(__name__).info(f"Stored jobs: {job_count}")
 
     def _handle_test_command(self, command: str) -> None:
         """Handle test commands."""
         parts = command.split()
         if len(parts) < 2:
-            self.logger.warning("Test command requires an argument (ping, notify)")
+            logging.getLogger(__name__).warning("Test command requires an argument (ping, notify)")
             return
 
         test_type = parts[1]
         if test_type == "ping":
-            self.logger.info("Ping test - pong!")
+            logging.getLogger(__name__).info("Ping test - pong!")
         elif test_type == "notify":
             if self.watcher:
                 self.watcher.send_notification("Test notification", "This is a test")
-                self.logger.info("Test notification sent")
+                logging.getLogger(__name__).info("Test notification sent")
         else:
-            self.logger.warning(f"Unknown test command: {test_type}")
+            logging.getLogger(__name__).warning(f"Unknown test command: {test_type}")
 
     def call_from_thread(self, func, *args, **kwargs):
         # The base App.call_from_thread will be used, but we need to ensure we don't block
