@@ -705,7 +705,7 @@ class FullJobsTable(Widget):
             pass
         self.refresh()
 
-    def refresh(self, layout: bool = False) -> None:
+    def refresh(self, **kwargs) -> None:
         """
         Refresh the full jobs table from the current application state.
 
@@ -713,7 +713,8 @@ class FullJobsTable(Widget):
         job ID, language pair, word count, reward, source, and timestamp.
 
         Args:
-            layout: Whether to refresh layout (ignored, for Textual compatibility)
+            **kwargs: Arbitrary keyword arguments for Textual compatibility
+                     (e.g., layout, repaint - all ignored)
         """
         if not self.state:
             return
