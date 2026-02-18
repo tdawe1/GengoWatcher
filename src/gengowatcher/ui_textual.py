@@ -690,7 +690,7 @@ class FullJobsTable(Widget):
     """Full jobs table for the Jobs tab, showing all stored jobs."""
 
     def __init__(self, state: "AppState", **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(id="full-jobs-table", **kwargs)
         self.state = state
 
     def compose(self) -> ComposeResult:
@@ -1103,7 +1103,7 @@ class GengoWatcherApp(App):
     def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
         pane_id = event.pane.id
         if pane_id == "jobs":
-            self._refresh_widget("#jobs-table-full", "refresh")
+            self._refresh_widget("#full-jobs-table", "refresh")
         elif pane_id == "activity":
             self._refresh_widget("#activity-log-full", "refresh")
         elif pane_id == "output":
