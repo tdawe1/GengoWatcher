@@ -705,12 +705,15 @@ class FullJobsTable(Widget):
             pass
         self.refresh()
 
-    def refresh(self) -> None:
+    def refresh(self, layout: bool = False) -> None:
         """
         Refresh the full jobs table from the current application state.
 
         Populates the jobs DataTable with all stored jobs from state, showing
         job ID, language pair, word count, reward, source, and timestamp.
+
+        Args:
+            layout: Whether to refresh layout (ignored, for Textual compatibility)
         """
         if not self.state:
             return
