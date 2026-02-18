@@ -8,7 +8,7 @@ fastapi
 uvicorn[standard]
 pydantic
 python-multipart
-cryptography>=3.4.8
+cryptography>=46.0.5
 requests>=2.25.1
 imapclient>=2.3.0
 playwright>=1.40.0

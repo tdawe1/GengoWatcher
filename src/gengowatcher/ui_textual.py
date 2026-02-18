@@ -14,6 +14,7 @@ from collections import deque
 from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
+from textual.widget import Widget
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, Grid, Container
 from textual.widgets import (
