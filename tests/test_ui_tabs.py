@@ -436,7 +436,7 @@ async def test_dashboard_quadrants_exist():
         assert session is not None
 
 
-@pytest.mark.asyncio
+`@pytest.mark.asyncio`
 async def test_app_bindings_defined():
     """Verify app has key bindings defined."""
     app = create_mock_app()
