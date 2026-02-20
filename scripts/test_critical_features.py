@@ -74,6 +74,12 @@ def config():
 
 
 @pytest.fixture
+def state():
+    """Create a test state."""
+    return AppState()
+
+
+@pytest.fixture
 def logger():
     """Create a test logger."""
     logger = logging.getLogger("test")
@@ -235,10 +241,10 @@ class TestWebSocketConnectivity:
     """Test WebSocket connectivity."""
 
     @pytest.mark.asyncio
-    async def test_websocket_connection(self, config, logger):
+    async def test_websocket_connection(self, config, state, logger):
         """Test WebSocket connection establishment."""
         # Create watcher with test config
-        watcher = GengoWatcher(config, logger)
+        watcher = GengoWatcher(config, state, logger)
 
         # Mock WebSocket connection
         with patch("websockets.connect") as mock_connect:
@@ -253,9 +259,9 @@ class TestWebSocketConnectivity:
             assert mock_ws.send.called
 
     @pytest.mark.asyncio
-    async def test_websocket_message_handling(self, config, logger):
+    async def test_websocket_message_handling(self, config, state, logger):
         """Test WebSocket message processing."""
-        watcher = GengoWatcher(config, logger)
+        watcher = GengoWatcher(config, state, logger)
 
         # Mock WebSocket and message
         mock_ws = AsyncMock()
@@ -279,9 +285,9 @@ class TestWebSocketConnectivity:
             mock_process.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_websocket_reconnection(self, config, logger):
+    async def test_websocket_reconnection(self, config, state, logger):
         """Test WebSocket reconnection logic."""
-        watcher = GengoWatcher(config, logger)
+        watcher = GengoWatcher(config, state, logger)
 
         # Mock failed connection followed by success
         with patch("websockets.connect") as mock_connect:
@@ -453,7 +459,7 @@ class TestRateLimitingAndPerformance:
 
 # Integration test
 @pytest.mark.asyncio
-async def test_full_integration(config, logger, captcha_solution):
+async def test_full_integration(config, state, logger, captcha_solution):
     """Test full integration of all components."""
     # Create all components
     captcha_solver = Mock(spec=CaptchaSolverManager)
@@ -461,7 +467,7 @@ async def test_full_integration(config, logger, captcha_solution):
     captcha_solver.solve_recaptcha_v2.return_value = captcha_solution
 
     engine = JobAcceptanceEngine(config, logger, captcha_solver)
-    watcher = GengoWatcher(config, logger)
+    watcher = GengoWatcher(config, state, logger)
     web_server = WebAPI(config, logger, port=8003)
 
     # Test job flow

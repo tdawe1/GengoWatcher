@@ -85,10 +85,10 @@ firebase-debug.log
 # OS files
 .DS_Store
 Thumbs.db
-archives/
-.github/
-.workflows/
 .slim/
 .worktrees/
 thoughts/
 .codex/
+
+# Sensitive data files
+stats.json

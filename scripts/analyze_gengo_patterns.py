@@ -71,7 +71,7 @@ class GengoAnalyzer:
             ws_version = getattr(websockets, "__version__", "0")
             ws_header_key = (
                 "additional_headers"
-                if int(ws_version.split(".")[0]) >= 12
+                if int(ws_version.split(".")[0]) >= 13
                 else "extra_headers"
             )
             header_kwargs = {ws_header_key: extra_headers}

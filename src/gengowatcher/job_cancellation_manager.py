@@ -176,6 +176,7 @@ class JobCancellationManager:
 
             max_retries = 3
             last_error = None
+            last_http_status = None
             session = self.session
             if session is None:
                 self.logger.error("HTTP session unavailable for job cancellation")
@@ -188,6 +189,7 @@ class JobCancellationManager:
 
                     async with session.get(job_url, headers=headers) as response:
                         if response.status != 200:
+                            last_http_status = response.status
                             self.logger.warning(
                                 f"Cannot access job page: {response.status} (attempt {attempt + 1}/{max_retries})"
                             )
@@ -296,13 +298,27 @@ class JobCancellationManager:
 
                             return True
                         else:
-                            self.logger.error(
-                                f"Failed to cancel job {self.current_job_id}, "
-                                f"status: {response.status}"
+                            # Check if status is retryable (5xx or 429)
+                            is_retryable = (
+                                response.status >= 500 or response.status == 429
                             )
-                            with self._lock:
-                                self.stats["failed_cancellations"] += 1
-                            return False
+                            if is_retryable and attempt < max_retries - 1:
+                                last_http_status = response.status
+                                delay = 2**attempt
+                                self.logger.warning(
+                                    f"Cancellation got {response.status} (attempt {attempt + 1}/{max_retries}), "
+                                    f"retrying in {delay}s"
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            else:
+                                self.logger.error(
+                                    f"Failed to cancel job {self.current_job_id}, "
+                                    f"status: {response.status}"
+                                )
+                                with self._lock:
+                                    self.stats["failed_cancellations"] += 1
+                                return False
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     last_error = e
                     if attempt < max_retries - 1:
@@ -313,14 +329,23 @@ class JobCancellationManager:
                         await asyncio.sleep(delay)
                     continue
 
+            # All retries exhausted
             if last_error:
                 self.logger.error(
                     f"Job cancellation failed after {max_retries} attempts: {last_error}"
                 )
-                with self._lock:
-                    self.stats["failed_cancellations"] += 1
-                return False
+            elif last_http_status:
+                self.logger.error(
+                    f"Job cancellation failed after {max_retries} attempts, "
+                    f"last HTTP status: {last_http_status}"
+                )
+            else:
+                self.logger.error(
+                    f"Job cancellation failed after {max_retries} attempts"
+                )
 
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
             return False
         except aiohttp.ClientError as e:
             self.logger.error(f"HTTP client error cancelling job: {e}")

@@ -6,7 +6,6 @@ Strict implementation of the v2.0 Design Doc.
 
 import asyncio
 import datetime
-import inspect
 import logging
 import re
 import time
@@ -1191,12 +1190,8 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self.format(record)
             level = record.levelno
-            loop = getattr(self.app, "_loop", None) or getattr(self.app, "loop", None)
-            if loop is None or not loop.is_running():
-                return
-            result = self.app.call_from_thread(self.write_log, msg, level)
-            if inspect.isawaitable(result):
-                asyncio.run_coroutine_threadsafe(result, loop)
+            # Use call_from_thread for thread-safe UI updates - Textual handles scheduling
+            self.app.call_from_thread(self.write_log, msg, level)
         except Exception:
             pass  # Logging failures should not crash the app
 

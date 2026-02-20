@@ -55,6 +55,12 @@ class BrowserDetector:
         Returns:
             User-Agent string for HTTP requests
         """
+        # 0. Check if browser detection is disabled - early return with fallback
+        if not self.config.get("Network", {}).get("detect_browser_ua", False):
+            if self.logger:
+                self.logger.debug("Browser detection disabled, using fallback")
+            return self._get_fallback_user_agent()
+
         # 1. Check for manual override in config
         manual_ua = self._get_manual_user_agent()
         if manual_ua:
@@ -90,12 +96,6 @@ class BrowserDetector:
         Returns:
             Manual User-Agent string or None if not configured
         """
-        # Check if browser detection is disabled
-        if not self.config.get("Network", {}).get("detect_browser_ua", False):
-            if self.logger:
-                self.logger.debug("Browser detection disabled, using fallback")
-            return None
-
         # Check for manual override
         manual_ua = self.config.get("Network", {}).get("user_agent", "")
         if manual_ua and manual_ua.strip():
@@ -304,7 +304,8 @@ class BrowserDetector:
             )
 
             version_output = result.stdout.strip() or result.stderr.strip()
-            version_match = re.search(r"(\d+\.\d+\.\d+\.\d+)", version_output)
+            # Match 2-4 part version numbers (e.g., 131.0, 131.0.3, 131.0.3.1)
+            version_match = re.search(r"(\d+\.\d+(?:\.\d+){0,2})", version_output)
 
             if version_match:
                 version = version_match.group(1)
