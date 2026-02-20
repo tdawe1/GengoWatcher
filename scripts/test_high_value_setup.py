@@ -133,7 +133,7 @@ async def test_high_value_manager():
 
         # Test stats
         stats = manager.get_stats()
-        print(f"\n📊 Current Stats:")
+        print("\n📊 Current Stats:")
         print(f"   High-value threshold: ${stats['thresholds']['high']}")
         print(f"   Max per day: {config.get('HighValue', 'max_per_day')}")
         print(
