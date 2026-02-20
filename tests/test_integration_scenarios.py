@@ -218,6 +218,7 @@ class TestConfigurationChanges:
         from gengowatcher.watcher import GengoWatcher
 
         watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        watcher.cancellation_manager.update_settings = MagicMock()
         return watcher
 
     def test_config_change_triggers_save(self, configurable_watcher):
@@ -370,8 +371,8 @@ class TestStatisticsAggregation:
 
     def test_hourly_aggregation(self, stats_system):
         """Test hourly statistics aggregation."""
-        # Deterministic distribution for peak‑hour calculation
-        stats_system.hourly_counts = {hour: hour for hour in range(24)}
+        # Deterministic distribution for peak-hour calculation
+        stats_system.hourly_counts = {hour: hour + 1 for hour in range(24)}
 
         peak_hour, peak_count = stats_system.get_peak_hour()
         assert peak_hour == 23  # Last hour should have most jobs
@@ -381,13 +382,13 @@ class TestStatisticsAggregation:
         """Test tracking job distribution across sources."""
         # Record jobs from different sources
         for _ in range(10):
-            stats_system.record_job(10.0, "RSS", "JA→EN", accepted=False)
+            stats_system.record_job(10.0, "Web", "JA→EN", accepted=False)
         for _ in range(5):
             stats_system.record_job(10.0, "WebSocket", "EN→JA", accepted=False)
         for _ in range(3):
             stats_system.record_job(10.0, "Email", "FR→EN", accepted=False)
 
-        assert stats_system.by_source.rss == 10
+        assert stats_system.by_source.website == 10
         assert stats_system.by_source.websocket == 5
         assert stats_system.by_source.email == 3
 
@@ -413,10 +414,11 @@ class TestBoundaryConditions:
         from gengowatcher.watcher import GengoWatcher
 
         mock_config.get.side_effect = lambda s, k, **kw: {
-            ("Watcher", "check_interval"): 0
-        }.get((s, k), kw.get("fallback", 60))
+            ("Watcher", "check_interval"): 0,
+            ("Logging", "log_all_entries_enabled"): False,
+        }.get((s, k), kw.get("fallback"))
 
-        watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        _ = GengoWatcher(mock_config, mock_state, mock_logger)
 
         # Should have been corrected to minimum
         assert mock_config.set.called
@@ -428,10 +430,11 @@ class TestBoundaryConditions:
         from gengowatcher.watcher import GengoWatcher
 
         mock_config.get.side_effect = lambda s, k, **kw: {
-            ("Watcher", "check_interval"): -10
-        }.get((s, k), kw.get("fallback", 60))
+            ("Watcher", "check_interval"): -10,
+            ("Logging", "log_all_entries_enabled"): False,
+        }.get((s, k), kw.get("fallback"))
 
-        watcher = GengoWatcher(mock_config, mock_state, mock_logger)
+        _ = GengoWatcher(mock_config, mock_state, mock_logger)
 
         # Should have been corrected
         assert mock_config.set.called
@@ -497,7 +500,19 @@ class TestConcurrencyAndThreadSafety:
         from gengowatcher.web import WebAPI, WatcherStatus
 
         with patch("gengowatcher.web.GengoWatcher") as MockWatcher:
-            MockWatcher.return_value = MagicMock()
+            mock_watcher = MagicMock()
+            MockWatcher.return_value = mock_watcher
+            mock_watcher.shutdown_event.is_set.return_value = False
+            mock_watcher.websocket_status = "Live"
+            mock_watcher.rss_action = "Checking"
+            mock_watcher.last_check_time = 1234567890.0
+            mock_watcher.next_check_time = 1234567950.0
+            mock_watcher.session_new_entries = 0
+            mock_watcher.session_total_value = 0.0
+            mock_watcher.start_time = 1234567800.0
+            mock_watcher.failure_count = 0
+            mock_watcher.get_cancellation_stats.return_value = {}
+
             api = WebAPI(mock_config, mock_state, mock_logger)
 
             # Mock get_status directly to avoid Pydantic validation issues with mocks

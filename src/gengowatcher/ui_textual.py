@@ -4,7 +4,9 @@ Textual-based TUI for GengoWatcher.
 Strict implementation of the v2.0 Design Doc.
 """
 
+import asyncio
 import datetime
+import inspect
 import logging
 import re
 import time
@@ -24,7 +26,7 @@ from textual.widgets import (
     TabPane,
     DataTable,
 )
-from textual import work
+from textual import work, on
 from textual.css.query import NoMatches
 from rich.text import Text
 
@@ -689,6 +691,7 @@ class JobsPreview(DashboardQuadrant):
             dt.add_columns("ID", "Pair", "Words", "$$$")
         except NoMatches:
             pass  # Widget not mounted yet
+        self.refresh_jobs()
 
     def refresh_jobs(self):
         """
@@ -844,18 +847,19 @@ class ConfigPreview(DashboardQuadrant):
         Only None or empty string render as em dash. Numeric zero is preserved.
         """
         if self._is_sensitive(key) and value:
-            return self._mask_value(value)
-        if isinstance(value, bool):
-            return "✓" if value else "✗"
-        if isinstance(value, list):
-            if not value:
-                return "—"
-            return ", ".join(str(v) for v in value)
-        if isinstance(value, float):
-            return f"{value:.2f}" if value != int(value) else str(int(value))
-        if value is None or value == "":
-            return "—"
-        return str(value)
+            formatted = self._mask_value(value)
+        elif isinstance(value, bool):
+            formatted = "✓" if value else "✗"
+        elif isinstance(value, list):
+            formatted = ", ".join(str(v) for v in value)
+        elif isinstance(value, float):
+            formatted = f"{value:.2f}" if value != int(value) else str(int(value))
+        else:
+            formatted = str(value) if value else "—"
+
+        if len(formatted) > self.MAX_VALUE_LENGTH:
+            return formatted[: self.MAX_VALUE_LENGTH_SHORT] + "..."
+        return formatted
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
@@ -936,20 +940,24 @@ class SessionStats(DashboardQuadrant):
     def refresh_stats(self):
         if not self.watcher or not self.state:
             return
-        try:
-            elapsed = int(time.time() - self.watcher.start_time)
-            h, m = divmod(elapsed // 60, 60)
-            jobs = self.state.get_recent_jobs(limit=1000)
-            found = len(jobs)
-            accepted = sum(1 for j in jobs if j.get("accepted", False))
-            total = sum(j.get("reward", 0) for j in jobs)
+        elapsed = int(time.time() - self.watcher.start_time)
+        h, m = divmod(elapsed // 60, 60)
+        jobs = self.state.get_recent_jobs(limit=1000)
+        found = len(jobs)
+        accepted = sum(1 for j in jobs if j.get("accepted", False))
+        total = sum(j.get("reward", 0) for j in jobs)
 
-            self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
-            self.query_one("#stat-found", Static).update(f"Found: {found}")
-            self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
-            self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
-        except NoMatches:
-            pass
+        updates = {
+            "#stat-duration": f"Duration: {h}h {m:02d}m",
+            "#stat-found": f"Found: {found}",
+            "#stat-accepted": f"Accepted: {accepted}",
+            "#stat-value": f"Value: ${total:.2f}",
+        }
+        for selector, value in updates.items():
+            try:
+                self.query_one(selector, Static).update(value)
+            except NoMatches:
+                pass  # Widget not mounted yet
 
 
 class SourcesBreakdown(DashboardQuadrant):
@@ -1335,6 +1343,32 @@ class GengoWatcherApp(App):
         handler = TextualLogHandler(self)
         logging.getLogger().addHandler(handler)
 
+    def _refresh_widget(self, selector_or_type, method_name: str) -> None:
+        try:
+            widget = self.query_one(selector_or_type)
+        except NoMatches:
+            return
+        method = getattr(widget, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+
+    @on(TabbedContent.TabActivated)
+    def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
+        pane_id = event.pane.id
+        if pane_id == "jobs":
+            self._refresh_widget("#jobs-table-full", "refresh")
+        elif pane_id == "activity":
+            self._refresh_widget("#activity-log-full", "refresh")
+        elif pane_id == "output":
+            self._refresh_widget("#output-log", "refresh")
+        elif pane_id == "charts":
+            self._refresh_widget("#charts-content", "refresh")
+        elif pane_id == "stats":
+            self._refresh_widget("#stats-content", "refresh")
+
     def compose(self) -> ComposeResult:
         # 1. Title Bar
         """
@@ -1368,9 +1402,9 @@ class GengoWatcherApp(App):
             with TabPane("Output", id="output"):
                 yield RichLog(id="output-log", markup=True)
             with TabPane("Charts", id="charts"):
-                yield ChartsPanel(stats=self.stats, state=self.state)
+                yield Static("Charts Content", id="charts-content")
             with TabPane("Stats", id="stats"):
-                yield StatsPanel(stats=self.stats)
+                yield Static("Stats Content", id="stats-content")
 
         # 3. Input & Footer
         yield Input(placeholder="> help_")
@@ -1472,7 +1506,12 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self.format(record)
             level = record.levelno
-            self.app.call_from_thread(self.write_log, msg, level)
+            loop = getattr(self.app, "_loop", None) or getattr(self.app, "loop", None)
+            if loop is None or not loop.is_running():
+                return
+            result = self.app.call_from_thread(self.write_log, msg, level)
+            if inspect.isawaitable(result):
+                asyncio.run_coroutine_threadsafe(result, loop)
         except Exception:
             pass  # Logging failures should not crash the app
 

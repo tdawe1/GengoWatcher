@@ -21,7 +21,9 @@ def watcher_instance(mock_config, mock_state, mock_logger):
 class TestWatcherInitialization:
     """Test GengoWatcher initialization."""
 
-    def test_watcher_initializes_with_valid_config(self, mock_config, mock_state, mock_logger):
+    def test_watcher_initializes_with_valid_config(
+        self, mock_config, mock_state, mock_logger
+    ):
         """Test that watcher initializes with valid configuration."""
         watcher = GengoWatcher(mock_config, mock_state, mock_logger)
 
@@ -29,10 +31,16 @@ class TestWatcherInitialization:
         assert watcher.state == mock_state
         assert watcher.logger == mock_logger
 
-    def test_watcher_validates_check_interval(self, mock_config, mock_state, mock_logger):
+    def test_watcher_validates_check_interval(
+        self, mock_config, mock_state, mock_logger
+    ):
         """Test that watcher validates check_interval minimum."""
         # Set check_interval to invalid low value
-        mock_config.get.return_value = 0
+        mock_config.get.side_effect = lambda s, k, **kw: (
+            0
+            if (s, k) == ("Watcher", "check_interval")
+            else mock_config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
 
         GengoWatcher(mock_config, mock_state, mock_logger)
 
@@ -41,12 +49,12 @@ class TestWatcherInitialization:
 
     def test_watcher_initializes_cancellation_manager(self, watcher_instance):
         """Test that cancellation manager is initialized."""
-        assert hasattr(watcher_instance, 'cancellation_manager')
+        assert hasattr(watcher_instance, "cancellation_manager")
         assert watcher_instance.cancellation_manager is not None
 
     def test_watcher_initializes_job_acceptance_engine(self, watcher_instance):
         """Test that job acceptance engine is initialized."""
-        assert hasattr(watcher_instance, 'job_acceptance_engine')
+        assert hasattr(watcher_instance, "job_acceptance_engine")
         assert watcher_instance.job_acceptance_engine is not None
 
 
@@ -135,8 +143,12 @@ class TestJobProcessing:
         watcher_instance.show_notification = MagicMock()
 
         # Process same job twice
-        watcher_instance._process_new_job(123, "Test Job", 10.0, "http://test.com", "Test")
-        watcher_instance._process_new_job(123, "Test Job", 10.0, "http://test.com", "Test")
+        watcher_instance._process_new_job(
+            123, "Test Job", 10.0, "http://test.com", "Test"
+        )
+        watcher_instance._process_new_job(
+            123, "Test Job", 10.0, "http://test.com", "Test"
+        )
 
         # Should only show notification once
         assert watcher_instance.show_notification.call_count == 1
@@ -146,18 +158,24 @@ class TestJobProcessing:
         watcher_instance.show_notification = MagicMock()
         watcher_instance.state.add_job = MagicMock()
 
-        watcher_instance._process_new_job(123, "Test Job", 10.0, "http://test.com", "Test")
+        watcher_instance._process_new_job(
+            123, "Test Job", 10.0, "http://test.com", "Test"
+        )
 
         # Should call add_job
         watcher_instance.state.add_job.assert_called_once()
 
-    def test_process_new_job_with_min_reward_filter(self, watcher_instance, mock_config):
+    def test_process_new_job_with_min_reward_filter(
+        self, watcher_instance, mock_config
+    ):
         """Test job filtering by minimum reward."""
         mock_config.get.side_effect = lambda s, k: 50.0 if k == "min_reward" else None
         watcher_instance.show_notification = MagicMock()
 
         # Job below minimum
-        watcher_instance._process_new_job(123, "Low Value Job", 10.0, "http://test.com", "Test")
+        watcher_instance._process_new_job(
+            123, "Low Value Job", 10.0, "http://test.com", "Test"
+        )
 
         # Should not show notification
         assert watcher_instance.show_notification.call_count == 0
@@ -169,7 +187,9 @@ class TestCancellationIntegration:
     def test_get_cancellation_stats(self, watcher_instance):
         """Test getting cancellation statistics."""
         mock_stats = {"jobs_cancelled": 5, "current_job_id": None}
-        watcher_instance.cancellation_manager.get_stats = MagicMock(return_value=mock_stats)
+        watcher_instance.cancellation_manager.get_stats = MagicMock(
+            return_value=mock_stats
+        )
 
         stats = watcher_instance.get_cancellation_stats()
 
@@ -177,7 +197,9 @@ class TestCancellationIntegration:
 
     def test_cancel_current_job_sync(self, watcher_instance):
         """Test synchronous job cancellation."""
-        watcher_instance.cancellation_manager.cancel_current_job = AsyncMock(return_value=True)
+        watcher_instance.cancellation_manager.cancel_current_job = AsyncMock(
+            return_value=True
+        )
 
         result = watcher_instance.cancel_current_job_sync()
 
@@ -186,7 +208,9 @@ class TestCancellationIntegration:
     @pytest.mark.asyncio
     async def test_cancel_current_job_async(self, watcher_instance):
         """Test asynchronous job cancellation."""
-        watcher_instance.cancellation_manager.cancel_current_job = AsyncMock(return_value=True)
+        watcher_instance.cancellation_manager.cancel_current_job = AsyncMock(
+            return_value=True
+        )
 
         result = await watcher_instance.cancel_current_job_async()
 
@@ -200,12 +224,14 @@ class TestConfigManagement:
         """Test setting configuration values."""
         watcher_instance.set_config_value("Watcher", "check_interval", "60")
 
-        watcher_instance.config.set.assert_called_with("Watcher", "check_interval", "60")
+        watcher_instance.config.set.assert_called_with(
+            "Watcher", "check_interval", "60"
+        )
         watcher_instance.config.save_config.assert_called()
 
     def test_get_config_value(self, watcher_instance):
         """Test getting configuration values."""
-        watcher_instance.config.get.return_value = "test_value"
+        watcher_instance.config.get.side_effect = lambda *_args, **_kwargs: "test_value"
 
         value = watcher_instance.get_config_value("Watcher", "check_interval")
 
@@ -280,7 +306,9 @@ class TestJobAcceptanceIntegration:
             "current_rate": 0.5,
             "enabled": True,
         }
-        watcher_instance.job_acceptance_engine.get_stats = MagicMock(return_value=mock_stats)
+        watcher_instance.job_acceptance_engine.get_stats = MagicMock(
+            return_value=mock_stats
+        )
 
         stats = watcher_instance.get_job_acceptance_stats()
 
@@ -302,10 +330,10 @@ class TestConfigValidation:
 
     def test_is_config_complete_with_valid_config(self, watcher_instance):
         """Test config completeness check with valid config."""
-        watcher_instance.config.config = {
-            "Watcher": {"check_interval": 60}
-        }
-        watcher_instance.config.get.return_value = 60
+        watcher_instance.config.config = {"Watcher": {"check_interval": 60}}
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: (
+            60 if (s, k) == ("Watcher", "check_interval") else kw.get("fallback")
+        )
 
         result = watcher_instance.is_config_complete()
 
@@ -314,19 +342,27 @@ class TestConfigValidation:
     def test_is_config_complete_with_placeholder(self, watcher_instance):
         """Test config completeness check with placeholder values."""
         watcher_instance.config.config = {
-            "Watcher": {"feed_url": "YOUR_RSS_KEY_HERE"}
+            "Watcher": {"feed_url": "REPLACE_WITH_YOUR_SESSION_TOKEN"}
         }
-        watcher_instance.config.get.return_value = None
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: (
+            "REPLACE_WITH_YOUR_SESSION_TOKEN"
+            if (s, k) == ("Watcher", "feed_url")
+            else kw.get("fallback")
+        )
 
         result = watcher_instance.is_config_complete([("Watcher", "feed_url")])
 
         assert result is False
 
-    def test_prompt_for_config_values(self, watcher_instance, monkeypatch):
+    def test_prompt_for_config_values(self, watcher_instance, monkeypatch, tmp_path):
         """Test prompting for configuration values."""
         # Mock input
         inputs = iter(["test_value"])
-        monkeypatch.setattr('builtins.input', lambda _: next(inputs))
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        monkeypatch.setattr("getpass.getpass", lambda _prompt: "test_value")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text("[Watcher]\ntest_key=REPLACE_WITH_YOUR_SESSION_TOKEN\n")
+        watcher_instance.config.CONFIG_FILE = str(config_path)
 
         watcher_instance.prompt_for_config_values([("Watcher", "test_key")])
 
@@ -384,8 +420,9 @@ class TestBrowserIntegration:
     def test_open_in_browser_default(self, watcher_instance, monkeypatch):
         """Test opening URL with default browser."""
         import webbrowser
+
         mock_open = MagicMock()
-        monkeypatch.setattr(webbrowser, 'open', mock_open)
+        monkeypatch.setattr(webbrowser, "open", mock_open)
 
         watcher_instance.open_in_browser("http://example.com")
 
@@ -394,8 +431,9 @@ class TestBrowserIntegration:
     def test_open_in_browser_with_error(self, watcher_instance, monkeypatch):
         """Test opening URL when exception occurs."""
         import webbrowser
+
         mock_open = MagicMock(side_effect=Exception("Browser error"))
-        monkeypatch.setattr(webbrowser, 'open', mock_open)
+        monkeypatch.setattr(webbrowser, "open", mock_open)
 
         # Should not crash
         watcher_instance.open_in_browser("http://example.com")
@@ -416,7 +454,7 @@ class TestEdgeCases:
 
     def test_fetch_rss_with_network_error(self, watcher_instance):
         """Test RSS fetching with network error."""
-        with patch('gengowatcher.watcher.feedparser.parse') as mock_parse:
+        with patch("gengowatcher.watcher.feedparser.parse") as mock_parse:
             mock_parse.side_effect = Exception("Network error")
 
             feed = watcher_instance.fetch_rss()
@@ -425,14 +463,21 @@ class TestEdgeCases:
 
     def test_show_notification_with_all_options(self, watcher_instance, mock_config):
         """Test notification with all options enabled."""
-        mock_config.get.side_effect = lambda s, k: True
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "enable_notifications"): True,
+            ("Watcher", "enable_sound"): True,
+            ("Paths", "notification_icon_path"): "",
+            ("Paths", "sound_file"): "assets/alert.wav",
+            ("Paths", "browser_path"): "",
+            ("Paths", "browser_args"): "{url}",
+        }.get((s, k), kw.get("fallback", ""))
 
         watcher_instance.show_notification(
             message="Test",
             title="Title",
             play_sound=True,
             open_link=True,
-            url="http://example.com"
+            url="http://example.com",
         )
 
         # Should complete without error

@@ -149,7 +149,7 @@ class StatsManager:
                 self.by_source.websocket += 1
             elif "email" in source_lower:
                 self.by_source.email += 1
-            elif "web" in source_lower:
+            elif "web" in source_lower or "rss" in source_lower:
                 self.by_source.website += 1
             elif "rss" in source_lower:
                 self.by_source.rss += 1

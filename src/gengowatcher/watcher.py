@@ -2,6 +2,7 @@ __version__ = "2.1.5"
 __release_date__ = "2025-06-22"
 
 import asyncio
+import concurrent.futures
 import csv
 import datetime
 import json
@@ -118,6 +119,9 @@ class GengoWatcher:
         self._all_entries_log_file = None
         self._csv_writer = None
         self._shutdown_initiated = False
+        self._rss_executor = None
+        self._rss_future = None
+        self._rss_future_started_at = None
         # Thread references for health monitoring
         self._monitor_threads = {}  # name -> threading.Thread
         # Raw WebSocket message buffer for debug output
@@ -664,9 +668,43 @@ class GengoWatcher:
             f"Fetching RSS feed: {self.config.get('Watcher', 'feed_url')} with headers: {headers}"
         )
         try:
-            feed = feedparser.parse(
-                self.config.get("Watcher", "feed_url"), request_headers=headers
+            feed_url = self.config.get("Watcher", "feed_url")
+            # Wrap feedparser in thread with timeout to prevent blocking
+            if self._rss_executor is None:
+                self._rss_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1
+                )
+            if self._rss_future is not None:
+                if not self._rss_future.done():
+                    elapsed = (
+                        time.monotonic() - self._rss_future_started_at
+                        if self._rss_future_started_at is not None
+                        else 0.0
+                    )
+                    self.logger.warning(
+                        f"Skipping RSS fetch: previous fetch still running ({elapsed:.1f}s elapsed)"
+                    )
+                    return None
+                self._rss_future = None
+                self._rss_future_started_at = None
+            future = self._rss_executor.submit(
+                feedparser.parse,
+                feed_url,
+                request_headers=headers,
             )
+            self._rss_future = future
+            self._rss_future_started_at = time.monotonic()
+            try:
+                feed = future.result(timeout=30)
+            except concurrent.futures.TimeoutError:
+                cancel_success = future.cancel()
+                self.logger.warning("RSS feed fetch timed out after 30 seconds")
+                self.logger.info(f"RSS fetch future cancelled: {cancel_success}")
+                return None
+            finally:
+                if future.done():
+                    self._rss_future = None
+                    self._rss_future_started_at = None
             # Check HTTP status first (feedparser stores it in feed.status)
             http_status = getattr(feed, "status", None)
             if http_status == 429:
@@ -784,6 +822,7 @@ class GengoWatcher:
                 header_desc = (
                     "with custom headers" if headers else "with no custom headers"
                 )
+                messages_received = False
                 self.websocket_status = "Connecting"
                 self.logger.debug(
                     f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
@@ -795,6 +834,7 @@ class GengoWatcher:
                     ping_timeout=10,
                     compression=None,
                 ) as websocket:
+                    connected_at = time.time()
                     self.websocket_status = "Authenticating"
                     user_id = self.config.get("WebSocket", "user_id")
 
@@ -860,6 +900,7 @@ class GengoWatcher:
                         first_message = await asyncio.wait_for(
                             websocket.recv(), timeout=5
                         )
+                        messages_received = True
                         self.logger.debug(
                             f"WebSocket: First message received: {first_message[:100]}..."
                         )
@@ -934,6 +975,7 @@ class GengoWatcher:
                     test_monitor_task = asyncio.create_task(monitor_test_request())
                     try:
                         async for message in websocket:
+                            messages_received = True
                             self.logger.debug(
                                 f"WebSocket: Message received (len={len(message)})"
                             )
@@ -1016,9 +1058,20 @@ class GengoWatcher:
                         close_reason = getattr(websocket, "close_reason", None)
                         self.websocket_last_close_code = close_code
                         self.websocket_last_close_reason = close_reason
+                        connection_age = time.time() - connected_at
                         self.logger.info(
                             f"WebSocket: Socket Closed: code={close_code}, reason={close_reason}"
                         )
+                        if (
+                            close_code in (1000, 1001)
+                            and not messages_received
+                            and connection_age < 20
+                        ):
+                            self.logger.warning(
+                                "WebSocket closed cleanly %.1fs after auth with no messages. "
+                                "This can indicate session/auth mismatch or server-side filtering.",
+                                connection_age,
+                            )
 
             try:
                 await run_session(extra_headers)
@@ -1555,6 +1608,14 @@ class GengoWatcher:
             finally:
                 self._all_entries_log_file = None
                 self._csv_writer = None
+        if self._rss_executor is not None:
+            try:
+                self._rss_executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                self._rss_executor.shutdown(wait=False)
+            self._rss_executor = None
+        self._rss_future = None
+        self._rss_future_started_at = None
 
         try:
             self.state.save_state()

@@ -572,9 +572,11 @@ class JobAcceptanceEngine:
                 "path": result.path,
                 "http_status": result.http_status,
                 "redirect": result.redirect,
-                "result": "accepted"
-                if result.success
-                else ("timeout" if result.reason == "timeout" else "failed"),
+                "result": (
+                    "accepted"
+                    if result.success
+                    else ("timeout" if result.reason == "timeout" else "failed")
+                ),
                 "reason": result.reason,
             }
             timings = result.timings or {}

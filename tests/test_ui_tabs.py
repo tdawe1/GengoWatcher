@@ -445,7 +445,9 @@ async def test_app_bindings_defined():
     assert len(app.BINDINGS) > 0
 
     # Check for expected bindings
-    binding_keys = [b[0] if isinstance(b, tuple) else b.key for b in app.BINDINGS]
+    binding_keys = [
+        b.key if hasattr(b, "key") else b[0] for b in app.BINDINGS if b is not None
+    ]
     assert "q" in binding_keys  # quit
     assert "c" in binding_keys  # check
     assert "p" in binding_keys  # pause
