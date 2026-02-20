@@ -169,7 +169,9 @@ class TestJobProcessing:
         self, watcher_instance, mock_config
     ):
         """Test job filtering by minimum reward."""
-        mock_config.get.side_effect = lambda s, k: 50.0 if k == "min_reward" else None
+        mock_config.get.side_effect = (
+            lambda _s, key: 50.0 if key == "min_reward" else None
+        )
         watcher_instance.show_notification = MagicMock()
 
         # Job below minimum

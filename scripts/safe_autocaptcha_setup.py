@@ -108,7 +108,8 @@ class SafeAutoCaptchaSetup:
 
         # Check Captcha settings
         if config.has_section("Captcha"):
-            if not config.get("Captcha", "api_key", fallback="").startswith("YOUR_"):
+            api_key = config.get("Captcha", "api_key", fallback="")
+            if api_key and not api_key.startswith("YOUR_"):
                 self.logger.info("CAPTCHA API key appears to be configured")
             else:
                 issues.append("CAPTCHA API key not configured")
