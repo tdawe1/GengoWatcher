@@ -82,7 +82,7 @@ def mock_stats():
         stats.session = SessionStats()
         stats.all_time = AllTimeStats()
         stats.hourly_counts = {0: 5, 1: 3, 8: 10, 12: 7}
-        yield stats
+        return stats
 
 
 class TestIcons:

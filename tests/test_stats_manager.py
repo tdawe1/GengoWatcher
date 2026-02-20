@@ -26,6 +26,8 @@ def test_stats_manager_record_job():
         assert manager.session.jobs_found == 1
         assert manager.session.jobs_accepted == 1
         assert manager.session.total_value == 10.0
+        assert manager.all_time.total_jobs == 1
+        assert manager.all_time.total_jobs_accepted == 1
         assert manager.by_source.websocket == 1
         assert manager.by_language["JA→EN"] == 1
 
@@ -44,6 +46,7 @@ def test_stats_manager_persistence():
         # Second manager - reload
         manager2 = StatsManager(stats_path=path)
         assert manager2.all_time.total_jobs == 100
+        assert manager2.all_time.total_jobs_accepted == 1
         assert manager2.by_source.email == 1
 
 
@@ -81,14 +84,15 @@ def test_get_peak_hour_with_data():
 
         # Check that total_jobs counts all jobs (5)
         assert manager.all_time.total_jobs == 5
+        # Check that total_jobs_accepted counts only accepted jobs (3)
+        assert manager.all_time.total_jobs_accepted == 3
         # Check that total_value only includes accepted jobs (10 + 15 + 25 = 50)
         assert manager.all_time.total_value == 50.0
-        # Check that avg_job_value is calculated correctly (50 / 5)
-        expected_avg = 50.0 / 5
+        # Check that avg_job_value is calculated correctly (50 / 3)
+        expected_avg = 50.0 / 3
         assert abs(manager.all_time.avg_job_value - expected_avg) < 0.001
 
-        # Reset hourly counts to isolate peak hour assertions
-        manager.hourly_counts.clear()
+
         # Record jobs at different hours
         import datetime
         from unittest.mock import patch
@@ -173,9 +177,9 @@ class TestStatsManagerHourlyCounts:
             manager = StatsManager(stats_path=path)
 
             assert hasattr(manager, "hourly_counts")
-            # Accessing any hour should yield a non-negative count (using .get to avoid mutating defaultdict)
+            # Accessing any hour should yield a non-negative count
             for hour in range(24):
-                assert manager.hourly_counts.get(hour, 0) >= 0
+                assert manager.hourly_counts[hour] >= 0
 
     def test_get_peak_hour(self):
         """Test get_peak_hour method."""
@@ -215,6 +219,7 @@ class TestStatsManagerPersistence:
 
             manager1 = StatsManager(stats_path=path)
             manager1.record_job(100.0, "RSS", "JA→EN", accepted=True)
+            manager1.record_job(100.0, "Website", "JA→EN", accepted=True)
             manager1.record_job(200.0, "WebSocket", "EN→JA", accepted=False)
             manager1.save()
 
@@ -244,6 +249,7 @@ class TestStatsManagerPersistence:
 
             manager = StatsManager(stats_path=path)
             manager.record_job(50.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(50.0, "Website", "JA→EN", accepted=True)
             manager.save()
 
             assert path.exists()
@@ -272,6 +278,7 @@ class TestStatsManagerEdgeCases:
             manager = StatsManager(stats_path=path)
 
             manager.record_job(0.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(0.0, "Website", "JA→EN", accepted=True)
 
             assert manager.session.jobs_found == 1
             assert manager.session.total_value == 0.0
@@ -284,6 +291,7 @@ class TestStatsManagerEdgeCases:
 
             # Negative rewards shouldn't happen, but test handling
             manager.record_job(-10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(-10.0, "Website", "JA→EN", accepted=True)
 
             assert manager.session.jobs_found == 1
             # Should either reject or accept the value
@@ -296,6 +304,7 @@ class TestStatsManagerEdgeCases:
             manager = StatsManager(stats_path=path)
 
             manager.record_job(999999.99, "RSS", "JA→EN", accepted=True)
+            manager.record_job(999999.99, "Website", "JA→EN", accepted=True)
 
             assert manager.session.jobs_found == 1
             assert manager.session.total_value == 999999.99
@@ -318,6 +327,7 @@ class TestStatsManagerEdgeCases:
             manager = StatsManager(stats_path=path)
 
             manager.record_job(10.0, "RSS", "", accepted=True)
+            manager.record_job(10.0, "Website", "", accepted=True)
 
             assert manager.session.jobs_found == 1
             # Should handle empty language pair gracefully
@@ -335,6 +345,8 @@ class TestStatsManagerReset:
             # Record some jobs
             manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
             manager.record_job(20.0, "RSS", "EN→JA", accepted=False)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
+            manager.record_job(20.0, "Website", "EN→JA", accepted=False)
 
             assert manager.session.jobs_found == 2
 
@@ -380,6 +392,7 @@ class TestStatsManagerConcurrency:
                 manager.record_job(
                     float(i),
                     "RSS" if i % 2 == 0 else "WebSocket",
+                    "Website" if i % 2 == 0 else "WebSocket",
                     "JA→EN" if i % 3 == 0 else "EN→JA",
                     accepted=(i % 2 == 0),
                 )
@@ -398,6 +411,7 @@ class TestStatsManagerExport:
             manager = StatsManager(stats_path=path)
 
             manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
             manager.save()
 
             # Read and verify JSON format
@@ -413,6 +427,7 @@ class TestStatsManagerExport:
             manager = StatsManager(stats_path=path)
 
             manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
             manager.hourly_counts[12] = 5
             manager.save()
 

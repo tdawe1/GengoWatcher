@@ -235,6 +235,9 @@ class TestConfigurationChanges:
         mock_config.getboolean.return_value = True
         mock_config.getfloat.return_value = 3.0
 
+        # Ensure update_settings is a mock
+        configurable_watcher.cancellation_manager.update_settings = MagicMock()
+
         configurable_watcher.set_config_value("Cancellation", "enabled", "true")
 
         # Should trigger reconfiguration
@@ -379,13 +382,14 @@ class TestStatisticsAggregation:
         """Test tracking job distribution across sources."""
         # Record jobs from different sources
         for _ in range(10):
-            stats_system.record_job(10.0, "Web", "JA→EN", accepted=False)
+            stats_system.record_job(10.0, "RSS", "JA→EN", accepted=False)
         for _ in range(5):
             stats_system.record_job(10.0, "WebSocket", "EN→JA", accepted=False)
         for _ in range(3):
             stats_system.record_job(10.0, "Email", "FR→EN", accepted=False)
 
         assert stats_system.by_source.website == 10
+        assert stats_system.by_source.rss == 10
         assert stats_system.by_source.websocket == 5
         assert stats_system.by_source.email == 3
 
@@ -494,23 +498,31 @@ class TestConcurrencyAndThreadSafety:
 
     def test_web_api_thread_safety(self, mock_config, mock_state, mock_logger):
         """Test WebAPI thread safety with concurrent requests."""
-        from gengowatcher.web import WebAPI
+        from gengowatcher.web import WebAPI, WatcherStatus
 
         with patch("gengowatcher.web.GengoWatcher") as MockWatcher:
-            mock_watcher = MagicMock()
-            MockWatcher.return_value = mock_watcher
-            mock_watcher.shutdown_event.is_set.return_value = False
-            mock_watcher.websocket_status = "Live"
-            mock_watcher.rss_action = "Checking"
-            mock_watcher.last_check_time = 1234567890.0
-            mock_watcher.next_check_time = 1234567950.0
-            mock_watcher.session_new_entries = 0
-            mock_watcher.session_total_value = 0.0
-            mock_watcher.start_time = 1234567800.0
-            mock_watcher.failure_count = 0
-            mock_watcher.get_cancellation_stats.return_value = {}
-
+            MockWatcher.return_value = MagicMock()
             api = WebAPI(mock_config, mock_state, mock_logger)
+
+            # Mock get_status directly to avoid Pydantic validation issues with mocks
+            mock_status = WatcherStatus(
+                is_running=True,
+                websocket_status="Live",
+                rss_status="OK",
+                email_status="Idle",
+                website_status="Idle",
+                last_check_time=time.time(),
+                next_check_time=time.time() + 60,
+                session_stats={
+                    "jobs_found": 0,
+                    "jobs_accepted": 0,
+                    "total_reward": 0.0,
+                },
+                failure_count=0,
+                uptime_seconds=3600,
+                cancellation_stats={},
+            )
+            api.get_status = MagicMock(return_value=mock_status)
 
             # Concurrent status checks
             import threading

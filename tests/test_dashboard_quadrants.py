@@ -4,7 +4,12 @@ import pytest
 from unittest.mock import MagicMock
 from textual.app import App, ComposeResult
 
-from gengowatcher.ui_textual import ActivityPreview, JobsPreview, ConfigPreview
+from gengowatcher.ui_textual import (
+    ActivityPreview,
+    JobsPreview,
+    ConfigPreview,
+    JobsPanel,
+)
 
 
 class ActivityPreviewTestApp(App):
@@ -30,7 +35,15 @@ class ConfigPreviewTestApp(App):
         yield ConfigPreview(self._config)
 
 
-@pytest.mark.asyncio
+class JobsPanelTestApp(App):
+    def __init__(self, state):
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield JobsPanel(self._state)
+
+
 async def test_activity_preview_has_log():
     """ActivityPreview should have a RichLog widget."""
     app = ActivityPreviewTestApp()
@@ -85,7 +98,7 @@ def test_config_preview_constants():
     assert "Watcher" in ConfigPreview.SECTION_ORDER
     assert "WebSocket" in ConfigPreview.SECTION_ORDER
     assert "AutoAccept" in ConfigPreview.SECTION_ORDER
-    assert len(ConfigPreview.SECTION_ORDER) >= 3
+    assert len(ConfigPreview.SECTION_ORDER) == 13
 
 
 @pytest.mark.asyncio

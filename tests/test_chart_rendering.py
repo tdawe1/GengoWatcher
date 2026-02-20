@@ -61,7 +61,7 @@ def test_render_chart_uses_fractional_blocks():
     # Create values that should produce fractional blocks
     values = [0.5, 1.0, 1.5, 2.0, 2.5]
     result = _render_chart(values, width=5, height=3)
-
+    
     # The result should contain characters from BAR_CHARS
     for char in result:
         if char != "\n":
@@ -95,6 +95,7 @@ def test_render_chart_all_zeros():
     result = _render_chart(values, width=5, height=3)
     lines = result.split("\n")
 
+    
     # All lines should be mostly empty (spaces or minimal blocks)
     assert len(lines) == 3
     for line in lines:
@@ -107,6 +108,7 @@ def test_render_chart_single_value():
     result = _render_chart(values, width=5, height=3)
     lines = result.split("\n")
 
+    
     assert len(lines) == 3
     # First column should show the value, rest should be empty
     assert lines[-1][0] in BAR_CHARS  # Bottom line, first column should have a block

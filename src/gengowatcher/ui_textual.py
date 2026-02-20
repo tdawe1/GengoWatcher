@@ -11,7 +11,7 @@ import logging
 import re
 import time
 from collections import deque
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -204,6 +204,28 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
     return "\n".join(lines)
 
 
+def _parse_job_title_fallback(title: Any) -> tuple[str, str]:
+    """Fallback parser for language pair and word count from job title."""
+
+    default_pair = "??→??"
+    default_words = "0"
+    if not title:
+        return default_pair, default_words
+
+    text = str(title)
+    pair_match = re.search(
+        r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", text, re.IGNORECASE
+    )
+    if pair_match:
+        pair = f"{pair_match.group(1).upper()}→{pair_match.group(2).upper()}"
+    else:
+        pair = default_pair
+
+    words_match = re.search(r"\b(\d{1,6})\s*words?\b", text, re.IGNORECASE)
+    words = words_match.group(1) if words_match else default_words
+    return pair, words
+
+
 # =============================================================================
 # Widgets
 # =============================================================================
@@ -250,7 +272,9 @@ class TitleBar(Static):
         try:
             self.query_one("#clock", Static).update(now.strftime("%H:%M:%S"))
         except NoMatches:
-            pass  # Widget not mounted yet
+            logging.getLogger(__name__).debug(
+                "TitleBar.update_clock: widget not mounted yet"
+            )
 
         # Session timer
         try:
@@ -267,6 +291,18 @@ class TitleBar(Static):
                 )
             except NoMatches:
                 pass  # Widget not mounted yet
+            watcher = getattr(app, "watcher", None)
+            if watcher:
+                elapsed = int(time.time() - watcher.start_time)
+                h, m = divmod(elapsed // 60, 60)
+                try:
+                    self.query_one("#session-timer", Static).update(
+                        f"Session: {h}h {m:02d}m"
+                    )
+                except NoMatches:
+                    pass  # Widget not mounted yet
+        except Exception:
+            pass  # app might not be ready
 
 
 class MetricCard(Static):
@@ -296,7 +332,9 @@ class MetricCard(Static):
         try:
             self.query_one(f"#val-{self.label.lower()}", Static).update(value)
         except NoMatches:
-            pass  # Widget not mounted yet
+            logging.getLogger(__name__).debug(
+                "MetricCard.update_value: metric value widget not mounted yet"
+            )
 
 
 class MetricsRow(Horizontal):
@@ -305,6 +343,10 @@ class MetricsRow(Horizontal):
     def __init__(self, state: "AppState", **kwargs):
         super().__init__(**kwargs)
         self.state = state
+
+    def on_mount(self) -> None:
+        """Start periodic metrics refresh."""
+        self.set_interval(1.0, self.refresh_metrics)
 
     def compose(self) -> ComposeResult:
         yield MetricCard("Found", "▲", id="card-found", classes="found")
@@ -316,31 +358,31 @@ class MetricsRow(Horizontal):
     def refresh_metrics(self) -> None:
         if not self.state:
             return
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total_value = sum(j.get("reward", 0) for j in jobs)
+        try:
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total_value = sum(j.get("reward", 0) for j in jobs)
 
-        # Rate calculation using session duration
-        session_start = getattr(self.state, "session_start", None)
-        if session_start:
-            elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
-        else:
-            elapsed_hours = 1.0  # Default to 1 hour if no session start
-        rate = found / elapsed_hours
+            # Rate calculation using session duration
+            session_start = getattr(self.state, "session_start", None)
+            if session_start:
+                elapsed_hours = max((time.time() - session_start) / 3600, 0.01)
+            else:
+                elapsed_hours = 1.0  # Default to 1 hour if no session start
+            rate = found / elapsed_hours
 
-        updates = {
-            "#card-found": str(found),
-            "#card-accepted": str(accepted),
-            "#card-value": f"${total_value:.2f}",
-            "#card-rate": f"{rate:.1f}/hr",
-            "#card-today": f"${total_value:.2f}",
-        }
-        for selector, value in updates.items():
-            try:
-                self.query_one(selector, MetricCard).update_value(value)
-            except NoMatches:
-                pass  # Widget not mounted yet
+            self.query_one("#card-found", MetricCard).update_value(str(found))
+            self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
+            self.query_one("#card-value", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+            self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
+            self.query_one("#card-today", MetricCard).update_value(
+                f"${total_value:.2f}"
+            )
+        except NoMatches:
+            pass
 
 
 class StatusIndicator(Static):
@@ -656,6 +698,8 @@ class JobsPreview(DashboardQuadrant):
         yield DataTable(id="jobs-table")
 
     def on_mount(self):
+        """Initialize table columns and start periodic refresh."""
+        self.set_interval(2.0, self.refresh_jobs)
         try:
             dt = self.query_one(DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$")
@@ -677,8 +721,16 @@ class JobsPreview(DashboardQuadrant):
             jobs = self.state.get_recent_jobs(limit=10)
             for job in jobs:
                 job_id = str(job.get("id", "N/A"))[:8]
-                pair = job.get("lang_pair", "??→??")
-                words = str(job.get("word_count", job.get("words", 0)))
+                fallback_pair, fallback_words = _parse_job_title_fallback(
+                    job.get("title", "")
+                )
+                pair = job.get("lang_pair") or fallback_pair
+                word_count = job.get("word_count")
+                if word_count is None:
+                    word_count = job.get("words")
+                if word_count is None:
+                    word_count = fallback_words
+                words = str(word_count)
                 reward = f"${job.get('reward', 0):.2f}"
                 dt.add_row(job_id, pair, words, reward)
         except NoMatches:
@@ -847,29 +899,31 @@ class ConfigPreview(DashboardQuadrant):
         key_lower = key.lower()
         return any(s in key_lower for s in self.SENSITIVE_KEYS)
 
-    def _mask_value(self, value: str) -> str:
+    def _mask_value(self, value: object) -> str:
         """Mask a sensitive value, showing only first/last chars."""
-        if not value or len(str(value)) < 4:
+        if not value or len(str(value)) <= 4:
             return "****"
         val_str = str(value)
         return f"{val_str[:2]}...{val_str[-2:]}"
 
     def _format_value(self, key: str, value) -> str:
-        """Format a config value for display."""
-        if self._is_sensitive(key) and value:
-            formatted = self._mask_value(value)
-        elif isinstance(value, bool):
-            formatted = "✓" if value else "✗"
-        elif isinstance(value, list):
-            formatted = ", ".join(str(v) for v in value)
-        elif isinstance(value, float):
-            formatted = f"{value:.2f}" if value != int(value) else str(int(value))
-        else:
-            formatted = str(value) if value else "—"
+        """Format a config value for display.
 
-        if len(formatted) > self.MAX_VALUE_LENGTH:
-            return formatted[: self.MAX_VALUE_LENGTH_SHORT] + "..."
-        return formatted
+        Only None or empty string render as em dash. Numeric zero is preserved.
+        """
+        if self._is_sensitive(key) and value:
+            return self._mask_value(value)
+        if isinstance(value, bool):
+            return "✓" if value else "✗"
+        if isinstance(value, list):
+            if not value:
+                return "—"
+            return ", ".join(str(v) for v in value)
+        if isinstance(value, float):
+            return f"{value:.2f}" if value != int(value) else str(int(value))
+        if value is None or value == "":
+            return "—"
+        return str(value)
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
@@ -879,9 +933,14 @@ class ConfigPreview(DashboardQuadrant):
         if not callable(list_all):
             # Gracefully handle cases where config is a mock or non-AppConfig without list_all()
             return text
-        all_config = list_all()
+        all_config = cast(dict[str, dict[str, Any]], list_all())
 
-        for section in self.SECTION_ORDER:
+        # Render known sections first in preferred order, then any additional sections
+        sections_to_render = list(self.SECTION_ORDER) + [
+            s for s in all_config if s not in self.SECTION_ORDER
+        ]
+
+        for section in sections_to_render:
             if section not in all_config:
                 continue
             options = all_config[section]
@@ -908,12 +967,12 @@ class ConfigPreview(DashboardQuadrant):
                 text.append(f"  {key}: ", style="#727169")
 
                 # Value styling based on type/content
-                if isinstance(value, bool):
+                if self._is_sensitive(key):
+                    text.append(formatted_value, style="#957FB8")
+                elif isinstance(value, bool):
                     text.append(
                         formatted_value, style="#98BB6C" if value else "#C34043"
                     )
-                elif self._is_sensitive(key):
-                    text.append(formatted_value, style="#957FB8")
                 elif isinstance(value, (int, float)):
                     text.append(formatted_value, style="#D27E99")
                 else:
@@ -938,27 +997,27 @@ class SessionStats(DashboardQuadrant):
             yield Static("Accepted: 0", id="stat-accepted")
             yield Static("Value: $0.00", id="stat-value")
 
+    def on_mount(self) -> None:
+        """Start periodic stats refresh."""
+        self.set_interval(1.0, self.refresh_stats)
+
     def refresh_stats(self):
         if not self.watcher or not self.state:
             return
-        elapsed = int(time.time() - self.watcher.start_time)
-        h, m = divmod(elapsed // 60, 60)
-        jobs = self.state.get_recent_jobs(limit=1000)
-        found = len(jobs)
-        accepted = sum(1 for j in jobs if j.get("accepted", False))
-        total = sum(j.get("reward", 0) for j in jobs)
+        try:
+            elapsed = int(time.time() - self.watcher.start_time)
+            h, m = divmod(elapsed // 60, 60)
+            jobs = self.state.get_recent_jobs(limit=1000)
+            found = len(jobs)
+            accepted = sum(1 for j in jobs if j.get("accepted", False))
+            total = sum(j.get("reward", 0) for j in jobs)
 
-        updates = {
-            "#stat-duration": f"Duration: {h}h {m:02d}m",
-            "#stat-found": f"Found: {found}",
-            "#stat-accepted": f"Accepted: {accepted}",
-            "#stat-value": f"Value: ${total:.2f}",
-        }
-        for selector, value in updates.items():
-            try:
-                self.query_one(selector, Static).update(value)
-            except NoMatches:
-                pass  # Widget not mounted yet
+            self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
+            self.query_one("#stat-found", Static).update(f"Found: {found}")
+            self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
+            self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
+        except NoMatches:
+            pass
 
 
 class SourcesBreakdown(DashboardQuadrant):
@@ -969,7 +1028,13 @@ class SourcesBreakdown(DashboardQuadrant):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        yield Static("WS: 0%\nEmail: 0%\nWeb: 0%\nRSS: 0%", id="sources-content")
+        yield Static(
+            "WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%", id="sources-content"
+        )
+
+    def on_mount(self) -> None:
+        """Start periodic sources refresh."""
+        self.set_interval(5.0, self.refresh_sources)
 
     def refresh_sources(self):
         """Refresh sources breakdown with job source statistics."""
@@ -980,18 +1045,25 @@ class SourcesBreakdown(DashboardQuadrant):
             total = len(jobs) if jobs else 1  # Avoid division by zero
 
             # Count jobs by source
-            ws_count = sum(1 for j in jobs if j.get("source") == "websocket")
-            email_count = sum(1 for j in jobs if j.get("source") == "email")
-            web_count = sum(1 for j in jobs if j.get("source") == "web")
-            rss_count = sum(1 for j in jobs if j.get("source") == "rss")
+            counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0, "unknown": 0}
+            for job in jobs:
+                bucket = _normalize_source(job.get("source"))
+                counts[bucket] += 1
 
             # Calculate percentages
-            ws_pct = (ws_count / total) * 100 if total > 0 else 0
-            email_pct = (email_count / total) * 100 if total > 0 else 0
-            web_pct = (web_count / total) * 100 if total > 0 else 0
-            rss_pct = (rss_count / total) * 100 if total > 0 else 0
+            ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
+            email_pct = (counts["email"] / total) * 100 if total > 0 else 0
+            website_pct = (counts["website"] / total) * 100 if total > 0 else 0
+            rss_pct = (counts["rss"] / total) * 100 if total > 0 else 0
+            unknown_pct = (counts["unknown"] / total) * 100 if total > 0 else 0
 
-            content = f"WS: {ws_pct:.0f}%\nEmail: {email_pct:.0f}%\nWeb: {web_pct:.0f}%\nRSS: {rss_pct:.0f}%"
+            content = (
+                f"WS: {ws_pct:.0f}%\n"
+                f"Email: {email_pct:.0f}%\n"
+                f"Website: {website_pct:.0f}%\n"
+                f"RSS: {rss_pct:.0f}%\n"
+                f"Unknown: {unknown_pct:.0f}%"
+            )
             self.query_one("#sources-content", Static).update(content)
         except NoMatches:
             pass  # Widget not mounted yet
@@ -1041,12 +1113,68 @@ class StatsPanel(Static):
             alltime = self.stats.all_time
             alltime_text = (
                 f"Total Jobs: {alltime.total_jobs}\n"
-                f"Total Accepted: {alltime.total_sessions}\n"
+                f"Total Accepted: {alltime.total_jobs_accepted}\n"
                 f"Total Value: ${alltime.total_value:.2f}"
             )
             self.query_one("#stats-alltime-content", Static).update(alltime_text)
         except NoMatches:
             pass  # Widget not mounted yet
+
+
+class JobsPanel(Static):
+    """Full jobs panel for the Jobs tab with detailed job listing."""
+
+    def __init__(self, state: "AppState", **kwargs):
+        super().__init__(**kwargs)
+        self.state = state
+
+    def on_mount(self):
+        """Initialize the jobs table with columns."""
+        try:
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.add_columns(
+                "ID", "Lang Pair", "Words", "Reward", "Source", "Status", "Time"
+            )
+            dt.cursor_type = "row"
+        except NoMatches:
+            logging.getLogger(__name__).debug(
+                "JobsPanel.on_mount: full jobs table not yet mounted"
+            )
+        self.refresh_jobs()
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="jobs-table-full")
+
+    def refresh_jobs(self):
+        """Refresh the full jobs table with all recent jobs."""
+        if not self.state:
+            return
+        try:
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.clear()
+            jobs = self.state.get_recent_jobs(limit=100)
+            for job in jobs:
+                job_id = str(job.get("id", "N/A"))[:12]
+                fallback_pair, fallback_words = _parse_job_title_fallback(
+                    job.get("title", "")
+                )
+                pair = job.get("lang_pair") or fallback_pair
+                word_count = job.get("word_count")
+                if word_count is None:
+                    word_count = job.get("words")
+                if word_count is None:
+                    word_count = fallback_words
+                words = str(word_count)
+                reward = f"${job.get('reward', 0):.2f}"
+                source = job.get("source", "unknown")
+                status = "✓" if job.get("accepted", False) else "○"
+                timestamp_raw = job.get("timestamp", job.get("found_at"))
+                timestamp = _format_timestamp(timestamp_raw)
+                dt.add_row(job_id, pair, words, reward, source, status, timestamp)
+        except NoMatches:
+            logging.getLogger(__name__).debug(
+                "JobsPanel.refresh_jobs: full jobs table missing during refresh"
+            )
 
 
 class ChartsPanel(Static):
@@ -1085,7 +1213,11 @@ class ChartsPanel(Static):
             value_text = self._render_value_trend()
             self.query_one("#chart-value", Static).update(value_text)
         except NoMatches:
-            pass
+            # Chart widgets may not be present yet (e.g., during initial layout);
+            # safely ignore missing targets when refreshing charts.
+            logging.getLogger(__name__).debug(
+                "ChartsPanel.refresh_charts: chart widgets not found; skipping update"
+            )
 
     def _render_hourly_chart(self) -> Text:
         """Render hourly job distribution chart."""
@@ -1115,35 +1247,26 @@ class ChartsPanel(Static):
             return text
 
         jobs = self.state.get_recent_jobs(limit=1000)
-        total = len(jobs) if jobs else 1
-
-        sources = {"websocket": 0, "email": 0, "web": 0, "rss": 0, "unknown": 0}
+        sources = {key: 0 for key in SOURCE_BUCKET_CONFIG}
         for job in jobs:
-            src = job.get("source", "unknown")
-            if src in sources:
-                sources[src] += 1
-            else:
-                sources["unknown"] += 1
+            bucket = _normalize_source(job.get("source"))
+            sources[bucket] += 1
 
+        total = sum(sources.values()) or 1
         max_count = max(sources.values()) if sources else 1
-        colors = {
-            "websocket": "#957FB8",
-            "email": "#FFA066",
-            "web": "#7E9CD8",
-            "rss": "#7AA89F",
-            "unknown": "#727169",
-        }
+        if max_count == 0:
+            max_count = 1
 
-        for source, count in sources.items():
+        for bucket_key, bucket in SOURCE_BUCKET_CONFIG.items():
+            count = sources.get(bucket_key, 0)
             pct = (count / total) * 100 if total > 0 else 0
             bar_width = int((count / max_count) * 15) if max_count > 0 else 0
             bar = "█" * bar_width
             bar_padded = bar.ljust(15, "░")
-            text.append(f"{source:10s} ", style="#737c73")
-            text.append(
-                bar_padded,
-                style=colors.get(source, "#727169") if count > 0 else "#393836",
-            )
+            label = bucket["label"]
+            color = bucket["color"] if count > 0 else "#393836"
+            text.append(f"{label:10s} ", style="#737c73")
+            text.append(bar_padded, style=color)
             text.append(f" {count:4d} ({pct:5.1f}%)\n", style="#737c73")
         return text
 
@@ -1159,10 +1282,11 @@ class ChartsPanel(Static):
             text.append("No jobs recorded yet")
             return text
 
-        # Calculate cumulative value over last N jobs
+        # Calculate cumulative value over the most recent 20 jobs
         cumulative = 0
         values = []
-        for job in reversed(jobs[-20:]):  # Last 20 jobs
+        recent_jobs = jobs[:20]
+        for job in reversed(recent_jobs):
             cumulative += job.get("reward", 0)
             values.append(cumulative)
 
@@ -1211,35 +1335,73 @@ class GengoWatcherApp(App):
         # Setup logging redirection
         self._setup_logging()
 
+        # Register callback for when new jobs are detected
+        self.watcher.on_job_added_callback = self._on_job_added_from_thread
+
+    def _on_job_added_from_thread(self, _job_data: dict):
+        """Called from watcher thread when a new job is added."""
+        # Use call_from_thread to safely update UI from watcher thread
+        self.call_from_thread(self._refresh_all_panels)
+
+    def _refresh_all_panels(self):
+        """Refresh relevant data panels when a new job is detected."""
+        # Determine which tab is currently active so we only refresh visible panels.
+        try:
+            tabbed_content = self.query_one(TabbedContent)
+            active_tab_id = tabbed_content.active
+        except NoMatches:
+            # If TabbedContent can't be found, fall back to refreshing dashboard widgets.
+            active_tab_id = None
+
+        # Widgets that live on the dashboard tab.
+        dashboard_widgets = [
+            (MetricsRow, "refresh_metrics"),
+            (JobsPreview, "refresh_jobs"),
+            (HourlyActivity, "refresh_hourly"),
+            (SessionStats, "refresh_stats"),
+        ]
+
+        widgets_to_refresh = []
+
+        # When no active tab is known, or when the dashboard is active,
+        # refresh the dashboard widgets to keep the main view up to date.
+        if active_tab_id in (None, "dashboard"):
+            widgets_to_refresh.extend(dashboard_widgets)
+
+        # Only refresh widgets belonging to the currently active non-dashboard tab.
+        if active_tab_id == "jobs":
+            widgets_to_refresh.append((JobsPanel, "refresh_jobs"))
+        elif active_tab_id == "charts":
+            widgets_to_refresh.append((ChartsPanel, "refresh_charts"))
+        elif active_tab_id == "stats":
+            widgets_to_refresh.append((StatsPanel, "refresh_stats"))
+
+        for widget_class, method_name in widgets_to_refresh:
+            self._refresh_widget(widget_class, method_name)
+
+    def _refresh_widget(self, widget_class, method_name: str) -> None:
+        """Attempt to refresh a specific widget and log when it's missing."""
+        try:
+            widget = self.query_one(widget_class)
+        except NoMatches:
+            logging.getLogger(__name__).debug(
+                "Widget %s missing while refreshing %s",
+                widget_class.__name__,
+                method_name,
+            )
+            return
+
+        method = getattr(widget, method_name, None)
+        if callable(method):
+            method()
+        else:
+            logging.getLogger(__name__).warning(
+                "Widget %s has no method %s", widget_class.__name__, method_name
+            )
+
     def _setup_logging(self):
         handler = TextualLogHandler(self)
         logging.getLogger().addHandler(handler)
-
-    def _refresh_widget(self, selector_or_type, method_name: str) -> None:
-        try:
-            widget = self.query_one(selector_or_type)
-        except NoMatches:
-            return
-        method = getattr(widget, method_name, None)
-        if callable(method):
-            try:
-                method()
-            except Exception:
-                pass
-
-    @on(TabbedContent.TabActivated)
-    def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
-        pane_id = event.pane.id
-        if pane_id == "jobs":
-            self._refresh_widget(JobsPanel, "refresh_jobs")
-        elif pane_id == "activity":
-            self._refresh_widget("#activity-log-full", "refresh")
-        elif pane_id == "output":
-            self._refresh_widget("#output-log", "refresh")
-        elif pane_id == "charts":
-            self._refresh_widget(ChartsPanel, "refresh_charts")
-        elif pane_id == "stats":
-            self._refresh_widget(StatsPanel, "refresh_stats")
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
@@ -1279,97 +1441,8 @@ class GengoWatcherApp(App):
                 yield StatsPanel(stats=self.stats)
 
         # 3. Input & Footer
-        yield Input(placeholder="Type a command... (try: help, check, pause, stats, quit)", id="command-input")
+        yield Input(placeholder="> help_")
         yield Footer()
-
-    @on(Input.Submitted, "#command-input")
-    async def on_command_submitted(self, event: Input.Submitted) -> None:
-        """Handle command input from the user."""
-        command = event.value.strip().lower()
-        if not command:
-            return
-
-        # Clear the input
-        event.input.value = ""
-
-        # Log the command
-        logging.getLogger(__name__).info(f"Command: {command}")
-
-        # Process commands
-        if command in ("quit", "exit", "q"):
-            self.exit()
-        elif command == "help" or command == "?":
-            self._show_help()
-        elif command == "check" or command == "c":
-            if self.watcher:
-                self.watcher.trigger_rss_check()
-                logging.getLogger(__name__).info("RSS check triggered")
-        elif command == "pause" or command == "p":
-            if self.watcher:
-                if self.watcher.paused:
-                    self.watcher.resume()
-                    logging.getLogger(__name__).info("Resumed monitoring")
-                else:
-                    self.watcher.pause()
-                    logging.getLogger(__name__).info("Paused monitoring")
-        elif command == "stats":
-            self._show_stats()
-        elif command == "jobs":
-            # Switch to Jobs tab
-            self.query_one(TabbedContent).active = "jobs"
-        elif command == "charts":
-            # Switch to Charts tab
-            self.query_one(TabbedContent).active = "charts"
-        elif command.startswith("test"):
-            self._handle_test_command(command)
-        else:
-            logging.getLogger(__name__).warning(f"Unknown command: {command}")
-            self._show_help()
-
-    def _show_help(self) -> None:
-        """Show help message in the activity log."""
-        help_text = """
-Available commands:
-  help, ?          - Show this help
-  check, c          - Trigger RSS check
-  pause, p          - Pause/resume monitoring
-  stats             - Show statistics
-  jobs              - Switch to Jobs tab
-  charts            - Switch to Charts tab
-  quit, exit, q     - Exit the application
-  test <cmd>        - Run test (ping, notify)
-        """
-        logging.getLogger(__name__).info(help_text.strip())
-
-    def _show_stats(self) -> None:
-        """Show current statistics."""
-        if self.stats:
-            session = self.stats.session
-            logging.getLogger(__name__).info(
-                f"Stats - Found: {session.jobs_found}, "
-                f"Accepted: {session.jobs_accepted}, "
-                f"Value: ${session.total_value:.2f}"
-            )
-        if self.state:
-            job_count = self.state.get_job_count()
-            logging.getLogger(__name__).info(f"Stored jobs: {job_count}")
-
-    def _handle_test_command(self, command: str) -> None:
-        """Handle test commands."""
-        parts = command.split()
-        if len(parts) < 2:
-            logging.getLogger(__name__).warning("Test command requires an argument (ping, notify)")
-            return
-
-        test_type = parts[1]
-        if test_type == "ping":
-            logging.getLogger(__name__).info("Ping test - pong!")
-        elif test_type == "notify":
-            if self.watcher:
-                self.watcher.send_notification("Test notification", "This is a test")
-                logging.getLogger(__name__).info("Test notification sent")
-        else:
-            logging.getLogger(__name__).warning(f"Unknown test command: {test_type}")
 
     def call_from_thread(self, func, *args, **kwargs):
         # The base App.call_from_thread will be used, but we need to ensure we don't block
@@ -1483,6 +1556,16 @@ class TextualLogHandler(logging.Handler):
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
+
+    def write_log(self, msg: str, level: int = logging.INFO):
+        colored_text = self._colorize_message(msg, level)
+        # Write to dashboard activity log
+        self._write_to_log("#activity-log", colored_text)
+        # Also write to full activity log tab
+        self._write_to_log("#activity-log-full", colored_text)
+        # Also write to output log for system output
+        if level >= logging.WARNING:
+            self._write_to_log("#output-log", colored_text)
 
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""

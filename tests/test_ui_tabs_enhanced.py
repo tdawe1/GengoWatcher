@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock
 import tempfile
 import pathlib
+from textual.css.query import NoMatches
 
 
 def create_mock_app():
@@ -58,18 +59,16 @@ def create_mock_app():
     mock_state.get_recent_jobs.return_value = []
     mock_state.session_start = 0
 
-    temp_dir = tempfile.TemporaryDirectory()
-    stats_path = pathlib.Path(temp_dir.name) / "stats.json"
-    mock_stats = StatsManager(stats_path=stats_path)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stats_path = pathlib.Path(tmpdir) / "stats.json"
+        mock_stats = StatsManager(stats_path=stats_path)
 
-    app = GengoWatcherApp(
+    return GengoWatcherApp(
         watcher=mock_watcher,
         config=mock_config,
         state=mock_state,
         stats=mock_stats,
     )
-    app._temp_dir = temp_dir
-    return app
 
 
 @pytest.mark.asyncio
