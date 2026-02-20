@@ -26,6 +26,8 @@ def test_stats_manager_record_job():
         assert manager.session.jobs_found == 1
         assert manager.session.jobs_accepted == 1
         assert manager.session.total_value == 10.0
+        assert manager.all_time.total_jobs == 1
+        assert manager.all_time.total_jobs_accepted == 1
         assert manager.by_source.websocket == 1
         assert manager.by_language["JA→EN"] == 1
 
@@ -44,6 +46,7 @@ def test_stats_manager_persistence():
         # Second manager - reload
         manager2 = StatsManager(stats_path=path)
         assert manager2.all_time.total_jobs == 100
+        assert manager2.all_time.total_jobs_accepted == 1
         assert manager2.by_source.email == 1
 
 
@@ -214,7 +217,7 @@ class TestStatsManagerPersistence:
             path = pathlib.Path(tmpdir) / "stats.json"
 
             manager1 = StatsManager(stats_path=path)
-            manager1.record_job(100.0, "RSS", "JA→EN", accepted=True)
+            manager1.record_job(100.0, "Website", "JA→EN", accepted=True)
             manager1.record_job(200.0, "WebSocket", "EN→JA", accepted=False)
             manager1.save()
 
@@ -243,7 +246,7 @@ class TestStatsManagerPersistence:
             path = pathlib.Path(tmpdir) / "stats.json"
 
             manager = StatsManager(stats_path=path)
-            manager.record_job(50.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(50.0, "Website", "JA→EN", accepted=True)
             manager.save()
 
             assert path.exists()
@@ -271,7 +274,7 @@ class TestStatsManagerEdgeCases:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(0.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(0.0, "Website", "JA→EN", accepted=True)
 
             assert manager.session.jobs_found == 1
             assert manager.session.total_value == 0.0
@@ -283,7 +286,7 @@ class TestStatsManagerEdgeCases:
             manager = StatsManager(stats_path=path)
 
             # Negative rewards shouldn't happen, but test handling
-            manager.record_job(-10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(-10.0, "Website", "JA→EN", accepted=True)
 
             assert manager.session.jobs_found == 1
             # Should either reject or accept the value
@@ -295,7 +298,7 @@ class TestStatsManagerEdgeCases:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(999999.99, "RSS", "JA→EN", accepted=True)
+            manager.record_job(999999.99, "Website", "JA→EN", accepted=True)
 
             assert manager.session.jobs_found == 1
             assert manager.session.total_value == 999999.99
@@ -317,7 +320,7 @@ class TestStatsManagerEdgeCases:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(10.0, "RSS", "", accepted=True)
+            manager.record_job(10.0, "Website", "", accepted=True)
 
             assert manager.session.jobs_found == 1
             # Should handle empty language pair gracefully
@@ -333,8 +336,8 @@ class TestStatsManagerReset:
             manager = StatsManager(stats_path=path)
 
             # Record some jobs
-            manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
-            manager.record_job(20.0, "RSS", "EN→JA", accepted=False)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
+            manager.record_job(20.0, "Website", "EN→JA", accepted=False)
 
             assert manager.session.jobs_found == 2
 
@@ -379,7 +382,7 @@ class TestStatsManagerConcurrency:
             for i in range(100):
                 manager.record_job(
                     float(i),
-                    "RSS" if i % 2 == 0 else "WebSocket",
+                    "Website" if i % 2 == 0 else "WebSocket",
                     "JA→EN" if i % 3 == 0 else "EN→JA",
                     accepted=(i % 2 == 0),
                 )
@@ -397,7 +400,7 @@ class TestStatsManagerExport:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
             manager.save()
 
             # Read and verify JSON format
@@ -412,7 +415,7 @@ class TestStatsManagerExport:
             path = pathlib.Path(tmpdir) / "stats.json"
             manager = StatsManager(stats_path=path)
 
-            manager.record_job(10.0, "RSS", "JA→EN", accepted=True)
+            manager.record_job(10.0, "Website", "JA→EN", accepted=True)
             manager.hourly_counts[12] = 5
             manager.save()
 

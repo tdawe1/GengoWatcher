@@ -21,7 +21,6 @@ except ImportError:  # pragma: no cover - handled at runtime
     BeautifulSoup = None  # type: ignore
 
 from .config import AppConfig
-from .browser_detector import BrowserDetector
 
 
 class RateLimiter:
@@ -133,9 +132,6 @@ class JobAcceptanceEngine:
         # Session for HTTP requests
         self.session: Optional[aiohttp.ClientSession] = None
 
-        # Browser detector for dynamic User-Agent
-        self.browser_detector = BrowserDetector(config.list_all(), logger)
-
         # Retry settings
         self.max_retries = 3
         self.retry_delay = 2  # seconds
@@ -150,7 +146,7 @@ class JobAcceptanceEngine:
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
                 headers={
-                    "User-Agent": self.browser_detector.get_user_agent(),
+                    "User-Agent": "GengoWatcher/2.1.5",
                     "Content-Type": "application/json",
                 },
                 timeout=aiohttp.ClientTimeout(total=30),
@@ -377,7 +373,7 @@ class JobAcceptanceEngine:
 
         return {
             "Cookie": f"my_gengo_session={user_session}",
-            "User-Agent": self.browser_detector.get_user_agent(),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             "Origin": "https://gengo.com",
             "Referer": "https://gengo.com/t/jobs/status/available",
         }

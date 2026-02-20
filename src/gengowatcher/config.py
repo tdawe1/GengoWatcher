@@ -1,4 +1,6 @@
 import configparser
+if sys.platform != 'win32':
+    import fcntl
 import json
 import os
 import shutil

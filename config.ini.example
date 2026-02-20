@@ -47,7 +47,6 @@ raw = False
 max_backoff = 300
 user_agent_email = your-email@example.com
 browser_user_agent = Mozilla/5.0
-detect_browser_ua = false
 clean_close_backoff_min = 20
 clean_close_backoff_max = 45
 reconnect_jitter_max = 5
