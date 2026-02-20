@@ -19,6 +19,11 @@ wheels/
 *.egg-info/
 *.egg
 MANIFEST
+thoughts/
+archives/
+.codex/
+.slim/
+stats.json
 
 # Virtual environments
 venv/
@@ -64,6 +69,7 @@ archives/logs-*/
 
 # Temporary / Session files
 .tmp/
+.worktrees/
 
 # Legacy files
 gengo_rss_log.txt

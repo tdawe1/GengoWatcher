@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import webbrowser
+from typing import Callable, Optional
 from collections import deque
 from pathlib import Path
 
@@ -47,6 +48,11 @@ PLACEHOLDER_CONFIG_VALUES = {
 }
 
 SENSITIVE_KEYWORDS = {"password", "session", "key"}
+LANG_PAIR_REGEX = re.compile(
+    r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", re.IGNORECASE
+)
+LANG_PAIR_SPLIT_REGEX = re.compile(r"\s*(?:→|->|-|>|↔|/)\s*")
+WORD_COUNT_REGEX = re.compile(r"\b(\d{1,6})\s*words?\b", re.IGNORECASE)
 
 
 class GengoWatcher:
@@ -126,6 +132,9 @@ class GengoWatcher:
         )
         if self.config.get("Logging", "log_all_entries_enabled"):
             self._setup_csv_logging()
+
+        # Callback for UI notification when a new job is added (set by UI)
+        self.on_job_added_callback: Optional[Callable[[dict], None]] = None
 
         # Initialize job acceptance engine (without CAPTCHA support)
         self.job_acceptance_engine = JobAcceptanceEngine(
@@ -232,10 +241,10 @@ class GengoWatcher:
         self.logger.debug("Setting up CSV logging.")
         try:
             log_path_str = self.config.get("Paths", "all_entries_log")
-            if not log_path_str:
-                self.logger.error("all_entries_log path not configured")
+            if not log_path_str or not isinstance(log_path_str, (str, Path)):
+                self.logger.error("all_entries_log path not configured or invalid")
                 return
-            log_path = Path(log_path_str)
+            log_path = Path(str(log_path_str))
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._all_entries_log_file = open(
                 log_path, "a", newline="", encoding="utf-8"
@@ -341,7 +350,7 @@ class GengoWatcher:
             )
         self._all_entries_log_file.flush()
 
-    def _process_new_job(self, job_id, title, reward, url, source):
+    def _process_new_job(self, job_id, title, reward, url, source, source_meta=None):
         """Process a newly discovered job from RSS or WebSocket sources.
 
         Handles job filtering, notification, storage, and auto-acceptance logic.
@@ -353,6 +362,7 @@ class GengoWatcher:
             reward: Job reward amount in USD.
             url: URL to access the job.
             source: Source of the job discovery ("RSS" or "WebSocket").
+            source_meta: Optional metadata from the source (entry dict, websocket payload, etc.).
         """
         self.logger.debug(
             f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
@@ -383,18 +393,25 @@ class GengoWatcher:
             url=url,
         )
 
-        # Store job in state for web API access
+        lang_pair = self._derive_lang_pair(title, source_meta)
+        word_count = self._derive_word_count(title, source_meta)
+
+        # Prepare job data for storage, callbacks, and acceptance checks
+        job_data = {
+            "id": str(job_id),
+            "title": title,
+            "reward": float(reward),
+            "currency": "USD",
+            "url": url,
+            "timestamp": time.time(),
+            "source": source,
+            "lang_pair": lang_pair,
+            "word_count": word_count,
+        }
+        job_added = False
         try:
-            job_data = {
-                "id": str(job_id),
-                "title": title,
-                "reward": float(reward),
-                "currency": "USD",
-                "url": url,
-                "timestamp": time.time(),
-                "source": source,
-            }
             self.state.add_job(job_data)
+            job_added = True
         except Exception as e:
             self.logger.warning(f"Failed to store job in state: {e}")
 
@@ -429,6 +446,103 @@ class GengoWatcher:
             self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
 
         self.state.save_state()
+
+        # Notify UI that a new job was added, but only if it was stored in state
+        if self.on_job_added_callback and job_added:
+            try:
+                self.on_job_added_callback(job_data)
+            except Exception as e:
+                self.logger.debug(f"Error in job added callback: {e}")
+        elif self.on_job_added_callback and not job_added:
+            # This can happen if storing the job in state failed earlier.
+            self.logger.debug(
+                f"Skipping job added callback for job {job_id} because it was not stored in state"
+            )
+
+    def _normalize_meta(self, meta) -> dict:
+        if meta is None or not hasattr(meta, "get"):
+            return {}
+        return meta
+
+    def _pick_meta_value(self, meta: dict, keys: list[str]):
+        for key in keys:
+            value = meta.get(key)
+            if value:
+                return value
+        return None
+
+    def _format_lang_token(self, token: str) -> str:
+        if not token:
+            return ""
+        cleaned = "".join(ch for ch in str(token) if ch.isalpha())
+        if not cleaned:
+            return ""
+        if len(cleaned) == 2:
+            return cleaned.upper()
+        return cleaned[:2].upper()
+
+    def _normalize_lang_pair_string(self, value) -> str:
+        if not value:
+            return ""
+        candidate = str(value)
+        parts = LANG_PAIR_SPLIT_REGEX.split(candidate)
+        if len(parts) < 2:
+            return ""
+        left = self._format_lang_token(parts[0])
+        right = self._format_lang_token(parts[1])
+        if left and right:
+            return f"{left}→{right}"
+        return ""
+
+    def _parse_lang_pair_from_title(self, title) -> str:
+        if not title:
+            return ""
+        text = str(title)
+        primary = text.split("|")[0]
+        match = LANG_PAIR_REGEX.search(primary)
+        if match:
+            return f"{match.group(1).upper()}→{match.group(2).upper()}"
+        return self._normalize_lang_pair_string(primary)
+
+    def _derive_lang_pair(self, title, source_meta) -> str:
+        meta = self._normalize_meta(source_meta)
+        for key in ("lang_pair", "language_pair"):
+            normalized = self._normalize_lang_pair_string(meta.get(key))
+            if normalized:
+                return normalized
+
+        src = self._pick_meta_value(
+            meta, ["lc_src", "source_lang", "source_language", "source"]
+        )
+        tgt = self._pick_meta_value(
+            meta, ["lc_tgt", "target_lang", "target_language", "target"]
+        )
+        if src and tgt:
+            left = self._format_lang_token(src)
+            right = self._format_lang_token(tgt)
+            if left and right:
+                return f"{left}→{right}"
+
+        fallback = self._parse_lang_pair_from_title(title)
+        return fallback or "??→??"
+
+    def _derive_word_count(self, title, source_meta) -> int:
+        meta = self._normalize_meta(source_meta)
+        for key in ("word_count", "words"):
+            if key in meta:
+                try:
+                    return int(meta.get(key))
+                except (TypeError, ValueError):
+                    continue
+
+        text = str(title) if title else ""
+        match = WORD_COUNT_REGEX.search(text)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+        return 0
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
@@ -523,7 +637,14 @@ class GengoWatcher:
                     continue
                 job_id = int(match.group(1))
                 reward = self._extract_reward(entry)
-                self._process_new_job(job_id, title, reward, url, source="RSS")
+                self._process_new_job(
+                    job_id,
+                    title,
+                    reward,
+                    url,
+                    source="RSS",
+                    source_meta=entry,
+                )
             except (ValueError, IndexError) as e:
                 self.logger.warning(f"Error processing RSS entry {url}: {e}")
 
@@ -892,6 +1013,7 @@ class GengoWatcher:
                                             reward,
                                             url,
                                             source="WebSocket",
+                                            source_meta=job,
                                         )
                                 else:
                                     self.logger.debug(
@@ -1124,12 +1246,14 @@ class GengoWatcher:
     def _run_rss_monitor(self):
         self.logger.debug("Starting RSS monitor thread.")
         self.logger.info("RSS monitor thread started.")
+        state_updated = False
         if not self.state.last_seen_rss_link:
             if self.state.last_seen_link:
                 self.state.last_seen_rss_link = self.state.last_seen_link
                 self.logger.debug(
                     "Migrated legacy last_seen_link value to last_seen_rss_link."
                 )
+                state_updated = True
             else:
                 self.rss_action = "Priming feed"
                 initial_feed = self.fetch_rss()
@@ -1138,7 +1262,9 @@ class GengoWatcher:
                     self.state.last_seen_rss_link = first_link
                     self.state.last_seen_link = first_link
                     self.logger.info("Initial RSS feed primed successfully.")
-                    self.state.save_state()
+                    state_updated = True
+        if state_updated:
+            self.state.save_state()
 
         while not self.shutdown_event.is_set():
             is_paused = os.path.exists(self.PAUSE_FILE)

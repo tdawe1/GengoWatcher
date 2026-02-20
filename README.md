@@ -1,18 +1,13 @@
 # GengoWatcher
-
 A terminal-based monitor for Gengo translation jobs with real-time notifications.
-
 ## Features
-
 - **Real-time monitoring** via WebSocket and RSS feed
 - **Desktop notifications** with sound alerts
 - **Auto-accept jobs** matching your criteria
 - **Multiple sources** - WebSocket, RSS, email, and website scraping
 - **CAPTCHA solving** integration (2Captcha, Anti-Captcha)
 - **Modern TUI** built with Textual
-
 ## Installation
-
 ```bash
 git clone https://github.com/tdawe1/GengoWatcher.git
 cd GengoWatcher
@@ -20,42 +15,32 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
-
 ## Quick Start
-
 ```bash
 make run
 ```
-
 Or directly:
-
 ```bash
 PYTHONPATH=src python -m gengowatcher.main
 ```
-
 On first run, you'll be guided through configuration setup.
-
 ## Configuration
-Settings are stored in `config.ini`. Environment variables in `.env` (see `.env.example`) override sensitive values in `config.ini`. Key sections:
+Settings are stored in `config.ini`. Key sections:
 ```ini
 [Watcher]
 feed_url = https://your-rss-feed-url
 check_interval = 31
 min_reward = 0.0
-
 [WebSocket]
 enable_websocket = true
 user_id = 12345
 user_session = YOUR_SESSION_TOKEN
 user_key = YOUR_USER_KEY
 ```
-
 Get WebSocket credentials from your browser's DevTools:
 - **user_id** / **user_session**: Application → Cookies → gengo.com
 - **user_key**: Application → Local Storage → gengo.com → userKey
-
 ## Commands
-
 | Command | Description |
 |---------|-------------|
 | `check` | Trigger immediate RSS check |
@@ -67,6 +52,4 @@ Get WebSocket credentials from your browser's DevTools:
 | `help` | Show all commands |
 | `exit` | Save state and quit |
 
-## License
-
-MIT
+![GengoWatcher TUI Screenshot](assets/tui-screenshot.png)
