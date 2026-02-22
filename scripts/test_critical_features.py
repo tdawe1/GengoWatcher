@@ -73,7 +73,10 @@ def config():
     return config
 
 
-@pytest.fixture
+from gengowatcher.watcher import GengoWatcher
+from gengowatcher.state import AppState
+
+`@pytest.fixture`
 def state():
     """Create a test state."""
     return AppState()
