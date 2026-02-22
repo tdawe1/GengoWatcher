@@ -1,7 +1,6 @@
 # scripts/
 
 ## Responsibility
-## Responsibility
 - Host standalone CLI utilities that exercise, validate, and analyze GengoWatcher subsystems without touching the main TUI (e.g., `web_server.py`).
 - Aggregate operational telemetry (`import_historical_data.py`, `analyze_logs.py`) and capture safety/quality signals (`monitor_captcha_safety.py`, `validate_captcha_implementation.py`).
 - Provide exploratory/test runners for WebSocket interactions, cancellation flows, and critical acceptance scenarios (`test_ws_connection.py`, `websocket_scaler.py`, `demo_cancellation_workflow.py`, `run_critical_tests.py`, etc.).

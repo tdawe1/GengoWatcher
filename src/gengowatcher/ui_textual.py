@@ -985,7 +985,7 @@ class StatsPanel(Static):
             alltime = self.stats.all_time
             alltime_text = (
                 f"Total Jobs: {alltime.total_jobs}\n"
-                f"Total Accepted: {alltime.total_sessions}\n"
+                f"Total Accepted: {alltime.total_jobs_accepted}\n"
                 f"Total Value: ${alltime.total_value:.2f}"
             )
             self.query_one("#stats-alltime-content", Static).update(alltime_text)
@@ -1039,11 +1039,54 @@ class GengoWatcherApp(App):
             except Exception:
                 pass
 
+    def on_mount(self) -> None:
+        """Initialize the jobs table with columns when the app mounts."""
+        self._setup_jobs_table()
+
+    def _setup_jobs_table(self) -> None:
+        """Set up the jobs DataTable with columns."""
+        try:
+            from textual.widgets import DataTable
+            from textual.css.query import NoMatches
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.add_columns("ID", "Pair", "Words", "$$$", "Source", "Time")
+        except Exception:
+            pass  # Widget not mounted yet
+
+    def _load_jobs_into_table(self) -> None:
+        """Load current jobs from state into the jobs DataTable."""
+        if not self.state:
+            return
+        try:
+            from textual.widgets import DataTable
+            from textual.css.query import NoMatches
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.clear()
+            jobs = self.state.get_recent_jobs(limit=100)
+            for job in jobs:
+                job_id = str(job.get("id", "N/A"))[:8]
+                pair = job.get("lang_pair", "??→??")
+                words = str(job.get("word_count", job.get("words", 0)))
+                reward = f"${job.get('reward', 0):.2f}"
+                source = job.get("source", "N/A")
+                timestamp = job.get("timestamp", "")
+                if timestamp:
+                    # Truncate timestamp to just time
+                    try:
+                        ts = timestamp.split()[1] if " " in timestamp else timestamp
+                        timestamp = ts[:8]  # HH:MM:SS
+                    except:
+                        pass
+                dt.add_row(job_id, pair, words, reward, source, timestamp)
+        except Exception:
+            pass  # Widget not mounted yet
+
+
     @on(TabbedContent.TabActivated)
     def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
         pane_id = event.pane.id
         if pane_id == "jobs":
-            self._refresh_widget("#jobs-table-full", "refresh")
+            self._load_jobs_into_table()
         elif pane_id == "activity":
             self._refresh_widget("#activity-log-full", "refresh")
         elif pane_id == "output":
@@ -1095,8 +1138,8 @@ class GengoWatcherApp(App):
         yield Footer()
 
     def call_from_thread(self, func, *args, **kwargs):
-        # The base App.call_from_thread will be used, but we need to ensure we don't block
-        super().call_from_thread(func, *args, **kwargs)
+        # Delegate to the parent implementation and return its result
+        return super().call_from_thread(func, *args, **kwargs)
 
 
 class TextualLogHandler(logging.Handler):

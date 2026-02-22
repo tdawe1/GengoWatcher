@@ -310,7 +310,7 @@ class GengoAnalyzer:
 
             # Analyze patterns
             recent_captchas = [
-                e for e in captcha_events if "2025-09-17" in e
+                e for e in captcha_events if datetime.date.today().isoformat() in e
             ]  # Today's entries
             self.logger.info(f"Recent CAPTCHA events: {len(recent_captchas)}")
 

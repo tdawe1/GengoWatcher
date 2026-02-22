@@ -11,6 +11,7 @@
 - `Makefile`: Developer task shortcuts (lint/test/run utilities).
 
 ## Directory Map (Aggregated)
+
 | Directory | Responsibility Summary | Detailed Map |
 | --- | --- | --- |
 | `src/` | Core implementation for the watcher, config/state/stats, CLI/TUI, acceptance/cancellation engines, and FastAPI layer. | [View Map](src/codemap.md) |

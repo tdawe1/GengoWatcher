@@ -56,7 +56,11 @@ class BrowserDetector:
             User-Agent string for HTTP requests
         """
         # 0. Check if browser detection is disabled - early return with fallback
-        if not self.config.get("Network", {}).get("detect_browser_ua", False):
+        detect_ua_flag = self.config.get("Network", {}).get("detect_browser_ua", False)
+        # Coerce string values to boolean (config may return "true"/"false" strings)
+        if isinstance(detect_ua_flag, str):
+            detect_ua_flag = detect_ua_flag.lower() in ("1", "true", "yes", "on", "enabled")
+        if not detect_ua_flag:
             if self.logger:
                 self.logger.debug("Browser detection disabled, using fallback")
             return self._get_fallback_user_agent()
@@ -352,7 +356,7 @@ class BrowserDetector:
         elif browser_name == "Vivaldi":
             return f"Mozilla/5.0 ({platform_info}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version} Safari/537.36 Vivaldi/{version}"
         elif browser_name == "Firefox":
-            return f"Mozilla/5.0 ({platform_info}; rv:91.0) Gecko/20100101 Firefox/{version}"
+            return f"Mozilla/5.0 ({platform_info}; rv:{version}) Gecko/20100101 Firefox/{version}"
         else:
             # Fallback to Chrome-style UA
             return f"Mozilla/5.0 ({platform_info}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version} Safari/537.36"
@@ -365,7 +369,9 @@ class BrowserDetector:
             Default User-Agent for current platform
         """
         system = platform.system().lower()
-        return self.default_ua.get(system, self.default_ua["linux"])
+        # Normalize platform names to match default_ua keys
+        platform_key = {"darwin": "macos"}.get(system, system)
+        return self.default_ua.get(platform_key, self.default_ua["linux"])
 
     def clear_cache(self) -> None:
         """
