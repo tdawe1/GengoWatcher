@@ -341,7 +341,7 @@ class BrowserDetector:
 
         # Platform information
         if system == "Windows":
-            platform_info = f"Windows NT {platform.version()}; Win64; x64"
+            platform_info = "Windows NT 10.0; Win64; x64"
         elif system == "Linux":
             platform_info = "X11; Linux x86_64"
         elif system == "Darwin":  # macOS

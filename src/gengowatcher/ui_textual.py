@@ -930,7 +930,7 @@ class SourcesBreakdown(DashboardQuadrant):
             # Count jobs by source
             ws_count = sum(1 for j in jobs if j.get("source") == "websocket")
             email_count = sum(1 for j in jobs if j.get("source") == "email")
-            web_count = sum(1 for j in jobs if j.get("source") == "web")
+            web_count = sum(1 for j in jobs if j.get("source") == "website")
             rss_count = sum(1 for j in jobs if j.get("source") == "rss")
 
             # Calculate percentages
@@ -1075,7 +1075,7 @@ class GengoWatcherApp(App):
                     try:
                         ts = timestamp.split()[1] if " " in timestamp else timestamp
                         timestamp = ts[:8]  # HH:MM:SS
-                    except:
+                    except Exception:
                         pass
                 dt.add_row(job_id, pair, words, reward, source, timestamp)
         except Exception:

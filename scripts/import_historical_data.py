@@ -207,7 +207,7 @@ def main():
         reward = job["reward"]
         lang = job["lang_pair"]
 
-        hourly_counts[dt.hour] += 1
+        hourly_counts[str(dt.hour)] += 1
         daily_counts[dt.strftime("%A")] += 1
         daily_earnings[dt.strftime("%Y-%m-%d")] += reward
         by_language[lang] += 1

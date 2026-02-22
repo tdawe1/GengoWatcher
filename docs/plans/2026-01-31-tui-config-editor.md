@@ -9,6 +9,8 @@
 
 ---
 
+## Tasks
+
 ### Task 1: Add config value coercion helper
 
 **Files:**

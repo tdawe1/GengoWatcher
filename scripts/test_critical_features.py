@@ -77,9 +77,9 @@ from gengowatcher.watcher import GengoWatcher
 from gengowatcher.state import AppState
 
 @pytest.fixture
-def state():
+def state(logger):
     """Create a test state."""
-    return AppState()
+    return AppState(logger)
 
 
 @pytest.fixture
