@@ -242,14 +242,14 @@ def main():
     }
 
     # Print summary
-    print(f"\n--- Summary ---")
+    print("\n--- Summary ---")
     print(f"Total jobs: {stats['all_time']['total_jobs']}")
     print(f"Total value: ${stats['all_time']['total_value']:.2f}")
     print(f"Best day: {best_day_date} (${best_day_value:.2f})")
-    print(f"\nLanguage breakdown:")
+    print("\nLanguage breakdown:")
     for lang, count in sorted(by_language.items(), key=lambda x: -x[1])[:5]:
         print(f"  {lang}: {count}")
-    print(f"\nPeak hours:")
+    print("\nPeak hours:")
     peak_hours = sorted(hourly_counts.items(), key=lambda x: -x[1])[:3]
     for hour, count in peak_hours:
         print(f"  {hour:02d}:00 - {count} jobs")
