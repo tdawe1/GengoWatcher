@@ -1,6 +1,5 @@
 # TUI Config Editor Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add a Textual TUI editor so all `config.ini` settings can be edited in-app without restarting.
 
