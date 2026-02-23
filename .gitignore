@@ -58,6 +58,7 @@ state.json
 *.pause
 token.json
 credentials.json
+.env
 
 # Archives (keep structure, ignore contents)
 archives/logs-*/
