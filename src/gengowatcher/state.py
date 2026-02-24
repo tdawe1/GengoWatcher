@@ -12,7 +12,6 @@ import datetime
 
 class AppState:
     STATE_FILE = "state.json"
-    MAX_STORED_JOBS = 1000  # Maximum number of jobs to store
 
     def __init__(
         self,
@@ -26,7 +25,7 @@ class AppState:
         self.last_seen_rss_link = None  # New variable for RSS tracking
         self.last_seen_link = None  # General last job (for display, optional)
         self.total_new_entries_found = 0
-        self.seen_job_ids = collections.deque(maxlen=1000)
+        self.seen_job_ids = collections.deque()  # Unbounded - no limit
         self._sparkline_data = []
 
         # Job storage for web API
@@ -53,13 +52,11 @@ class AppState:
                     with self._lock:
                         self.last_seen_rss_link = state_data.get("last_seen_rss_link")
                         self.last_seen_link = state_data.get("last_seen_link")
-                        self.total_new_entries_found = int(
-                            state_data.get("total_new_entries_found", 0)
-                        )
-                        self._sparkline_data = state_data.get("sparkline_data", [])
-                        loaded_ids = state_data.get("seen_job_ids", [])
+                        # Session data cleared on startup - start fresh each session
+                        self.total_new_entries_found = 0
                         self.seen_job_ids.clear()
-                        self.seen_job_ids.extend(loaded_ids)
+                        # Persist sparkline data across sessions
+                        self._sparkline_data = state_data.get("sparkline_data", [])
 
                         # Load stored jobs
                         stored_jobs = state_data.get("jobs", [])
@@ -188,10 +185,6 @@ class AppState:
 
             # Add new job
             self._jobs.insert(0, job_data)  # Add to beginning for newest first
-
-            # Maintain maximum size
-            if len(self._jobs) > self.MAX_STORED_JOBS:
-                self._jobs = self._jobs[: self.MAX_STORED_JOBS]
 
             self.logger.debug(f"Added job {job_data.get('id')} to storage")
 
