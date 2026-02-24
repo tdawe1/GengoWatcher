@@ -42,7 +42,7 @@ class AppConfig:
         },
         "Logging": {
             "log_max_bytes": 1000000,
-            "log_backup_count": 3,
+            "log_backup_count": 99,
             "log_main_enabled": True,
             "log_all_entries_enabled": True,
         },

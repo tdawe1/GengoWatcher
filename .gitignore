@@ -50,6 +50,7 @@ pytest-of-*/
 logs/
 *.log
 *.log.*
+wakapi_db.db
 
 # Application files (user-specific)
 config.ini
