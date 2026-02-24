@@ -162,9 +162,9 @@ def _interactive_configure(config: AppConfig, console: Console):
     )
 
     required_fields = [
-        ("Credentials", "user_id", "Your Gengo user ID"),
-        ("Credentials", "user_key", "Your Gengo API key (optional)"),
-        ("Credentials", "session_token", "Your session token from browser cookies"),
+        ("WebSocket", "user_id", "Your Gengo user ID"),
+        ("WebSocket", "user_key", "Your Gengo API key (optional)"),
+        ("WebSocket", "user_session", "Your session token from browser cookies"),
     ]
 
     for section, option, description in required_fields:
