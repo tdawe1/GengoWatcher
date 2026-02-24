@@ -194,6 +194,78 @@ def test_process_new_job_populates_lang_pair_and_word_count(watcher_instance):
     assert job_data["word_count"] == 320
 
 
+def test_process_new_job_populates_word_count_from_ws_unit(watcher_instance):
+    """WS payloads use `unit`; this should populate word_count."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    recorded = []
+    w.state.add_job = MagicMock(side_effect=lambda data: recorded.append(data))
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    source_meta = {"lc_src": "Japanese", "lc_tgt": "English", "unit": "480"}
+    w._process_new_job(
+        1001,
+        "Japanese > English | Sample",
+        9.60,
+        "http://example.com/1001",
+        "WebSocket",
+        source_meta=source_meta,
+    )
+
+    assert recorded
+    assert recorded[0]["word_count"] == 480
+
+
+def test_process_new_job_populates_word_count_from_ws_unit_count(watcher_instance):
+    """WebSocket payloads also include `unit_count`, so derive from that too."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    recorded = []
+    w.state.add_job = MagicMock(side_effect=lambda data: recorded.append(data))
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    source_meta = {"lc_src": "Japanese", "lc_tgt": "English", "unit_count": "512"}
+    w._process_new_job(
+        1003,
+        "Japanese > English | Sample",
+        10.24,
+        "http://example.com/1003",
+        "WebSocket",
+        source_meta=source_meta,
+    )
+
+    assert recorded
+    assert recorded[0]["word_count"] == 512
+
+
+def test_process_new_job_estimates_word_count_from_reward_and_tier(watcher_instance):
+    """Estimate units from reward+tier when count is missing from metadata."""
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    recorded = []
+    w.state.add_job = MagicMock(side_effect=lambda data: recorded.append(data))
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    source_meta = {"lc_src": "Japanese", "lc_tgt": "English", "tier": "standard"}
+    w._process_new_job(
+        1002,
+        "Japanese > English | Sample",
+        10.0,
+        "http://example.com/1002",
+        "WebSocket",
+        source_meta=source_meta,
+    )
+
+    assert recorded
+    assert recorded[0]["word_count"] == 500
+
+
 def test_process_new_job_callback_order(watcher_instance):
     """Ensure the job callback runs after the job is added to state."""
     w = watcher_instance

@@ -1,7 +1,7 @@
 """Comprehensive tests for src/gengowatcher/ui_textual.py"""
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 import tempfile
 import pathlib
 import time
@@ -26,6 +26,7 @@ from gengowatcher.ui_textual import (
     Icons,
     _build_semantic_color_palette,
     _with_timestamp_prefix,
+    BAR_CHARS,
 )
 from gengowatcher.stats import StatsManager
 from textual.theme import Theme
@@ -478,6 +479,81 @@ class TestHourlyActivity:
             chart.refresh_hourly()
             await pilot.pause(0.1)
 
+    @pytest.mark.asyncio
+    async def test_hourly_activity_falls_back_to_state_jobs(self):
+        """If stats have no activity, Jobs/Hour should use persisted state jobs."""
+        from textual.app import App
+        from textual.widgets import Static
+
+        now_ts = time.time()
+        state = MagicMock()
+        state.get_recent_jobs.return_value = [
+            {"timestamp": now_ts - 2 * 3600},
+            {"timestamp": now_ts - 2 * 3600 + 300},
+            {"timestamp": now_ts - 1 * 3600},
+        ]
+
+        class TestApp(App):
+            def compose(self):
+                yield HourlyActivity(stats=None, state=state)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            chart = app.query_one(HourlyActivity)
+            chart.refresh_hourly()
+            await pilot.pause(0.1)
+            content = chart.query_one("#hourly-content", Static)
+            text = str(content.render())
+            assert "Peak:" in text
+            assert "Jobs: 2" in text
+            assert "24h" in text
+            assert "12h" in text
+            assert "now" in text
+            assert any(ch in text for ch in ("┌", "┐", "└", "┘", "┤", "┼", "█"))
+
+    def test_hourly_activity_builds_rolling_hourly_buckets(self):
+        """Rolling buckets should represent the most recent hours left->right."""
+        now_ts = 1_700_000_000.0
+        state = MagicMock()
+        state.get_recent_jobs.return_value = [
+            {"timestamp": now_ts - 60},  # current hour
+            {"timestamp": now_ts - 2 * 3600},
+            {"timestamp": now_ts - 2 * 3600 - 10},
+            {"timestamp": now_ts - 26 * 3600},  # out of window
+        ]
+
+        chart = HourlyActivity(stats=None, state=state)
+        with patch("gengowatcher.ui_textual.time.time", return_value=now_ts):
+            buckets = chart._rolling_hourly_counts_from_state(window_hours=24)
+
+        assert len(buckets) == 24
+        assert buckets[-1] == 1.0
+        assert buckets[-3] == 2.0
+        assert sum(buckets) == 3.0
+
+    @pytest.mark.asyncio
+    async def test_hourly_activity_shows_chart_when_data_exists(self, mock_stats):
+        """Jobs/Hour should render a chart (not just plain text) when data exists."""
+        from textual.app import App
+        from textual.widgets import Static
+
+        class TestApp(App):
+            def compose(self):
+                yield HourlyActivity(stats=mock_stats)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            chart = app.query_one(HourlyActivity)
+            chart.refresh_hourly()
+            await pilot.pause(0.1)
+            content = chart.query_one("#hourly-content", Static)
+            text = str(content.render())
+            assert "Peak:" in text
+            assert "Jobs:" in text
+            assert "00:00" in text
+            assert "23:59" in text
+            assert any(ch in text for ch in ("┌", "┐", "└", "┘", "┤", "┼", "█"))
+
 
 class TestConfigPreview:
     """Test ConfigPreview widget."""
@@ -669,6 +745,7 @@ class TestGengoWatcherApp:
         assert app.state == mock_state
         assert app.watcher == mock_watcher
         assert app.stats == mock_stats
+        assert app.theme == "nord"
 
     @pytest.mark.asyncio
     async def test_app_has_bindings(
@@ -680,6 +757,25 @@ class TestGengoWatcherApp:
         )
         assert hasattr(app, "BINDINGS")
         assert len(app.BINDINGS) > 0
+
+    def test_refresh_dashboard_panels_dispatches_widget_refreshes(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        """Dashboard panel refresh helper should refresh all session-driven widgets."""
+        app = GengoWatcherApp(
+            config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
+        )
+        app._refresh_widget = MagicMock()
+
+        app._refresh_dashboard_panels()
+
+        assert app._refresh_widget.call_args_list == [
+            call(MetricsRow, "refresh_metrics"),
+            call(SessionStatsWidget, "refresh_stats"),
+            call(SourcesBreakdown, "refresh_sources"),
+            call(HourlyActivity, "refresh_hourly"),
+            call(JobsPreview, "refresh_jobs"),
+        ]
 
 
 class TestRegressionCases:

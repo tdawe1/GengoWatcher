@@ -31,10 +31,15 @@ from textual.css.query import NoMatches
 from textual.theme import BUILTIN_THEMES, Theme
 from rich.text import Text
 
-from .watcher import GengoWatcher, __version__
+from .watcher import GengoWatcher, __version__, TIER_UNIT_RATES
 from .config import AppConfig
 from .state import AppState
 from .stats import StatsManager
+
+try:
+    import plotext as plotext
+except ImportError:  # pragma: no cover - optional runtime dependency
+    plotext = None
 
 # =============================================================================
 # Constants
@@ -233,6 +238,75 @@ def _normalize_source(source: Any) -> str:
     return "unknown"
 
 
+def _coerce_positive_int(value: Any) -> int:
+    """Best-effort conversion to positive int from numeric/text values."""
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        if not isinstance(value, str):
+            return 0
+        match = re.search(r"(\d+)", value)
+        if not match:
+            return 0
+        try:
+            parsed = int(match.group(1))
+        except ValueError:
+            return 0
+    return parsed if parsed > 0 else 0
+
+
+def _coerce_positive_float(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return parsed if parsed > 0 else 0.0
+
+
+def _derive_display_word_count(job: dict[str, Any]) -> int:
+    """
+    Derive a display word/unit count for tables.
+
+    Uses explicit unit fields first, then estimates from reward and tier.
+    """
+    for key in (
+        "word_count",
+        "words",
+        "unit_count",
+        "unit",
+        "units",
+        "wordCount",
+        "unitCount",
+    ):
+        count = _coerce_positive_int(job.get(key))
+        if count > 0:
+            return count
+
+    reward = _coerce_positive_float(job.get("reward"))
+    if reward <= 0:
+        return 0
+
+    tier_text = str(
+        job.get("tier") or job.get("job_tier") or job.get("service_level") or ""
+    ).lower()
+    if not tier_text:
+        title = str(job.get("title") or "")
+        match = re.search(r"\(([^)]+)\)", title)
+        if match:
+            tier_text = match.group(1).strip().lower()
+
+    normalized = tier_text.replace("-", "").replace("_", "").strip()
+    if any(token in normalized for token in ("pro", "professional")):
+        rate = TIER_UNIT_RATES["pro"]
+    elif any(token in normalized for token in ("edit", "proofread", "proofreading")):
+        rate = TIER_UNIT_RATES["edit"]
+    else:
+        # Default to Standard when tier is absent so historic WS rows still show an estimate.
+        rate = TIER_UNIT_RATES["standard"]
+
+    return max(1, int(round(reward / rate)))
+
+
 # Fractional block characters for bar chart rendering
 # Characters arranged from empty to full: ▁▂▃▄▅▆▇█
 BAR_CHARS = " ▁▂▃▄▅▆▇█"
@@ -301,6 +375,82 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
         lines.append(line)
 
     return "\n".join(lines)
+
+
+def _aggregate_series(values: list[float], bin_size: int = 2) -> list[float]:
+    """Aggregate a series into fixed-size bins."""
+    if bin_size <= 1:
+        return list(values)
+    aggregated: list[float] = []
+    for i in range(0, len(values), bin_size):
+        aggregated.append(float(sum(values[i : i + bin_size])))
+    return aggregated
+
+
+def _render_chart_with_axes(
+    values: list[float],
+    *,
+    width: int = 12,
+    height: int = 4,
+    x_left: str = "old",
+    x_right: str = "new",
+) -> str:
+    """Render chart with minimal y-axis and x-axis labels."""
+    chart = _render_chart(values, width=width, height=height)
+    if not chart:
+        return ""
+
+    lines = chart.splitlines()
+    max_val = max(values) if values else 0.0
+    if max_val <= 0:
+        max_val = 1.0
+
+    y_label_width = max(1, len(str(int(round(max_val)))))
+    with_axis: list[str] = []
+    for row_idx, line in enumerate(lines):
+        # Top row shows the highest approximate bucket value.
+        approx_value = int(round(max_val * (height - row_idx) / height))
+        with_axis.append(f"{approx_value:>{y_label_width}} |{line}")
+
+    with_axis.append(f"{0:>{y_label_width}} +{'─' * width}")
+    left_pad = " " * (y_label_width + 2)
+    spacing = max(1, width - len(x_left) - len(x_right))
+    with_axis.append(f"{left_pad}{x_left}{' ' * spacing}{x_right}")
+    return "\n".join(with_axis)
+
+
+def _render_plotext_bar_chart(
+    values: list[float],
+    *,
+    width: int,
+    height: int,
+    x_left: str,
+    x_mid: str,
+    x_right: str,
+) -> str:
+    """Render a bar chart via plotext with true axes/ticks."""
+    if plotext is None or not values or width <= 0 or height <= 0:
+        return ""
+
+    try:
+        x = list(range(1, len(values) + 1))
+        mid = max(1, len(values) // 2)
+        right = len(values)
+
+        plotext.clear_figure()
+        plotext.plotsize(width, height)
+        plotext.bar(x, values, fill=True, width=0.8)
+        plotext.xticks([1, mid, right], [x_left, x_mid, x_right])
+        plotext.ylabel("jobs")
+        plotext.xlabel("time")
+        plotext.grid(True)
+
+        # Convert ANSI output into plain text, preserving chart glyphs.
+        built = plotext.build()
+        plotext.clear_figure()
+        return str(Text.from_ansi(built)).rstrip()
+    except Exception:
+        return ""
 
 
 # =============================================================================
@@ -493,7 +643,7 @@ class StatusIndicator(Static):
 
     def _render_label(self, status_icon: str) -> str:
         if self.base_icon:
-            return f"{status_icon} {self.base_icon} {self.label_text}"
+            return f"{status_icon} {self.base_icon}  {self.label_text}"
         return f"{status_icon} {self.label_text}"
 
     def set_state(self, state: str) -> None:
@@ -753,7 +903,7 @@ class JobsPreview(DashboardQuadrant):
             for job in jobs:
                 job_id = str(job.get("id", "N/A"))[:8]
                 pair = job.get("lang_pair", "??→??")
-                words = str(job.get("word_count", job.get("words", 0)))
+                words = str(_derive_display_word_count(job))
                 reward = f"${job.get('reward', 0):.2f}"
                 dt.add_row(job_id, pair, words, reward)
         except NoMatches:
@@ -763,9 +913,12 @@ class JobsPreview(DashboardQuadrant):
 class HourlyActivity(DashboardQuadrant):
     """Hourly activity stats with peak hour highlighting."""
 
-    def __init__(self, stats: "StatsManager", **kwargs):
+    def __init__(
+        self, stats: "StatsManager", state: "AppState | None" = None, **kwargs
+    ):
         super().__init__(f"{Icons.PANEL_CHART} Jobs/Hour", **kwargs)
         self.stats = stats
+        self.state = state
 
     def compose(self) -> ComposeResult:
         yield Static("No activity data", id="hourly-content")
@@ -776,28 +929,202 @@ class HourlyActivity(DashboardQuadrant):
 
     def refresh_hourly(self):
         """Refresh hourly activity display."""
-        if not self.stats:
-            return
         try:
-            # Get peak hour info - unpacking both values as per fix
-            peak_hour, peak_rate = self.stats.get_peak_hour()
-
-            # FIX: Only treat as valid peak if peak_rate > 0
-            # This prevents highlighting "12-15" period with zero activity
-            if peak_rate > 0:
-                # Valid peak hour with actual activity
-                peak_period_start = (peak_hour // 3) * 3
-                peak_period_end = peak_period_start + 3
-                peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
-
-                content = f"Peak: {peak_period}\nJobs: {int(peak_rate)}"
+            rolling_values = self._rolling_hourly_counts_from_state()
+            if rolling_values:
+                peak_index = max(
+                    range(len(rolling_values)), key=lambda i: rolling_values[i]
+                )
+                peak_rate = float(rolling_values[peak_index])
+                peak_period = self._format_peak_period_for_bucket(
+                    peak_index, total_buckets=len(rolling_values)
+                )
+                # Use 2-hour bins for readability in compact dashboard cards.
+                chart_values = _aggregate_series(rolling_values, bin_size=2)
+                chart = _render_plotext_bar_chart(
+                    chart_values, width=30, height=8, x_left="24h", x_mid="12h", x_right="now"
+                ) or _render_chart_with_axes(
+                    chart_values,
+                    width=len(chart_values),
+                    height=4,
+                    x_left="24h",
+                    x_right="now",
+                )
+                content_parts = []
+                if chart.strip():
+                    content_parts.append(chart)
+                content_parts.append(f"Peak: {peak_period}  Jobs: {int(peak_rate)}")
+                content = "\n".join(content_parts)
             else:
-                # No activity - don't highlight any period
-                content = "No activity yet"
+                hourly_counts = self._hourly_counts_from_stats()
+                if not hourly_counts:
+                    hourly_counts = self._hourly_counts_from_state()
+
+                if hourly_counts:
+                    peak_hour = max(hourly_counts, key=lambda h: hourly_counts[h])
+                    peak_rate = float(hourly_counts[peak_hour])
+                    peak_period_start = (peak_hour // 3) * 3
+                    peak_period_end = peak_period_start + 3
+                    peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
+                    values = [hourly_counts.get(hour, 0.0) for hour in range(24)]
+                    chart_values = _aggregate_series(values, bin_size=2)
+                    chart = _render_plotext_bar_chart(
+                        chart_values,
+                        width=30,
+                        height=8,
+                        x_left="00:00",
+                        x_mid="12:00",
+                        x_right="23:59",
+                    ) or _render_chart_with_axes(
+                        chart_values,
+                        width=len(chart_values),
+                        height=4,
+                        x_left="00:00",
+                        x_right="23:59",
+                    )
+
+                    content_parts = []
+                    if chart.strip():
+                        content_parts.append(chart)
+                    content_parts.append(f"Peak: {peak_period}  Jobs: {int(peak_rate)}")
+                    content = "\n".join(content_parts)
+                else:
+                    content = "No activity yet"
 
             self.query_one("#hourly-content", Static).update(content)
         except Exception:
             pass  # Widget not mounted yet
+
+    def _hourly_counts_from_stats(self) -> dict[int, float]:
+        """Get positive hourly counts from StatsManager."""
+        if not self.stats:
+            return {}
+
+        raw_counts = getattr(self.stats, "hourly_counts", {}) or {}
+        counts: dict[int, float] = {}
+        for hour, count in raw_counts.items():
+            try:
+                hour_i = int(hour)
+                count_f = float(count)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour_i <= 23 and count_f > 0:
+                counts[hour_i] = count_f
+        return counts
+
+    def _hourly_counts_from_state(self) -> dict[int, float]:
+        """Derive hourly counts from persisted AppState jobs."""
+        if not self.state:
+            return {}
+
+        counts: dict[int, float] = {}
+        jobs = self.state.get_recent_jobs(limit=1000)
+        for job in jobs:
+            ts = job.get("timestamp")
+            hour = self._extract_hour(ts)
+            if hour is None:
+                continue
+            counts[hour] = counts.get(hour, 0.0) + 1.0
+        return counts
+
+    def _coerce_timestamp(self, timestamp: Any) -> float | None:
+        """Convert numeric/ISO timestamps to epoch seconds."""
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            value = float(timestamp)
+            return value if value > 0 else None
+
+        if isinstance(timestamp, str):
+            cleaned = timestamp.strip()
+            if not cleaned:
+                return None
+            iso_candidate = cleaned[:-1] + "+00:00" if cleaned.endswith("Z") else cleaned
+            try:
+                return datetime.datetime.fromisoformat(iso_candidate).timestamp()
+            except ValueError:
+                return None
+
+        return None
+
+    def _rolling_hourly_counts_from_state(self, window_hours: int = 24) -> list[float]:
+        """
+        Build rolling hourly buckets from oldest->newest for recent state jobs.
+
+        The rightmost bucket represents the current hour; earlier buckets step
+        backwards in one-hour increments.
+        """
+        if not self.state or window_hours <= 0:
+            return []
+
+        buckets = [0.0] * window_hours
+        now_ts = time.time()
+        jobs = self.state.get_recent_jobs(limit=1000)
+        for job in jobs:
+            ts = self._coerce_timestamp(job.get("timestamp"))
+            if ts is None:
+                continue
+            delta_seconds = now_ts - ts
+            if delta_seconds < 0:
+                continue
+            hours_ago = int(delta_seconds // 3600)
+            if hours_ago >= window_hours:
+                continue
+            bucket_index = window_hours - 1 - hours_ago
+            buckets[bucket_index] += 1.0
+
+        return buckets if any(v > 0 for v in buckets) else []
+
+    def _format_peak_period_for_bucket(
+        self, bucket_index: int, total_buckets: int = 24
+    ) -> str:
+        """Format a rolling bucket index as an HH-HH one-hour period."""
+        now_hour = datetime.datetime.now().replace(minute=0, second=0, microsecond=0)
+        hours_ago = max(0, (total_buckets - 1) - bucket_index)
+        start = now_hour - datetime.timedelta(hours=hours_ago)
+        end = start + datetime.timedelta(hours=1)
+        return f"{start:%H}-{end:%H}"
+
+    def _peak_hour_from_state(self) -> tuple[int, float]:
+        """Compute peak hour from AppState jobs when StatsManager has no activity."""
+        hourly_counts = self._hourly_counts_from_state()
+
+        if not hourly_counts:
+            return (12, 0.0)
+
+        peak_hour = max(hourly_counts, key=lambda h: hourly_counts[h])
+        return (peak_hour, float(hourly_counts[peak_hour]))
+
+    def _extract_hour(self, timestamp: Any) -> int | None:
+        """Extract an hour (0-23) from a numeric or string timestamp value."""
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            try:
+                hour = datetime.datetime.fromtimestamp(float(timestamp)).hour
+                return hour if 0 <= hour <= 23 else None
+            except (OSError, OverflowError, ValueError):
+                return None
+
+        if isinstance(timestamp, str):
+            cleaned = timestamp.strip()
+            if not cleaned:
+                return None
+
+            iso_candidate = cleaned
+            if iso_candidate.endswith("Z"):
+                iso_candidate = iso_candidate[:-1] + "+00:00"
+            try:
+                hour = datetime.datetime.fromisoformat(iso_candidate).hour
+                return hour if 0 <= hour <= 23 else None
+            except ValueError:
+                pass
+
+            match = re.search(r"(\d{2}):\d{2}:\d{2}", cleaned)
+            if match:
+                try:
+                    hour = int(match.group(1))
+                    return hour if 0 <= hour <= 23 else None
+                except ValueError:
+                    return None
+
+        return None
 
 
 class ConfigPreview(DashboardQuadrant):
@@ -1077,6 +1404,7 @@ class StatsPanel(Static):
 
 class GengoWatcherApp(App):
     CSS_PATH = "gengo_watcher.tcss"
+    DEFAULT_THEME_NAME = "nord"
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("c", "check", "Check"),
@@ -1092,6 +1420,7 @@ class GengoWatcherApp(App):
         stats: StatsManager,
     ):
         super().__init__()
+        self.theme = self.DEFAULT_THEME_NAME
         self.config = config
         self.state = state
         self.watcher = watcher
@@ -1119,6 +1448,16 @@ class GengoWatcherApp(App):
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
         self._setup_jobs_table()
+        self._refresh_dashboard_panels()
+        self.set_interval(1.0, self._refresh_dashboard_panels)
+
+    def _refresh_dashboard_panels(self) -> None:
+        """Refresh dashboard widgets that depend on live/persisted state."""
+        self._refresh_widget(MetricsRow, "refresh_metrics")
+        self._refresh_widget(SessionStats, "refresh_stats")
+        self._refresh_widget(SourcesBreakdown, "refresh_sources")
+        self._refresh_widget(HourlyActivity, "refresh_hourly")
+        self._refresh_widget(JobsPreview, "refresh_jobs")
 
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""
@@ -1143,7 +1482,7 @@ class GengoWatcherApp(App):
             for job in jobs:
                 job_id = str(job.get("id", "N/A"))[:8]
                 pair = job.get("lang_pair", "??→??")
-                words = str(job.get("word_count", job.get("words", 0)))
+                words = str(_derive_display_word_count(job))
                 reward = f"${job.get('reward', 0):.2f}"
                 source = job.get("source", "N/A")
                 timestamp = job.get("timestamp", "")
@@ -1193,7 +1532,7 @@ class GengoWatcherApp(App):
                 with Vertical(id="dashboard-content"):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
-                        yield HourlyActivity(stats=self.stats)
+                        yield HourlyActivity(stats=self.stats, state=self.state)
                         yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
