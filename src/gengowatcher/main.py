@@ -413,10 +413,7 @@ def main():
         watcher_thread.join(timeout=2)
         console.print("[info]GengoWatcher has shut down.[/]")
     except KeyboardInterrupt:
-        console.print("[info]Web server shutting down...[/]")
-    finally:
-        if not watcher.shutdown_event.is_set():
-            watcher.handle_exit()
+        console.print("[info]Shutting down...[/]")
 
 
 if __name__ == "__main__":

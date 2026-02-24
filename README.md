@@ -40,7 +40,9 @@ user_key = YOUR_USER_KEY
 Get WebSocket credentials from your browser's DevTools:
 - **user_id** / **user_session**: Application → Cookies → gengo.com
 - **user_key**: Application → Local Storage → gengo.com → userKey
+
 ## Commands
+
 | Command | Description |
 |---------|-------------|
 | `check` | Trigger immediate RSS check |
@@ -48,7 +50,7 @@ Get WebSocket credentials from your browser's DevTools:
 | `wstest` | Test WebSocket connection |
 | `notifytest` | Test notifications |
 | `togglesound` | Toggle sound alerts |
-| `autoaccept` | Toggle auto job acceptance |
+| `autoaccept` | Toggle auto-acceptance |
 | `help` | Show all commands |
 | `exit` | Save state and quit |
 

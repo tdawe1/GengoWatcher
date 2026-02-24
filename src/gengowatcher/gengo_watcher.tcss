@@ -14,7 +14,6 @@ $accent-orange: #b6927b;      /* Dragon Orange */
 $accent-yellow: #c4b28a;      /* Dragon Yellow */
 $accent-violet: #8992a7;      /* Dragon Violet (Ash) */
 $accent-aqua: #8ea4a2;        /* Dragon Aqua */
-$accent-pink: #a292a3;        /* Dragon Pink */
 
 Screen {
     background: $surface;
@@ -107,6 +106,32 @@ MetricCard.today {
 
 MetricCard:focus {
     border: round $accent-blue;
+}
+
+MetricCard.found:focus { 
+    border-left: tall $accent-green; 
+    border-title-color: $accent-green;
+    color: $accent-green;
+}
+MetricCard.accepted:focus { 
+    border-left: tall $accent-aqua; 
+    border-title-color: $accent-aqua;
+    color: $accent-aqua;
+}
+MetricCard.value:focus { 
+    border-left: tall $accent-yellow; 
+    border-title-color: $accent-yellow;
+    color: $accent-yellow;
+}
+MetricCard.rate:focus { 
+    border-left: tall $accent-orange; 
+    border-title-color: $accent-orange;
+    color: $accent-orange;
+}
+MetricCard.today:focus { 
+    border-left: tall $accent-violet; 
+    border-title-color: $accent-violet;
+    color: $accent-violet;
 }
 
 .metric-grid {

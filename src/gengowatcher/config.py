@@ -1,4 +1,7 @@
 import configparser
+
+if sys.platform != "win32":
+    import fcntl
 import json
 import os
 import shutil
@@ -23,6 +26,8 @@ PLACEHOLDER_CONFIG_VALUES = [
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
     "REPLACE_WITH_YOUR_WEB_API_TOKEN",
+    "YOUR_USER_ID",
+    "REPLACE_WITH_BROWSER_USER_KEY",
 ]
 
 

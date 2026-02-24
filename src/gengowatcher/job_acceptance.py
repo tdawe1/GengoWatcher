@@ -10,6 +10,7 @@ import json
 import aiohttp
 import asyncio
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from urllib.parse import urljoin
@@ -37,6 +38,7 @@ class RateLimiter:
         self.max_requests = max_requests
         self.time_window = time_window
         self._requests: list[float] = []
+        self._lock = threading.RLock()
 
     def _clean_old_requests(self) -> None:
         """Remove requests outside the time window."""
@@ -45,33 +47,38 @@ class RateLimiter:
 
     def can_proceed(self) -> bool:
         """Check if a new request can proceed without exceeding rate limit."""
-        self._clean_old_requests()
-        return len(self._requests) < self.max_requests
+        with self._lock:
+            self._clean_old_requests()
+            return len(self._requests) < self.max_requests
 
     def acquire(self) -> bool:
         """Try to acquire a slot. Returns True if successful, False if rate limited."""
-        if self.can_proceed():
-            self._requests.append(time.time())
-            return True
-        return False
+        with self._lock:
+            if self.can_proceed():
+                self._requests.append(time.time())
+                return True
+            return False
 
     def wait_time(self) -> float:
         """Return seconds to wait before next request is allowed."""
-        self._clean_old_requests()
-        if len(self._requests) < self.max_requests:
-            return 0.0
-        # Find oldest request and calculate when it will expire
-        oldest = min(self._requests)
-        return max(0.0, self.time_window - (time.time() - oldest))
+        with self._lock:
+            self._clean_old_requests()
+            if len(self._requests) < self.max_requests:
+                return 0.0
+            # Find oldest request and calculate when it will expire
+            oldest = min(self._requests)
+            return max(0.0, self.time_window - (time.time() - oldest))
 
     def record_request(self) -> None:
         """Record that a request was made."""
-        self._requests.append(time.time())
+        with self._lock:
+            self._requests.append(time.time())
 
     def get_current_rate(self) -> float:
         """Return current requests per time window."""
-        self._clean_old_requests()
-        return len(self._requests)
+        with self._lock:
+            self._clean_old_requests()
+            return len(self._requests)
 
 
 @dataclass
@@ -117,10 +124,8 @@ class JobAcceptanceEngine:
             self.logger.info("Job Acceptance Engine initialized")
 
         # Rate limiter to prevent exceeding API limits
-        # Read from config if available, otherwise default to 30/min
-        max_hourly = config.getint(
-            "RateLimit", "max_acceptances_per_hour", fallback=1800
-        )
+        # Read from config if available, otherwise default to 30/hour
+        max_hourly = config.getint("RateLimit", "max_acceptances_per_hour", fallback=30)
         # RateLimiter uses a time_window (seconds) and max_requests.
         # We'll stick to a 60s window and scale the requests accordingly.
         # If user wants 15/hour, that's 0.25/min which RateLimiter (int) can't handle directly with 60s window.
@@ -454,20 +459,90 @@ class JobAcceptanceEngine:
 
         timings["click_ms"] = (time.perf_counter() - start_monotonic) * 1000.0
 
+        if accept_form.method.lower() == "post":
+            request_ctx = self.session.post(
+                accept_form.url,
+                headers=submit_headers,
+                data=accept_form.fields or None,
+                timeout=30,
+            )
+        else:
+            request_ctx = self.session.get(
+                accept_form.url,
+                headers=submit_headers,
+                params=accept_form.fields or None,
+                timeout=30,
+            )
+
         try:
-            if accept_form.method.lower() == "post":
-                request_ctx = self.session.post(
-                    accept_form.url,
-                    headers=submit_headers,
-                    data=accept_form.fields or None,
-                    timeout=30,
-                )
-            else:
-                request_ctx = self.session.get(
-                    accept_form.url,
-                    headers=submit_headers,
-                    params=accept_form.fields or None,
-                    timeout=30,
+            async with request_ctx as response:
+                status = response.status
+                timings["redirect_ms"] = (
+                    time.perf_counter() - start_monotonic
+                ) * 1000.0
+
+                if status in {302, 303}:
+                    return AcceptResult(
+                        success=True,
+                        path="http",
+                        http_status=status,
+                        redirect=True,
+                        timings=timings,
+                    )
+
+                if status != 200:
+                    return AcceptResult(
+                        success=False,
+                        path="http",
+                        http_status=status,
+                        reason=f"submit_status_{status}",
+                        timings=timings,
+                    )
+
+                content = await response.text()
+                lowered = content.lower()
+                if "captcha" in lowered or "recaptcha" in lowered:
+                    success = await self._handle_captcha_challenge(
+                        job_id,
+                        content,
+                        headers,
+                        timings=timings,
+                        start_monotonic=start_monotonic,
+                    )
+                    if success:
+                        timings["redirect_ms"] = (
+                            time.perf_counter() - start_monotonic
+                        ) * 1000.0
+                        return AcceptResult(
+                            success=True,
+                            path="http",
+                            http_status=200,
+                            redirect=False,
+                            timings=timings,
+                        )
+                    return AcceptResult(
+                        success=False,
+                        path="http",
+                        http_status=200,
+                        reason="captcha_required",
+                        timings=timings,
+                    )
+
+                if "accepted" in lowered or "success" in lowered:
+                    return AcceptResult(
+                        success=True,
+                        path="http",
+                        http_status=200,
+                        redirect=False,
+                        timings=timings,
+                    )
+
+                return AcceptResult(
+                    success=False,
+                    path="http",
+                    http_status=200,
+                    reason="unexpected_response",
+                    timings=timings,
                 )
         except asyncio.TimeoutError:
             return AcceptResult(
@@ -481,74 +556,6 @@ class JobAcceptanceEngine:
                 success=False,
                 path="http",
                 reason=f"submit_error:{error}",
-                timings=timings,
-            )
-
-        async with request_ctx as response:
-            status = response.status
-            timings["redirect_ms"] = (time.perf_counter() - start_monotonic) * 1000.0
-
-            if status in {302, 303}:
-                return AcceptResult(
-                    success=True,
-                    path="http",
-                    http_status=status,
-                    redirect=True,
-                    timings=timings,
-                )
-
-            if status != 200:
-                return AcceptResult(
-                    success=False,
-                    path="http",
-                    http_status=status,
-                    reason=f"submit_status_{status}",
-                    timings=timings,
-                )
-
-            content = await response.text()
-            lowered = content.lower()
-            if "captcha" in lowered or "recaptcha" in lowered:
-                success = await self._handle_captcha_challenge(
-                    job_id,
-                    content,
-                    headers,
-                    timings=timings,
-                    start_monotonic=start_monotonic,
-                )
-                if success:
-                    timings["redirect_ms"] = (
-                        time.perf_counter() - start_monotonic
-                    ) * 1000.0
-                    return AcceptResult(
-                        success=True,
-                        path="http",
-                        http_status=200,
-                        redirect=False,
-                        timings=timings,
-                    )
-                return AcceptResult(
-                    success=False,
-                    path="http",
-                    http_status=200,
-                    reason="captcha_required",
-                    timings=timings,
-                )
-
-            if "accepted" in lowered or "success" in lowered:
-                return AcceptResult(
-                    success=True,
-                    path="http",
-                    http_status=200,
-                    redirect=False,
-                    timings=timings,
-                )
-
-            return AcceptResult(
-                success=False,
-                path="http",
-                http_status=200,
-                reason="unexpected_response",
                 timings=timings,
             )
 
@@ -707,105 +714,6 @@ class JobAcceptanceEngine:
                 )
         except Exception:
             return None
-        return None
-
-    def _extract_recaptcha_v3_site_key(self, soup: BeautifulSoup) -> Optional[str]:
-        """
-        Extract reCAPTCHA v3 site key from HTML content.
-
-        Args:
-            soup: BeautifulSoup object containing parsed HTML
-
-        Returns:
-            str: Site key if found, None otherwise
-        """
-        # Try to extract from data attributes
-        recaptcha_elements = soup.find_all(attrs={"data-sitekey": True})
-        for element in recaptcha_elements:
-            site_key = element.get("data-sitekey")
-            if site_key and len(site_key) > 10:  # Basic validation
-                self.logger.debug(
-                    f"Found reCAPTCHA v3 site key in data attribute: {site_key[:10]}..."
-                )
-                return site_key
-
-        # Try to extract from inline scripts
-        scripts = soup.find_all("script")
-        for script in scripts:
-            if script.string:
-                self.logger.debug(f"Examining script content: {script.string[:100]}...")
-                # Look for common reCAPTCHA v3 patterns
-                # Pattern for grecaptcha.execute('site_key', ...)
-                pattern1 = r"grecaptcha\.execute\s*\(\s*['\"]([A-Za-z0-9_-]{25,})['\"]"
-                match1 = re.search(pattern1, script.string, re.DOTALL)
-                if match1:
-                    site_key = match1.group(1)
-                    self.logger.debug(
-                        f"Found reCAPTCHA v3 site key in script (execute): {site_key[:10]}..."
-                    )
-                    return site_key
-
-                # Pattern for grecaptcha.ready(function() { grecaptcha.execute('site_key', ...)
-                pattern2 = r"grecaptcha\.ready\s*\(\s*function\s*\(\s*\)\s*\{\s*grecaptcha\.execute\s*\(\s*['\"]([A-Za-z0-9_-]{25,})['\"]"
-                match2 = re.search(pattern2, script.string, re.DOTALL)
-                if match2:
-                    site_key = match2.group(1)
-                    self.logger.debug(
-                        f"Found reCAPTCHA v3 site key in script (ready): {site_key[:10]}..."
-                    )
-                    return site_key
-
-                # Pattern for reCAPTCHA rendering parameters
-                pattern3 = r"recaptcha_site_key\s*[:=]\s*['\"]([A-Za-z0-9_-]{25,})['\"]"
-                match3 = re.search(pattern3, script.string, re.IGNORECASE | re.DOTALL)
-                if match3:
-                    site_key = match3.group(1)
-                    self.logger.debug(
-                        f"Found reCAPTCHA v3 site key in script (site_key var): {site_key[:10]}..."
-                    )
-                    return site_key
-
-        self.logger.warning("Failed to extract reCAPTCHA v3 site key from page content")
-        return None
-
-    def _extract_recaptcha_v3_action(self, soup: BeautifulSoup) -> Optional[str]:
-        """
-        Extract reCAPTCHA v3 action from HTML content.
-
-        Args:
-            soup: BeautifulSoup object containing parsed HTML
-
-        Returns:
-            str: Action if found, None otherwise
-        """
-        # Try to extract from inline scripts
-        scripts = soup.find_all("script")
-        for script in scripts:
-            if script.string:
-                # Look for common reCAPTCHA v3 action patterns
-                import re
-
-                # Pattern for action parameter in grecaptcha.execute
-                pattern1 = r"grecaptcha\.execute\s*\(\s*['\"][A-Za-z0-9_-]{30,}['\"]\s*,\s*\{\s*action\s*:\s*['\"]([^'\"]+)['\"]"
-                match1 = re.search(pattern1, script.string)
-                if match1:
-                    action = match1.group(1)
-                    self.logger.debug(f"Found reCAPTCHA v3 action in script: {action}")
-                    return action
-
-                # Pattern for action in object
-                pattern2 = r"action\s*:\s*['\"]([^'\"]+)['\"]"
-                match2 = re.search(pattern2, script.string)
-                if match2:
-                    action = match2.group(1)
-                    # Basic validation to avoid false positives
-                    if action and len(action) > 2 and not action.startswith("http"):
-                        self.logger.debug(
-                            f"Found reCAPTCHA v3 action in script (generic): {action}"
-                        )
-                        return action
-
-        self.logger.warning("Failed to extract reCAPTCHA v3 action from page content")
         return None
 
     def _log_job_acceptance(self, job_data: Dict[str, Any]):
