@@ -280,3 +280,41 @@ def test_process_new_job_callback_exception_handling(watcher_instance):
     # Verify job was still processed successfully
     assert 123 in mock_state.seen_job_ids
     assert mock_state.total_new_entries_found == 1
+
+
+def test_derive_lang_pair_defaults_to_ja_en(watcher_instance):
+    """When language pair cannot be derived, default to JA→EN."""
+    w = watcher_instance
+
+    # No language info in title or meta
+    result = w._derive_lang_pair("Some random title", {})
+    assert result == "JA→EN"
+
+    # Empty meta
+    result = w._derive_lang_pair("", None)
+    assert result == "JA→EN"
+
+    # Meta with missing language fields
+    result = w._derive_lang_pair("Job Title", {"other_field": "value"})
+    assert result == "JA→EN"
+
+
+def test_derive_word_count_extracts_units(watcher_instance):
+    """Word count should be extracted from 'units' field when available."""
+    w = watcher_instance
+
+    # units field
+    result = w._derive_word_count("Job Title", {"units": 350})
+    assert result == 350
+
+    # word_count takes precedence over units
+    result = w._derive_word_count("Job Title", {"word_count": 100, "units": 350})
+    assert result == 100
+
+    # words field
+    result = w._derive_word_count("Job Title", {"words": 200})
+    assert result == 200
+
+    # No word count info
+    result = w._derive_word_count("Job Title", {})
+    assert result == 0

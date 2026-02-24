@@ -520,11 +520,17 @@ class GengoWatcher:
                 return f"{left}→{right}"
 
         fallback = self._parse_lang_pair_from_title(title)
-        return fallback or "??→??"
+        if fallback:
+            return fallback
+        self.logger.debug(
+            f"[WS] Could not derive language pair from title='{title}', meta={meta}. "
+            "Defaulting to JA→EN."
+        )
+        return "JA→EN"
 
     def _derive_word_count(self, title, source_meta) -> int:
         meta = self._normalize_meta(source_meta)
-        for key in ("word_count", "words"):
+        for key in ("word_count", "words", "units"):
             if key in meta:
                 try:
                     return int(meta.get(key))

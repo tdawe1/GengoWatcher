@@ -114,6 +114,12 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
         25.50,
         "https://gengo.com/t/jobs/details/9876",
         source="WebSocket",
+        source_meta={
+            "id": 9876,
+            "lc_src": "English",
+            "lc_tgt": "Japanese",
+            "rewards": "25.50",
+        },
     )
 
 
@@ -161,4 +167,10 @@ async def test_websocket_logic_processes_job(mock_connect, watcher_instance):
         25.50,
         "https://gengo.com/t/jobs/details/9876",
         source="WebSocket",
+        source_meta={
+            "id": 9876,
+            "lc_src": "English",
+            "lc_tgt": "Japanese",
+            "rewards": "25.50",
+        },
     )
