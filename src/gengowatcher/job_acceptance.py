@@ -57,10 +57,11 @@ class RateLimiter:
 
     def wait_time(self) -> float:
         """Return seconds to wait before next request is allowed."""
-        self._clean_old_requests()
-        if len(self._requests) < self.max_requests:
+        if self.max_requests <= 0:
             return 0.0
-        # Find oldest request and calculate when it will expire
+        self._clean_old_requests()
+        if not self._requests or len(self._requests) < self.max_requests:
+            return 0.0
         oldest = min(self._requests)
         return max(0.0, self.time_window - (time.time() - oldest))
 

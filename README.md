@@ -5,7 +5,6 @@ A terminal-based monitor for Gengo translation jobs with real-time notifications
 - **Desktop notifications** with sound alerts
 - **Auto-accept jobs** matching your criteria
 - **Multiple sources** - WebSocket, RSS, email, and website scraping
-- **CAPTCHA solving** integration (2Captcha, Anti-Captcha)
 - **Modern TUI** built with Textual
 ## Installation
 ```bash

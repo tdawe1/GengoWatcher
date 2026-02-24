@@ -1,4 +1,5 @@
 import configparser
+import copy
 import json
 from pathlib import Path
 import sys
@@ -275,7 +276,7 @@ class AppConfig:
             Dict with section names as keys, containing dicts of option:value pairs
         """
         with self._lock:
-            return {section: dict(options) for section, options in self.config.items()}
+            return copy.deepcopy(self.config)
 
     def is_placeholder(self, value: Any) -> bool:
         """Check if a value is a placeholder that needs user configuration.
@@ -378,6 +379,9 @@ class AppConfig:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
+            if not self._config_parser.has_section(section):
+                self._config_parser.add_section(section)
+            self._config_parser.set(section, key, str(value))
 
     def _validate_auto_accept_config(self):
         """

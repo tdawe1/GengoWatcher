@@ -1,7 +1,7 @@
 aiohttp>=3.8.0
 feedparser
 rich
-textual>=0.40.0
+textual>=0.86.2
 pytest
 websockets==11.0.3
 fastapi
@@ -16,4 +16,4 @@ imapclient>=2.3.0
 playwright>=1.40.0
 playwright-stealth>=1.0.6
 textual-plotext>=1.0.0
-textual-autocomplete>=3.0.0
+textual-autocomplete>=4.0.0

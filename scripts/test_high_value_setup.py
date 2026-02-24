@@ -19,9 +19,9 @@ from gengowatcher.high_value_job_manager import HighValueJobManager
 def test_configuration():
     """
     Verify that the high-value job configuration file exists and contains valid settings.
-    
+
     Checks for the presence of config_high_value.ini, loads it via AppConfig and validates the RSS feed URL, WebSocket credentials (user_id, user_session, user_key), high-value thresholds and CAPTCHA configuration. Status messages are printed to stdout for each check.
-    
+
     Returns:
         bool: `True` if the configuration file exists and all validations complete without error, `False` otherwise.
     """
@@ -66,7 +66,8 @@ def test_configuration():
             "REPLACE_WITH_BROWSER_USER_KEY",
         }
         if (
-            user_id != 0
+            user_id not in (0, "0", None, "")
+            and str(user_id) != "YOUR_USER_ID"
             and "YOUR_SESSION_TOKEN" not in session
             and not any(token in (user_key or "") for token in key_placeholder_tokens)
         ):
@@ -79,13 +80,6 @@ def test_configuration():
         very_high = float(config.get("HighValue", "very_high_threshold"))
         extreme = float(config.get("HighValue", "extreme_threshold"))
         print(f"✅ High-value thresholds: ${threshold}, ${very_high}, ${extreme}")
-
-        # Check CAPTCHA settings
-        captcha_service = config.get("Captcha", "service")
-        if captcha_service and "YOUR_2CAPTCHA_API_KEY" not in config.get("Captcha", "api_key"):
-            print(f"✅ CAPTCHA service configured: {captcha_service}")
-        else:
-            print("⚠️  CAPTCHA service not configured - recommended for high-value jobs")
 
         return True
 
@@ -121,14 +115,18 @@ async def test_high_value_manager():
 
         for job in test_jobs:
             is_hv, category = manager.is_high_value(job["reward"])
-            print(f"Job {job['id']}: ${job['reward']} -> {category if is_hv else 'Standard'}")
+            print(
+                f"Job {job['id']}: ${job['reward']} -> {category if is_hv else 'Standard'}"
+            )
 
         # Test stats
         stats = manager.get_stats()
         print(f"\n📊 Current Stats:")
         print(f"   High-value threshold: ${stats['thresholds']['high']}")
         print(f"   Max per day: {config.get('HighValue', 'max_per_day')}")
-        print(f"   Min interval: {config.get('HighValue', 'min_interval_seconds')} seconds")
+        print(
+            f"   Min interval: {config.get('HighValue', 'min_interval_seconds')} seconds"
+        )
 
         return True
 
@@ -140,12 +138,12 @@ async def test_high_value_manager():
 def show_setup_instructions():
     """
     Print the setup and configuration instructions required to configure high-value job monitoring.
-    
+
     The printed message covers required configuration file edits and keys, RSS feed details, WebSocket credentials (user ID, session cookie and user key), running instructions, recommended safety limits and notification/logging locations.
     """
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("HIGH-VALUE JOB SETUP INSTRUCTIONS")
-    print("="*60)
+    print("=" * 60)
     print("""
 1. CONFIGURATION:
    - Copy config_high_value.ini to config.ini
@@ -186,8 +184,6 @@ def main():
     config_ok = test_configuration()
 
     if config_ok:
-        # Test manager
-        import asyncio
         manager_ok = asyncio.run(test_high_value_manager())
 
         if manager_ok:
