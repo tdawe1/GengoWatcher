@@ -129,6 +129,7 @@ class AppConfig:
             "check_interval_max": 300,
             "headless": True,
             "session_cookie": "",
+            "browser_executable": "",
         },
     }
 

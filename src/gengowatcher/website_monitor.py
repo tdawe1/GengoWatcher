@@ -85,14 +85,28 @@ class WebsiteMonitor:
         viewport_width = 1920 + random.randint(-50, 50)
         viewport_height = 1080 + random.randint(-50, 50)
 
-        self._browser = await self._playwright.chromium.launch(
-            headless=headless,
-            args=[
+        launch_options = {
+            "headless": headless,
+            "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--no-sandbox",
             ],
-        )
+        }
+
+        browser_executable = self.config.get("WebsiteMonitor", "browser_executable")
+        if browser_executable:
+            from pathlib import Path
+
+            if Path(browser_executable).is_file():
+                launch_options["executable_path"] = browser_executable
+                self.logger.info(f"Using custom browser: {browser_executable}")
+            else:
+                self.logger.warning(
+                    f"Custom browser executable not found: {browser_executable}, falling back to Chromium"
+                )
+
+        self._browser = await self._playwright.chromium.launch(**launch_options)
 
         self._context = await self._browser.new_context(
             viewport={"width": viewport_width, "height": viewport_height},
