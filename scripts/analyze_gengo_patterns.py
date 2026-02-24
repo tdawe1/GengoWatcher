@@ -71,7 +71,7 @@ class GengoAnalyzer:
             ws_version = getattr(websockets, "__version__", "0")
             ws_header_key = (
                 "additional_headers"
-                if int(ws_version.split(".")[0]) >= 12
+                if int(ws_version.split(".")[0]) >= 13
                 else "extra_headers"
             )
             header_kwargs = {ws_header_key: extra_headers}
@@ -310,7 +310,7 @@ class GengoAnalyzer:
 
             # Analyze patterns
             recent_captchas = [
-                e for e in captcha_events if "2025-09-17" in e
+                e for e in captcha_events if datetime.date.today().isoformat() in e
             ]  # Today's entries
             self.logger.info(f"Recent CAPTCHA events: {len(recent_captchas)}")
 

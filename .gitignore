@@ -19,11 +19,6 @@ wheels/
 *.egg-info/
 *.egg
 MANIFEST
-thoughts/
-archives/
-.codex/
-.slim/
-stats.json
 
 # Virtual environments
 venv/
@@ -90,10 +85,11 @@ firebase-debug.log
 # OS files
 .DS_Store
 Thumbs.db
-archives/
-.github/
-.workflows/
+
+# Project-specific
 .slim/
-.worktrees/
-thoughts/
 .codex/
+thoughts/
+
+# Sensitive data files
+stats.json

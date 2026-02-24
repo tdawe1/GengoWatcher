@@ -77,6 +77,7 @@ class AppConfig:
             "max_backoff": 300,
             "user_agent_email": "",
             "browser_user_agent": "",
+            "detect_browser_ua": False,
             "clean_close_backoff_min": 20,
             "clean_close_backoff_max": 45,
             "reconnect_jitter_max": 5,
