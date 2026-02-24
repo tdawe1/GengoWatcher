@@ -17,7 +17,6 @@ $accent-aqua: #8ea4a2;        /* Dragon Aqua */
 $accent-pink: #a292a3;        /* Dragon Pink */
 
 Screen {
-    background: $surface;
     color: $text;
 }
 
@@ -28,7 +27,6 @@ Screen {
 /* Title Bar - seamless, no box */
 TitleBar {
     height: 3;
-    background: $surface;
     dock: top;
     layout: vertical;
     align: center middle;
@@ -70,7 +68,6 @@ MetricsRow {
 MetricCard {
     width: 1fr;
     height: 100%;
-    background: $surface;
     border: round $surface-muted;
     layout: vertical;
     align: center middle;
@@ -142,7 +139,6 @@ StatusRow {
     height: 3;
     width: 100%;
     layout: horizontal;
-    background: $surface;
     align: center middle;
     margin: 0 1 1 1;
     padding: 0 2;
@@ -203,13 +199,11 @@ StatusIndicator {
 
 /* Panel styling - unified with surface */
 .dashboard-panel {
-    background: $surface;
     border: round $surface-muted;
     padding: 0 1;
     height: 100%;
     margin: 0 1 1 1;
     border-title-color: $accent-blue;
-    border-title-background: $surface;
 }
 
 /* Specific panel accents */
@@ -220,7 +214,6 @@ StatusIndicator {
 
 /* Activity log at bottom */
 .activity-panel {
-    background: $surface;
     border: round $surface-muted;
     border-left: tall $accent-aqua;
     padding: 0 1;
@@ -231,7 +224,6 @@ StatusIndicator {
 
 .activity-panel .panel-title {
     color: $accent-blue;
-    background: $surface;
     text-style: bold;
     dock: top;
     padding: 0 1;
@@ -239,7 +231,6 @@ StatusIndicator {
 
 DashboardQuadrant {
     border: round $surface-muted;
-    background: $surface;
     margin: 0 1 1 1;
     padding: 0 1;
     height: 100%;
@@ -247,7 +238,6 @@ DashboardQuadrant {
 }
 
 .quadrant-title {
-    background: $surface;
     color: $accent-blue;
     dock: top;
     padding: 0 1;
@@ -286,14 +276,11 @@ SessionStats {
 }
 
 RichLog {
-    background: $surface;
     border: none;
-    scrollbar-background: $surface;
     scrollbar-color: $surface-muted;
 }
 
 DataTable {
-    background: $surface;
     border: none;
     height: 100%;
 }
@@ -303,7 +290,6 @@ JobsPreview {
 }
 
 DataTable > .datatable--header {
-    background: $surface-highlight;
     color: $accent-blue;
 }
 
@@ -318,20 +304,13 @@ TabPane {
 
 Tabs {
     dock: top;
-    background: $surface;
 }
 
 Tab {
-    background: $surface;
     color: $text-muted;
 }
 
-Tab:hover {
-    background: $surface-highlight;
-}
-
 Tab.-active {
-    background: $surface;
     color: $text;
     text-style: bold;
 }
@@ -345,21 +324,17 @@ Input {
     dock: bottom;
     height: 3;
     border: round $surface-muted;
-    background: $surface;
 }
 
 Footer {
     dock: bottom;
-    background: $surface;
     color: $text-muted;
 }
 
 FooterKey {
-    background: $surface-highlight;
     color: $text;
 }
 
 FooterKey > .footer-key--key {
-    background: $surface-muted;
     color: $accent-blue;
 }
