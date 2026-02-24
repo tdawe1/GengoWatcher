@@ -14,7 +14,8 @@ from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, Grid, Container
+from textual.color import Color
+from textual.containers import Horizontal, Vertical, Container
 from textual.widgets import (
     Footer,
     Input,
@@ -27,6 +28,7 @@ from textual.widgets import (
 )
 from textual import work, on
 from textual.css.query import NoMatches
+from textual.theme import BUILTIN_THEMES, Theme
 from rich.text import Text
 
 from .watcher import GengoWatcher, __version__
@@ -40,19 +42,27 @@ from .stats import StatsManager
 
 
 class Icons:
-    FOUND = "▲"
-    ACCEPTED = "✓"
-    VALUE = "$"
-    RATE = "~"
+    FOUND = ""
+    ACCEPTED = ""
+    VALUE = ""
+    RATE = ""
+    TODAY = ""
     MIN_WORDS = "≥"
 
-    WEBSOCKET = "●"
-    EMAIL = "◉"
-    WEB = "◎"
-    RSS = "⊛"  # Added
-    CAPTCHA = "⧗"
-    WORKFLOW = "⇄"
-    AUTO = "▶"  # Added
+    WEBSOCKET = ""
+    EMAIL = ""
+    WEB = ""
+    RSS = ""
+    CAPTCHA = ""
+    WORKFLOW = ""
+    AUTO = ""
+
+    PANEL_ACTIVITY = ""
+    PANEL_JOBS = ""
+    PANEL_CHART = ""
+    PANEL_CONFIG = ""
+    PANEL_SESSION = ""
+    PANEL_SOURCES = ""
 
     IDLE = "○"
     LIVE = "∿∿∿"
@@ -101,13 +111,103 @@ def _format_timestamp(timestamp: Any) -> str:
     return ""
 
 
+_TIMESTAMP_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:\[\d{2}:\d{2}:\d{2}\]|\d{2}:\d{2}:\d{2}\b|\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\]?)"
+)
+
+
+def _with_timestamp_prefix(
+    message: str, now: datetime.datetime | None = None
+) -> str:
+    """Prefix a message with [HH:MM:SS] if it has no leading timestamp."""
+    text = "" if message is None else str(message)
+    if _TIMESTAMP_PREFIX_PATTERN.match(text):
+        return text
+
+    current_time = now or datetime.datetime.now()
+    return f"[{current_time.strftime('%H:%M:%S')}] {text}".rstrip()
+
+
 SOURCE_BUCKET_CONFIG = {
-    "websocket": {"label": "WebSocket", "color": "#957FB8"},
-    "email": {"label": "Email", "color": "#FFA066"},
-    "website": {"label": "Website", "color": "#7E9CD8"},
-    "rss": {"label": "RSS", "color": "#7AA89F"},
-    "unknown": {"label": "Unknown", "color": "#727169"},
+    "websocket": {"label": "WebSocket", "color": "secondary"},
+    "email": {"label": "Email", "color": "accent"},
+    "website": {"label": "Website", "color": "primary"},
+    "rss": {"label": "RSS", "color": "success"},
+    "unknown": {"label": "Unknown", "color": "text-muted"},
 }
+
+
+def _get_active_theme(owner: Any) -> Theme:
+    """Get the currently active Textual theme for an app/widget/handler owner."""
+    app = None
+    try:
+        app = owner.app
+    except Exception:
+        app = getattr(owner, "__dict__", {}).get("app")
+    if app is not None:
+        theme = getattr(app, "current_theme", None)
+        if isinstance(theme, Theme):
+            return theme
+    return BUILTIN_THEMES["textual-dark"]
+
+
+def _build_semantic_color_palette(theme: Theme) -> dict[str, str]:
+    """Build semantic Rich color roles from a Textual theme."""
+    generated = theme.to_color_system().generate()
+
+    def rich_color(name: str) -> str:
+        return _to_rich_color(generated[name])
+
+    return {
+        "timestamp": rich_color("foreground-muted"),
+        "job_id": rich_color("primary"),
+        "money": rich_color("warning"),
+        "lang_pair": rich_color("secondary"),
+        "number": rich_color("accent"),
+        "success": rich_color("success"),
+        "error_word": rich_color("error"),
+        "warning_word": rich_color("warning"),
+        "source_ws": rich_color("secondary"),
+        "source_email": rich_color("accent"),
+        "source_rss": rich_color("success"),
+        "source_web": rich_color("primary"),
+        "url": rich_color("accent"),
+        "default": rich_color("foreground"),
+        "level_debug": rich_color("foreground-muted"),
+        "level_info": rich_color("foreground"),
+        "level_warning": rich_color("warning"),
+        "level_error": rich_color("error"),
+        "level_success": rich_color("success"),
+        "level_job": rich_color("primary"),
+        "level_critical": _to_rich_color(
+            generated.get("error-lighten-1", generated["error"])
+        ),
+        "bracket": rich_color("foreground-muted"),
+        "punctuation": rich_color("foreground-muted"),
+    }
+
+
+def _build_config_style_palette(theme: Theme) -> dict[str, str]:
+    """Build semantic styles for ConfigPreview from a Textual theme."""
+    generated = theme.to_color_system().generate()
+    return {
+        "section_header": f"bold {_to_rich_color(generated['primary'])}",
+        "section_rule": _to_rich_color(generated["foreground-muted"]),
+        "key": _to_rich_color(generated["foreground-muted"]),
+        "bool_true": _to_rich_color(generated["success"]),
+        "bool_false": _to_rich_color(generated["error"]),
+        "sensitive": _to_rich_color(generated["secondary"]),
+        "number": _to_rich_color(generated["accent"]),
+        "value": _to_rich_color(generated["foreground"]),
+    }
+
+
+def _to_rich_color(color_value: str) -> str:
+    """Normalize a Textual color value to a Rich-compatible color string."""
+    try:
+        return Color.parse(color_value).hex6
+    except Exception:
+        return color_value
 
 
 def _normalize_source(source: Any) -> str:
@@ -269,27 +369,19 @@ class TitleBar(Static):
 
 
 class MetricCard(Static):
-    """Metric card with precise Grid layout."""
+    """Metric card with centered stat value and border title."""
 
     def __init__(self, label: str, icon: str, value: str = "0", **kwargs):
         super().__init__(**kwargs)
         self.label = label
         self.icon = icon
         self.value = value
-        self.border_title = label  # Native Textual border title
+        self.border_title = f"{icon} {label}" if icon else label
 
     def compose(self) -> ComposeResult:
-        # Use a grid: Column 1 (Icon), Column 2 (Value)
-        with Grid(classes="metric-grid"):
-            yield Static(self.icon, classes="metric-icon")
-            yield Static(
-                self.value, classes="metric-value", id=f"val-{self.label.lower()}"
-            )
-        # Label is handled by border_title now, or we can keep it inside if desired.
-        # Design doc shows "Found" at bottom. Let's keep it simple: Icon+Value centered.
-        # The Label is strictly the card title/footer.
-        # Let's put label at bottom as a Static if border_title isn't enough.
-        yield Static(self.label, classes="metric-label")
+        # Border title already provides the card label, so the card body only
+        # renders the current stat value centered.
+        yield Static(self.value, classes="metric-value", id=f"val-{self.label.lower()}")
 
     def update_value(self, value: str):
         try:
@@ -306,11 +398,11 @@ class MetricsRow(Horizontal):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        yield MetricCard("Found", "▲", id="card-found", classes="found")
-        yield MetricCard("Accepted", "✓", id="card-accepted", classes="accepted")
-        yield MetricCard("Value", "$", id="card-value", classes="value")
-        yield MetricCard("Rate", "~", id="card-rate", classes="rate")
-        yield MetricCard("Today", "☀", id="card-today", classes="today")
+        yield MetricCard("Found", Icons.FOUND, id="card-found", classes="found")
+        yield MetricCard("Accepted", Icons.ACCEPTED, id="card-accepted", classes="accepted")
+        yield MetricCard("Value", Icons.VALUE, id="card-value", classes="value")
+        yield MetricCard("Rate", Icons.RATE, id="card-rate", classes="rate")
+        yield MetricCard("Today", Icons.TODAY, id="card-today", classes="today")
 
     def refresh_metrics(self) -> None:
         if not self.state:
@@ -367,7 +459,7 @@ class StatusIndicator(Static):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            f"{self.ICONS['idle']} {self.label_text}",
+            self._render_label(self.ICONS["idle"]),
             classes="status-label",
             id=f"{self.id}-label",
         )
@@ -395,9 +487,14 @@ class StatusIndicator(Static):
                 icon = working_frames[self._pulse_index]
             else:
                 icon = self.ICONS.get(self.current_state, self.base_icon)
-            label.update(f"{icon} {self.label_text}")
+            label.update(self._render_label(icon))
         except NoMatches:
             pass
+
+    def _render_label(self, status_icon: str) -> str:
+        if self.base_icon:
+            return f"{status_icon} {self.base_icon} {self.label_text}"
+        return f"{status_icon} {self.label_text}"
 
     def set_state(self, state: str) -> None:
         """Set the indicator state and update styling."""
@@ -428,13 +525,13 @@ class StatusRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         # 7 Indicators - reordered: WS, RSS next to each other, then Mail, Web, Captcha, Workflow, Auto
-        yield StatusIndicator("●", "WS", id="ind-ws")
-        yield StatusIndicator("⊛", "RSS", id="ind-rss")
-        yield StatusIndicator("◉", "Mail", id="ind-email")
-        yield StatusIndicator("◎", "Web", id="ind-web")
-        yield StatusIndicator("⧗", "Captcha", id="ind-cap")
-        yield StatusIndicator("⇄", "Workflow", id="ind-work")
-        yield StatusIndicator("▶", "Auto", id="ind-auto")
+        yield StatusIndicator(Icons.WEBSOCKET, "WS", id="ind-ws")
+        yield StatusIndicator(Icons.RSS, "RSS", id="ind-rss")
+        yield StatusIndicator(Icons.EMAIL, "Mail", id="ind-email")
+        yield StatusIndicator(Icons.WEB, "Web", id="ind-web")
+        yield StatusIndicator(Icons.CAPTCHA, "Captcha", id="ind-cap")
+        yield StatusIndicator(Icons.WORKFLOW, "Workflow", id="ind-work")
+        yield StatusIndicator(Icons.AUTO, "Auto", id="ind-auto")
 
     def refresh_status(self) -> None:
         """Refresh all status indicators based on watcher state."""
@@ -537,30 +634,6 @@ class DashboardQuadrant(Static):
 class ActivityPreview(DashboardQuadrant):
     """Recent activity log with colored output."""
 
-    # Kanagawa-inspired colors (same as TextualLogHandler)
-    COLORS = {
-        "timestamp": "#727169",  # Fuji Gray (muted)
-        "job_id": "#7E9CD8",  # Crystal Blue
-        "money": "#E6C384",  # Carp Yellow
-        "lang_pair": "#957FB8",  # Oni Violet
-        "number": "#D27E99",  # Sakura Pink
-        "success": "#98BB6C",  # Spring Green
-        "error_word": "#C34043",  # Samurai Red
-        "warning_word": "#E6C384",  # Carp Yellow
-        "source_ws": "#957FB8",  # Oni Violet
-        "source_email": "#FFA066",  # Surimi Orange
-        "source_rss": "#7AA89F",  # Wave Aqua
-        "source_web": "#7E9CD8",  # Crystal Blue
-        "url": "#7AA89F",  # Wave Aqua
-        "default": "#DCD7BA",  # Fuji White
-        "level_debug": "#727169",  # Fuji Gray
-        "level_info": "#DCD7BA",  # Fuji White
-        "level_warning": "#E6C384",  # Carp Yellow
-        "level_error": "#C34043",  # Samurai Red
-        "level_success": "#98BB6C",  # Spring Green
-        "level_job": "#7E9CD8",  # Crystal Blue
-    }
-
     # Mapping of level names to color keys
     LEVEL_COLORS = {
         "debug": "level_debug",
@@ -598,7 +671,7 @@ class ActivityPreview(DashboardQuadrant):
     ]
 
     def __init__(self, **kwargs):
-        super().__init__("Recent Activity", **kwargs)
+        super().__init__(f"{Icons.PANEL_ACTIVITY} Recent Activity", **kwargs)
         # Compile patterns
         self._compiled_patterns = [
             (re.compile(pattern, re.IGNORECASE), color_key)
@@ -618,23 +691,26 @@ class ActivityPreview(DashboardQuadrant):
         """
         try:
             log = self.query_one("#activity-log", RichLog)
-            colored_text = self._colorize_message(message, level)
+            line = _with_timestamp_prefix(message)
+            colored_text = self._colorize_message(line, level)
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
 
     def _colorize_message(self, msg: str, level: str = "info") -> Text:
         """Apply Rich markup coloring based on content patterns."""
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+
         # Determine base color from level
         color_key = self.LEVEL_COLORS.get(level, "default")
-        base_color = self.COLORS[color_key]
+        base_color = colors[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
 
         # Apply pattern-based highlighting
         for pattern, color_key in self._compiled_patterns:
-            color = self.COLORS.get(color_key, base_color)
+            color = colors.get(color_key, base_color)
             for match in pattern.finditer(msg):
                 start, end = match.span()
                 # Apply bold for important items
@@ -648,7 +724,7 @@ class ActivityPreview(DashboardQuadrant):
 
 class JobsPreview(DashboardQuadrant):
     def __init__(self, state: "AppState", **kwargs):
-        super().__init__("Jobs Preview", **kwargs)
+        super().__init__(f"{Icons.PANEL_JOBS} Jobs Preview", **kwargs)
         self.state = state
 
     def compose(self) -> ComposeResult:
@@ -688,7 +764,7 @@ class HourlyActivity(DashboardQuadrant):
     """Hourly activity stats with peak hour highlighting."""
 
     def __init__(self, stats: "StatsManager", **kwargs):
-        super().__init__("Jobs/Hour", **kwargs)
+        super().__init__(f"{Icons.PANEL_CHART} Jobs/Hour", **kwargs)
         self.stats = stats
 
     def compose(self) -> ComposeResult:
@@ -767,7 +843,7 @@ class ConfigPreview(DashboardQuadrant):
     MAX_VALUE_LENGTH_SHORT = 17
 
     def __init__(self, config: "AppConfig", **kwargs):
-        super().__init__("Configuration", **kwargs)
+        super().__init__(f"{Icons.PANEL_CONFIG} Configuration", **kwargs)
         self.config = config
 
     def compose(self) -> ComposeResult:
@@ -815,13 +891,12 @@ class ConfigPreview(DashboardQuadrant):
         else:
             formatted = str(value) if value else "—"
 
-        if len(formatted) > self.MAX_VALUE_LENGTH:
-            return formatted[: self.MAX_VALUE_LENGTH_SHORT] + "..."
         return formatted
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
         text = Text()
+        styles = _build_config_style_palette(_get_active_theme(self))
         config = getattr(self, "config", None)
         list_all = getattr(config, "list_all", None)
         if not callable(list_all):
@@ -837,9 +912,10 @@ class ConfigPreview(DashboardQuadrant):
                 continue
 
             # Section header
-            text.append(f"─ {section} ", style="bold #7E9CD8")
+            text.append(f"─ {section} ", style=styles["section_header"])
             text.append(
-                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)), style="#727169"
+                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)),
+                style=styles["section_rule"],
             )
             text.append("\n")
 
@@ -853,19 +929,20 @@ class ConfigPreview(DashboardQuadrant):
                     )
 
                 # Key styling
-                text.append(f"  {key}: ", style="#727169")
+                text.append(f"  {key}: ", style=styles["key"])
 
                 # Value styling based on type/content
                 if isinstance(value, bool):
                     text.append(
-                        formatted_value, style="#98BB6C" if value else "#C34043"
+                        formatted_value,
+                        style=styles["bool_true"] if value else styles["bool_false"],
                     )
                 elif self._is_sensitive(key):
-                    text.append(formatted_value, style="#957FB8")
+                    text.append(formatted_value, style=styles["sensitive"])
                 elif isinstance(value, (int, float)):
-                    text.append(formatted_value, style="#D27E99")
+                    text.append(formatted_value, style=styles["number"])
                 else:
-                    text.append(formatted_value, style="#DCD7BA")
+                    text.append(formatted_value, style=styles["value"])
                 text.append("\n")
 
         return text
@@ -875,7 +952,7 @@ class SessionStats(DashboardQuadrant):
     """Session statistics summary."""
 
     def __init__(self, watcher: "GengoWatcher", state: "AppState", **kwargs):
-        super().__init__("Session", **kwargs)
+        super().__init__(f"{Icons.PANEL_SESSION} Session", **kwargs)
         self.watcher = watcher
         self.state = state
 
@@ -913,7 +990,7 @@ class SourcesBreakdown(DashboardQuadrant):
     """Job source breakdown."""
 
     def __init__(self, state: "AppState", **kwargs):
-        super().__init__("Sources", **kwargs)
+        super().__init__(f"{Icons.PANEL_SOURCES} Sources", **kwargs)
         self.state = state
 
     def compose(self) -> ComposeResult:
@@ -1145,30 +1222,6 @@ class GengoWatcherApp(App):
 class TextualLogHandler(logging.Handler):
     """Redirects logs to the ActivityPreview widget with Rich markup coloring."""
 
-    # Kanagawa-inspired colors
-    COLORS = {
-        "timestamp": "#727169",  # Fuji Gray (muted)
-        "level_debug": "#727169",  # Fuji Gray
-        "level_info": "#DCD7BA",  # Fuji White (default)
-        "level_warning": "#E6C384",  # Carp Yellow
-        "level_error": "#C34043",  # Samurai Red
-        "level_critical": "#FF5D62",  # Peach Red
-        "job_id": "#7E9CD8",  # Crystal Blue
-        "money": "#E6C384",  # Carp Yellow
-        "lang_pair": "#957FB8",  # Oni Violet
-        "number": "#D27E99",  # Sakura Pink
-        "success": "#98BB6C",  # Spring Green
-        "error_word": "#C34043",  # Samurai Red
-        "warning_word": "#E6C384",  # Carp Yellow
-        "source_ws": "#957FB8",  # Oni Violet
-        "source_email": "#FFA066",  # Surimi Orange
-        "source_rss": "#7AA89F",  # Wave Aqua
-        "source_web": "#7E9CD8",  # Crystal Blue
-        "url": "#7AA89F",  # Wave Aqua
-        "bracket": "#727169",  # Fuji Gray
-        "punctuation": "#727169",  # Fuji Gray
-    }
-
     # Mapping of logging levels to color keys
     LEVEL_COLORS = {
         logging.DEBUG: "level_debug",
@@ -1241,23 +1294,26 @@ class TextualLogHandler(logging.Handler):
     def write_log(self, msg: str, level: int = logging.INFO):
         try:
             log = self.app.query_one("#activity-log", RichLog)
-            colored_text = self._colorize_message(msg, level)
+            line = _with_timestamp_prefix(msg)
+            colored_text = self._colorize_message(line, level)
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
 
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+
         # Determine base color from log level
         color_key = self.LEVEL_COLORS.get(level, "level_info")
-        base_color = self.COLORS[color_key]
+        base_color = colors[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
 
         # Apply pattern-based highlighting
         for pattern, color_key in self._compiled_patterns:
-            color = self.COLORS.get(color_key, base_color)
+            color = colors.get(color_key, base_color)
             for match in pattern.finditer(msg):
                 start, end = match.span()
                 # Apply bold for important items
@@ -1269,6 +1325,6 @@ class TextualLogHandler(logging.Handler):
         # Style brackets and punctuation
         for match in re.finditer(r"[\[\](){}:,]", msg):
             start, end = match.span()
-            text.stylize(self.COLORS["bracket"], start, end)
+            text.stylize(colors["bracket"], start, end)
 
         return text

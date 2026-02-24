@@ -24,8 +24,12 @@ from gengowatcher.ui_textual import (
     GengoWatcherApp,
     TextualLogHandler,
     Icons,
+    _build_semantic_color_palette,
+    _with_timestamp_prefix,
 )
 from gengowatcher.stats import StatsManager
+from textual.theme import Theme
+from textual.color import Color
 
 
 @pytest.fixture
@@ -140,6 +144,58 @@ class TestIcons:
         assert isinstance(Icons.IDLE, str)
 
 
+class TestThemeIntegration:
+    """Theme integration tests for Textual palette compatibility."""
+
+    def test_semantic_palette_is_derived_from_textual_theme(self):
+        """Semantic UI colors should come from Theme-generated variables."""
+        theme = Theme(
+            name="test-theme",
+            primary="#1a2b3c",
+            secondary="#2b3c4d",
+            warning="#3c4d5e",
+            error="#4d5e6f",
+            success="#5e6f70",
+            accent="#6f7081",
+            foreground="#d0d1d2",
+            background="#101112",
+            surface="#202122",
+            panel="#303132",
+            dark=True,
+        )
+
+        generated = theme.to_color_system().generate()
+        palette = _build_semantic_color_palette(theme)
+
+        assert palette["job_id"] == Color.parse(generated["primary"]).hex6
+        assert palette["lang_pair"] == Color.parse(generated["secondary"]).hex6
+        assert palette["money"] == Color.parse(generated["warning"]).hex6
+        assert palette["success"] == Color.parse(generated["success"]).hex6
+        assert palette["error_word"] == Color.parse(generated["error"]).hex6
+        assert palette["url"] == Color.parse(generated["accent"]).hex6
+        assert palette["default"] == Color.parse(generated["foreground"]).hex6
+        assert palette["timestamp"] == Color.parse(generated["foreground-muted"]).hex6
+
+    def test_css_uses_textual_variables_not_hardcoded_hex(self):
+        """TUI CSS should reference Textual theme variables directly."""
+        css_path = pathlib.Path(__file__).resolve().parents[1] / "src" / "gengowatcher" / "gengo_watcher.tcss"
+        css = css_path.read_text(encoding="utf-8")
+
+        assert "$primary" in css
+        assert "$secondary" in css
+        assert "$warning" in css
+        assert "$error" in css
+        assert "$success" in css
+        assert "$accent" in css
+
+        # Screen background should be explicitly controlled by theme color
+        # (or transparent if inheriting terminal in future variants).
+        assert re.search(r"Screen\s*\{[^}]*background:\s*(?:\$background|transparent)\s*;", css, re.DOTALL)
+
+        # No hardcoded hex color literals in the main stylesheet.
+        assert re.search(r"#[0-9A-Fa-f]{3,8}", css) is None
+
+
 class TestTitleBar:
     """Test TitleBar widget."""
 
@@ -176,7 +232,7 @@ class TestMetricCard:
     def test_metric_card_border_title(self):
         """Test that border_title is set."""
         card = MetricCard("Found", "▲", "10")
-        assert card.border_title == "Found"
+        assert card.border_title == "▲ Found"
 
     @pytest.mark.asyncio
     async def test_update_value_not_mounted(self):
@@ -308,7 +364,20 @@ class TestActivityPreview:
     def test_activity_preview_initialization(self):
         """Test ActivityPreview initialization."""
         preview = ActivityPreview()
-        assert preview.border_title == "Recent Activity"
+        assert preview.border_title == f"{Icons.PANEL_ACTIVITY} Recent Activity"
+
+    def test_with_timestamp_prefix(self):
+        """Messages without a timestamp should be prefixed once."""
+        now = datetime.datetime(2026, 2, 24, 13, 45, 6)
+        assert _with_timestamp_prefix("Test message", now=now) == "[13:45:06] Test message"
+        assert (
+            _with_timestamp_prefix("[13:45:06] Existing timestamp", now=now)
+            == "[13:45:06] Existing timestamp"
+        )
+        assert (
+            _with_timestamp_prefix("13:45:06 Existing timestamp", now=now)
+            == "13:45:06 Existing timestamp"
+        )
 
     def test_patterns_compiled(self):
         """Test that regex patterns are compiled."""
@@ -353,7 +422,7 @@ class TestJobsPreview:
         """Test JobsPreview initialization."""
         preview = JobsPreview(state=mock_state)
         assert preview.state == mock_state
-        assert preview.border_title == "Jobs Preview"
+        assert preview.border_title == f"{Icons.PANEL_JOBS} Jobs Preview"
 
     @pytest.mark.asyncio
     async def test_refresh_jobs_with_data(self, mock_state):
@@ -377,7 +446,7 @@ class TestHourlyActivity:
         """Test HourlyActivity initialization."""
         chart = HourlyActivity(stats=mock_stats)
         assert chart.stats == mock_stats
-        assert chart.border_title == "Jobs/Hour"
+        assert chart.border_title == f"{Icons.PANEL_CHART} Jobs/Hour"
 
     @pytest.mark.asyncio
     async def test_hourly_activity_refresh(self, mock_stats):
@@ -417,7 +486,7 @@ class TestConfigPreview:
         """Test ConfigPreview initialization."""
         preview = ConfigPreview(config=mock_config)
         assert preview.config == mock_config
-        assert preview.border_title == "Configuration"
+        assert preview.border_title == f"{Icons.PANEL_CONFIG} Configuration"
 
     def test_sensitive_keys_defined(self):
         """Test that sensitive keys are defined."""
@@ -483,7 +552,7 @@ class TestSessionStatsWidget:
         stats = SessionStatsWidget(watcher=mock_watcher, state=mock_state)
         assert stats.watcher == mock_watcher
         assert stats.state == mock_state
-        assert stats.border_title == "Session"
+        assert stats.border_title == f"{Icons.PANEL_SESSION} Session"
 
     @pytest.mark.asyncio
     async def test_refresh_stats_not_mounted(self, mock_watcher, mock_state):
@@ -501,7 +570,7 @@ class TestSourcesBreakdown:
         """Test SourcesBreakdown initialization."""
         breakdown = SourcesBreakdown(state=mock_state)
         assert breakdown.state == mock_state
-        assert breakdown.border_title == "Sources"
+        assert breakdown.border_title == f"{Icons.PANEL_SOURCES} Sources"
 
     @pytest.mark.asyncio
     async def test_refresh_sources_with_jobs(self, mock_state):

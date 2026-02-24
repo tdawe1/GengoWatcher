@@ -1,23 +1,17 @@
-/* Kanagawa Dragon Theme Colors */
-/* Dragon variant - darker, more muted tones */
-$surface: #181616;            /* Dragon Black 3 - main background */
-$surface-highlight: #282727;  /* Dragon Black 4 - subtle highlight */
-$surface-muted: #393836;      /* Dragon Black 5 - borders */
-$text: #c5c9c5;               /* Dragon White */
-$text-muted: #737c73;         /* Dragon Gray (muted) */
-
-/* Dragon Accents - more muted than Wave */
-$accent-blue: #8ba4b0;        /* Dragon Blue */
-$accent-green: #8a9a7b;       /* Dragon Green */
-$accent-red: #c4746e;         /* Dragon Red */
-$accent-orange: #b6927b;      /* Dragon Orange */
-$accent-yellow: #c4b28a;      /* Dragon Yellow */
-$accent-violet: #8992a7;      /* Dragon Violet (Ash) */
-$accent-aqua: #8ea4a2;        /* Dragon Aqua */
-$accent-pink: #a292a3;        /* Dragon Pink */
+/* Theme aliases: these map directly to the currently selected Textual theme. */
+$surface-muted: $border-blurred;
+$accent-blue: $primary;
+$accent-green: $success;
+$accent-red: $error;
+$accent-orange: $warning;
+$accent-yellow: $warning-lighten-1;
+$accent-violet: $secondary;
+$accent-aqua: $accent;
+$accent-pink: $accent-muted;
 
 Screen {
     color: $text;
+    background: $background;
 }
 
 /* ============================================================================
@@ -75,7 +69,7 @@ MetricCard {
     padding: 0 1;
 }
 
-/* Color diversity for cards - using Dragon accents */
+/* Card accents from current theme roles */
 MetricCard.found { 
     border-left: tall $accent-green; 
     border-title-color: $accent-green;
@@ -106,32 +100,13 @@ MetricCard:focus {
     border: round $accent-blue;
 }
 
-.metric-grid {
-    layout: grid;
-    grid-size: 2;
-    grid-columns: auto 1fr;
-    width: 100%;
-    height: 1;
-    align: center middle;
-}
-
-.metric-icon {
-    color: $text;
-    margin-right: 1;
-}
-
 .metric-value {
     text-style: bold;
     color: $text;
-    width: 100%;
-    text-align: right;
-}
-
-.metric-label {
-    width: 100%;
+    width: 1fr;
     text-align: center;
-    color: $text-muted;
-    padding-bottom: 0;
+    height: 1fr;
+    content-align: center middle;
 }
 
 /* Status Row - seamless, matches surface */
@@ -158,7 +133,7 @@ StatusIndicator {
     color: $text-muted;
 }
 
-/* Status Colors - Dragon palette */
+/* Status Colors */
 .status-live { 
     color: $accent-green; 
     text-style: bold;
