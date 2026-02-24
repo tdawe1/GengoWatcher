@@ -35,10 +35,11 @@ async def run_test(name, user_id, headers):
     logger.info(f"--- Starting Test: {name} ---")
     try:
         # Handle websockets version difference
+        # websockets >= 13.0 uses "additional_headers", earlier versions use "extra_headers"
         ws_version = getattr(websockets, "__version__", "0")
         ws_header_key = (
             "additional_headers"
-            if int(ws_version.split(".")[0]) >= 12
+            if int(ws_version.split(".")[0]) >= 13
             else "extra_headers"
         )
 

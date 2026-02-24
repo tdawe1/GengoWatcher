@@ -294,7 +294,7 @@ def main():
                 log.addHandler(file_handler)
             except IOError as e:
                 console.print(f"[error]Could not set up file logging: {e}[/]")
-        if args.stdio_logs or config.get("Logging", "log_stdio_enabled"):
+        if args.stdio_logs or config.getboolean("Logging", "log_stdio_enabled", fallback=False):
             stdio_handler = logging.StreamHandler(stream=sys.stderr)
             stdio_handler.setFormatter(
                 logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
