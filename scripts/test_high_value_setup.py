@@ -22,7 +22,11 @@ def test_configuration():
     """
     Verify that the high-value job configuration file exists and contains valid settings.
 
-    Checks for the presence of config_high_value.ini, loads it via AppConfig and validates the RSS feed URL, WebSocket credentials (user_id, user_session, user_key), and high-value thresholds. Status messages are printed to stdout for each check.
+    Checks for the presence of config_high_value.ini, loads it via AppConfig,
+    validates the RSS feed URL, verifies WebSocket credentials
+    (user_id, user_session, user_key), validates high-value thresholds, and
+    reports optional CAPTCHA configuration status. Status messages are printed
+    to stdout for each check.
 
     Returns:
         bool: `True` if the configuration file exists and all validations complete without error, `False` otherwise.
