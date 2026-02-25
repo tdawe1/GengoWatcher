@@ -292,6 +292,12 @@ class JobAcceptanceEngine:
                 result.reason or "unknown",
             )
 
+            if result.reason == "captcha_required":
+                self.logger.error(
+                    "CAPTCHA required for job %s; stopping retries", job_id
+                )
+                break
+
             if attempt < attempts:
                 backoff_time = self.retry_delay * (2 ** (attempt - 1)) + random.uniform(
                     0, 1

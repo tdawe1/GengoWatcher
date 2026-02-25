@@ -173,7 +173,7 @@ class AppConfig:
         for section, settings in self.DEFAULT_CONFIG.items():
             parser.add_section(section)
             for key, value in settings.items():
-                parser.set(section, key, str(value))
+                parser.set(section, key, self._serialize_for_parser(value))
 
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -242,8 +242,23 @@ class AppConfig:
                                         self.config[section][key] = json.loads(raw_val)
                                     except json.JSONDecodeError:
                                         self.config[section][key] = default_val
+                                        self._config_parser.set(
+                                            section,
+                                            key,
+                                            self._serialize_for_parser(default_val),
+                                        )
+                                        config_modified = True
                                 else:
                                     self.config[section][key] = default_val
+                                    self._config_parser.set(
+                                        section,
+                                        key,
+                                        self._serialize_for_parser(default_val),
+                                    )
+                                    print(
+                                        f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
+                                    )
+                                    config_modified = True
                             else:
                                 self.config[section][key] = method(
                                     section, key, fallback=default_val
@@ -253,7 +268,9 @@ class AppConfig:
                             configparser.NoOptionError,
                         ):
                             # Add missing option with default value
-                            self._config_parser.set(section, key, str(default_val))
+                            self._config_parser.set(
+                                section, key, self._serialize_for_parser(default_val)
+                            )
                             self.config[section][key] = default_val
                             print(
                                 f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
@@ -285,11 +302,7 @@ class AppConfig:
                 if not self._config_parser.has_section(section):
                     self._config_parser.add_section(section)
                 for key, value in settings.items():
-                    # Serialize lists as JSON to preserve them on reload
-                    if isinstance(value, list):
-                        serialized = json.dumps(value)
-                    else:
-                        serialized = str(value)
+                    serialized = self._serialize_for_parser(value)
                     self._config_parser.set(section, key, serialized)
             lock_file = None
             config_path = Path(self.CONFIG_FILE)
@@ -459,6 +472,13 @@ class AppConfig:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
+
+    @staticmethod
+    def _serialize_for_parser(value: Any) -> str:
+        """Serialize values for ConfigParser while preserving list round-tripping."""
+        if isinstance(value, list):
+            return json.dumps(value)
+        return str(value)
 
     def _validate_auto_accept_config(self):
         """
