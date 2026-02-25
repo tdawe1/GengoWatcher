@@ -1,12 +1,9 @@
 import configparser
-
-if sys.platform != "win32":
-    import fcntl
 import json
 import os
 import shutil
-from pathlib import Path
 import sys
+from pathlib import Path
 import threading
 from typing import Any, Dict, List, Optional
 
