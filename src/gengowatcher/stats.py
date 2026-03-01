@@ -149,7 +149,7 @@ class StatsManager:
                 self.by_source.websocket += 1
             elif "email" in source_lower:
                 self.by_source.email += 1
-            elif "website" in source_lower:
+            elif "web" in source_lower or "rss" in source_lower:
                 self.by_source.website += 1
             elif "rss" in source_lower:
                 self.by_source.rss += 1
@@ -177,19 +177,17 @@ class StatsManager:
 
     def get_peak_hour(self) -> tuple[int, float]:
         """Return (hour, rate) for peak activity."""
-        with self._lock:
-            if not self.hourly_counts:
-                return (12, 0.0)
-            peak_hour = max(self.hourly_counts, key=lambda k: self.hourly_counts[k])
-            return (peak_hour, float(self.hourly_counts[peak_hour]))
+        if not self.hourly_counts:
+            return (12, 0.0)
+        peak_hour = max(self.hourly_counts, key=lambda k: self.hourly_counts[k])
+        return (peak_hour, float(self.hourly_counts[peak_hour]))
 
     def get_slowest_hour(self) -> tuple[int, float]:
         """Return (hour, rate) for slowest activity."""
-        with self._lock:
-            if not self.hourly_counts:
-                return (4, 0.0)
-            slow_hour = min(self.hourly_counts, key=lambda k: self.hourly_counts[k])
-            return (slow_hour, float(self.hourly_counts[slow_hour]))
+        if not self.hourly_counts:
+            return (4, 0.0)
+        slow_hour = min(self.hourly_counts, key=lambda k: self.hourly_counts[k])
+        return (slow_hour, float(self.hourly_counts[slow_hour]))
 
     def get_recent_earnings(self, days: int = 7) -> Dict[str, float]:
         """Get earnings for the last N days."""

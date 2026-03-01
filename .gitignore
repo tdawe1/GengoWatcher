@@ -60,6 +60,11 @@ token.json
 credentials.json
 .env
 
+# Environment variables (secrets)
+.env
+.env.local
+.env.*.local
+
 # Archives (keep structure, ignore contents)
 archives/logs-*/
 
@@ -85,3 +90,13 @@ firebase-debug.log
 # OS files
 .DS_Store
 Thumbs.db
+
+# Project-specific
+.slim/
+.codex/
+thoughts/
+
+# Sensitive data files
+stats.json
+
+archives/

@@ -12,6 +12,7 @@ import time
 from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
+from .browser_detector import BrowserDetector
 
 
 class JobCancellationManager:
@@ -22,6 +23,11 @@ class JobCancellationManager:
         self.logger = logger
         self.session: Optional[aiohttp.ClientSession] = None
         self._lock = threading.Lock()  # Thread safety for state access
+
+        # Browser detector for dynamic User-Agent
+        self.browser_detector = BrowserDetector(
+            config.list_all() if hasattr(config, "list_all") else config, logger
+        )
 
         # Current job tracking (protected by _lock)
         self.current_job_id: Optional[str] = None
@@ -49,7 +55,7 @@ class JobCancellationManager:
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
                 headers={
-                    "User-Agent": "GengoWatcher/2.1.5",
+                    "User-Agent": self.browser_detector.get_user_agent(),
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 },
@@ -162,122 +168,199 @@ class JobCancellationManager:
             # Set up authentication headers
             headers = {
                 "Cookie": f"my_gengo_session={user_session}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                "User-Agent": self.browser_detector.get_user_agent(),
                 "Origin": "https://gengo.com",
                 "Referer": f"https://gengo.com/t/jobs/details/{self.current_job_id}",
                 "X-Requested-With": "XMLHttpRequest",
             }
 
-            # Step 1: Check if job is still active
-            job_url = f"https://gengo.com/t/jobs/details/{self.current_job_id}"
+            max_retries = 3
+            last_error = None
+            last_http_status = None
+            session = self.session
+            if session is None:
+                self.logger.error("HTTP session unavailable for job cancellation")
+                return False
 
-            async with self.session.get(job_url, headers=headers) as response:
-                if response.status != 200:
-                    self.logger.error(f"Cannot access job page: {response.status}")
-                    return False
+            for attempt in range(max_retries):
+                try:
+                    # Step 1: Check if job is still active
+                    job_url = f"https://gengo.com/t/jobs/details/{self.current_job_id}"
 
-                content = await response.text()
+                    async with session.get(job_url, headers=headers) as response:
+                        if response.status != 200:
+                            last_http_status = response.status
+                            self.logger.warning(
+                                f"Cannot access job page: {response.status} (attempt {attempt + 1}/{max_retries})"
+                            )
+                            continue
 
-                # Check if job is already completed/failed
-                if (
-                    "job not found" in content.lower()
-                    or "job completed" in content.lower()
-                ):
-                    self.logger.info(f"Job {self.current_job_id} is no longer active")
-                    self.clear_current_job()
-                    return True
+                        content = await response.text()
 
-            # Step 2: Submit cancellation request
-            cancel_url = f"https://gengo.com/t/jobs/cancel/{self.current_job_id}"
+                        # Check if job is already completed/failed
+                        if (
+                            "job not found" in content.lower()
+                            or "job completed" in content.lower()
+                        ):
+                            self.logger.info(
+                                f"Job {self.current_job_id} is no longer active"
+                            )
+                            self.clear_current_job()
+                            return True
 
-            # The cancellation likely requires a form submission
-            cancel_data = {
-                "confirm": "1",
-                "forfeit_reward": "1",  # Ticking the forfeit reward box
-                "reason": "Cancelling for higher value opportunity",
-            }
-
-            self.logger.debug(f"Submitting cancellation for job {self.current_job_id}")
-
-            async with self.session.post(
-                cancel_url, headers=headers, data=cancel_data, timeout=30
-            ) as response:
-                self.logger.debug(f"Cancellation response status: {response.status}")
-
-                if response.status == 200:
-                    content = await response.text()
-
-                    # Check for success indicators
-                    if (
-                        "job cancelled" in content.lower()
-                        or "cancellation successful" in content.lower()
-                        or "job successfully cancelled" in content.lower()
-                    ):
-                        self.logger.info(
-                            f"✅ Successfully cancelled job {self.current_job_id}"
-                        )
-
-                        # Update stats
-                        self.stats["successful_cancellations"] += 1
-                        self.stats["total_lost_rewards"] += self.current_job_reward
-
-                        # Record cancellation
-                        self.stats["jobs_saved"].append(
-                            {
-                                "cancelled_job_id": self.current_job_id,
-                                "cancelled_reward": self.current_job_reward,
-                                "timestamp": datetime.now().isoformat(),
-                                "job_duration": time.time() - self.job_start_time
-                                if self.job_start_time
-                                else 0,
-                            }
-                        )
-
-                        # Clear tracking
-                        self.clear_current_job()
-                        self._save_job_state()
-
-                        return True
-                    else:
-                        self.logger.error(
-                            f"Cancellation may have failed - unexpected response"
-                        )
-                        self.stats["failed_cancellations"] += 1
-                        return False
-
-                elif response.status == 302 or response.status == 303:
-                    # Redirect might indicate success
-                    self.logger.info(
-                        f"✅ Job {self.current_job_id} cancelled (redirect response)"
+                    # Step 2: Submit cancellation request
+                    cancel_url = (
+                        f"https://gengo.com/t/jobs/cancel/{self.current_job_id}"
                     )
 
-                    # Update stats
-                    self.stats["successful_cancellations"] += 1
-                    self.stats["total_lost_rewards"] += self.current_job_reward
+                    # The cancellation likely requires a form submission
+                    cancel_data = {
+                        "confirm": "1",
+                        "forfeit_reward": "1",  # Ticking the forfeit reward box
+                        "reason": "Cancelling for higher value opportunity",
+                    }
 
-                    self.clear_current_job()
-                    self._save_job_state()
-
-                    return True
-                else:
-                    self.logger.error(
-                        f"Failed to cancel job {self.current_job_id}, "
-                        f"status: {response.status}"
+                    self.logger.debug(
+                        f"Submitting cancellation for job {self.current_job_id}"
                     )
-                    self.stats["failed_cancellations"] += 1
-                    return False
 
+                    async with session.post(
+                        cancel_url,
+                        headers=headers,
+                        data=cancel_data,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as response:
+                        self.logger.debug(
+                            f"Cancellation response status: {response.status}"
+                        )
+
+                        if response.status == 200:
+                            content = await response.text()
+
+                            # Check for success indicators
+                            if (
+                                "job cancelled" in content.lower()
+                                or "cancellation successful" in content.lower()
+                                or "job successfully cancelled" in content.lower()
+                            ):
+                                self.logger.info(
+                                    f"✅ Successfully cancelled job {self.current_job_id}"
+                                )
+
+                                # Update stats
+                                with self._lock:
+                                    self.stats["successful_cancellations"] += 1
+                                    self.stats["total_lost_rewards"] += (
+                                        self.current_job_reward
+                                    )
+                                    # Record cancellation
+                                    self.stats["jobs_saved"].append(
+                                        {
+                                            "cancelled_job_id": self.current_job_id,
+                                            "cancelled_reward": self.current_job_reward,
+                                            "timestamp": datetime.now().isoformat(),
+                                            "job_duration": (
+                                                time.time() - self.job_start_time
+                                                if self.job_start_time
+                                                else 0
+                                            ),
+                                        }
+                                    )
+
+                                # Clear tracking
+                                self.clear_current_job()
+                                self._save_job_state()
+
+                                return True
+                            else:
+                                self.logger.error(
+                                    "Cancellation may have failed - unexpected response"
+                                )
+                                with self._lock:
+                                    self.stats["failed_cancellations"] += 1
+                                return False
+
+                        elif response.status == 302 or response.status == 303:
+                            # Redirect might indicate success
+                            self.logger.info(
+                                f"✅ Job {self.current_job_id} cancelled (redirect response)"
+                            )
+
+                            # Update stats
+                            with self._lock:
+                                self.stats["successful_cancellations"] += 1
+                                self.stats["total_lost_rewards"] += (
+                                    self.current_job_reward
+                                )
+
+                            self.clear_current_job()
+                            self._save_job_state()
+
+                            return True
+                        else:
+                            # Check if status is retryable (5xx or 429)
+                            is_retryable = (
+                                response.status >= 500 or response.status == 429
+                            )
+                            if is_retryable and attempt < max_retries - 1:
+                                last_http_status = response.status
+                                delay = 2**attempt
+                                self.logger.warning(
+                                    f"Cancellation got {response.status} (attempt {attempt + 1}/{max_retries}), "
+                                    f"retrying in {delay}s"
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            else:
+                                self.logger.error(
+                                    f"Failed to cancel job {self.current_job_id}, "
+                                    f"status: {response.status}"
+                                )
+                                with self._lock:
+                                    self.stats["failed_cancellations"] += 1
+                                return False
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        delay = 2**attempt
+                        self.logger.warning(
+                            f"Cancellation attempt {attempt + 1} failed: {e}, retrying in {delay}s"
+                        )
+                        await asyncio.sleep(delay)
+                    continue
+
+            # All retries exhausted
+            if last_error:
+                self.logger.error(
+                    f"Job cancellation failed after {max_retries} attempts: {last_error}"
+                )
+            elif last_http_status:
+                self.logger.error(
+                    f"Job cancellation failed after {max_retries} attempts, "
+                    f"last HTTP status: {last_http_status}"
+                )
+            else:
+                self.logger.error(
+                    f"Job cancellation failed after {max_retries} attempts"
+                )
+
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
+            return False
         except aiohttp.ClientError as e:
             self.logger.error(f"HTTP client error cancelling job: {e}")
-            self.stats["failed_cancellations"] += 1
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
             return False
         except asyncio.TimeoutError as e:
             self.logger.error(f"Timeout error cancelling job: {e}")
-            self.stats["failed_cancellations"] += 1
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
             return False
         except Exception as e:
             self.logger.error(f"Unexpected error cancelling job: {e}")
-            self.stats["failed_cancellations"] += 1
+            with self._lock:
+                self.stats["failed_cancellations"] += 1
             return False
 
     def get_stats(self) -> Dict[str, Any]:
@@ -287,9 +370,11 @@ class JobCancellationManager:
             current_job = {
                 "id": self.current_job_id,
                 "reward": self.current_job_reward,
-                "duration": time.time() - self.job_start_time
-                if self.job_start_time and self.current_job_id
-                else 0,
+                "duration": (
+                    time.time() - self.job_start_time
+                    if self.job_start_time and self.current_job_id
+                    else 0
+                ),
             }
         return {
             **stats_copy,

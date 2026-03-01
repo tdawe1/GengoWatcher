@@ -22,19 +22,13 @@ class TestMonitorStatus:
 
     def test_get_monitor_status_all_alive(self, watcher_with_mocks):
         """Test get_monitor_status when all monitors are running."""
-        import threading
-
         # Create mock threads
         watcher_with_mocks._monitor_threads = {
-            "rss": threading.Thread(target=lambda: None),
-            "websocket": threading.Thread(target=lambda: None),
-            "email": threading.Thread(target=lambda: None),
-            "website": threading.Thread(target=lambda: None),
+            "rss": MagicMock(is_alive=MagicMock(return_value=True)),
+            "websocket": MagicMock(is_alive=MagicMock(return_value=True)),
+            "email": MagicMock(is_alive=MagicMock(return_value=True)),
+            "website": MagicMock(is_alive=MagicMock(return_value=True)),
         }
-
-        # Start all threads
-        for thread in watcher_with_mocks._monitor_threads.values():
-            thread.start()
 
         status = watcher_with_mocks.get_monitor_status()
 
@@ -43,10 +37,6 @@ class TestMonitorStatus:
         assert status["websocket"] == "alive"
         assert status["email"] == "alive"
         assert status["website"] == "alive"
-
-        # Clean up threads
-        for thread in watcher_with_mocks._monitor_threads.values():
-            thread.join(timeout=1)
 
     def test_get_monitor_status_disabled(self, watcher_with_mocks):
         """Test get_monitor_status when monitors are disabled."""
@@ -222,12 +212,14 @@ class TestConfigurationManagement:
         """Test setting configuration values."""
         watcher_with_mocks.set_config_value("Watcher", "min_reward", "10.0")
 
-        watcher_with_mocks.config.set.assert_called_with("Watcher", "min_reward", "10.0")
+        watcher_with_mocks.config.set.assert_called_with(
+            "Watcher", "min_reward", "10.0"
+        )
         watcher_with_mocks.config.save_config.assert_called_once()
 
     def test_get_config_value(self, watcher_with_mocks):
         """Test getting configuration values."""
-        watcher_with_mocks.config.get.return_value = 60
+        watcher_with_mocks.config.get.side_effect = lambda *_args, **_kwargs: 60
 
         value = watcher_with_mocks.get_config_value("Watcher", "check_interval")
         assert value == 60
@@ -255,6 +247,7 @@ class TestConfigurationManagement:
             ("Cancellation", "extreme_threshold"): 1000.0,
         }.get((s, k), kw.get("fallback", 0.0))
 
+        watcher_with_mocks.cancellation_manager.update_settings = MagicMock()
         watcher_with_mocks._configure_cancellation_manager()
 
         watcher_with_mocks.cancellation_manager.update_settings.assert_called_once()
@@ -286,6 +279,15 @@ class TestJobAcceptance:
         mock_state.seen_job_ids = deque()
         mock_logger = logging.getLogger("test")
 
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "check_interval"): 31,
+            ("Watcher", "min_reward"): 0.0,
+        }.get((s, k), kw.get("fallback", 0.0))
+        mock_config.getboolean.side_effect = lambda *_args, **_kwargs: False
+        mock_config.getfloat.side_effect = lambda *_args, **_kwargs: 0.0
+        mock_config.getint.side_effect = lambda *_args, **_kwargs: 0
+        mock_config.config = {}
+
         watcher = GengoWatcher(mock_config, mock_state, mock_logger)
         delattr(watcher, "job_acceptance_engine")
 
@@ -304,16 +306,16 @@ class TestNotificationSimulation:
         watcher_with_mocks._simulate_new_job_notification()
 
         watcher_with_mocks._process_new_job.assert_called_once()
-        call_args = watcher_with_mocks._process_new_job.call_args[0]
-        assert call_args[1] == "TEST JOB: English > Japanese"
-        assert call_args[2] == 12.34
-        assert "Test Simulation" in call_args[4]
+        call_args = watcher_with_mocks._process_new_job.call_args
+        assert call_args[0][1] == "TEST JOB: English > Japanese"
+        assert call_args[0][2] == 12.34
+        assert "Test Simulation" in call_args[1].get("source", "")
 
 
 class TestPromptForConfigValues:
     """Tests for interactive config prompting."""
 
-    def test_prompt_for_config_values_auto_detect(self, watcher_with_mocks):
+    def test_prompt_for_config_values_auto_detect(self, watcher_with_mocks, tmp_path):
         """Test auto-detecting missing config values."""
         mock_parser = MagicMock()
         mock_parser.sections.return_value = ["WebSocket"]
@@ -321,25 +323,33 @@ class TestPromptForConfigValues:
 
         watcher_with_mocks.config._config_parser = mock_parser
         watcher_with_mocks.config.get.return_value = "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(
+            "[WebSocket]\nuser_session=REPLACE_WITH_YOUR_SESSION_TOKEN\n"
+        )
+        watcher_with_mocks.config.CONFIG_FILE = str(config_path)
 
         with patch("builtins.input", return_value="test_value"):
             watcher_with_mocks.prompt_for_config_values()
 
     def test_prompt_for_config_values_no_missing(
-        self, watcher_with_mocks, capsys, monkeypatch
+        self, watcher_with_mocks, capsys, tmp_path
     ):
         """Test when no config values are missing."""
         mock_parser = MagicMock()
         mock_parser.sections.return_value = []
 
         watcher_with_mocks.config._config_parser = mock_parser
+        config_path = tmp_path / "config.ini"
+        config_path.write_text("")
+        watcher_with_mocks.config.CONFIG_FILE = str(config_path)
 
         # Mock print to capture output
         watcher_with_mocks.prompt_for_config_values()
         captured = capsys.readouterr()
         assert "All configuration values are set" in captured.out
 
-    def test_prompt_sensitive_fields_hidden(self, watcher_with_mocks):
+    def test_prompt_sensitive_fields_hidden(self, watcher_with_mocks, tmp_path):
         """Test that sensitive fields use hidden input."""
         import getpass
 
@@ -349,6 +359,11 @@ class TestPromptForConfigValues:
 
         watcher_with_mocks.config._config_parser = mock_parser
         watcher_with_mocks.config.get.return_value = "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(
+            "[WebSocket]\nuser_session=REPLACE_WITH_YOUR_SESSION_TOKEN\n"
+        )
+        watcher_with_mocks.config.CONFIG_FILE = str(config_path)
 
         with patch("getpass.getpass", return_value="secret_value"):
             watcher_with_mocks.prompt_for_config_values([("WebSocket", "user_session")])
@@ -372,7 +387,9 @@ class TestConfigCompleteness:
         watcher_with_mocks.config.config = {
             "WebSocket": {"user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN"}
         }
-        watcher_with_mocks.config.get.return_value = "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        watcher_with_mocks.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "user_session"): "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        }.get((s, k), kw.get("fallback", ""))
 
         result = watcher_with_mocks.is_config_complete()
         assert result is False
@@ -462,6 +479,7 @@ class TestOnJobAccepted:
         """Test that accepted jobs are recorded for cancellation tracking."""
         job_data = {"id": "12345", "reward": 50.0}
 
+        watcher_with_mocks.cancellation_manager.set_current_job = MagicMock()
         watcher_with_mocks._on_job_accepted(job_data)
 
         watcher_with_mocks.cancellation_manager.set_current_job.assert_called_once_with(
@@ -504,11 +522,14 @@ class TestAsyncCancelCurrentJob:
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
-    def test_watcher_initialization_low_check_interval(self, mock_config, mock_state, mock_logger):
+    def test_watcher_initialization_low_check_interval(
+        self, mock_config, mock_state, mock_logger
+    ):
         """Test that very low check_interval is validated."""
         mock_config.get.side_effect = lambda s, k, **kw: {
-            ("Watcher", "check_interval"): 0
-        }.get((s, k), kw.get("fallback", 60))
+            ("Watcher", "check_interval"): 0,
+            ("Logging", "log_all_entries_enabled"): False,
+        }.get((s, k), kw.get("fallback"))
 
         GengoWatcher(mock_config, mock_state, mock_logger)
 

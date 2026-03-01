@@ -3,6 +3,8 @@
 Test script to verify high-value job configuration and setup.
 """
 
+__test__ = False
+
 import asyncio
 import logging
 import sys
@@ -20,7 +22,7 @@ def test_configuration():
     """
     Verify that the high-value job configuration file exists and contains valid settings.
 
-    Checks for the presence of config_high_value.ini, loads it via AppConfig and validates the RSS feed URL, WebSocket credentials (user_id, user_session, user_key), high-value thresholds and CAPTCHA configuration. Status messages are printed to stdout for each check.
+    Checks for the presence of config_high_value.ini, loads it via AppConfig and validates the RSS feed URL, WebSocket credentials (user_id, user_session, user_key), and high-value thresholds. Status messages are printed to stdout for each check.
 
     Returns:
         bool: `True` if the configuration file exists and all validations complete without error, `False` otherwise.
@@ -45,16 +47,19 @@ def test_configuration():
 
         # Check RSS feed URL
         feed_url = config.get("Watcher", "feed_url")
-        parsed_feed = urlparse(feed_url)
-        host = parsed_feed.hostname
-        if (
-            host
-            and (host == "gengo.com" or host.endswith(".gengo.com"))
-            and "YOUR_RSS_KEY" not in feed_url
-        ):
-            print("✅ RSS feed URL appears to be configured")
+        if feed_url:
+            parsed_feed = urlparse(feed_url)
+            host = parsed_feed.hostname
+            if (
+                host
+                and (host == "gengo.com" or host.endswith(".gengo.com"))
+                and "YOUR_RSS_KEY" not in feed_url
+            ):
+                print("✅ RSS feed URL appears to be configured")
+            else:
+                print("❌ RSS feed URL needs configuration")
         else:
-            print("❌ RSS feed URL needs configuration")
+            print("❌ RSS feed URL not configured")
 
         # Check WebSocket settings
         user_id = config.get("WebSocket", "user_id")
@@ -66,9 +71,8 @@ def test_configuration():
             "REPLACE_WITH_BROWSER_USER_KEY",
         }
         if (
-            user_id not in (0, "0", None, "")
-            and str(user_id) != "YOUR_USER_ID"
-            and "YOUR_SESSION_TOKEN" not in session
+            user_id != 0
+            and "YOUR_SESSION_TOKEN" not in (session or "")
             and not any(token in (user_key or "") for token in key_placeholder_tokens)
         ):
             print("✅ WebSocket appears to be configured")
@@ -80,6 +84,15 @@ def test_configuration():
         very_high = float(config.get("HighValue", "very_high_threshold"))
         extreme = float(config.get("HighValue", "extreme_threshold"))
         print(f"✅ High-value thresholds: ${threshold}, ${very_high}, ${extreme}")
+
+        # Check CAPTCHA settings
+        captcha_service = config.get("Captcha", "service")
+        if captcha_service and "YOUR_2CAPTCHA_API_KEY" not in config.get(
+            "Captcha", "api_key"
+        ):
+            print(f"✅ CAPTCHA service configured: {captcha_service}")
+        else:
+            print("⚠️  CAPTCHA service not configured - recommended for high-value jobs")
 
         return True
 
@@ -121,7 +134,7 @@ async def test_high_value_manager():
 
         # Test stats
         stats = manager.get_stats()
-        print(f"\n📊 Current Stats:")
+        print("\n📊 Current Stats:")
         print(f"   High-value threshold: ${stats['thresholds']['high']}")
         print(f"   Max per day: {config.get('HighValue', 'max_per_day')}")
         print(
@@ -149,7 +162,6 @@ def show_setup_instructions():
    - Copy config_high_value.ini to config.ini
    - Update YOUR_RSS_KEY_HERE with your actual RSS key
    - Set your user_id, user_session, and user_key from Gengo
-   - Configure CAPTCHA service (recommended: 2captcha)
 
 2. RSS FEED:
    - Get your RSS key from: https://gengo.com/developers/dashboard
@@ -184,6 +196,9 @@ def main():
     config_ok = test_configuration()
 
     if config_ok:
+        # Test manager
+        import asyncio
+
         manager_ok = asyncio.run(test_high_value_manager())
 
         if manager_ok:

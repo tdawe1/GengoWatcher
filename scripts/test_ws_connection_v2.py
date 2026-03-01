@@ -7,8 +7,8 @@ import websockets
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("ws_test")
 
@@ -20,26 +20,34 @@ WS_URL = "https://live-dashboard.gengo.com"
 
 UA_CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+
 async def run_test(name, user_id, headers):
     """
     Run a WebSocket connection test that authenticates with the server and awaits a single response.
-    
+
     Establishes a WebSocket connection to the module-level WS_URL using the supplied handshake headers, sends an authentication payload containing `user_id`, `USER_SESSION` and `USER_KEY`, and waits up to 5 seconds for a reply. Connection closures and other errors are handled internally and not raised to the caller.
-    
+
     Parameters:
-    	name (str): Identifier used in logs to label this test.
-    	user_id (int | str): User identifier to include in the authentication payload.
-    	headers (Mapping[str, str]): HTTP headers to include in the WebSocket handshake (e.g. Cookie, Origin, User-Agent).
+        name (str): Identifier used in logs to label this test.
+        user_id (int | str): User identifier to include in the authentication payload.
+        headers (Mapping[str, str]): HTTP headers to include in the WebSocket handshake (e.g. Cookie, Origin, User-Agent).
     """
     logger.info(f"--- Starting Test: {name} ---")
     try:
         # Handle websockets version difference
+        # websockets >= 13.0 uses "additional_headers", earlier versions use "extra_headers"
         ws_version = getattr(websockets, "__version__", "0")
-        ws_header_key = "additional_headers" if int(ws_version.split(".")[0]) >= 12 else "extra_headers"
-        
-        async with websockets.connect(WS_URL, **{ws_header_key: headers}, ping_interval=20, ping_timeout=10) as websocket:
+        ws_header_key = (
+            "additional_headers"
+            if int(ws_version.split(".")[0]) >= 13
+            else "extra_headers"
+        )
+
+        async with websockets.connect(
+            WS_URL, **{ws_header_key: headers}, ping_interval=20, ping_timeout=10
+        ) as websocket:
             logger.info(f"[{name}] Connected")
-            
+
             auth_payload = {
                 "user_id": user_id,
                 "user_session": USER_SESSION,
@@ -47,23 +55,24 @@ async def run_test(name, user_id, headers):
             }
             logger.info(f"[{name}] Sending auth: user_id type={type(user_id)}")
             await websocket.send(json.dumps(auth_payload))
-            
+
             try:
                 msg = await asyncio.wait_for(websocket.recv(), timeout=5)
                 logger.info(f"[{name}] Received: {msg}")
             except asyncio.TimeoutError:
                 logger.info(f"[{name}] Timeout waiting for message")
-                
+
     except websockets.exceptions.ConnectionClosed as e:
         logger.error(f"[{name}] Closed: code={e.code}, reason={e.reason}")
     except Exception as e:
         logger.error(f"[{name}] Error: {e}")
     logger.info(f"--- End Test: {name} ---\n")
 
+
 async def main():
     """
     Run three WebSocket authentication tests using predefined header and credential combinations.
-    
+
     Each test invokes run_test with:
     - an integer user ID and a Chrome User-Agent,
     - a string user ID and a Chrome User-Agent,
@@ -76,19 +85,20 @@ async def main():
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
     }
-    
+
     # Test 1: Int ID, Chrome UA
     h1 = base_headers.copy()
     h1["User-Agent"] = UA_CHROME
     await run_test("IntID_ChromeUA", USER_ID_INT, h1)
-    
+
     # Test 2: String ID, Chrome UA
     await run_test("StrID_ChromeUA", USER_ID_STR, h1)
-    
+
     # Test 3: Int ID, No UA
     h2 = base_headers.copy()
     # No User-Agent
     await run_test("IntID_NoUA", USER_ID_INT, h2)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

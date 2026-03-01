@@ -1,10 +1,22 @@
 import configparser
 import copy
 import json
-from pathlib import Path
+import os
+import shutil
 import sys
+from pathlib import Path
 import threading
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not available on Windows
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - not available on POSIX
+    msvcrt = None
 
 
 # Values that indicate a config field has not been properly configured
@@ -12,6 +24,8 @@ PLACEHOLDER_CONFIG_VALUES = [
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
     "REPLACE_WITH_YOUR_WEB_API_TOKEN",
+    "YOUR_USER_ID",
+    "REPLACE_WITH_BROWSER_USER_KEY",
 ]
 
 
@@ -45,6 +59,7 @@ class AppConfig:
             "log_max_bytes": 1000000,
             "log_backup_count": 99,
             "log_main_enabled": True,
+            "log_stdio_enabled": False,
             "log_all_entries_enabled": True,
         },
         "DebugCategories": {
@@ -63,6 +78,7 @@ class AppConfig:
             "max_backoff": 300,
             "user_agent_email": "",
             "browser_user_agent": "",
+            "detect_browser_ua": False,
             "clean_close_backoff_min": 20,
             "clean_close_backoff_max": 45,
             "reconnect_jitter_max": 5,
@@ -134,6 +150,16 @@ class AppConfig:
         },
     }
 
+    ENV_VAR_OVERRIDES = {
+        ("WebSocket", "user_id"): "GENGO_USER_ID",
+        ("WebSocket", "user_session"): "GENGO_USER_SESSION",
+        ("WebSocket", "user_key"): "GENGO_USER_KEY",
+        ("WebServer", "auth_token"): "GENGOWATCHER_API_TOKEN",
+        ("EmailMonitor", "client_id"): "GMAIL_CLIENT_ID",
+        ("EmailMonitor", "client_secret"): "GMAIL_CLIENT_SECRET",
+        ("EmailMonitor", "refresh_token"): "GMAIL_REFRESH_TOKEN",
+    }
+
     def __init__(self):
         self._config_parser = configparser.ConfigParser()
         self._lock = threading.Lock()
@@ -149,13 +175,17 @@ class AppConfig:
         for section, settings in self.DEFAULT_CONFIG.items():
             parser.add_section(section)
             for key, value in settings.items():
-                parser.set(section, key, str(value))
+                parser.set(section, key, self._serialize_for_parser(value))
 
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
 
         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
             parser.write(f)
+        try:
+            os.chmod(self.CONFIG_FILE, 0o600)
+        except OSError:
+            pass
 
         print(
             f"Created default '{self.CONFIG_FILE}'. You can now configure it interactively."
@@ -186,7 +216,7 @@ class AppConfig:
                     # Add missing sections
                     if not self._config_parser.has_section(section):
                         self._config_parser.add_section(section)
-                        print(f"Added missing config section: [{section}]")
+                        print(f"WARNING: Added missing config section: [{section}]")
                         config_modified = True
 
                     if section not in self.config:
@@ -214,8 +244,23 @@ class AppConfig:
                                         self.config[section][key] = json.loads(raw_val)
                                     except json.JSONDecodeError:
                                         self.config[section][key] = default_val
+                                        self._config_parser.set(
+                                            section,
+                                            key,
+                                            self._serialize_for_parser(default_val),
+                                        )
+                                        config_modified = True
                                 else:
                                     self.config[section][key] = default_val
+                                    self._config_parser.set(
+                                        section,
+                                        key,
+                                        self._serialize_for_parser(default_val),
+                                    )
+                                    print(
+                                        f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
+                                    )
+                                    config_modified = True
                             else:
                                 self.config[section][key] = method(
                                     section, key, fallback=default_val
@@ -225,10 +270,12 @@ class AppConfig:
                             configparser.NoOptionError,
                         ):
                             # Add missing option with default value
-                            self._config_parser.set(section, key, str(default_val))
+                            self._config_parser.set(
+                                section, key, self._serialize_for_parser(default_val)
+                            )
                             self.config[section][key] = default_val
                             print(
-                                f"Added missing config option: [{section}]{key} = {default_val}"
+                                f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
                             )
                             config_modified = True
 
@@ -237,7 +284,7 @@ class AppConfig:
                     try:
                         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
                             self._config_parser.write(f)
-                        print(f"Config file updated with missing sections/options")
+                        print("Config file updated with missing sections/options")
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 
@@ -257,17 +304,55 @@ class AppConfig:
                 if not self._config_parser.has_section(section):
                     self._config_parser.add_section(section)
                 for key, value in settings.items():
-                    # Serialize lists as JSON to preserve them on reload
-                    if isinstance(value, list):
-                        serialized = json.dumps(value)
-                    else:
-                        serialized = str(value)
+                    serialized = self._serialize_for_parser(value)
                     self._config_parser.set(section, key, serialized)
+            lock_file = None
+            config_path = Path(self.CONFIG_FILE)
+            lock_path = config_path.with_suffix(f"{config_path.suffix}.lock")
             try:
-                with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+                # Use a sidecar lock file so Windows can atomically replace CONFIG_FILE.
+                lock_file = open(lock_path, "a+", encoding="utf-8")
+                if fcntl is not None:
+                    try:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                    except OSError:
+                        pass
+                elif msvcrt is not None and sys.platform == "win32":
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                    except OSError:
+                        pass
+
+                tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     self._config_parser.write(f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                if config_path.exists():
+                    try:
+                        shutil.copymode(config_path, tmp_path)
+                    except OSError:
+                        pass
+                tmp_path.replace(config_path)
+                try:
+                    os.chmod(self.CONFIG_FILE, 0o600)
+                except OSError:
+                    pass
             except IOError as e:
                 print(f"Error saving config: {e}")
+            finally:
+                if lock_file is not None:
+                    if fcntl is not None:
+                        try:
+                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                    elif msvcrt is not None and sys.platform == "win32":
+                        try:
+                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                        except OSError:
+                            pass
+                    lock_file.close()
 
     def list_all(self) -> Dict[str, Dict[str, Any]]:
         """Return all config values as a nested dictionary.
@@ -358,8 +443,18 @@ class AppConfig:
                     return fallback
                 raise
 
+    def _get_env_or_config(self, section: str, key: str, env_var: str) -> Any:
+        """Return the environment override for a key or fall back to config."""
+        env_value = os.environ.get(env_var)
+        if env_value is not None and env_value.strip():
+            return env_value
+        return self.config.get(section, {}).get(key)
+
     def get(self, section, key):
+        env_override = self.ENV_VAR_OVERRIDES.get((section, key))
         with self._lock:
+            if env_override:
+                return self._get_env_or_config(section, key, env_override)
             try:
                 return self.config[section][key]
             except KeyError:
@@ -383,11 +478,18 @@ class AppConfig:
                 self._config_parser.add_section(section)
             self._config_parser.set(section, key, str(value))
 
+    @staticmethod
+    def _serialize_for_parser(value: Any) -> str:
+        """Serialize values for ConfigParser while preserving list round-tripping."""
+        if isinstance(value, list):
+            return json.dumps(value)
+        return str(value)
+
     def _validate_auto_accept_config(self):
         """
         Validate and sanitise the AutoAccept section of the in-memory configuration.
 
-        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
+        Ensures the reward and delay ranges are ordered (swapping min/max when necessary), clamps the accept delay minimum to at least 0 and the maximum to at most 300 seconds, and restricts `job_sources` to the allowed set {"rss", "websocket", "email", "website"}. If `job_sources` contains no valid entries it is reset to "rss,websocket". Warnings are printed when ranges are swapped or invalid job sources are found.
         """
         auto_accept = self.config["AutoAccept"]
 
@@ -399,7 +501,10 @@ class AppConfig:
             (
                 self.config["AutoAccept"]["min_reward"],
                 self.config["AutoAccept"]["max_reward"],
-            ) = auto_accept["max_reward"], auto_accept["min_reward"]
+            ) = (
+                auto_accept["max_reward"],
+                auto_accept["min_reward"],
+            )
 
         # Validate delay range
         if auto_accept["accept_delay_min"] > auto_accept["accept_delay_max"]:
@@ -409,7 +514,10 @@ class AppConfig:
             (
                 self.config["AutoAccept"]["accept_delay_min"],
                 self.config["AutoAccept"]["accept_delay_max"],
-            ) = auto_accept["accept_delay_max"], auto_accept["accept_delay_min"]
+            ) = (
+                auto_accept["accept_delay_max"],
+                auto_accept["accept_delay_min"],
+            )
 
         # Validate job sources
         valid_sources = {"rss", "websocket", "email", "website"}

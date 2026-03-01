@@ -45,9 +45,9 @@ class GengoAnalyzer:
     async def monitor_websocket_traffic(self, duration_hours: int = 24):
         """
         Monitor the Gengo live WebSocket feed, record messages and job postings, and run pattern analysis.
-        
+
         Connects to the live-dashboard WebSocket, authenticates with configured credentials, records incoming messages, extracts and records new job postings (including reward, language pair, word count and timestamps), computes inter-job intervals and hourly counts, and stops when the specified duration elapses; after monitoring completes, triggers analysis of the collected data. JSON decode errors are ignored and unexpected connection errors are logged.
-        
+
         Parameters:
             duration_hours (int): Number of hours to monitor the WebSocket feed.
         """
@@ -57,16 +57,27 @@ class GengoAnalyzer:
 
         try:
             extra_headers = [
-                ("Cookie", f"my_gengo_session={self.config.get('WebSocket', 'user_session')}"),
+                (
+                    "Cookie",
+                    f"my_gengo_session={self.config.get('WebSocket', 'user_session')}",
+                ),
                 ("Origin", "https://gengo.com"),
-                ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"),
+                (
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                ),
             ]
 
+            ws_version = getattr(websockets, "__version__", "0")
+            ws_header_key = (
+                "additional_headers"
+                if int(ws_version.split(".")[0]) >= 13
+                else "extra_headers"
+            )
+            header_kwargs = {ws_header_key: extra_headers}
+
             async with websockets.connect(
-                ws_url,
-                extra_headers=extra_headers,
-                ping_interval=20,
-                ping_timeout=10
+                ws_url, **header_kwargs, ping_interval=20, ping_timeout=10
             ) as websocket:
                 # Authenticate
                 auth_payload = {
@@ -85,42 +96,50 @@ class GengoAnalyzer:
                         data = json.loads(message)
 
                         # Record all messages
-                        self.websocket_messages.append({
-                            'timestamp': msg_time,
-                            'type': data.get('type'),
-                            'data': data
-                        })
+                        self.websocket_messages.append(
+                            {
+                                "timestamp": msg_time,
+                                "type": data.get("type"),
+                                "data": data,
+                            }
+                        )
 
                         # Track job postings
-                        if data.get('type') == 'available_collection':
-                            job = data.get('collection', {})
-                            job_id = job.get('id')
+                        if data.get("type") == "available_collection":
+                            job = data.get("collection", {})
+                            job_id = job.get("id")
 
                             if job_id and job_id not in self.session_jobs:
                                 self.session_jobs.add(job_id)
 
                                 job_data = {
-                                    'id': job_id,
-                                    'timestamp': msg_time,
-                                    'reward': float(job.get('rewards', 0)),
-                                    'language_pair': f"{job.get('lc_src')}->{job.get('lc_tgt')}",
-                                    'word_count': job.get('word_count', 0),
-                                    'group_id': job.get('group_id')
+                                    "id": job_id,
+                                    "timestamp": msg_time,
+                                    "reward": float(job.get("rewards", 0)),
+                                    "language_pair": f"{job.get('lc_src')}->{job.get('lc_tgt')}",
+                                    "word_count": job.get("word_count", 0),
+                                    "group_id": job.get("group_id"),
                                 }
 
                                 self.job_postings.append(job_data)
-                                self.reward_distribution.append(job_data['reward'])
+                                self.reward_distribution.append(job_data["reward"])
 
                                 # Calculate interval from previous job
                                 if len(self.job_postings) > 1:
-                                    interval = msg_time - self.job_postings[-2]['timestamp']
+                                    interval = (
+                                        msg_time - self.job_postings[-2]["timestamp"]
+                                    )
                                     self.job_intervals.append(interval)
 
                                 # Track hourly distribution
-                                hour_key = datetime.fromtimestamp(msg_time).strftime('%Y-%m-%d %H:00')
+                                hour_key = datetime.fromtimestamp(msg_time).strftime(
+                                    "%Y-%m-%d %H:00"
+                                )
                                 self.hourly_job_counts[hour_key] += 1
 
-                                self.logger.debug(f"Job posted: {job_id}, reward: ${job_data['reward']:.2f}")
+                                self.logger.debug(
+                                    f"Job posted: {job_id}, reward: ${job_data['reward']:.2f}"
+                                )
 
                         # Check if monitoring duration reached
                         if msg_time - start_time > duration_hours * 3600:
@@ -148,7 +167,9 @@ class GengoAnalyzer:
         jobs_per_hour = total_jobs / (monitoring_duration / 3600)
 
         self.logger.info(f"Total jobs monitored: {total_jobs}")
-        self.logger.info(f"Monitoring duration: {timedelta(seconds=int(monitoring_duration))}")
+        self.logger.info(
+            f"Monitoring duration: {timedelta(seconds=int(monitoring_duration))}"
+        )
         self.logger.info(f"Average job rate: {jobs_per_hour:.2f} jobs/hour")
 
         # Interval analysis
@@ -166,7 +187,9 @@ class GengoAnalyzer:
 
             # Detect patterns
             if min_interval < 5:
-                self.logger.warning("⚠️  Jobs posted in rapid succession (<5s) - possible batch posting")
+                self.logger.warning(
+                    "⚠️  Jobs posted in rapid succession (<5s) - possible batch posting"
+                )
 
         # Reward distribution
         if self.reward_distribution:
@@ -183,7 +206,9 @@ class GengoAnalyzer:
         # Hourly patterns
         if len(self.hourly_job_counts) > 1:
             self.logger.info(f"\nHourly distribution:")
-            for hour, count in sorted(self.hourly_job_counts.items())[-10:]:  # Show last 10 hours
+            for hour, count in sorted(self.hourly_job_counts.items())[
+                -10:
+            ]:  # Show last 10 hours
                 self.logger.info(f"  {hour}: {count} jobs")
 
         # Peak hour analysis
@@ -199,26 +224,39 @@ class GengoAnalyzer:
         output_dir.mkdir(exist_ok=True)
 
         # Save job postings
-        with open(output_dir / "job_postings.json", 'w') as f:
+        with open(output_dir / "job_postings.json", "w") as f:
             json.dump(self.job_postings, f, indent=2)
 
         # Save intervals
-        with open(output_dir / "job_intervals.json", 'w') as f:
+        with open(output_dir / "job_intervals.json", "w") as f:
             json.dump(list(self.job_intervals), f)
 
         # Generate report
         report = {
-            'analysis_timestamp': datetime.now().isoformat(),
-            'monitoring_duration_seconds': time.time() - self.start_time,
-            'total_jobs_posted': len(self.job_postings),
-            'jobs_per_hour': len(self.job_postings) / ((time.time() - self.start_time) / 3600),
-            'average_interval_seconds': statistics.mean(self.job_intervals) if self.job_intervals else 0,
-            'average_reward': statistics.mean(self.reward_distribution) if self.reward_distribution else 0,
-            'peak_hour': max(self.hourly_job_counts.items(), key=lambda x: x[1])[0] if self.hourly_job_counts else None,
-            'peak_hour_count': max(self.hourly_job_counts.values()) if self.hourly_job_counts else 0
+            "analysis_timestamp": datetime.now().isoformat(),
+            "monitoring_duration_seconds": time.time() - self.start_time,
+            "total_jobs_posted": len(self.job_postings),
+            "jobs_per_hour": len(self.job_postings)
+            / ((time.time() - self.start_time) / 3600),
+            "average_interval_seconds": (
+                statistics.mean(self.job_intervals) if self.job_intervals else 0
+            ),
+            "average_reward": (
+                statistics.mean(self.reward_distribution)
+                if self.reward_distribution
+                else 0
+            ),
+            "peak_hour": (
+                max(self.hourly_job_counts.items(), key=lambda x: x[1])[0]
+                if self.hourly_job_counts
+                else None
+            ),
+            "peak_hour_count": (
+                max(self.hourly_job_counts.values()) if self.hourly_job_counts else 0
+            ),
         }
 
-        with open(output_dir / "analysis_report.json", 'w') as f:
+        with open(output_dir / "analysis_report.json", "w") as f:
             json.dump(report, f, indent=2)
 
         self.logger.info(f"\nAnalysis data saved to {output_dir}/")
@@ -230,20 +268,24 @@ class GengoAnalyzer:
         # Note: This should be done cautiously with manual review
         test_patterns = [
             {"name": "Very Conservative", "interval": 3600, "count": 1},  # 1 job/hour
-            {"name": "Conservative", "interval": 1800, "count": 2},     # 2 jobs/hour
-            {"name": "Moderate", "interval": 900, "count": 4},         # 4 jobs/hour
-            {"name": "Aggressive", "interval": 600, "count": 6},        # 6 jobs/hour
+            {"name": "Conservative", "interval": 1800, "count": 2},  # 2 jobs/hour
+            {"name": "Moderate", "interval": 900, "count": 4},  # 4 jobs/hour
+            {"name": "Aggressive", "interval": 600, "count": 6},  # 6 jobs/hour
         ]
 
         # This would require actual job acceptance implementation
         # For now, we'll just log the recommendations
         for pattern in test_patterns:
             jobs_per_hour = pattern["count"] * (3600 / pattern["interval"])
-            self.logger.info(f"{pattern['name']}: {pattern['count']} jobs every {pattern['interval']/60:.0f} minutes "
-                           f"({jobs_per_hour:.1f} jobs/hour)")
+            self.logger.info(
+                f"{pattern['name']}: {pattern['count']} jobs every {pattern['interval']/60:.0f} minutes "
+                f"({jobs_per_hour:.1f} jobs/hour)"
+            )
 
-        self.logger.info("\n⚠️  IMPORTANT: Actual acceptance testing should be done manually "
-                        "starting with the 'Very Conservative' pattern")
+        self.logger.info(
+            "\n⚠️  IMPORTANT: Actual acceptance testing should be done manually "
+            "starting with the 'Very Conservative' pattern"
+        )
 
     async def analyze_captcha_patterns(self):
         """Analyze when and how often CAPTCHAs appear."""
@@ -259,15 +301,17 @@ class GengoAnalyzer:
         log_path = Path("logs/gengowatcher.log")
         if log_path.exists():
             captcha_events = []
-            with open(log_path, 'r') as f:
+            with open(log_path, "r") as f:
                 for line in f:
-                    if 'captcha' in line.lower() or 'recaptcha' in line.lower():
+                    if "captcha" in line.lower() or "recaptcha" in line.lower():
                         captcha_events.append(line.strip())
 
             self.logger.info(f"Found {len(captcha_events)} CAPTCHA-related log entries")
 
             # Analyze patterns
-            recent_captchas = [e for e in captcha_events if '2025-09-17' in e]  # Today's entries
+            recent_captchas = [
+                e for e in captcha_events if datetime.date.today().isoformat() in e
+            ]  # Today's entries
             self.logger.info(f"Recent CAPTCHA events: {len(recent_captchas)}")
 
             if recent_captchas:
@@ -281,14 +325,14 @@ class GengoAnalyzer:
 async def main():
     """
     Initialise logging, validate required WebSocket credentials in config, run the Gengo analysis sequence, and emit final recommendations.
-    
+
     This coroutine sets up the logger, ensures a valid WebSocket session token and browser user key are present in the configuration (exits early if missing), and then executes the analyzer workflow: monitor WebSocket traffic, run acceptance-limit tests, and analyse CAPTCHA patterns. It logs a short set of post-run recommendations.
     """
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    logger = logging.getLogger('GengoAnalyzer')
+    logger = logging.getLogger("GengoAnalyzer")
 
     config = AppConfig()
     state = AppState()
@@ -302,7 +346,9 @@ async def main():
         logger.error("Please configure your session token in config.ini")
         return
     if not user_key or user_key == "REPLACE_WITH_YOUR_USER_KEY":
-        logger.error("Please configure your browser user key (DevTools → Application → Local Storage → userKey) in config.ini")
+        logger.error(
+            "Please configure your browser user key (DevTools → Application → Local Storage → userKey) in config.ini"
+        )
         return
 
     # Run analysis

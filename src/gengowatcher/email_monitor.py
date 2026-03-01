@@ -115,31 +115,63 @@ class EmailMonitor:
         if not all([client_id, client_secret, refresh_token]):
             raise ValueError("Email OAuth not configured. Run 'setup-email' command.")
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.GMAIL_TOKEN_URL,
-                data={
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "refresh_token": refresh_token,
-                    "grant_type": "refresh_token",
-                },
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    raise ValueError(f"OAuth token refresh failed: {error_text}")
+        timeout = aiohttp.ClientTimeout(total=30)
+        last_error = None
 
-                data = await resp.json()
-                self._access_token = data["access_token"]
-                expires_in = data.get("expires_in", 3600)
+        for attempt in range(3):
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(
+                        self.GMAIL_TOKEN_URL,
+                        data={
+                            "client_id": client_id,
+                            "client_secret": client_secret,
+                            "refresh_token": refresh_token,
+                            "grant_type": "refresh_token",
+                        },
+                    ) as resp:
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            if resp.status >= 500:
+                                raise aiohttp.ClientError(
+                                    f"Server error {resp.status}: {error_text}"
+                                )
+                            raise ValueError(
+                                f"OAuth token refresh failed: {error_text}"
+                            )
 
-                self.config.set("EmailMonitor", "access_token", self._access_token)
-                self.config.set(
-                    "EmailMonitor", "token_expiry", int(time.time() + expires_in)
-                )
-                self.config.save_config()
+                        data = await resp.json()
+                        self._access_token = data["access_token"]
+                        expires_in = data.get("expires_in", 3600)
 
-                self.logger.debug("OAuth token refreshed successfully")
+                        self.config.set(
+                            "EmailMonitor", "access_token", self._access_token
+                        )
+                        self.config.set(
+                            "EmailMonitor",
+                            "token_expiry",
+                            int(time.time() + expires_in),
+                        )
+                        self.config.save_config()
+
+                        if attempt > 0:
+                            self.logger.info(
+                                "OAuth token refresh succeeded on attempt %s",
+                                attempt + 1,
+                            )
+                        else:
+                            self.logger.debug("OAuth token refreshed successfully")
+                        return
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_error = e
+                if attempt < 2:
+                    delay = 2**attempt
+                    self.logger.warning(
+                        f"OAuth refresh attempt {attempt + 1} failed: {e}, retrying in {delay}s"
+                    )
+                    await asyncio.sleep(delay)
+
+        raise ValueError(f"OAuth token refresh failed after 3 attempts: {last_error}")
 
     async def _connect_and_monitor(self):
         email_addr = self.config.get("EmailMonitor", "email")

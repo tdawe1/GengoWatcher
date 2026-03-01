@@ -89,14 +89,16 @@ def send_notification(title: str, message: str, icon_path: str = ""):
         command.extend(["--icon", icon_path])
 
     try:
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, timeout=10)
         logger.debug("Notification sent successfully via notify-send.")
+    except subprocess.TimeoutExpired:
+        logger.error("Notification command timed out after 10 seconds")
     except FileNotFoundError:
-        logger.error(
+        logger.exception(
             "`notify-send` command not found. Please ensure it is installed and in your PATH."
         )
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to send notification: {e}")
+        logger.exception(f"Failed to send notification: {e}")
 
 
 def show_notification(

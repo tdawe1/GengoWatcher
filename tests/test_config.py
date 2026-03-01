@@ -1,5 +1,6 @@
 import pytest
 import os
+import json
 import configparser
 from pathlib import Path
 
@@ -44,6 +45,60 @@ def test_config_loads_default_values(test_dir):
     assert (
         app_config.get("WebSocket", "user_session") == "REPLACE_WITH_YOUR_SESSION_TOKEN"
     )
-    assert (
-        app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"
+    assert app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"
+
+
+def test_save_config_uses_sidecar_lock_file(test_dir):
+    """Test that save_config locks a sidecar file so atomic replace works on Windows."""
+    with patch("sys.exit"):
+        app_config = AppConfig()
+
+    app_config.set("Watcher", "check_interval", 42)
+
+    real_open = open
+    open_calls = []
+
+    def tracking_open(file, mode="r", *args, **kwargs):
+        open_calls.append((str(file), mode))
+        return real_open(file, mode, *args, **kwargs)
+
+    with patch("builtins.open", side_effect=tracking_open):
+        app_config.save_config()
+
+    assert ("config.ini.lock", "a+") in open_calls
+    assert ("config.ini", "a+") not in open_calls
+
+
+def test_default_list_values_are_stored_as_json(test_dir):
+    """Default list values should be serialized as JSON in config.ini."""
+    with patch("sys.exit"):
+        AppConfig()
+
+    parser = configparser.ConfigParser()
+    parser.read(test_dir / "config.ini")
+
+    assert parser.get("WebServer", "cors_origins") == json.dumps(
+        AppConfig.DEFAULT_CONFIG["WebServer"]["cors_origins"]
+    )
+
+
+def test_missing_list_option_is_repaired_using_json(test_dir):
+    """Repairing a missing list option should write JSON, not repr()."""
+    with patch("sys.exit"):
+        AppConfig()
+
+    config_file = test_dir / "config.ini"
+    parser = configparser.ConfigParser()
+    parser.read(config_file)
+    parser.remove_option("WebServer", "cors_origins")
+    with open(config_file, "w", encoding="utf-8") as handle:
+        parser.write(handle)
+
+    with patch("sys.exit"):
+        AppConfig()
+
+    repaired = configparser.ConfigParser()
+    repaired.read(config_file)
+    assert repaired.get("WebServer", "cors_origins") == json.dumps(
+        AppConfig.DEFAULT_CONFIG["WebServer"]["cors_origins"]
     )

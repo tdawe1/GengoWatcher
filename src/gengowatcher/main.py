@@ -165,17 +165,18 @@ def _interactive_configure(config: AppConfig, console: Console):
     )
 
     required_fields = [
-        ("WebSocket", "user_id", "Your Gengo user ID"),
-        ("WebSocket", "user_key", "Your Gengo API key (optional)"),
-        ("WebSocket", "user_session", "Your session token from browser cookies"),
+        ("WebSocket", "user_id", "Your Gengo user ID", True),
+        ("WebSocket", "user_key", "Your Gengo API key", False),
+        ("WebSocket", "user_session", "Your session token from browser cookies", True),
     ]
 
-    for section, option, description in required_fields:
+    for section, option, description, required in required_fields:
         current = config.get(section, option)
         is_placeholder = current in PLACEHOLDER_CONFIG_VALUES
 
         if is_placeholder:
-            prompt_text = f"[label]{description}[/] [warning](required)[/]: "
+            label = "required" if required else "optional"
+            prompt_text = f"[label]{description}[/] [warning]({label})[/]: "
         else:
             # Mask sensitive values
             masked = str(current)[:4] + "..." if len(str(current)) > 8 else str(current)
@@ -239,6 +240,11 @@ def main():
         action="store_true",
         help="Configure WebsiteMonitor for browser-based job scraping (interactive)",
     )
+    parser.add_argument(
+        "--stdio-logs",
+        action="store_true",
+        help="Also write watcher logs to stderr in addition to file/UI handlers",
+    )
     args, unknown = parser.parse_known_args()
 
     console = Console(theme=APP_THEME)
@@ -291,6 +297,13 @@ def main():
                 log.addHandler(file_handler)
             except IOError as e:
                 console.print(f"[error]Could not set up file logging: {e}[/]")
+        if args.stdio_logs or config.getboolean("Logging", "log_stdio_enabled", fallback=False):
+            stdio_handler = logging.StreamHandler(stream=sys.stderr)
+            stdio_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
+            stdio_handler.addFilter(category_filter)
+            log.addHandler(stdio_handler)
         state = AppState(logger=log)
         watcher = GengoWatcher(config=config, state=state, logger=log)
     except Exception as e:
@@ -407,10 +420,7 @@ def main():
         watcher_thread.join(timeout=2)
         console.print("[info]GengoWatcher has shut down.[/]")
     except KeyboardInterrupt:
-        console.print("[info]Web server shutting down...[/]")
-    finally:
-        if not watcher.shutdown_event.is_set():
-            watcher.handle_exit()
+        console.print("[info]Shutting down...[/]")
 
 
 if __name__ == "__main__":

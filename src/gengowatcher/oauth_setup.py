@@ -17,7 +17,6 @@ import aiohttp
 
 from .config import AppConfig
 
-
 GMAIL_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
 REDIRECT_URI = "http://localhost:8089/oauth/callback"

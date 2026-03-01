@@ -4,12 +4,13 @@ Textual-based TUI for GengoWatcher.
 Strict implementation of the v2.0 Design Doc.
 """
 
+import asyncio
 import datetime
 import logging
 import re
 import time
 from collections import deque
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -24,7 +25,7 @@ from textual.widgets import (
     TabPane,
     DataTable,
 )
-from textual import work
+from textual import work, on
 from textual.css.query import NoMatches
 from rich.text import Text
 
@@ -130,6 +131,8 @@ def _normalize_source(source: Any) -> str:
     ):
         return "website"
     return "unknown"
+
+
 # Fractional block characters for bar chart rendering
 # Characters arranged from empty to full: ▁▂▃▄▅▆▇█
 BAR_CHARS = " ▁▂▃▄▅▆▇█"
@@ -275,18 +278,18 @@ class TitleBar(Static):
         # Session timer
         try:
             app = self.app
-            watcher = getattr(app, "watcher", None)
-            if watcher:
-                elapsed = int(time.time() - watcher.start_time)
-                h, m = divmod(elapsed // 60, 60)
-                try:
-                    self.query_one("#session-timer", Static).update(
-                        f"Session: {h}h {m:02d}m"
-                    )
-                except NoMatches:
-                    pass  # Widget not mounted yet
         except Exception:
-            pass  # app might not be ready
+            return
+        watcher = getattr(app, "watcher", None)
+        if watcher:
+            elapsed = int(time.time() - watcher.start_time)
+            h, m = divmod(elapsed // 60, 60)
+            try:
+                self.query_one("#session-timer", Static).update(
+                    f"Session: {h}h {m:02d}m"
+                )
+            except NoMatches:
+                pass  # Widget not mounted yet
 
 
 class MetricCard(Static):
@@ -356,17 +359,18 @@ class MetricsRow(Horizontal):
                 elapsed_hours = 1.0  # Default to 1 hour if no session start
             rate = found / elapsed_hours
 
-            self.query_one("#card-found", MetricCard).update_value(str(found))
-            self.query_one("#card-accepted", MetricCard).update_value(str(accepted))
-            self.query_one("#card-value", MetricCard).update_value(
-                f"${total_value:.2f}"
-            )
-            self.query_one("#card-rate", MetricCard).update_value(f"{rate:.1f}/hr")
-            self.query_one("#card-today", MetricCard).update_value(
-                f"${total_value:.2f}"
-            )
-        except NoMatches:
-            pass
+        updates = {
+            "#card-found": str(found),
+            "#card-accepted": str(accepted),
+            "#card-value": f"${total_value:.2f}",
+            "#card-rate": f"{rate:.1f}/hr",
+            "#card-today": f"${total_value:.2f}",
+        }
+        for selector, value in updates.items():
+            try:
+                self.query_one(selector, MetricCard).update_value(value)
+            except NoMatches:
+                pass  # Widget not mounted yet
 
 
 class StatusIndicator(Static):
@@ -689,6 +693,7 @@ class JobsPreview(DashboardQuadrant):
             dt.add_columns("ID", "Pair", "Words", "$$$")
         except NoMatches:
             pass  # Widget not mounted yet
+        self.refresh_jobs()
 
     def refresh_jobs(self):
         """
@@ -765,20 +770,21 @@ class ConfigPreview(DashboardQuadrant):
     """Configuration preview showing all config.ini options."""
 
     # Keys that should be masked for security
-    SENSITIVE_KEYS: ClassVar[set[str]] = {
-        "user_session",
-        "user_key",
-        "client_id",
-        "client_secret",
-        "refresh_token",
-        "access_token",
-        "auth_token",
-        "session_cookie",
-        "password",
-        "secret",
-        "token",
-        "api_key",
-    }
+    SENSITIVE_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "user_session",
+            "user_key",
+            "client_id",
+            "client_secret",
+            "refresh_token",
+            "access_token",
+            "auth_token",
+            "session_cookie",
+            "password",
+            "secret",
+            "token",
+        }
+    )
 
     # Section display order for configuration
     SECTION_ORDER: ClassVar[list[str]] = [
@@ -844,18 +850,19 @@ class ConfigPreview(DashboardQuadrant):
         Only None or empty string render as em dash. Numeric zero is preserved.
         """
         if self._is_sensitive(key) and value:
-            return self._mask_value(value)
-        if isinstance(value, bool):
-            return "✓" if value else "✗"
-        if isinstance(value, list):
-            if not value:
-                return "—"
-            return ", ".join(str(v) for v in value)
-        if isinstance(value, float):
-            return f"{value:.2f}" if value != int(value) else str(int(value))
-        if value is None or value == "":
-            return "—"
-        return str(value)
+            formatted = self._mask_value(value)
+        elif isinstance(value, bool):
+            formatted = "✓" if value else "✗"
+        elif isinstance(value, list):
+            formatted = ", ".join(str(v) for v in value)
+        elif isinstance(value, float):
+            formatted = f"{value:.2f}" if value != int(value) else str(int(value))
+        else:
+            formatted = str(value) if value else "—"
+
+        if len(formatted) > self.MAX_VALUE_LENGTH:
+            return formatted[: self.MAX_VALUE_LENGTH_SHORT] + "..."
+        return formatted
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
@@ -936,20 +943,24 @@ class SessionStats(DashboardQuadrant):
     def refresh_stats(self):
         if not self.watcher or not self.state:
             return
-        try:
-            elapsed = int(time.time() - self.watcher.start_time)
-            h, m = divmod(elapsed // 60, 60)
-            jobs = self.state.get_recent_jobs(limit=1000)
-            found = len(jobs)
-            accepted = sum(1 for j in jobs if j.get("accepted", False))
-            total = sum(j.get("reward", 0) for j in jobs)
+        elapsed = int(time.time() - self.watcher.start_time)
+        h, m = divmod(elapsed // 60, 60)
+        jobs = self.state.get_recent_jobs(limit=1000)
+        found = len(jobs)
+        accepted = sum(1 for j in jobs if j.get("accepted", False))
+        total = sum(j.get("reward", 0) for j in jobs)
 
-            self.query_one("#stat-duration", Static).update(f"Duration: {h}h {m:02d}m")
-            self.query_one("#stat-found", Static).update(f"Found: {found}")
-            self.query_one("#stat-accepted", Static).update(f"Accepted: {accepted}")
-            self.query_one("#stat-value", Static).update(f"Value: ${total:.2f}")
-        except NoMatches:
-            pass
+        updates = {
+            "#stat-duration": f"Duration: {h}h {m:02d}m",
+            "#stat-found": f"Found: {found}",
+            "#stat-accepted": f"Accepted: {accepted}",
+            "#stat-value": f"Value: ${total:.2f}",
+        }
+        for selector, value in updates.items():
+            try:
+                self.query_one(selector, Static).update(value)
+            except NoMatches:
+                pass  # Widget not mounted yet
 
 
 class SourcesBreakdown(DashboardQuadrant):
@@ -977,10 +988,10 @@ class SourcesBreakdown(DashboardQuadrant):
             total = len(jobs) if jobs else 1  # Avoid division by zero
 
             # Count jobs by source
-            counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0, "unknown": 0}
-            for job in jobs:
-                bucket = _normalize_source(job.get("source"))
-                counts[bucket] += 1
+            ws_count = sum(1 for j in jobs if j.get("source") == "websocket")
+            email_count = sum(1 for j in jobs if j.get("source") == "email")
+            web_count = sum(1 for j in jobs if j.get("source") == "website")
+            rss_count = sum(1 for j in jobs if j.get("source") == "rss")
 
             # Calculate percentages
             ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
@@ -1335,6 +1346,75 @@ class GengoWatcherApp(App):
         handler = TextualLogHandler(self)
         logging.getLogger().addHandler(handler)
 
+    def _refresh_widget(self, selector_or_type, method_name: str) -> None:
+        try:
+            widget = self.query_one(selector_or_type)
+        except NoMatches:
+            return
+        method = getattr(widget, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+
+    def on_mount(self) -> None:
+        """Initialize the jobs table with columns when the app mounts."""
+        self._setup_jobs_table()
+
+    def _setup_jobs_table(self) -> None:
+        """Set up the jobs DataTable with columns."""
+        try:
+            from textual.widgets import DataTable
+            from textual.css.query import NoMatches
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.add_columns("ID", "Pair", "Words", "$$$", "Source", "Time")
+        except Exception:
+            pass  # Widget not mounted yet
+
+    def _load_jobs_into_table(self) -> None:
+        """Load current jobs from state into the jobs DataTable."""
+        if not self.state:
+            return
+        try:
+            from textual.widgets import DataTable
+            from textual.css.query import NoMatches
+            dt = self.query_one("#jobs-table-full", DataTable)
+            dt.clear()
+            jobs = self.state.get_recent_jobs(limit=100)
+            for job in jobs:
+                job_id = str(job.get("id", "N/A"))[:8]
+                pair = job.get("lang_pair", "??→??")
+                words = str(job.get("word_count", job.get("words", 0)))
+                reward = f"${job.get('reward', 0):.2f}"
+                source = job.get("source", "N/A")
+                timestamp = job.get("timestamp", "")
+                if timestamp:
+                    # Truncate timestamp to just time
+                    try:
+                        ts = timestamp.split()[1] if " " in timestamp else timestamp
+                        timestamp = ts[:8]  # HH:MM:SS
+                    except Exception:
+                        pass
+                dt.add_row(job_id, pair, words, reward, source, timestamp)
+        except Exception:
+            pass  # Widget not mounted yet
+
+
+    @on(TabbedContent.TabActivated)
+    def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
+        pane_id = event.pane.id
+        if pane_id == "jobs":
+            self._load_jobs_into_table()
+        elif pane_id == "activity":
+            self._refresh_widget("#activity-log-full", "refresh")
+        elif pane_id == "output":
+            self._refresh_widget("#output-log", "refresh")
+        elif pane_id == "charts":
+            self._refresh_widget("#charts-content", "refresh")
+        elif pane_id == "stats":
+            self._refresh_widget("#stats-content", "refresh")
+
     def compose(self) -> ComposeResult:
         # 1. Title Bar
         """
@@ -1368,17 +1448,17 @@ class GengoWatcherApp(App):
             with TabPane("Output", id="output"):
                 yield RichLog(id="output-log", markup=True)
             with TabPane("Charts", id="charts"):
-                yield ChartsPanel(stats=self.stats, state=self.state)
+                yield Static("Charts Content", id="charts-content")
             with TabPane("Stats", id="stats"):
-                yield StatsPanel(stats=self.stats)
+                yield Static("Stats Content", id="stats-content")
 
         # 3. Input & Footer
         yield Input(placeholder="> help_")
         yield Footer()
 
     def call_from_thread(self, func, *args, **kwargs):
-        # The base App.call_from_thread will be used, but we need to ensure we don't block
-        super().call_from_thread(func, *args, **kwargs)
+        # Delegate to the parent implementation and return its result
+        return super().call_from_thread(func, *args, **kwargs)
 
 
 class TextualLogHandler(logging.Handler):
@@ -1472,6 +1552,7 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self.format(record)
             level = record.levelno
+            # Use call_from_thread for thread-safe UI updates - Textual handles scheduling
             self.app.call_from_thread(self.write_log, msg, level)
         except Exception:
             pass  # Logging failures should not crash the app

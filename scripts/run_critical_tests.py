@@ -19,8 +19,7 @@ from pathlib import Path
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ def run_command(cmd, timeout=30):
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(Path(__file__).parent)
+            cwd=str(Path(__file__).parent),
         )
         return result.returncode == 0, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
@@ -48,7 +47,9 @@ async def test_captcha_solver():
     logger.info("\n=== Testing CAPTCHA Solver ===")
 
     # Test 1: Check CAPTCHA CLI exists
-    success, stdout, stderr = run_command("python -m src.gengowatcher.main captchasetup --help")
+    success, _stdout, _stderr = run_command(
+        "python -m src.gengowatcher.main captchasetup --help"
+    )
     if success:
         logger.info("✅ CAPTCHA setup command available")
     else:
@@ -56,7 +57,9 @@ async def test_captcha_solver():
         return False
 
     # Test 2: Check CAPTCHA test command
-    success, stdout, stderr = run_command("python -m src.gengowatcher.main captchatest --help")
+    success, _stdout, _stderr = run_command(
+        "python -m src.gengowatcher.main captchatest --help"
+    )
     if success:
         logger.info("✅ CAPTCHA test command available")
     else:
@@ -66,14 +69,18 @@ async def test_captcha_solver():
     # Test 3: Check CAPTCHA configuration exists
     config_file = Path("config.ini")
     if config_file.exists():
-        with open(config_file, 'r') as f:
+        with open(config_file, "r") as f:
             config_content = f.read()
             if "[Captcha]" in config_content:
                 logger.info("✅ CAPTCHA configuration section exists")
             else:
-                logger.warning("⚠️ CAPTCHA configuration section missing - this is expected for new installations")
+                logger.warning(
+                    "⚠️ CAPTCHA configuration section missing - this is expected for new installations"
+                )
     else:
-        logger.warning("⚠️ Config file not found - this is expected for new installations")
+        logger.warning(
+            "⚠️ Config file not found - this is expected for new installations"
+        )
 
     logger.info("✅ CAPTCHA solver framework is properly integrated")
     return True
@@ -86,7 +93,7 @@ async def test_websocket_simulation():
     # Test 1: Check if WebSocket code exists
     watcher_file = Path("src/gengowatcher/watcher.py")
     if watcher_file.exists():
-        with open(watcher_file, 'r') as f:
+        with open(watcher_file, "r") as f:
             content = f.read()
             if "websockets" in content and "_connect_websocket" in content:
                 logger.info("✅ WebSocket implementation found")
@@ -95,7 +102,8 @@ async def test_websocket_simulation():
                 return False
 
     # Test 2: Check WebSocket test command
-    success, stdout, stderr = run_command("python -c "
+    success, _stdout, _stderr = run_command(
+        "python -c "
         "\"import sys; sys.path.insert(0, 'src'); "
         "from gengowatcher.ui import CommandLineInterface; "
         "from gengowatcher.config import AppConfig; "
@@ -107,7 +115,8 @@ async def test_websocket_simulation():
         "state = AppState(logger); "
         "watcher = GengoWatcher(config, logger, state); "
         "ui = CommandLineInterface(config, watcher, logger); "
-        "print('WebSocket test framework available')\"")
+        "print('WebSocket test framework available')\""
+    )
 
     if success:
         logger.info("✅ WebSocket test framework is available")
@@ -118,7 +127,7 @@ async def test_websocket_simulation():
     # Test 3: Check if WebSocket test commands are registered
     ui_file = Path("src/gengowatcher/ui.py")
     if ui_file.exists():
-        with open(ui_file, 'r') as f:
+        with open(ui_file, "r") as f:
             content = f.read()
             if "wstest" in content and "_handle_websocket_test" in content:
                 logger.info("✅ WebSocket test commands registered")
@@ -137,7 +146,7 @@ async def test_web_api():
     # Test 1: Check if web module exists
     web_file = Path("src/gengowatcher/web.py")
     if web_file.exists():
-        with open(web_file, 'r') as f:
+        with open(web_file, "r") as f:
             content = f.read()
             if "FastAPI" in content and "@app.get" in content:
                 logger.info("✅ Web API implementation found")
@@ -146,7 +155,8 @@ async def test_web_api():
                 return False
 
     # Test 2: Check if web server can be imported
-    success, stdout, stderr = run_command("python -c "
+    success, _stdout, stderr = run_command(
+        "python -c "
         "\"import sys; sys.path.insert(0, 'src'); "
         "from gengowatcher.web import WebAPI; "
         "from gengowatcher.config import AppConfig; "
@@ -154,7 +164,8 @@ async def test_web_api():
         "logger = logging.getLogger('test'); "
         "config = AppConfig(); "
         "web = WebAPI(config, logger, port=8001); "
-        "print('Web API can be initialized')\"")
+        "print('Web API can be initialized')\""
+    )
 
     if success:
         logger.info("✅ Web API can be initialized")
@@ -165,7 +176,7 @@ async def test_web_api():
 
     # Test 3: Check for required endpoints
     if web_file.exists():
-        with open(web_file, 'r') as f:
+        with open(web_file, "r") as f:
             content = f.read()
             endpoints = ["/health", "/config", "/metrics", "/jobs"]
             missing = []
@@ -195,7 +206,8 @@ async def test_rate_limiting():
         return False
 
     # Test 2: Test rate limiter functionality
-    success, stdout, stderr = run_command("python -c "
+    success, stdout, stderr = run_command(
+        "python -c "
         "\"import sys; sys.path.insert(0, 'src'); "
         "from gengowatcher.rate_limiter import RateLimiter; "
         "import time; "
@@ -205,7 +217,8 @@ async def test_rate_limiting():
         "    if limiter.acquire(): accepted += 1; "
         "print(f'Accepted: {accepted}'); "
         "assert accepted == 5, f'Expected 5, got {accepted}'; "
-        "print('Rate limiting test passed')\"")
+        "print('Rate limiting test passed')\""
+    )
 
     if success and "Rate limiting test passed" in stdout:
         logger.info("✅ Rate limiting functionality works correctly")
@@ -217,12 +230,14 @@ async def test_rate_limiting():
     # Test 3: Check job acceptance rate limiting
     job_acceptance_file = Path("src/gengowatcher/job_acceptance.py")
     if job_acceptance_file.exists():
-        with open(job_acceptance_file, 'r') as f:
+        with open(job_acceptance_file, "r") as f:
             content = f.read()
             if "RateLimiter" in content and "max_requests=30" in content:
                 logger.info("✅ Job acceptance rate limiting configured")
             else:
-                logger.warning("⚠️ Job acceptance rate limiting may not be properly configured")
+                logger.warning(
+                    "⚠️ Job acceptance rate limiting may not be properly configured"
+                )
 
     logger.info("✅ Rate limiting is properly implemented")
     return True
@@ -235,9 +250,12 @@ async def test_auto_accept_with_captcha():
     # Test 1: Check auto-accept implementation
     job_acceptance_file = Path("src/gengowatcher/job_acceptance.py")
     if job_acceptance_file.exists():
-        with open(job_acceptance_file, 'r') as f:
+        with open(job_acceptance_file, "r") as f:
             content = f.read()
-            if "JobAcceptanceEngine" in content and "_handle_captcha_challenge" in content:
+            if (
+                "JobAcceptanceEngine" in content
+                and "_handle_captcha_challenge" in content
+            ):
                 logger.info("✅ Auto-accept with CAPTCHA implementation found")
             else:
                 logger.error("❌ Auto-accept with CAPTCHA implementation not found")
@@ -245,24 +263,29 @@ async def test_auto_accept_with_captcha():
 
     # Test 2: Check CAPTCHA integration points
     if job_acceptance_file.exists():
-        with open(job_acceptance_file, 'r') as f:
+        with open(job_acceptance_file, "r") as f:
             content = f.read()
             captcha_checks = [
                 "captcha_solver.solve_recaptcha_v2",
                 "captcha_solver.solve_hcaptcha",
                 "captcha_solver.solve_recaptcha_v3",
                 "g-recaptcha-response",
-                "h-captcha-response"
+                "h-captcha-response",
             ]
 
             found = sum(1 for check in captcha_checks if check in content)
             if found >= 4:
-                logger.info(f"✅ CAPTCHA integration points found ({found}/{len(captcha_checks)})")
+                logger.info(
+                    f"✅ CAPTCHA integration points found ({found}/{len(captcha_checks)})"
+                )
             else:
-                logger.warning(f"⚠️ Some CAPTCHA integration points missing ({found}/{len(captcha_checks)})")
+                logger.warning(
+                    f"⚠️ Some CAPTCHA integration points missing ({found}/{len(captcha_checks)})"
+                )
 
     # Test 3: Check if components can be imported together
-    success, stdout, stderr = run_command("python -c "
+    success, _stdout, stderr = run_command(
+        "python -c "
         "\"import sys; sys.path.insert(0, 'src'); "
         "from gengowatcher.config import AppConfig; "
         "from gengowatcher.job_acceptance import JobAcceptanceEngine; "
@@ -271,7 +294,8 @@ async def test_auto_accept_with_captcha():
         "logger = logging.getLogger('test'); "
         "config = AppConfig(); "
         "engine = JobAcceptanceEngine(config, logger); "
-        "print('Auto-accept and CAPTCHA integration works')\"")
+        "print('Auto-accept and CAPTCHA integration works')\""
+    )
 
     if success:
         logger.info("✅ Auto-accept and CAPTCHA components integrate correctly")
@@ -297,7 +321,7 @@ async def run_all_tests():
         ("WebSocket Connectivity", test_websocket_simulation),
         ("Web API Endpoints", test_web_api),
         ("Rate Limiting", test_rate_limiting),
-        ("Auto-Accept with CAPTCHA", test_auto_accept_with_captcha)
+        ("Auto-Accept with CAPTCHA", test_auto_accept_with_captcha),
     ]
 
     for test_name, test_func in tests:
@@ -330,7 +354,9 @@ async def run_all_tests():
     else:
         logger.warning(f"\n⚠️ {total - passed} test(s) failed or have warnings")
         logger.info("\nNote: Some failures may be expected in a fresh installation.")
-        logger.info("Run the application with --configure to set up required configurations.")
+        logger.info(
+            "Run the application with --configure to set up required configurations."
+        )
         return False
 
 

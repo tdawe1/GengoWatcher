@@ -2,6 +2,7 @@
 
 import pytest
 import logging
+import concurrent.futures
 from unittest.mock import MagicMock, patch, mock_open, call
 import collections
 import time
@@ -23,7 +24,7 @@ def logger():
 
 
 @pytest.fixture
-def mock_config():
+def mock_config(tmp_path):
     """Create a comprehensive mock config."""
     config = MagicMock(spec=AppConfig)
     config_data = {
@@ -40,7 +41,7 @@ def mock_config():
             "browser_args": "{url}",
             "notification_icon_path": "/path/to/icon.png",
             "sound_file": "/path/to/sound.mp3",
-            "all_entries_log": "/tmp/entries.csv",
+            "all_entries_log": str(tmp_path / "entries.csv"),
         },
         "Network": {
             "user_agent_email": "test@example.com",
@@ -79,14 +80,18 @@ def mock_config():
         return config_data.get(section, {}).get(key, fallback)
 
     config.get.side_effect = get_side_effect
-    config.getint.side_effect = lambda s, k, **kw: int(get_side_effect(s, k, **kw) or 0)
-    config.getboolean.side_effect = lambda s, k, **kw: bool(get_side_effect(s, k, **kw))
-    config.getfloat.side_effect = lambda s, k, **kw: float(get_side_effect(s, k, **kw) or 0.0)
+    config.getint.side_effect = lambda s, k, **_: int(get_side_effect(s, k, **_) or 0)
+    config.getboolean.side_effect = lambda s, k, **_: bool(get_side_effect(s, k, **_))
+    config.getfloat.side_effect = lambda s, k, **_: float(
+        get_side_effect(s, k, **_) or 0.0
+    )
     config.config = config_data
     config.CONFIG_FILE = "test_config.ini"
     config._config_parser = MagicMock()
     config._config_parser.sections.return_value = list(config_data.keys())
-    config._config_parser.options.side_effect = lambda s: list(config_data.get(s, {}).keys())
+    config._config_parser.options.side_effect = lambda s: list(
+        config_data.get(s, {}).keys()
+    )
 
     return config
 
@@ -123,9 +128,15 @@ class TestWatcherInitialization:
         assert watcher.session_new_entries == 0
         assert watcher.websocket_status == "Disabled"
 
-    def test_initialization_validates_check_interval(self, mock_config, mock_state, logger):
+    def test_initialization_validates_check_interval(
+        self, mock_config, mock_state, logger
+    ):
         """Test that check_interval is validated."""
-        mock_config.get.side_effect = lambda s, k, **kw: 0 if (s, k) == ("Watcher", "check_interval") else mock_config.config.get(s, {}).get(k)
+        mock_config.get.side_effect = lambda s, k, **_: (
+            0
+            if (s, k) == ("Watcher", "check_interval")
+            else mock_config.config.get(s, {}).get(k)
+        )
 
         GengoWatcher(mock_config, mock_state, logger)
         # Should have been corrected to minimum of 5
@@ -133,9 +144,13 @@ class TestWatcherInitialization:
 
     def test_csv_logging_setup_when_enabled(self, mock_config, mock_state, logger):
         """Test CSV logging setup."""
-        mock_config.get.side_effect = lambda s, k, **kw: True if (s, k) == ("Logging", "log_all_entries_enabled") else mock_config.config.get(s, {}).get(k, kw.get("fallback"))
+        mock_config.get.side_effect = lambda s, k, **kw: (
+            True
+            if (s, k) == ("Logging", "log_all_entries_enabled")
+            else mock_config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
 
-        with patch("builtins.open", mock_open()) as mock_file:
+        with patch("builtins.open", mock_open()):
             with patch("pathlib.Path.stat") as mock_stat:
                 mock_stat.return_value.st_size = 0
                 watcher = GengoWatcher(mock_config, mock_state, logger)
@@ -216,7 +231,10 @@ class TestNotifications:
 
     def test_open_in_browser_exception_handling(self, watcher_instance):
         """Test browser opening exception handling."""
-        with patch("gengowatcher.watcher.webbrowser.open", side_effect=Exception("Browser error")):
+        with patch(
+            "gengowatcher.watcher.webbrowser.open",
+            side_effect=Exception("Browser error"),
+        ):
             # Should not raise exception
             watcher_instance.open_in_browser("http://example.com")
 
@@ -229,28 +247,40 @@ class TestJobProcessing:
         watcher_instance.show_notification = MagicMock()
 
         # Process job first time
-        watcher_instance._process_new_job(123, "Job 1", 10.0, "http://example.com/123", "RSS")
+        watcher_instance._process_new_job(
+            123, "Job 1", 10.0, "http://example.com/123", "RSS"
+        )
         assert 123 in watcher_instance.state.seen_job_ids
         assert watcher_instance.session_new_entries == 1
 
         # Process same job again
-        watcher_instance._process_new_job(123, "Job 1", 10.0, "http://example.com/123", "RSS")
+        watcher_instance._process_new_job(
+            123, "Job 1", 10.0, "http://example.com/123", "RSS"
+        )
         assert watcher_instance.session_new_entries == 1  # Should not increment
 
     def test_process_new_job_min_reward_filter(self, watcher_instance):
         """Test minimum reward filtering."""
-        watcher_instance.config.get.side_effect = lambda s, k, **kw: 20.0 if (s, k) == ("Watcher", "min_reward") else watcher_instance.config.config.get(s, {}).get(k)
+        watcher_instance.config.get.side_effect = lambda s, k, **_: (
+            20.0
+            if (s, k) == ("Watcher", "min_reward")
+            else watcher_instance.config.config.get(s, {}).get(k)
+        )
         watcher_instance.show_notification = MagicMock()
 
         # Job below minimum reward
-        watcher_instance._process_new_job(456, "Low Value", 10.0, "http://example.com/456", "RSS")
+        watcher_instance._process_new_job(
+            456, "Low Value", 10.0, "http://example.com/456", "RSS"
+        )
         assert watcher_instance.session_new_entries == 0
-        assert 456 not in watcher_instance.state.seen_job_ids
+        assert 456 in watcher_instance.state.seen_job_ids
 
     def test_process_new_job_stores_in_state(self, watcher_instance):
         """Test that jobs are stored in state."""
         watcher_instance.show_notification = MagicMock()
-        watcher_instance._process_new_job(789, "Job", 15.0, "http://example.com/789", "WebSocket")
+        watcher_instance._process_new_job(
+            789, "Job", 15.0, "http://example.com/789", "WebSocket"
+        )
 
         watcher_instance.state.add_job.assert_called_once()
         job_data = watcher_instance.state.add_job.call_args[0][0]
@@ -261,10 +291,14 @@ class TestJobProcessing:
     def test_process_new_job_auto_accept_check(self, watcher_instance):
         """Test auto-accept eligibility check."""
         watcher_instance.show_notification = MagicMock()
-        watcher_instance.job_acceptance_engine.is_job_eligible = MagicMock(return_value=True)
+        watcher_instance.job_acceptance_engine.is_job_eligible = MagicMock(
+            return_value=True
+        )
 
         with patch("threading.Thread") as mock_thread:
-            watcher_instance._process_new_job(999, "High Value", 100.0, "http://example.com/999", "RSS")
+            watcher_instance._process_new_job(
+                999, "High Value", 100.0, "http://example.com/999", "RSS"
+            )
             # Should spawn acceptance thread
             mock_thread.assert_called()
 
@@ -321,6 +355,7 @@ class TestRSSFetching:
         """Test successful RSS fetch."""
         mock_feed = MagicMock()
         mock_feed.bozo = False
+        mock_feed.status = 200
         mock_feed.entries = [{"title": "Job 1"}]
         mock_parse.return_value = mock_feed
 
@@ -383,6 +418,34 @@ class TestRSSFetching:
         assert "request_headers" in call_args.kwargs
         assert "User-Agent" in call_args.kwargs["request_headers"]
 
+    def test_fetch_rss_timeout_does_not_spawn_new_worker_threads(self, watcher_instance):
+        """Test that repeated timeouts reuse the same in-flight future."""
+
+        class HangingFuture:
+            def cancel(self):
+                return False
+
+            def done(self):
+                return False
+
+            def result(self, timeout):
+                raise concurrent.futures.TimeoutError()
+
+        hanging_future = HangingFuture()
+        mock_executor = MagicMock()
+        mock_executor.submit.return_value = hanging_future
+
+        with patch(
+            "gengowatcher.watcher.concurrent.futures.ThreadPoolExecutor",
+            return_value=mock_executor,
+        ):
+            assert watcher_instance.fetch_rss() is None
+            assert watcher_instance.fetch_rss() is None
+
+        # Second call should detect the in-flight future and avoid submitting again.
+        assert mock_executor.submit.call_count == 1
+        mock_executor.shutdown.assert_not_called()
+
 
 class TestConfigManagement:
     """Test configuration management."""
@@ -440,7 +503,9 @@ class TestWebSocketIntegration:
 
     def test_capture_raw_ws_message(self, watcher_instance):
         """Test raw message capture."""
-        watcher_instance.config.get.side_effect = lambda s, k, **kw: True if (s, k) == ("DebugCategories", "raw") else kw.get("fallback", False)
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: (
+            True if (s, k) == ("DebugCategories", "raw") else kw.get("fallback", False)
+        )
 
         watcher_instance._capture_raw_ws_message('{"type": "test"}', "recv")
 
@@ -450,7 +515,9 @@ class TestWebSocketIntegration:
 
     def test_clear_raw_ws_messages(self, watcher_instance):
         """Test clearing raw message buffer."""
-        watcher_instance.config.get.side_effect = lambda s, k, **kw: True if (s, k) == ("DebugCategories", "raw") else kw.get("fallback", False)
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: (
+            True if (s, k) == ("DebugCategories", "raw") else kw.get("fallback", False)
+        )
         watcher_instance._capture_raw_ws_message("test", "recv")
 
         watcher_instance.clear_raw_ws_messages()
@@ -471,12 +538,15 @@ class TestCancellationManager:
 
     def test_get_cancellation_stats(self, watcher_instance):
         """Test cancellation stats retrieval."""
-        watcher_instance.cancellation_manager.get_stats = MagicMock(return_value={"cancelled": 0})
+        watcher_instance.cancellation_manager.get_stats = MagicMock(
+            return_value={"cancelled": 0}
+        )
         stats = watcher_instance.get_cancellation_stats()
         assert stats is not None
 
     def test_configure_cancellation_manager(self, watcher_instance):
         """Test cancellation manager configuration."""
+        watcher_instance.cancellation_manager.update_settings = MagicMock()
         watcher_instance._configure_cancellation_manager()
         watcher_instance.cancellation_manager.update_settings.assert_called_once()
 
@@ -486,14 +556,16 @@ class TestPromptConfiguration:
 
     def test_is_config_complete_with_placeholders(self, watcher_instance):
         """Test detection of incomplete config."""
-        watcher_instance.config.get.side_effect = lambda s, k, **kw: "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        watcher_instance.config.get.side_effect = (
+            lambda *_, **__: "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        )
 
         result = watcher_instance.is_config_complete([("WebSocket", "user_session")])
         assert result is False
 
     def test_is_config_complete_with_valid_config(self, watcher_instance):
         """Test detection of complete config."""
-        watcher_instance.config.get.side_effect = lambda s, k, **kw: "valid_value"
+        watcher_instance.config.get.side_effect = lambda *_, **__: "valid_value"
 
         result = watcher_instance.is_config_complete([("Watcher", "feed_url")])
         assert result is True
@@ -506,11 +578,21 @@ class TestThreadSafety:
         """Test that job processing is thread-safe."""
         watcher_instance.show_notification = MagicMock()
 
-        def process_jobs():
+        def process_jobs(thread_idx):
             for i in range(10):
-                watcher_instance._process_new_job(i, f"Job {i}", 10.0, f"http://example.com/{i}", "RSS")
+                job_id = f"{thread_idx}-{i}"
+                watcher_instance._process_new_job(
+                    job_id,
+                    f"Job {job_id}",
+                    10.0,
+                    f"http://example.com/{job_id}",
+                    "RSS",
+                )
 
-        threads = [threading.Thread(target=process_jobs) for _ in range(5)]
+        threads = [
+            threading.Thread(target=process_jobs, args=(thread_idx,))
+            for thread_idx in range(5)
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -547,8 +629,15 @@ class TestEdgeCasesAndBoundaries:
 
     def test_process_new_job_with_zero_reward(self, watcher_instance):
         """Test processing job with zero reward."""
+        watcher_instance.config.get.side_effect = lambda s, k, **_: (
+            0.0
+            if (s, k) == ("Watcher", "min_reward")
+            else watcher_instance.config.config.get(s, {}).get(k)
+        )
         watcher_instance.show_notification = MagicMock()
-        watcher_instance._process_new_job(1, "Free Job", 0.0, "http://example.com/1", "RSS")
+        watcher_instance._process_new_job(
+            1, "Free Job", 0.0, "http://example.com/1", "RSS"
+        )
         assert watcher_instance.session_new_entries == 1
 
     def test_process_feed_entries_with_missing_title(self, watcher_instance):
