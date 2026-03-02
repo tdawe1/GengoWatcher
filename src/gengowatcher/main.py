@@ -405,7 +405,7 @@ def main():
         try:
             stats_manager.end_session()
         except Exception:
-            pass
+            log.exception("Failed to persist session stats on shutdown")
         if not watcher.shutdown_event.is_set():
             watcher.handle_exit()
 

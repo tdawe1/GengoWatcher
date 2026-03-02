@@ -1336,7 +1336,15 @@ class GengoWatcherApp(App):
 
         method = getattr(widget, method_name, None)
         if callable(method):
-            method()
+            try:
+                method()
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Failed refreshing %s via %s",
+                    widget_class.__name__,
+                    method_name,
+                    exc_info=True,
+                )
         else:
             logging.getLogger(__name__).warning(
                 "Widget %s has no method %s", widget_class.__name__, method_name

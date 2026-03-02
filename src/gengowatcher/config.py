@@ -476,7 +476,24 @@ class AppConfig:
             self.config[section][key] = value
             if not self._config_parser.has_section(section):
                 self._config_parser.add_section(section)
-            self._config_parser.set(section, key, str(value))
+            serialized = self._serialize_for_parser(value)
+            self._config_parser.set(section, key, serialized)
+
+    @staticmethod
+    def _serialize_for_parser(value: Any) -> str:
+        """Serialize values for ConfigParser while preserving JSON round-tripping."""
+        if isinstance(value, (list, dict)):
+            return json.dumps(value)
+
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return str(value)
+
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            pass
+
+        return str(value)
 
     @staticmethod
     def _serialize_for_parser(value: Any) -> str:
