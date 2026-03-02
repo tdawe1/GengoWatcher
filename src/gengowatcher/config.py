@@ -475,9 +475,18 @@ class AppConfig:
 
     @staticmethod
     def _serialize_for_parser(value: Any) -> str:
-        """Serialize values for ConfigParser while preserving list round-tripping."""
-        if isinstance(value, list):
+        """Serialize values for ConfigParser while preserving JSON round-tripping."""
+        if isinstance(value, (list, dict)):
             return json.dumps(value)
+
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return str(value)
+
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            pass
+
         return str(value)
 
     def _validate_auto_accept_config(self):
