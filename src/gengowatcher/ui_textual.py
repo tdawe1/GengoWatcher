@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from collections import deque
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -808,17 +808,12 @@ class ConfigPreview(DashboardQuadrant):
             formatted = self._mask_value(value)
         elif isinstance(value, bool):
             formatted = "✓" if value else "✗"
-        elif isinstance(value, int):
-            formatted = str(value)
         elif isinstance(value, list):
             formatted = ", ".join(str(v) for v in value)
         elif isinstance(value, float):
             formatted = f"{value:.2f}" if value != int(value) else str(int(value))
         else:
-            if value is None or (isinstance(value, str) and value == ""):
-                formatted = "—"
-            else:
-                formatted = str(value)
+            formatted = str(value) if value else "—"
 
         if len(formatted) > self.MAX_VALUE_LENGTH:
             return formatted[: self.MAX_VALUE_LENGTH_SHORT] + "..."
@@ -832,7 +827,7 @@ class ConfigPreview(DashboardQuadrant):
         if not callable(list_all):
             # Gracefully handle cases where config is a mock or non-AppConfig without list_all()
             return text
-        all_config = cast(dict[str, dict[str, Any]], list_all())
+        all_config = list_all()
 
         for section in self.SECTION_ORDER:
             if section not in all_config:
@@ -922,144 +917,40 @@ class SourcesBreakdown(DashboardQuadrant):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%",
-            id="sources-content",
-        )
+        yield Static("WS: 0%\nEmail: 0%\nWeb: 0%\nRSS: 0%", id="sources-content")
 
     def refresh_sources(self):
         """Refresh sources breakdown with job source statistics."""
         if not self.state:
             return
         try:
-            jobs = self.state.get_recent_jobs(limit=1000) or []
-            counts = {key: 0 for key in SOURCE_BUCKET_CONFIG}
+            jobs = self.state.get_recent_jobs(limit=1000)
+            total = len(jobs) if jobs else 1  # Avoid division by zero
 
-            for job in jobs:
-                source_key = _normalize_source(job.get("source"))
-                counts[source_key] = counts.get(source_key, 0) + 1
+            # Count jobs by source
+            ws_count = sum(1 for j in jobs if j.get("source") == "websocket")
+            email_count = sum(1 for j in jobs if j.get("source") == "email")
+            web_count = sum(1 for j in jobs if j.get("source") == "website")
+            rss_count = sum(1 for j in jobs if j.get("source") == "rss")
 
-            total = sum(counts.values())
-            if total <= 0:
-                total = 1
+            # Calculate percentages
+            ws_pct = (ws_count / total) * 100 if total > 0 else 0
+            email_pct = (email_count / total) * 100 if total > 0 else 0
+            web_pct = (web_count / total) * 100 if total > 0 else 0
+            rss_pct = (rss_count / total) * 100 if total > 0 else 0
 
-            ws_pct = (counts["websocket"] / total) * 100
-            email_pct = (counts["email"] / total) * 100
-            website_pct = (counts["website"] / total) * 100
-            rss_pct = (counts["rss"] / total) * 100
-            unknown_pct = (counts["unknown"] / total) * 100
-
-            content = (
-                f"WS: {ws_pct:.0f}%\n"
-                f"Email: {email_pct:.0f}%\n"
-                f"Website: {website_pct:.0f}%\n"
-                f"RSS: {rss_pct:.0f}%\n"
-                f"Unknown: {unknown_pct:.0f}%"
-            )
+            content = f"WS: {ws_pct:.0f}%\nEmail: {email_pct:.0f}%\nWeb: {web_pct:.0f}%\nRSS: {rss_pct:.0f}%"
             self.query_one("#sources-content", Static).update(content)
         except NoMatches:
             pass  # Widget not mounted yet
 
 
-class ChartsPanel(Static):
-    """Charts panel for the Charts tab."""
-
-    def __init__(
-        self,
-        stats: "StatsManager | None",
-        state: "AppState | None",
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.stats = stats
-        self.state = state
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static(
-                "── Value Trend (Recent Jobs) ──", classes="stats-section-header"
-            )
-            yield Static("No data", id="charts-value-trend")
-            yield Static("── Source Breakdown ──", classes="stats-section-header")
-            yield Static("No data", id="charts-sources")
-
-    def on_mount(self) -> None:
-        self.refresh_charts()
-
-    def refresh_charts(self) -> None:
-        try:
-            self.query_one("#charts-value-trend", Static).update(
-                self._render_value_trend()
-            )
-            self.query_one("#charts-sources", Static).update(
-                self._render_sources_chart()
-            )
-        except NoMatches:
-            pass
-
-    def _render_value_trend(self) -> Text:
-        jobs = self.state.get_recent_jobs(limit=20) if self.state else []
-        rewards: list[float] = []
-        for job in jobs:
-            reward = job.get("reward", 0)
-            try:
-                rewards.append(float(reward))
-            except (TypeError, ValueError):
-                rewards.append(0.0)
-
-        rewards = rewards[-20:]
-        if len(rewards) < 20:
-            rewards = ([0.0] * (20 - len(rewards))) + rewards
-        max_reward = max(rewards, default=0.0)
-        lines: list[str] = []
-
-        for index, reward in enumerate(rewards, start=1):
-            if max_reward > 0:
-                ratio = reward / max_reward
-            else:
-                ratio = 0.0
-            bar_length = max(1, int(ratio * 16)) if reward > 0 else 1
-            bar = "█" * bar_length
-            lines.append(f"{index:02d}: {bar:<16} ${reward:>7.2f}")
-
-        return Text("\n".join(lines))
-
-    def _render_sources_chart(self) -> Text:
-        jobs = self.state.get_recent_jobs(limit=1000) if self.state else []
-        counts = {key: 0 for key in SOURCE_BUCKET_CONFIG}
-
-        for job in jobs:
-            source_key = _normalize_source(job.get("source"))
-            counts[source_key] = counts.get(source_key, 0) + 1
-
-        total = sum(counts.values())
-        if total <= 0:
-            return Text("No source data")
-
-        rows = []
-        for key in ("websocket", "email", "website", "rss", "unknown"):
-            count = counts[key]
-            pct = (count / total) * 100
-            bar_length = max(1, int(round((pct / 100) * 20))) if count > 0 else 1
-            bar = "█" * bar_length
-            label = SOURCE_BUCKET_CONFIG[key]["label"]
-            rows.append(f"{label:<9} {bar:<20} {pct:>5.1f}%")
-
-        return Text("\n".join(rows))
-
-
 class StatsPanel(Static):
     """Full statistics panel for the Stats tab."""
 
-    def __init__(
-        self,
-        stats: "StatsManager",
-        state: "AppState | None" = None,
-        **kwargs,
-    ):
+    def __init__(self, stats: "StatsManager", **kwargs):
         super().__init__(**kwargs)
         self.stats = stats
-        self.state = state
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -1101,9 +992,6 @@ class StatsPanel(Static):
         except NoMatches:
             pass  # Widget not mounted yet
 
-    def on_mount(self) -> None:
-        self.refresh_stats()
-
 
 # =============================================================================
 # Main App
@@ -1140,32 +1028,16 @@ class GengoWatcherApp(App):
         logging.getLogger().addHandler(handler)
 
     def _refresh_widget(self, selector_or_type, method_name: str) -> None:
-        logger = logging.getLogger(__name__)
-        selector_label = getattr(selector_or_type, "__name__", str(selector_or_type))
-
         try:
             widget = self.query_one(selector_or_type)
         except NoMatches:
-            logger.debug(
-                "Widget %s missing while refreshing %s",
-                selector_label,
-                method_name,
-            )
             return
-
         method = getattr(widget, method_name, None)
         if callable(method):
             try:
                 method()
             except Exception:
-                logger.warning(
-                    "Failed refreshing %s via %s",
-                    selector_label,
-                    method_name,
-                    exc_info=True,
-                )
-        else:
-            logger.warning("Widget %s has no method %s", selector_label, method_name)
+                pass
 
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
@@ -1176,7 +1048,6 @@ class GengoWatcherApp(App):
         try:
             from textual.widgets import DataTable
             from textual.css.query import NoMatches
-
             dt = self.query_one("#jobs-table-full", DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$", "Source", "Time")
         except Exception:
@@ -1189,7 +1060,6 @@ class GengoWatcherApp(App):
         try:
             from textual.widgets import DataTable
             from textual.css.query import NoMatches
-
             dt = self.query_one("#jobs-table-full", DataTable)
             dt.clear()
             jobs = self.state.get_recent_jobs(limit=100)
@@ -1211,6 +1081,7 @@ class GengoWatcherApp(App):
         except Exception:
             pass  # Widget not mounted yet
 
+
     @on(TabbedContent.TabActivated)
     def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
         pane_id = event.pane.id
@@ -1221,9 +1092,9 @@ class GengoWatcherApp(App):
         elif pane_id == "output":
             self._refresh_widget("#output-log", "refresh")
         elif pane_id == "charts":
-            self._refresh_widget("#charts-content", "refresh_charts")
+            self._refresh_widget("#charts-content", "refresh")
         elif pane_id == "stats":
-            self._refresh_widget("#stats-content", "refresh_stats")
+            self._refresh_widget("#stats-content", "refresh")
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
@@ -1258,15 +1129,9 @@ class GengoWatcherApp(App):
             with TabPane("Output", id="output"):
                 yield RichLog(id="output-log", markup=True)
             with TabPane("Charts", id="charts"):
-                yield ChartsPanel(
-                    stats=self.stats, state=self.state, id="charts-content"
-                )
+                yield Static("Charts Content", id="charts-content")
             with TabPane("Stats", id="stats"):
-                yield StatsPanel(
-                    stats=self.stats,
-                    state=self.state,
-                    id="stats-content",
-                )
+                yield Static("Stats Content", id="stats-content")
 
         # 3. Input & Footer
         yield Input(placeholder="> help_")
@@ -1374,13 +1239,10 @@ class TextualLogHandler(logging.Handler):
             pass  # Logging failures should not crash the app
 
     def write_log(self, msg: str, level: int = logging.INFO):
-        colored_text = self._colorize_message(msg, level)
-        self._write_to_log("#activity-log", colored_text)
-
-    def _write_to_log(self, selector: str, content: Text) -> None:
         try:
-            log = self.app.query_one(selector, RichLog)
-            log.write(content)
+            log = self.app.query_one("#activity-log", RichLog)
+            colored_text = self._colorize_message(msg, level)
+            log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
 
