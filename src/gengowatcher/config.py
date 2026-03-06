@@ -1,4 +1,5 @@
 import configparser
+import copy
 import json
 import os
 import shutil
@@ -56,7 +57,7 @@ class AppConfig:
         },
         "Logging": {
             "log_max_bytes": 1000000,
-            "log_backup_count": 3,
+            "log_backup_count": 99,
             "log_main_enabled": True,
             "log_stdio_enabled": False,
             "log_all_entries_enabled": True,
@@ -145,6 +146,7 @@ class AppConfig:
             "check_interval_max": 300,
             "headless": True,
             "session_cookie": "",
+            "browser_executable": "",
         },
     }
 
@@ -359,7 +361,7 @@ class AppConfig:
             Dict with section names as keys, containing dicts of option:value pairs
         """
         with self._lock:
-            return {section: dict(options) for section, options in self.config.items()}
+            return copy.deepcopy(self.config)
 
     def is_placeholder(self, value: Any) -> bool:
         """Check if a value is a placeholder that needs user configuration.
@@ -472,6 +474,26 @@ class AppConfig:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
+            if not self._config_parser.has_section(section):
+                self._config_parser.add_section(section)
+            serialized = self._serialize_for_parser(value)
+            self._config_parser.set(section, key, serialized)
+
+    @staticmethod
+    def _serialize_for_parser(value: Any) -> str:
+        """Serialize values for ConfigParser while preserving JSON round-tripping."""
+        if isinstance(value, (list, dict)):
+            return json.dumps(value)
+
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return str(value)
+
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            pass
+
+        return str(value)
 
     @staticmethod
     def _serialize_for_parser(value: Any) -> str:

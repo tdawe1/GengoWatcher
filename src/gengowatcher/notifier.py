@@ -17,8 +17,7 @@ def play_sound(sound_file_path: str):
 
     def _play():
         path = Path(sound_file_path)
-        if not path.is_file():
-            # Try relative to the project root (assuming src/gengowatcher/notifier.py)
+        if not path.is_absolute():
             project_root = Path(__file__).parent.parent.parent
             path = project_root / sound_file_path
 
@@ -47,16 +46,21 @@ def play_sound(sound_file_path: str):
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    timeout=10,
                 )
-                logger.debug(
-                    f"Successfully played sound with {name}: {sound_file_path}"
-                )
-                return
             except FileNotFoundError:
                 continue
             except subprocess.CalledProcessError as e:
                 logger.debug(f"{name} failed: {e}")
                 continue
+            except subprocess.TimeoutExpired:
+                logger.debug(f"{name} timed out")
+                continue
+            else:
+                logger.debug(
+                    f"Successfully played sound with {name}: {sound_file_path}"
+                )
+                return
 
         logger.warning(
             "No suitable audio player found (tried pw-play, paplay, canberra-gtk-play, mpv, aplay)."

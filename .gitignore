@@ -19,6 +19,10 @@ wheels/
 *.egg-info/
 *.egg
 MANIFEST
+thoughts/
+.codex/
+.slim/
+stats.json
 
 # Virtual environments
 venv/
@@ -45,6 +49,7 @@ pytest-of-*/
 logs/
 *.log
 *.log.*
+wakapi_db.db
 
 # Application files (user-specific)
 config.ini
@@ -53,6 +58,7 @@ state.json
 *.pause
 token.json
 credentials.json
+.env
 
 # Environment variables (secrets)
 .env
@@ -72,7 +78,6 @@ rss_check_log.txt
 all_entries_log.txt
 flake8-report.txt
 *.spec
-MagicMock/
 
 # Build artifacts
 *.exe
