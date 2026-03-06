@@ -22,6 +22,7 @@ from gengowatcher.ui_textual import (
     StatsPanel,
     TextualLogHandler,
     Icons,
+    _derive_display_word_count,
 )
 
 
@@ -107,6 +108,21 @@ class TestIcons:
         assert isinstance(Icons.FOUND, str)
         assert isinstance(Icons.WEBSOCKET, str)
         assert isinstance(Icons.LIVE, str)
+
+
+class TestWordCountDerivation:
+    """Tests for table word-count derivation helper."""
+
+    def test_prefers_explicit_count_fields(self):
+        assert _derive_display_word_count({"word_count": "320", "reward": 10.0}) == 320
+        assert _derive_display_word_count({"unit_count": "480", "reward": 10.0}) == 480
+
+    def test_estimates_from_reward_and_tier(self):
+        assert _derive_display_word_count({"reward": 10.0, "tier": "standard"}) == 500
+        assert _derive_display_word_count({"reward": 5.0, "tier": "pro"}) == 100
+
+    def test_estimates_with_standard_default_when_tier_missing(self):
+        assert _derive_display_word_count({"reward": 1.92}) == 96
 
 
 class TestTitleBar:

@@ -53,6 +53,13 @@ LANG_PAIR_REGEX = re.compile(
 )
 LANG_PAIR_SPLIT_REGEX = re.compile(r"\s*(?:→|->|-|>|↔|/)\s*")
 WORD_COUNT_REGEX = re.compile(r"\b(\d{1,6})\s*words?\b", re.IGNORECASE)
+UNIT_COUNT_REGEX = re.compile(r"\b(\d{1,6})\s*(?:words?|chars?|units?)\b", re.IGNORECASE)
+TITLE_TIER_REGEX = re.compile(r"\(([^)]+)\)")
+TIER_UNIT_RATES = {
+    "standard": 0.02,
+    "pro": 0.05,
+    "edit": 0.01,
+}
 
 
 class GengoWatcher:
@@ -394,7 +401,7 @@ class GengoWatcher:
         )
 
         lang_pair = self._derive_lang_pair(title, source_meta)
-        word_count = self._derive_word_count(title, source_meta)
+        word_count = self._derive_word_count(title, source_meta, reward=reward)
 
         # Prepare job data for storage, callbacks, and acceptance checks
         job_data = {
@@ -526,23 +533,98 @@ class GengoWatcher:
         fallback = self._parse_lang_pair_from_title(title)
         return fallback or "??→??"
 
-    def _derive_word_count(self, title, source_meta) -> int:
-        meta = self._normalize_meta(source_meta)
-        for key in ("word_count", "words"):
-            if key in meta:
+    def _coerce_positive_int(self, value) -> int:
+        try:
+            parsed = int(float(value))
+        except (TypeError, ValueError):
+            if isinstance(value, str):
+                match = re.search(r"(\d+)", value)
+                if not match:
+                    return 0
                 try:
-                    return int(meta.get(key))
-                except (TypeError, ValueError):
-                    continue
+                    parsed = int(match.group(1))
+                except ValueError:
+                    return 0
+            else:
+                return 0
+        return parsed if parsed > 0 else 0
+
+    def _coerce_positive_float(self, value) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return parsed if parsed > 0 else 0.0
+
+    def _resolve_tier_rate(self, tier_value) -> float:
+        if not tier_value:
+            return 0.0
+        normalized = (
+            str(tier_value).strip().lower().replace("-", "").replace("_", "")
+        )
+        if normalized in ("standard", "std", "basic"):
+            return TIER_UNIT_RATES["standard"]
+        if normalized in ("pro", "professional"):
+            return TIER_UNIT_RATES["pro"]
+        if normalized in ("edit", "proofread", "proofreading"):
+            return TIER_UNIT_RATES["edit"]
+        return 0.0
+
+    def _estimate_word_count_from_reward(self, reward, title, source_meta) -> int:
+        meta = self._normalize_meta(source_meta)
+        reward_value = self._coerce_positive_float(reward)
+        if reward_value <= 0:
+            reward_value = self._coerce_positive_float(
+                self._pick_meta_value(meta, ["rewards", "reward"])
+            )
+        if reward_value <= 0:
+            return 0
+
+        for key in (
+            "reward_per_unit",
+            "unit_reward",
+            "unit_price",
+            "price_per_unit",
+            "rate_per_unit",
+        ):
+            rate = self._coerce_positive_float(meta.get(key))
+            if rate > 0:
+                return max(1, int(round(reward_value / rate)))
+
+        tier = self._pick_meta_value(meta, ["tier", "job_tier", "service_level"])
+        if not tier and title:
+            match = TITLE_TIER_REGEX.search(str(title))
+            if match:
+                tier = match.group(1)
+
+        rate = self._resolve_tier_rate(tier)
+        if rate > 0:
+            return max(1, int(round(reward_value / rate)))
+        return 0
+
+    def _derive_word_count(self, title, source_meta, reward=0.0) -> int:
+        meta = self._normalize_meta(source_meta)
+        for key in (
+            "word_count",
+            "words",
+            "unit",
+            "units",
+            "unit_count",
+            "wordCount",
+            "unitCount",
+        ):
+            count = self._coerce_positive_int(meta.get(key))
+            if count > 0:
+                return count
 
         text = str(title) if title else ""
-        match = WORD_COUNT_REGEX.search(text)
+        match = WORD_COUNT_REGEX.search(text) or UNIT_COUNT_REGEX.search(text)
         if match:
-            try:
-                return int(match.group(1))
-            except ValueError:
-                pass
-        return 0
+            count = self._coerce_positive_int(match.group(1))
+            if count > 0:
+                return count
+
+        return self._estimate_word_count_from_reward(reward, title, source_meta)
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """

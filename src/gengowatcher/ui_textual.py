@@ -14,7 +14,8 @@ from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, Grid, Container
+from textual.color import Color
+from textual.containers import Horizontal, Vertical, Container
 from textual.widgets import (
     Footer,
     Input,
@@ -27,12 +28,18 @@ from textual.widgets import (
 )
 from textual import work, on
 from textual.css.query import NoMatches
+from textual.theme import BUILTIN_THEMES, Theme
 from rich.text import Text
 
-from .watcher import GengoWatcher, __version__
+from .watcher import GengoWatcher, __version__, TIER_UNIT_RATES
 from .config import AppConfig
 from .state import AppState
 from .stats import StatsManager
+
+try:
+    import plotext as plotext
+except ImportError:  # pragma: no cover - optional runtime dependency
+    plotext = None
 
 # =============================================================================
 # Constants
@@ -40,19 +47,27 @@ from .stats import StatsManager
 
 
 class Icons:
-    FOUND = "▲"
-    ACCEPTED = "✓"
-    VALUE = "$"
-    RATE = "~"
+    FOUND = ""
+    ACCEPTED = ""
+    VALUE = ""
+    RATE = ""
+    TODAY = ""
     MIN_WORDS = "≥"
 
-    WEBSOCKET = "●"
-    EMAIL = "◉"
-    WEB = "◎"
-    RSS = "⊛"  # Added
-    CAPTCHA = "⧗"
-    WORKFLOW = "⇄"
-    AUTO = "▶"  # Added
+    WEBSOCKET = ""
+    EMAIL = ""
+    WEB = ""
+    RSS = ""
+    CAPTCHA = ""
+    WORKFLOW = ""
+    AUTO = ""
+
+    PANEL_ACTIVITY = ""
+    PANEL_JOBS = ""
+    PANEL_CHART = ""
+    PANEL_CONFIG = ""
+    PANEL_SESSION = ""
+    PANEL_SOURCES = ""
 
     IDLE = "○"
     LIVE = "∿∿∿"
@@ -101,13 +116,103 @@ def _format_timestamp(timestamp: Any) -> str:
     return ""
 
 
+_TIMESTAMP_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:\[\d{2}:\d{2}:\d{2}\]|\d{2}:\d{2}:\d{2}\b|\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\]?)"
+)
+
+
+def _with_timestamp_prefix(
+    message: str, now: datetime.datetime | None = None
+) -> str:
+    """Prefix a message with [HH:MM:SS] if it has no leading timestamp."""
+    text = "" if message is None else str(message)
+    if _TIMESTAMP_PREFIX_PATTERN.match(text):
+        return text
+
+    current_time = now or datetime.datetime.now()
+    return f"[{current_time.strftime('%H:%M:%S')}] {text}".rstrip()
+
+
 SOURCE_BUCKET_CONFIG = {
-    "websocket": {"label": "WebSocket", "color": "#957FB8"},
-    "email": {"label": "Email", "color": "#FFA066"},
-    "website": {"label": "Website", "color": "#7E9CD8"},
-    "rss": {"label": "RSS", "color": "#7AA89F"},
-    "unknown": {"label": "Unknown", "color": "#727169"},
+    "websocket": {"label": "WebSocket", "color": "secondary"},
+    "email": {"label": "Email", "color": "accent"},
+    "website": {"label": "Website", "color": "primary"},
+    "rss": {"label": "RSS", "color": "success"},
+    "unknown": {"label": "Unknown", "color": "text-muted"},
 }
+
+
+def _get_active_theme(owner: Any) -> Theme:
+    """Get the currently active Textual theme for an app/widget/handler owner."""
+    app = None
+    try:
+        app = owner.app
+    except Exception:
+        app = getattr(owner, "__dict__", {}).get("app")
+    if app is not None:
+        theme = getattr(app, "current_theme", None)
+        if isinstance(theme, Theme):
+            return theme
+    return BUILTIN_THEMES["textual-dark"]
+
+
+def _build_semantic_color_palette(theme: Theme) -> dict[str, str]:
+    """Build semantic Rich color roles from a Textual theme."""
+    generated = theme.to_color_system().generate()
+
+    def rich_color(name: str) -> str:
+        return _to_rich_color(generated[name])
+
+    return {
+        "timestamp": rich_color("foreground-muted"),
+        "job_id": rich_color("primary"),
+        "money": rich_color("warning"),
+        "lang_pair": rich_color("secondary"),
+        "number": rich_color("accent"),
+        "success": rich_color("success"),
+        "error_word": rich_color("error"),
+        "warning_word": rich_color("warning"),
+        "source_ws": rich_color("secondary"),
+        "source_email": rich_color("accent"),
+        "source_rss": rich_color("success"),
+        "source_web": rich_color("primary"),
+        "url": rich_color("accent"),
+        "default": rich_color("foreground"),
+        "level_debug": rich_color("foreground-muted"),
+        "level_info": rich_color("foreground"),
+        "level_warning": rich_color("warning"),
+        "level_error": rich_color("error"),
+        "level_success": rich_color("success"),
+        "level_job": rich_color("primary"),
+        "level_critical": _to_rich_color(
+            generated.get("error-lighten-1", generated["error"])
+        ),
+        "bracket": rich_color("foreground-muted"),
+        "punctuation": rich_color("foreground-muted"),
+    }
+
+
+def _build_config_style_palette(theme: Theme) -> dict[str, str]:
+    """Build semantic styles for ConfigPreview from a Textual theme."""
+    generated = theme.to_color_system().generate()
+    return {
+        "section_header": f"bold {_to_rich_color(generated['primary'])}",
+        "section_rule": _to_rich_color(generated["foreground-muted"]),
+        "key": _to_rich_color(generated["foreground-muted"]),
+        "bool_true": _to_rich_color(generated["success"]),
+        "bool_false": _to_rich_color(generated["error"]),
+        "sensitive": _to_rich_color(generated["secondary"]),
+        "number": _to_rich_color(generated["accent"]),
+        "value": _to_rich_color(generated["foreground"]),
+    }
+
+
+def _to_rich_color(color_value: str) -> str:
+    """Normalize a Textual color value to a Rich-compatible color string."""
+    try:
+        return Color.parse(color_value).hex6
+    except Exception:
+        return color_value
 
 
 def _normalize_source(source: Any) -> str:
@@ -131,6 +236,75 @@ def _normalize_source(source: Any) -> str:
     ):
         return "website"
     return "unknown"
+
+
+def _coerce_positive_int(value: Any) -> int:
+    """Best-effort conversion to positive int from numeric/text values."""
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        if not isinstance(value, str):
+            return 0
+        match = re.search(r"(\d+)", value)
+        if not match:
+            return 0
+        try:
+            parsed = int(match.group(1))
+        except ValueError:
+            return 0
+    return parsed if parsed > 0 else 0
+
+
+def _coerce_positive_float(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return parsed if parsed > 0 else 0.0
+
+
+def _derive_display_word_count(job: dict[str, Any]) -> int:
+    """
+    Derive a display word/unit count for tables.
+
+    Uses explicit unit fields first, then estimates from reward and tier.
+    """
+    for key in (
+        "word_count",
+        "words",
+        "unit_count",
+        "unit",
+        "units",
+        "wordCount",
+        "unitCount",
+    ):
+        count = _coerce_positive_int(job.get(key))
+        if count > 0:
+            return count
+
+    reward = _coerce_positive_float(job.get("reward"))
+    if reward <= 0:
+        return 0
+
+    tier_text = str(
+        job.get("tier") or job.get("job_tier") or job.get("service_level") or ""
+    ).lower()
+    if not tier_text:
+        title = str(job.get("title") or "")
+        match = re.search(r"\(([^)]+)\)", title)
+        if match:
+            tier_text = match.group(1).strip().lower()
+
+    normalized = tier_text.replace("-", "").replace("_", "").strip()
+    if any(token in normalized for token in ("pro", "professional")):
+        rate = TIER_UNIT_RATES["pro"]
+    elif any(token in normalized for token in ("edit", "proofread", "proofreading")):
+        rate = TIER_UNIT_RATES["edit"]
+    else:
+        # Default to Standard when tier is absent so historic WS rows still show an estimate.
+        rate = TIER_UNIT_RATES["standard"]
+
+    return max(1, int(round(reward / rate)))
 
 
 # Fractional block characters for bar chart rendering
@@ -201,6 +375,82 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
         lines.append(line)
 
     return "\n".join(lines)
+
+
+def _aggregate_series(values: list[float], bin_size: int = 2) -> list[float]:
+    """Aggregate a series into fixed-size bins."""
+    if bin_size <= 1:
+        return list(values)
+    aggregated: list[float] = []
+    for i in range(0, len(values), bin_size):
+        aggregated.append(float(sum(values[i : i + bin_size])))
+    return aggregated
+
+
+def _render_chart_with_axes(
+    values: list[float],
+    *,
+    width: int = 12,
+    height: int = 4,
+    x_left: str = "old",
+    x_right: str = "new",
+) -> str:
+    """Render chart with minimal y-axis and x-axis labels."""
+    chart = _render_chart(values, width=width, height=height)
+    if not chart:
+        return ""
+
+    lines = chart.splitlines()
+    max_val = max(values) if values else 0.0
+    if max_val <= 0:
+        max_val = 1.0
+
+    y_label_width = max(1, len(str(int(round(max_val)))))
+    with_axis: list[str] = []
+    for row_idx, line in enumerate(lines):
+        # Top row shows the highest approximate bucket value.
+        approx_value = int(round(max_val * (height - row_idx) / height))
+        with_axis.append(f"{approx_value:>{y_label_width}} |{line}")
+
+    with_axis.append(f"{0:>{y_label_width}} +{'─' * width}")
+    left_pad = " " * (y_label_width + 2)
+    spacing = max(1, width - len(x_left) - len(x_right))
+    with_axis.append(f"{left_pad}{x_left}{' ' * spacing}{x_right}")
+    return "\n".join(with_axis)
+
+
+def _render_plotext_bar_chart(
+    values: list[float],
+    *,
+    width: int,
+    height: int,
+    x_left: str,
+    x_mid: str,
+    x_right: str,
+) -> str:
+    """Render a bar chart via plotext with true axes/ticks."""
+    if plotext is None or not values or width <= 0 or height <= 0:
+        return ""
+
+    try:
+        x = list(range(1, len(values) + 1))
+        mid = max(1, len(values) // 2)
+        right = len(values)
+
+        plotext.clear_figure()
+        plotext.plotsize(width, height)
+        plotext.bar(x, values, fill=True, width=0.8)
+        plotext.xticks([1, mid, right], [x_left, x_mid, x_right])
+        plotext.ylabel("jobs")
+        plotext.xlabel("time")
+        plotext.grid(True)
+
+        # Convert ANSI output into plain text, preserving chart glyphs.
+        built = plotext.build()
+        plotext.clear_figure()
+        return str(Text.from_ansi(built)).rstrip()
+    except Exception:
+        return ""
 
 
 def _parse_job_title_fallback(title: Any) -> tuple[str, str]:
@@ -293,27 +543,19 @@ class TitleBar(Static):
 
 
 class MetricCard(Static):
-    """Metric card with precise Grid layout."""
+    """Metric card with centered stat value and border title."""
 
     def __init__(self, label: str, icon: str, value: str = "0", **kwargs):
         super().__init__(**kwargs)
         self.label = label
         self.icon = icon
         self.value = value
-        self.border_title = label  # Native Textual border title
+        self.border_title = f"{icon} {label}" if icon else label
 
     def compose(self) -> ComposeResult:
-        # Use a grid: Column 1 (Icon), Column 2 (Value)
-        with Grid(classes="metric-grid"):
-            yield Static(self.icon, classes="metric-icon")
-            yield Static(
-                self.value, classes="metric-value", id=f"val-{self.label.lower()}"
-            )
-        # Label is handled by border_title now, or we can keep it inside if desired.
-        # Design doc shows "Found" at bottom. Let's keep it simple: Icon+Value centered.
-        # The Label is strictly the card title/footer.
-        # Let's put label at bottom as a Static if border_title isn't enough.
-        yield Static(self.label, classes="metric-label")
+        # Border title already provides the card label, so the card body only
+        # renders the current stat value centered.
+        yield Static(self.value, classes="metric-value", id=f"val-{self.label.lower()}")
 
     def update_value(self, value: str):
         try:
@@ -336,11 +578,11 @@ class MetricsRow(Horizontal):
         self.set_interval(1.0, self.refresh_metrics)
 
     def compose(self) -> ComposeResult:
-        yield MetricCard("Found", "▲", id="card-found", classes="found")
-        yield MetricCard("Accepted", "✓", id="card-accepted", classes="accepted")
-        yield MetricCard("Value", "$", id="card-value", classes="value")
-        yield MetricCard("Rate", "~", id="card-rate", classes="rate")
-        yield MetricCard("Today", "☀", id="card-today", classes="today")
+        yield MetricCard("Found", Icons.FOUND, id="card-found", classes="found")
+        yield MetricCard("Accepted", Icons.ACCEPTED, id="card-accepted", classes="accepted")
+        yield MetricCard("Value", Icons.VALUE, id="card-value", classes="value")
+        yield MetricCard("Rate", Icons.RATE, id="card-rate", classes="rate")
+        yield MetricCard("Today", Icons.TODAY, id="card-today", classes="today")
 
     def refresh_metrics(self) -> None:
         if not self.state:
@@ -398,7 +640,7 @@ class StatusIndicator(Static):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            f"{self.ICONS['idle']} {self.label_text}",
+            self._render_label(self.ICONS["idle"]),
             classes="status-label",
             id=f"{self.id}-label",
         )
@@ -426,9 +668,14 @@ class StatusIndicator(Static):
                 icon = working_frames[self._pulse_index]
             else:
                 icon = self.ICONS.get(self.current_state, self.base_icon)
-            label.update(f"{icon} {self.label_text}")
+            label.update(self._render_label(icon))
         except NoMatches:
             pass
+
+    def _render_label(self, status_icon: str) -> str:
+        if self.base_icon:
+            return f"{status_icon} {self.base_icon}  {self.label_text}"
+        return f"{status_icon} {self.label_text}"
 
     def set_state(self, state: str) -> None:
         """Set the indicator state and update styling."""
@@ -459,13 +706,13 @@ class StatusRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         # 7 Indicators - reordered: WS, RSS next to each other, then Mail, Web, Captcha, Workflow, Auto
-        yield StatusIndicator("●", "WS", id="ind-ws")
-        yield StatusIndicator("⊛", "RSS", id="ind-rss")
-        yield StatusIndicator("◉", "Mail", id="ind-email")
-        yield StatusIndicator("◎", "Web", id="ind-web")
-        yield StatusIndicator("⧗", "Captcha", id="ind-cap")
-        yield StatusIndicator("⇄", "Workflow", id="ind-work")
-        yield StatusIndicator("▶", "Auto", id="ind-auto")
+        yield StatusIndicator(Icons.WEBSOCKET, "WS", id="ind-ws")
+        yield StatusIndicator(Icons.RSS, "RSS", id="ind-rss")
+        yield StatusIndicator(Icons.EMAIL, "Mail", id="ind-email")
+        yield StatusIndicator(Icons.WEB, "Web", id="ind-web")
+        yield StatusIndicator(Icons.CAPTCHA, "Captcha", id="ind-cap")
+        yield StatusIndicator(Icons.WORKFLOW, "Workflow", id="ind-work")
+        yield StatusIndicator(Icons.AUTO, "Auto", id="ind-auto")
 
     def refresh_status(self) -> None:
         """Refresh all status indicators based on watcher state."""
@@ -568,30 +815,6 @@ class DashboardQuadrant(Static):
 class ActivityPreview(DashboardQuadrant):
     """Recent activity log with colored output."""
 
-    # Kanagawa-inspired colors (same as TextualLogHandler)
-    COLORS = {
-        "timestamp": "#727169",  # Fuji Gray (muted)
-        "job_id": "#7E9CD8",  # Crystal Blue
-        "money": "#E6C384",  # Carp Yellow
-        "lang_pair": "#957FB8",  # Oni Violet
-        "number": "#D27E99",  # Sakura Pink
-        "success": "#98BB6C",  # Spring Green
-        "error_word": "#C34043",  # Samurai Red
-        "warning_word": "#E6C384",  # Carp Yellow
-        "source_ws": "#957FB8",  # Oni Violet
-        "source_email": "#FFA066",  # Surimi Orange
-        "source_rss": "#7AA89F",  # Wave Aqua
-        "source_web": "#7E9CD8",  # Crystal Blue
-        "url": "#7AA89F",  # Wave Aqua
-        "default": "#DCD7BA",  # Fuji White
-        "level_debug": "#727169",  # Fuji Gray
-        "level_info": "#DCD7BA",  # Fuji White
-        "level_warning": "#E6C384",  # Carp Yellow
-        "level_error": "#C34043",  # Samurai Red
-        "level_success": "#98BB6C",  # Spring Green
-        "level_job": "#7E9CD8",  # Crystal Blue
-    }
-
     # Mapping of level names to color keys
     LEVEL_COLORS = {
         "debug": "level_debug",
@@ -629,7 +852,7 @@ class ActivityPreview(DashboardQuadrant):
     ]
 
     def __init__(self, **kwargs):
-        super().__init__("Recent Activity", **kwargs)
+        super().__init__(f"{Icons.PANEL_ACTIVITY} Recent Activity", **kwargs)
         # Compile patterns
         self._compiled_patterns = [
             (re.compile(pattern, re.IGNORECASE), color_key)
@@ -649,23 +872,26 @@ class ActivityPreview(DashboardQuadrant):
         """
         try:
             log = self.query_one("#activity-log", RichLog)
-            colored_text = self._colorize_message(message, level)
+            line = _with_timestamp_prefix(message)
+            colored_text = self._colorize_message(line, level)
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
 
     def _colorize_message(self, msg: str, level: str = "info") -> Text:
         """Apply Rich markup coloring based on content patterns."""
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+
         # Determine base color from level
         color_key = self.LEVEL_COLORS.get(level, "default")
-        base_color = self.COLORS[color_key]
+        base_color = colors[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
 
         # Apply pattern-based highlighting
         for pattern, color_key in self._compiled_patterns:
-            color = self.COLORS.get(color_key, base_color)
+            color = colors.get(color_key, base_color)
             for match in pattern.finditer(msg):
                 start, end = match.span()
                 # Apply bold for important items
@@ -679,7 +905,7 @@ class ActivityPreview(DashboardQuadrant):
 
 class JobsPreview(DashboardQuadrant):
     def __init__(self, state: "AppState", **kwargs):
-        super().__init__("Jobs Preview", **kwargs)
+        super().__init__(f"{Icons.PANEL_JOBS} Jobs Preview", **kwargs)
         self.state = state
 
     def compose(self) -> ComposeResult:
@@ -713,12 +939,12 @@ class JobsPreview(DashboardQuadrant):
                     job.get("title", "")
                 )
                 pair = job.get("lang_pair") or fallback_pair
-                word_count = job.get("word_count")
-                if word_count is None:
-                    word_count = job.get("words")
-                if word_count is None:
-                    word_count = fallback_words
-                words = str(word_count)
+                derived_words = _derive_display_word_count(job)
+                words = str(
+                    derived_words
+                    if derived_words > 0
+                    else _coerce_positive_int(fallback_words)
+                )
                 reward = f"${job.get('reward', 0):.2f}"
                 dt.add_row(job_id, pair, words, reward)
         except NoMatches:
@@ -728,9 +954,12 @@ class JobsPreview(DashboardQuadrant):
 class HourlyActivity(DashboardQuadrant):
     """Hourly activity stats with peak hour highlighting."""
 
-    def __init__(self, stats: "StatsManager", **kwargs):
-        super().__init__("Jobs/Hour", **kwargs)
+    def __init__(
+        self, stats: "StatsManager", state: "AppState | None" = None, **kwargs
+    ):
+        super().__init__(f"{Icons.PANEL_CHART} Jobs/Hour", **kwargs)
         self.stats = stats
+        self.state = state
 
     def compose(self) -> ComposeResult:
         yield Static("No activity data", id="hourly-content")
@@ -742,28 +971,202 @@ class HourlyActivity(DashboardQuadrant):
 
     def refresh_hourly(self):
         """Refresh hourly activity display."""
-        if not self.stats:
-            return
         try:
-            # Get peak hour info - unpacking both values as per fix
-            peak_hour, peak_rate = self.stats.get_peak_hour()
-
-            # FIX: Only treat as valid peak if peak_rate > 0
-            # This prevents highlighting "12-15" period with zero activity
-            if peak_rate > 0:
-                # Valid peak hour with actual activity
-                peak_period_start = (peak_hour // 3) * 3
-                peak_period_end = peak_period_start + 3
-                peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
-
-                content = f"Peak: {peak_period}\nJobs: {int(peak_rate)}"
+            rolling_values = self._rolling_hourly_counts_from_state()
+            if rolling_values:
+                peak_index = max(
+                    range(len(rolling_values)), key=lambda i: rolling_values[i]
+                )
+                peak_rate = float(rolling_values[peak_index])
+                peak_period = self._format_peak_period_for_bucket(
+                    peak_index, total_buckets=len(rolling_values)
+                )
+                # Use 2-hour bins for readability in compact dashboard cards.
+                chart_values = _aggregate_series(rolling_values, bin_size=2)
+                chart = _render_plotext_bar_chart(
+                    chart_values, width=30, height=8, x_left="24h", x_mid="12h", x_right="now"
+                ) or _render_chart_with_axes(
+                    chart_values,
+                    width=len(chart_values),
+                    height=4,
+                    x_left="24h",
+                    x_right="now",
+                )
+                content_parts = []
+                if chart.strip():
+                    content_parts.append(chart)
+                content_parts.append(f"Peak: {peak_period}  Jobs: {int(peak_rate)}")
+                content = "\n".join(content_parts)
             else:
-                # No activity - don't highlight any period
-                content = "No activity yet"
+                hourly_counts = self._hourly_counts_from_stats()
+                if not hourly_counts:
+                    hourly_counts = self._hourly_counts_from_state()
+
+                if hourly_counts:
+                    peak_hour = max(hourly_counts, key=lambda h: hourly_counts[h])
+                    peak_rate = float(hourly_counts[peak_hour])
+                    peak_period_start = (peak_hour // 3) * 3
+                    peak_period_end = peak_period_start + 3
+                    peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
+                    values = [hourly_counts.get(hour, 0.0) for hour in range(24)]
+                    chart_values = _aggregate_series(values, bin_size=2)
+                    chart = _render_plotext_bar_chart(
+                        chart_values,
+                        width=30,
+                        height=8,
+                        x_left="00:00",
+                        x_mid="12:00",
+                        x_right="23:59",
+                    ) or _render_chart_with_axes(
+                        chart_values,
+                        width=len(chart_values),
+                        height=4,
+                        x_left="00:00",
+                        x_right="23:59",
+                    )
+
+                    content_parts = []
+                    if chart.strip():
+                        content_parts.append(chart)
+                    content_parts.append(f"Peak: {peak_period}  Jobs: {int(peak_rate)}")
+                    content = "\n".join(content_parts)
+                else:
+                    content = "No activity yet"
 
             self.query_one("#hourly-content", Static).update(content)
         except Exception:
             pass  # Widget not mounted yet
+
+    def _hourly_counts_from_stats(self) -> dict[int, float]:
+        """Get positive hourly counts from StatsManager."""
+        if not self.stats:
+            return {}
+
+        raw_counts = getattr(self.stats, "hourly_counts", {}) or {}
+        counts: dict[int, float] = {}
+        for hour, count in raw_counts.items():
+            try:
+                hour_i = int(hour)
+                count_f = float(count)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour_i <= 23 and count_f > 0:
+                counts[hour_i] = count_f
+        return counts
+
+    def _hourly_counts_from_state(self) -> dict[int, float]:
+        """Derive hourly counts from persisted AppState jobs."""
+        if not self.state:
+            return {}
+
+        counts: dict[int, float] = {}
+        jobs = self.state.get_recent_jobs(limit=1000)
+        for job in jobs:
+            ts = job.get("timestamp")
+            hour = self._extract_hour(ts)
+            if hour is None:
+                continue
+            counts[hour] = counts.get(hour, 0.0) + 1.0
+        return counts
+
+    def _coerce_timestamp(self, timestamp: Any) -> float | None:
+        """Convert numeric/ISO timestamps to epoch seconds."""
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            value = float(timestamp)
+            return value if value > 0 else None
+
+        if isinstance(timestamp, str):
+            cleaned = timestamp.strip()
+            if not cleaned:
+                return None
+            iso_candidate = cleaned[:-1] + "+00:00" if cleaned.endswith("Z") else cleaned
+            try:
+                return datetime.datetime.fromisoformat(iso_candidate).timestamp()
+            except ValueError:
+                return None
+
+        return None
+
+    def _rolling_hourly_counts_from_state(self, window_hours: int = 24) -> list[float]:
+        """
+        Build rolling hourly buckets from oldest->newest for recent state jobs.
+
+        The rightmost bucket represents the current hour; earlier buckets step
+        backwards in one-hour increments.
+        """
+        if not self.state or window_hours <= 0:
+            return []
+
+        buckets = [0.0] * window_hours
+        now_ts = time.time()
+        jobs = self.state.get_recent_jobs(limit=1000)
+        for job in jobs:
+            ts = self._coerce_timestamp(job.get("timestamp"))
+            if ts is None:
+                continue
+            delta_seconds = now_ts - ts
+            if delta_seconds < 0:
+                continue
+            hours_ago = int(delta_seconds // 3600)
+            if hours_ago >= window_hours:
+                continue
+            bucket_index = window_hours - 1 - hours_ago
+            buckets[bucket_index] += 1.0
+
+        return buckets if any(v > 0 for v in buckets) else []
+
+    def _format_peak_period_for_bucket(
+        self, bucket_index: int, total_buckets: int = 24
+    ) -> str:
+        """Format a rolling bucket index as an HH-HH one-hour period."""
+        now_hour = datetime.datetime.now().replace(minute=0, second=0, microsecond=0)
+        hours_ago = max(0, (total_buckets - 1) - bucket_index)
+        start = now_hour - datetime.timedelta(hours=hours_ago)
+        end = start + datetime.timedelta(hours=1)
+        return f"{start:%H}-{end:%H}"
+
+    def _peak_hour_from_state(self) -> tuple[int, float]:
+        """Compute peak hour from AppState jobs when StatsManager has no activity."""
+        hourly_counts = self._hourly_counts_from_state()
+
+        if not hourly_counts:
+            return (12, 0.0)
+
+        peak_hour = max(hourly_counts, key=lambda h: hourly_counts[h])
+        return (peak_hour, float(hourly_counts[peak_hour]))
+
+    def _extract_hour(self, timestamp: Any) -> int | None:
+        """Extract an hour (0-23) from a numeric or string timestamp value."""
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            try:
+                hour = datetime.datetime.fromtimestamp(float(timestamp)).hour
+                return hour if 0 <= hour <= 23 else None
+            except (OSError, OverflowError, ValueError):
+                return None
+
+        if isinstance(timestamp, str):
+            cleaned = timestamp.strip()
+            if not cleaned:
+                return None
+
+            iso_candidate = cleaned
+            if iso_candidate.endswith("Z"):
+                iso_candidate = iso_candidate[:-1] + "+00:00"
+            try:
+                hour = datetime.datetime.fromisoformat(iso_candidate).hour
+                return hour if 0 <= hour <= 23 else None
+            except ValueError:
+                pass
+
+            match = re.search(r"(\d{2}):\d{2}:\d{2}", cleaned)
+            if match:
+                try:
+                    hour = int(match.group(1))
+                    return hour if 0 <= hour <= 23 else None
+                except ValueError:
+                    return None
+
+        return None
 
 
 class ConfigPreview(DashboardQuadrant):
@@ -809,7 +1212,7 @@ class ConfigPreview(DashboardQuadrant):
     MAX_VALUE_LENGTH_SHORT = 17
 
     def __init__(self, config: "AppConfig", **kwargs):
-        super().__init__("Configuration", **kwargs)
+        super().__init__(f"{Icons.PANEL_CONFIG} Configuration", **kwargs)
         self.config = config
 
     def compose(self) -> ComposeResult:
@@ -860,13 +1263,12 @@ class ConfigPreview(DashboardQuadrant):
         else:
             formatted = str(value) if value else "—"
 
-        if len(formatted) > self.MAX_VALUE_LENGTH:
-            return formatted[: self.MAX_VALUE_LENGTH_SHORT] + "..."
         return formatted
 
     def _render_config(self) -> Text:
         """Render all config sections and options."""
         text = Text()
+        styles = _build_config_style_palette(_get_active_theme(self))
         config = getattr(self, "config", None)
         list_all = getattr(config, "list_all", None)
         if not callable(list_all):
@@ -887,9 +1289,10 @@ class ConfigPreview(DashboardQuadrant):
                 continue
 
             # Section header
-            text.append(f"─ {section} ", style="bold #7E9CD8")
+            text.append(f"─ {section} ", style=styles["section_header"])
             text.append(
-                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)), style="#727169"
+                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)),
+                style=styles["section_rule"],
             )
             text.append("\n")
 
@@ -903,19 +1306,20 @@ class ConfigPreview(DashboardQuadrant):
                     )
 
                 # Key styling
-                text.append(f"  {key}: ", style="#727169")
+                text.append(f"  {key}: ", style=styles["key"])
 
                 # Value styling based on type/content
                 if self._is_sensitive(key):
                     text.append(formatted_value, style="#957FB8")
                 elif isinstance(value, bool):
                     text.append(
-                        formatted_value, style="#98BB6C" if value else "#C34043"
+                        formatted_value,
+                        style=styles["bool_true"] if value else styles["bool_false"],
                     )
                 elif isinstance(value, (int, float)):
-                    text.append(formatted_value, style="#D27E99")
+                    text.append(formatted_value, style=styles["number"])
                 else:
-                    text.append(formatted_value, style="#DCD7BA")
+                    text.append(formatted_value, style=styles["value"])
                 text.append("\n")
 
         return text
@@ -925,7 +1329,7 @@ class SessionStats(DashboardQuadrant):
     """Session statistics summary."""
 
     def __init__(self, watcher: "GengoWatcher", state: "AppState", **kwargs):
-        super().__init__("Session", **kwargs)
+        super().__init__(f"{Icons.PANEL_SESSION} Session", **kwargs)
         self.watcher = watcher
         self.state = state
 
@@ -967,7 +1371,7 @@ class SourcesBreakdown(DashboardQuadrant):
     """Job source breakdown."""
 
     def __init__(self, state: "AppState", **kwargs):
-        super().__init__("Sources", **kwargs)
+        super().__init__(f"{Icons.PANEL_SOURCES} Sources", **kwargs)
         self.state = state
 
     def compose(self) -> ComposeResult:
@@ -1255,6 +1659,7 @@ class ChartsPanel(Static):
 
 class GengoWatcherApp(App):
     CSS_PATH = "gengo_watcher.tcss"
+    DEFAULT_THEME_NAME = "nord"
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("c", "check", "Check"),
@@ -1270,6 +1675,7 @@ class GengoWatcherApp(App):
         stats: StatsManager,
     ):
         super().__init__()
+        self.theme = self.DEFAULT_THEME_NAME
         self.config = config
         self.state = state
         self.watcher = watcher
@@ -1369,6 +1775,16 @@ class GengoWatcherApp(App):
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
         self._setup_jobs_table()
+        self._refresh_dashboard_panels()
+        self.set_interval(1.0, self._refresh_dashboard_panels)
+
+    def _refresh_dashboard_panels(self) -> None:
+        """Refresh dashboard widgets that depend on live/persisted state."""
+        self._refresh_widget(MetricsRow, "refresh_metrics")
+        self._refresh_widget(SessionStats, "refresh_stats")
+        self._refresh_widget(SourcesBreakdown, "refresh_sources")
+        self._refresh_widget(HourlyActivity, "refresh_hourly")
+        self._refresh_widget(JobsPreview, "refresh_jobs")
 
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""
@@ -1393,7 +1809,7 @@ class GengoWatcherApp(App):
             for job in jobs:
                 job_id = str(job.get("id", "N/A"))[:8]
                 pair = job.get("lang_pair", "??→??")
-                words = str(job.get("word_count", job.get("words", 0)))
+                words = str(_derive_display_word_count(job))
                 reward = f"${job.get('reward', 0):.2f}"
                 source = job.get("source", "N/A")
                 timestamp = job.get("timestamp", "")
@@ -1443,7 +1859,7 @@ class GengoWatcherApp(App):
                 with Vertical(id="dashboard-content"):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
-                        yield HourlyActivity(stats=self.stats)
+                        yield HourlyActivity(stats=self.stats, state=self.state)
                         yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
 
@@ -1471,30 +1887,6 @@ class GengoWatcherApp(App):
 
 class TextualLogHandler(logging.Handler):
     """Redirects logs to the ActivityPreview widget with Rich markup coloring."""
-
-    # Kanagawa-inspired colors
-    COLORS = {
-        "timestamp": "#727169",  # Fuji Gray (muted)
-        "level_debug": "#727169",  # Fuji Gray
-        "level_info": "#DCD7BA",  # Fuji White (default)
-        "level_warning": "#E6C384",  # Carp Yellow
-        "level_error": "#C34043",  # Samurai Red
-        "level_critical": "#FF5D62",  # Peach Red
-        "job_id": "#7E9CD8",  # Crystal Blue
-        "money": "#E6C384",  # Carp Yellow
-        "lang_pair": "#957FB8",  # Oni Violet
-        "number": "#D27E99",  # Sakura Pink
-        "success": "#98BB6C",  # Spring Green
-        "error_word": "#C34043",  # Samurai Red
-        "warning_word": "#E6C384",  # Carp Yellow
-        "source_ws": "#957FB8",  # Oni Violet
-        "source_email": "#FFA066",  # Surimi Orange
-        "source_rss": "#7AA89F",  # Wave Aqua
-        "source_web": "#7E9CD8",  # Crystal Blue
-        "url": "#7AA89F",  # Wave Aqua
-        "bracket": "#727169",  # Fuji Gray
-        "punctuation": "#727169",  # Fuji Gray
-    }
 
     # Mapping of logging levels to color keys
     LEVEL_COLORS = {
@@ -1584,16 +1976,18 @@ class TextualLogHandler(logging.Handler):
 
     def _colorize_message(self, msg: str, level: int) -> Text:
         """Apply Rich markup coloring based on content patterns."""
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+
         # Determine base color from log level
         color_key = self.LEVEL_COLORS.get(level, "level_info")
-        base_color = self.COLORS[color_key]
+        base_color = colors[color_key]
 
         # Create text with base styling
         text = Text(msg, style=base_color)
 
         # Apply pattern-based highlighting
         for pattern, color_key in self._compiled_patterns:
-            color = self.COLORS.get(color_key, base_color)
+            color = colors.get(color_key, base_color)
             for match in pattern.finditer(msg):
                 start, end = match.span()
                 # Apply bold for important items
@@ -1605,6 +1999,6 @@ class TextualLogHandler(logging.Handler):
         # Style brackets and punctuation
         for match in re.finditer(r"[\[\](){}:,]", msg):
             start, end = match.span()
-            text.stylize(self.COLORS["bracket"], start, end)
+            text.stylize(colors["bracket"], start, end)
 
         return text
