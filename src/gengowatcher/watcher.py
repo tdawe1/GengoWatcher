@@ -858,41 +858,29 @@ class GengoWatcher:
                 else "NOT_SET"
             )
 
-            extra_headers = [
-                (
-                    "Cookie",
-                    f"myG_myGSession_={session_token}; myG_rdsessID={session_token}",
-                ),
-                ("Origin", "https://gengo.com"),
-                ("Pragma", "no-cache"),
-                ("Cache-Control", "no-cache"),
-                ("User-Agent", user_agent),
-                ("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8"),
-                ("Accept-Encoding", "gzip, deflate, br, zstd"),
-            ]
+            # Build headers as dict for websockets 13+ (additional_headers)
+            # Only essential headers - Cookie for auth, Origin for CORS, User-Agent for identification
+            additional_headers = {
+                "Cookie": f"myG_myGSession_={session_token}; myG_rdsessID={session_token}",
+                "Origin": "https://gengo.com",
+                "User-Agent": user_agent,
+            }
 
             # Log headers (masking sensitive info)
             safe_headers = []
-            for k, v in extra_headers:
+            for k, v in additional_headers.items():
                 if k == "Cookie":
                     safe_headers.append((k, f"my_gengo_session={masked_token}"))
                 else:
                     safe_headers.append((k, v))
             self.logger.debug(f"WebSocket: Preparing headers: {safe_headers}")
 
-            # websockets 12+ renamed extra_headers -> additional_headers.
-            ws_header_key = (
-                "additional_headers"
-                if int(str(getattr(websockets, "__version__", "0").split(".")[0])) >= 12
-                else "extra_headers"
-            )
-
             async def run_session(headers):
                 """
                 Run a single WebSocket session: connect, authenticate, monitor heartbeat and test commands, and process incoming messages.
 
                 Parameters:
-                    headers (dict | None): Optional extra HTTP headers to include in the WebSocket handshake; pass None to omit custom headers.
+                    headers (dict | None): Optional additional HTTP headers to include in the WebSocket handshake; pass None to omit custom headers.
 
                 Detailed behaviour:
                     - Connects to the configured WebSocket URL and sends an authentication payload containing the configured `user_id`, the stored session token and, if present, the `user_key`.
@@ -911,7 +899,7 @@ class GengoWatcher:
                 )
                 async with websockets.connect(  # type: ignore
                     ws_url,
-                    **{ws_header_key: headers},
+                    additional_headers=headers,
                     ping_interval=20,
                     ping_timeout=10,
                     compression=None,
@@ -1156,7 +1144,7 @@ class GengoWatcher:
                             )
 
             try:
-                await run_session(extra_headers)
+                await run_session(additional_headers)
             except (InvalidStatusCode, InvalidHandshake) as e:
                 # Some load balancers/proxies reject any custom headers; retry without them.
                 message = str(e).lower()

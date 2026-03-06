@@ -120,11 +120,14 @@ def handle_cli_config_commands(args, config: AppConfig, console: Console) -> boo
     """
     if args.set:
         section, option, value = args.set
-        # Parse boolean/int values
+        import re
+
         if value.lower() in ("true", "false"):
             value = value.lower() == "true"
-        elif value.isdigit():
+        elif re.match(r"^[+-]?\d+$", value):
             value = int(value)
+        elif re.match(r"^[+-]?(?:\d+\.\d*|\d*\.\d+)$", value):
+            value = float(value)
         config.set(section, option, value)
         config.save_config()
         print(f"Set [{section}] {option} = {value}")
@@ -184,11 +187,11 @@ def _interactive_configure(config: AppConfig, console: Console):
 
         if new_value:
             config.set(section, option, new_value)
-            console.print(f"  [success]✓ Updated[/]")
+            console.print("  [success]✓ Updated[/]")
         elif is_placeholder:
-            console.print(f"  [warning]⚠ Keeping placeholder value[/]")
+            console.print("  [warning]⚠ Keeping placeholder value[/]")
         else:
-            console.print(f"  [info]Kept existing value[/]")
+            console.print("  [info]Kept existing value[/]")
 
     config.save_config()
     console.print("\n[success]Configuration saved![/]")
@@ -294,7 +297,7 @@ def main():
                 log.addHandler(file_handler)
             except IOError as e:
                 console.print(f"[error]Could not set up file logging: {e}[/]")
-        if args.stdio_logs or config.get("Logging", "log_stdio_enabled"):
+        if args.stdio_logs or config.getboolean("Logging", "log_stdio_enabled", fallback=False):
             stdio_handler = logging.StreamHandler(stream=sys.stderr)
             stdio_handler.setFormatter(
                 logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -399,6 +402,10 @@ def main():
     except Exception as e:
         log.exception("UI loop crashed")
     finally:
+        try:
+            stats_manager.end_session()
+        except Exception:
+            log.exception("Failed to persist session stats on shutdown")
         if not watcher.shutdown_event.is_set():
             watcher.handle_exit()
 
@@ -413,10 +420,7 @@ def main():
         watcher_thread.join(timeout=2)
         console.print("[info]GengoWatcher has shut down.[/]")
     except KeyboardInterrupt:
-        console.print("[info]Web server shutting down...[/]")
-    finally:
-        if not watcher.shutdown_event.is_set():
-            watcher.handle_exit()
+        console.print("[info]Shutting down...[/]")
 
 
 if __name__ == "__main__":

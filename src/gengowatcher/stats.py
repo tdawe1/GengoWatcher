@@ -191,10 +191,11 @@ class StatsManager:
 
     def get_recent_earnings(self, days: int = 7) -> Dict[str, float]:
         """Get earnings for the last N days."""
-        result = {}
-        today = datetime.date.today()
-        for i in range(days):
-            date = today - datetime.timedelta(days=i)
-            date_str = date.strftime("%Y-%m-%d")
-            result[date.strftime("%a")] = self.daily_earnings.get(date_str, 0.0)
-        return dict(reversed(list(result.items())))
+        with self._lock:
+            result = {}
+            today = datetime.date.today()
+            for i in range(days):
+                date = today - datetime.timedelta(days=i)
+                date_str = date.strftime("%Y-%m-%d")
+                result[date_str] = self.daily_earnings.get(date_str, 0.0)
+            return dict(reversed(list(result.items())))

@@ -1,9 +1,10 @@
 import configparser
+import copy
 import json
 import os
 import shutil
-from pathlib import Path
 import sys
+from pathlib import Path
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +24,8 @@ PLACEHOLDER_CONFIG_VALUES = [
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
     "REPLACE_WITH_YOUR_WEB_API_TOKEN",
+    "YOUR_USER_ID",
+    "REPLACE_WITH_BROWSER_USER_KEY",
 ]
 
 
@@ -54,7 +57,7 @@ class AppConfig:
         },
         "Logging": {
             "log_max_bytes": 1000000,
-            "log_backup_count": 3,
+            "log_backup_count": 99,
             "log_main_enabled": True,
             "log_stdio_enabled": False,
             "log_all_entries_enabled": True,
@@ -143,6 +146,7 @@ class AppConfig:
             "check_interval_max": 300,
             "headless": True,
             "session_cookie": "",
+            "browser_executable": "",
         },
     }
 
@@ -171,7 +175,7 @@ class AppConfig:
         for section, settings in self.DEFAULT_CONFIG.items():
             parser.add_section(section)
             for key, value in settings.items():
-                parser.set(section, key, str(value))
+                parser.set(section, key, self._serialize_for_parser(value))
 
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -240,8 +244,23 @@ class AppConfig:
                                         self.config[section][key] = json.loads(raw_val)
                                     except json.JSONDecodeError:
                                         self.config[section][key] = default_val
+                                        self._config_parser.set(
+                                            section,
+                                            key,
+                                            self._serialize_for_parser(default_val),
+                                        )
+                                        config_modified = True
                                 else:
                                     self.config[section][key] = default_val
+                                    self._config_parser.set(
+                                        section,
+                                        key,
+                                        self._serialize_for_parser(default_val),
+                                    )
+                                    print(
+                                        f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
+                                    )
+                                    config_modified = True
                             else:
                                 self.config[section][key] = method(
                                     section, key, fallback=default_val
@@ -251,7 +270,9 @@ class AppConfig:
                             configparser.NoOptionError,
                         ):
                             # Add missing option with default value
-                            self._config_parser.set(section, key, str(default_val))
+                            self._config_parser.set(
+                                section, key, self._serialize_for_parser(default_val)
+                            )
                             self.config[section][key] = default_val
                             print(
                                 f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
@@ -283,11 +304,7 @@ class AppConfig:
                 if not self._config_parser.has_section(section):
                     self._config_parser.add_section(section)
                 for key, value in settings.items():
-                    # Serialize lists as JSON to preserve them on reload
-                    if isinstance(value, list):
-                        serialized = json.dumps(value)
-                    else:
-                        serialized = str(value)
+                    serialized = self._serialize_for_parser(value)
                     self._config_parser.set(section, key, serialized)
             lock_file = None
             config_path = Path(self.CONFIG_FILE)
@@ -344,7 +361,7 @@ class AppConfig:
             Dict with section names as keys, containing dicts of option:value pairs
         """
         with self._lock:
-            return {section: dict(options) for section, options in self.config.items()}
+            return copy.deepcopy(self.config)
 
     def is_placeholder(self, value: Any) -> bool:
         """Check if a value is a placeholder that needs user configuration.
@@ -457,6 +474,33 @@ class AppConfig:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
+            if not self._config_parser.has_section(section):
+                self._config_parser.add_section(section)
+            serialized = self._serialize_for_parser(value)
+            self._config_parser.set(section, key, serialized)
+
+    @staticmethod
+    def _serialize_for_parser(value: Any) -> str:
+        """Serialize values for ConfigParser while preserving JSON round-tripping."""
+        if isinstance(value, (list, dict)):
+            return json.dumps(value)
+
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return str(value)
+
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            pass
+
+        return str(value)
+
+    @staticmethod
+    def _serialize_for_parser(value: Any) -> str:
+        """Serialize values for ConfigParser while preserving list round-tripping."""
+        if isinstance(value, list):
+            return json.dumps(value)
+        return str(value)
 
     def _validate_auto_accept_config(self):
         """
