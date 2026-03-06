@@ -25,7 +25,7 @@ Rewrite GengoWatcher from Python to Go for integration as a submodule of `transl
 
 ## Module Structure
 
-```
+```text
 gengowatcher-go/
 ├── go.mod                          # Module: github.com/tdawe1/gengowatcher-go
 ├── cmd/

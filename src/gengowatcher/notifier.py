@@ -16,10 +16,7 @@ def play_sound(sound_file_path: str):
     """
 
     def _play():
-        path = Path(sound_file_path)
-        if not path.is_absolute():
-            project_root = Path(__file__).parent.parent.parent
-            path = project_root / sound_file_path
+        path = _resolve_path(sound_file_path)
 
         if not path.is_file():
             logger.warning(f"Sound file not found: {sound_file_path}")
@@ -72,6 +69,15 @@ def play_sound(sound_file_path: str):
     sound_thread.start()
 
 
+def _resolve_path(file_path: str) -> Path:
+    """Resolve a path relative to project root if not absolute."""
+    path = Path(file_path)
+    if not path.is_absolute():
+        project_root = Path(__file__).parent.parent.parent
+        path = project_root / file_path
+    return path
+
+
 def send_notification(title: str, message: str, icon_path: str = ""):
     """
     Display a desktop notification using the system 'notify-send' utility.
@@ -85,20 +91,22 @@ def send_notification(title: str, message: str, icon_path: str = ""):
     """
     command = ["notify-send", title, message]
 
-    if icon_path and Path(icon_path).is_file():
-        command.extend(["--icon", icon_path])
+    if icon_path:
+        resolved_icon = _resolve_path(icon_path)
+        if resolved_icon.is_file():
+            command.extend(["--icon", str(resolved_icon)])
 
     try:
         subprocess.run(command, check=True, timeout=10)
         logger.debug("Notification sent successfully via notify-send.")
-    except subprocess.TimeoutExpired:
-        logger.error("Notification command timed out after 10 seconds")
     except FileNotFoundError:
         logger.exception(
             "`notify-send` command not found. Please ensure it is installed and in your PATH."
         )
+    except subprocess.TimeoutExpired:
+        logger.warning("notify-send timed out after 10 seconds")
     except subprocess.CalledProcessError as e:
-        logger.exception(f"Failed to send notification: {e}")
+        logger.exception("Failed to send notification")
 
 
 def show_notification(

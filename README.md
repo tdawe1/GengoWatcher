@@ -23,7 +23,8 @@ Or directly:
 ```bash
 PYTHONPATH=src python -m gengowatcher.main
 ```
-On first run, you'll be guided through configuration setup.
+On the first run, you'll be guided through configuration setup.
+
 ## Configuration
 Settings are stored in `config.ini`. Key sections:
 ```ini
@@ -38,7 +39,7 @@ user_session = YOUR_SESSION_TOKEN
 user_key = YOUR_USER_KEY
 ```
 Get WebSocket credentials from your browser's DevTools:
-- **user_id** / **user_session**: Application → Cookies → gengo.com
+- **user_id** and **user_session**: Application → Cookies → gengo.com
 - **user_key**: Application → Local Storage → gengo.com → userKey
 
 ## Commands
@@ -46,7 +47,7 @@ Get WebSocket credentials from your browser's DevTools:
 | Command | Description |
 |---------|-------------|
 | `check` | Trigger immediate RSS check |
-| `pause` / `resume` | Pause/resume monitoring |
+| `pause` and `resume` | Pause/resume monitoring |
 | `wstest` | Test WebSocket connection |
 | `notifytest` | Test notifications |
 | `togglesound` | Toggle sound alerts |

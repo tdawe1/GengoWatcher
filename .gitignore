@@ -22,7 +22,6 @@ MANIFEST
 thoughts/
 .codex/
 .slim/
-stats.json
 
 # Virtual environments
 venv/
@@ -56,6 +55,7 @@ wakapi_db.db
 config.ini
 config.ini.new
 state.json
+stats.json
 *.pause
 token.json
 credentials.json
