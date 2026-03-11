@@ -18,7 +18,6 @@ from gengowatcher.ui_textual import (
     HourlyActivity,
     ConfigPreview,
     SessionStats,
-    SourcesBreakdown,
     StatsPanel,
     TextualLogHandler,
     Icons,
@@ -490,51 +489,6 @@ class TestSessionStats:
             stats.refresh_stats()
             await pilot.pause(0.1)
             # Stats should be updated
-
-
-class TestSourcesBreakdown:
-    """Tests for SourcesBreakdown widget."""
-
-    @pytest.mark.asyncio
-    async def test_sources_breakdown_refresh(self, mock_state):
-        """Test SourcesBreakdown calculates percentages correctly."""
-        mock_state.get_recent_jobs.return_value = [
-            {"source": "websocket"},
-            {"source": "websocket"},
-            {"source": "email"},
-            {"source": "rss"},
-        ]
-
-        from textual.app import App
-
-        class TestApp(App):
-            def compose(self):
-                yield SourcesBreakdown(state=mock_state)
-
-        app = TestApp()
-        async with app.run_test() as pilot:
-            breakdown = app.query_one(SourcesBreakdown)
-            breakdown.refresh_sources()
-            await pilot.pause(0.1)
-            # Percentages should be calculated
-
-    @pytest.mark.asyncio
-    async def test_sources_breakdown_empty_state(self, mock_state):
-        """Test SourcesBreakdown handles empty job list."""
-        mock_state.get_recent_jobs.return_value = []
-
-        from textual.app import App
-
-        class TestApp(App):
-            def compose(self):
-                yield SourcesBreakdown(state=mock_state)
-
-        app = TestApp()
-        async with app.run_test() as pilot:
-            breakdown = app.query_one(SourcesBreakdown)
-            breakdown.refresh_sources()
-            await pilot.pause(0.1)
-            # Should handle empty list
 
 
 class TestStatsPanel:

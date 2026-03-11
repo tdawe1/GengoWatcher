@@ -6,6 +6,7 @@ import tempfile
 import pathlib
 import time
 import datetime
+import logging
 import re
 
 from gengowatcher.ui_textual import (
@@ -19,7 +20,6 @@ from gengowatcher.ui_textual import (
     HourlyActivity,
     ConfigPreview,
     SessionStats as SessionStatsWidget,
-    SourcesBreakdown,
     StatsPanel,
     GengoWatcherApp,
     TextualLogHandler,
@@ -29,6 +29,7 @@ from gengowatcher.ui_textual import (
     BAR_CHARS,
 )
 from gengowatcher.stats import StatsManager
+from textual.css.query import NoMatches
 from textual.theme import Theme
 from textual.color import Color
 
@@ -179,7 +180,12 @@ class TestThemeIntegration:
 
     def test_css_uses_textual_variables_not_hardcoded_hex(self):
         """TUI CSS should reference Textual theme variables directly."""
-        css_path = pathlib.Path(__file__).resolve().parents[1] / "src" / "gengowatcher" / "gengo_watcher.tcss"
+        css_path = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "src"
+            / "gengowatcher"
+            / "gengo_watcher.tcss"
+        )
         css = css_path.read_text(encoding="utf-8")
 
         assert "$primary" in css
@@ -191,7 +197,11 @@ class TestThemeIntegration:
 
         # Screen background should be explicitly controlled by theme color
         # (or transparent if inheriting terminal in future variants).
-        assert re.search(r"Screen\s*\{[^}]*background:\s*(?:\$background|transparent)\s*;", css, re.DOTALL)
+        assert re.search(
+            r"Screen\s*\{[^}]*background:\s*(?:\$background|transparent)\s*;",
+            css,
+            re.DOTALL,
+        )
 
         # No hardcoded hex color literals in the main stylesheet.
         assert re.search(r"#[0-9A-Fa-f]{3,8}", css) is None
@@ -370,7 +380,9 @@ class TestActivityPreview:
     def test_with_timestamp_prefix(self):
         """Messages without a timestamp should be prefixed once."""
         now = datetime.datetime(2026, 2, 24, 13, 45, 6)
-        assert _with_timestamp_prefix("Test message", now=now) == "[13:45:06] Test message"
+        assert (
+            _with_timestamp_prefix("Test message", now=now) == "[13:45:06] Test message"
+        )
         assert (
             _with_timestamp_prefix("[13:45:06] Existing timestamp", now=now)
             == "[13:45:06] Existing timestamp"
@@ -638,33 +650,6 @@ class TestSessionStatsWidget:
         stats.refresh_stats()
 
 
-class TestSourcesBreakdown:
-    """Test SourcesBreakdown widget."""
-
-    @pytest.mark.asyncio
-    async def test_sources_breakdown_initialization(self, mock_state):
-        """Test SourcesBreakdown initialization."""
-        breakdown = SourcesBreakdown(state=mock_state)
-        assert breakdown.state == mock_state
-        assert breakdown.border_title == f"{Icons.PANEL_SOURCES} Sources"
-
-    @pytest.mark.asyncio
-    async def test_refresh_sources_with_jobs(self, mock_state):
-        """Test refresh with job data."""
-        breakdown = SourcesBreakdown(state=mock_state)
-        # Should not raise exception even if not mounted
-        breakdown.refresh_sources()
-
-    @pytest.mark.asyncio
-    async def test_refresh_sources_division_by_zero(self):
-        """Test handling of empty job list."""
-        state = MagicMock()
-        state.get_recent_jobs.return_value = []
-        breakdown = SourcesBreakdown(state=state)
-        # Should not raise exception
-        breakdown.refresh_sources()
-
-
 class TestStatsPanel:
     """Test StatsPanel widget."""
 
@@ -767,15 +752,40 @@ class TestGengoWatcherApp:
         )
         app._refresh_widget = MagicMock()
 
+        expected_targets = [
+            (MetricsRow, "refresh_metrics"),
+            (JobsPreview, "refresh_jobs"),
+            (HourlyActivity, "refresh_hourly"),
+            (SessionStatsWidget, "refresh_stats"),
+        ]
+
+        assert app._dashboard_refresh_targets() == expected_targets
+
         app._refresh_dashboard_panels()
 
         assert app._refresh_widget.call_args_list == [
-            call(MetricsRow, "refresh_metrics"),
-            call(SessionStatsWidget, "refresh_stats"),
-            call(SourcesBreakdown, "refresh_sources"),
-            call(HourlyActivity, "refresh_hourly"),
-            call(JobsPreview, "refresh_jobs"),
+            call(*target, missing_level=logging.WARNING) for target in expected_targets
         ]
+
+    def test_refresh_widget_warns_for_required_missing_widget(
+        self, mock_config, mock_state, mock_watcher, mock_stats, caplog
+    ):
+        """Required dashboard widgets should not disappear quietly."""
+        app = GengoWatcherApp(
+            config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
+        )
+
+        with patch.object(app, "query_one", side_effect=NoMatches):
+            with caplog.at_level(logging.WARNING):
+                app._refresh_widget(
+                    MetricsRow,
+                    "refresh_metrics",
+                    missing_level=logging.WARNING,
+                )
+
+        assert (
+            "Widget MetricsRow missing while refreshing refresh_metrics" in caplog.text
+        )
 
 
 class TestRegressionCases:

@@ -9,7 +9,6 @@ from textual.css.query import NoMatches
 
 from gengowatcher.ui_textual import (
     ChartsPanel,
-    SourcesBreakdown,
     TextualLogHandler,
     _format_timestamp,
     _normalize_source,
@@ -64,7 +63,7 @@ def test_value_trend_limits_to_20_jobs():
     assert len(lines) == 20
 
 
-def test_sources_breakdown_normalizes_sources():
+def test_charts_panel_renders_normalized_source_breakdown():
     jobs = [
         {"source": "RSS"},
         {"source": "WebSocket"},
@@ -73,15 +72,17 @@ def test_sources_breakdown_normalizes_sources():
         {"source": "unknown"},
     ]
     state = DummySourceState(jobs)
-    panel = SourcesBreakdown(state=state)
-    mock_static = MagicMock()
-    panel.query_one = MagicMock(return_value=mock_static)
+    panel = ChartsPanel(stats=None, state=state)
 
-    panel.refresh_sources()
+    text = panel._render_sources_chart()
+    lines = text.plain.strip().splitlines()
 
-    mock_static.update.assert_called_once_with(
-        "WS: 20%\nEmail: 20%\nWebsite: 20%\nRSS: 20%\nUnknown: 20%"
-    )
+    assert len(lines) == 5
+    assert lines[0].startswith("WebSocket") and "1 ( 20.0%)" in lines[0]
+    assert lines[1].startswith("Email") and "1 ( 20.0%)" in lines[1]
+    assert lines[2].startswith("Website") and "1 ( 20.0%)" in lines[2]
+    assert lines[3].startswith("RSS") and "1 ( 20.0%)" in lines[3]
+    assert lines[4].startswith("Unknown") and "1 ( 20.0%)" in lines[4]
 
 
 def test_textual_log_handler_write_to_log_handles_missing_widget():

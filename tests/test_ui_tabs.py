@@ -436,7 +436,32 @@ async def test_dashboard_quadrants_exist():
         assert session is not None
 
 
-`@pytest.mark.asyncio`
+@pytest.mark.asyncio
+async def test_dashboard_refresh_targets_match_mounted_widgets():
+    """Required dashboard refresh targets should all be mounted widgets."""
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        from gengowatcher.ui_textual import (
+            HourlyActivity,
+            JobsPreview,
+            MetricsRow,
+            SessionStats,
+        )
+
+        expected_targets = [
+            (MetricsRow, "refresh_metrics"),
+            (JobsPreview, "refresh_jobs"),
+            (HourlyActivity, "refresh_hourly"),
+            (SessionStats, "refresh_stats"),
+        ]
+
+        assert app._dashboard_refresh_targets() == expected_targets
+        for widget_class, _ in expected_targets:
+            assert pilot.app.query_one(widget_class) is not None
+
+
+@pytest.mark.asyncio
 async def test_app_bindings_defined():
     """Verify app has key bindings defined."""
     app = create_mock_app()
@@ -483,16 +508,8 @@ async def test_app_css_path_defined():
     assert app.CSS_PATH is not None
 
 
-@pytest.mark.asyncio
-async def test_sources_breakdown_exists():
-    """Verify sources breakdown widget exists."""
-    app = create_mock_app()
+def test_sources_breakdown_removed_from_ui_module():
+    """Unused SourcesBreakdown should stay removed from the UI module."""
+    import gengowatcher.ui_textual as ui_textual
 
-    async with app.run_test() as pilot:
-        from gengowatcher.ui_textual import SourcesBreakdown
-
-        # SourcesBreakdown might not be in dashboard, but should be queryable
-        # Check if it exists in the app structure
-        breakdowns = list(pilot.app.query(SourcesBreakdown))
-        # May be 0 or 1 depending on layout
-        assert len(breakdowns) in (0, 1)
+    assert not hasattr(ui_textual, "SourcesBreakdown")

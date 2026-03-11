@@ -67,7 +67,6 @@ class Icons:
     PANEL_CHART = ""
     PANEL_CONFIG = ""
     PANEL_SESSION = ""
-    PANEL_SOURCES = ""
 
     IDLE = "○"
     LIVE = "∿∿∿"
@@ -1370,54 +1369,6 @@ class SessionStats(DashboardQuadrant):
                 pass  # Widget not mounted yet
 
 
-class SourcesBreakdown(DashboardQuadrant):
-    """Job source breakdown."""
-
-    def __init__(self, state: "AppState", **kwargs):
-        super().__init__(f"{Icons.PANEL_SOURCES} Sources", **kwargs)
-        self.state = state
-
-    def compose(self) -> ComposeResult:
-        yield Static(
-            "WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%", id="sources-content"
-        )
-
-    def on_mount(self) -> None:
-        """Start periodic sources refresh."""
-        self.set_interval(5.0, self.refresh_sources)
-
-    def refresh_sources(self):
-        """Refresh sources breakdown with job source statistics."""
-        if not self.state:
-            return
-        try:
-            jobs = self.state.get_recent_jobs(limit=1000)
-            total = len(jobs) if jobs else 1  # Avoid division by zero
-
-            # Count jobs by source
-            counts = {source: 0 for source in SOURCE_BUCKET_CONFIG}
-            for job in jobs:
-                counts[_normalize_source(job.get("source"))] += 1
-
-            # Calculate percentages
-            ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
-            email_pct = (counts["email"] / total) * 100 if total > 0 else 0
-            website_pct = (counts["website"] / total) * 100 if total > 0 else 0
-            rss_pct = (counts["rss"] / total) * 100 if total > 0 else 0
-            unknown_pct = (counts["unknown"] / total) * 100 if total > 0 else 0
-
-            content = (
-                f"WS: {ws_pct:.0f}%\n"
-                f"Email: {email_pct:.0f}%\n"
-                f"Website: {website_pct:.0f}%\n"
-                f"RSS: {rss_pct:.0f}%\n"
-                f"Unknown: {unknown_pct:.0f}%"
-            )
-            self.query_one("#sources-content", Static).update(content)
-        except NoMatches:
-            pass  # Widget not mounted yet
-
-
 class StatsPanel(Static):
     """Full statistics panel for the Stats tab."""
 
@@ -1705,12 +1656,7 @@ class GengoWatcherApp(App):
             active_tab_id = None
 
         # Widgets that live on the dashboard tab.
-        dashboard_widgets = [
-            (MetricsRow, "refresh_metrics"),
-            (JobsPreview, "refresh_jobs"),
-            (HourlyActivity, "refresh_hourly"),
-            (SessionStats, "refresh_stats"),
-        ]
+        dashboard_widgets = self._dashboard_refresh_targets()
 
         widgets_to_refresh = []
 
@@ -1730,12 +1676,19 @@ class GengoWatcherApp(App):
         for widget_class, method_name in widgets_to_refresh:
             self._refresh_widget(widget_class, method_name)
 
-    def _refresh_widget(self, widget_class, method_name: str) -> None:
+    def _refresh_widget(
+        self,
+        widget_class,
+        method_name: str,
+        *,
+        missing_level: int = logging.DEBUG,
+    ) -> None:
         """Attempt to refresh a specific widget and log when it's missing."""
         try:
             widget = self.query_one(widget_class)
         except NoMatches:
-            logging.getLogger(__name__).debug(
+            logging.getLogger(__name__).log(
+                missing_level,
                 "Widget %s missing while refreshing %s",
                 widget_class.__name__,
                 method_name,
@@ -1762,31 +1715,29 @@ class GengoWatcherApp(App):
         handler = TextualLogHandler(self)
         logging.getLogger().addHandler(handler)
 
-    def _refresh_widget(self, selector_or_type, method_name: str) -> None:
-        try:
-            widget = self.query_one(selector_or_type)
-        except NoMatches:
-            return
-        method = getattr(widget, method_name, None)
-        if callable(method):
-            try:
-                method()
-            except Exception:
-                pass
-
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
         self._setup_jobs_table()
         self._refresh_dashboard_panels()
         self.set_interval(1.0, self._refresh_dashboard_panels)
 
+    def _dashboard_refresh_targets(self) -> list[tuple[type, str]]:
+        """Return the required refresh targets for mounted dashboard widgets."""
+        return [
+            (MetricsRow, "refresh_metrics"),
+            (JobsPreview, "refresh_jobs"),
+            (HourlyActivity, "refresh_hourly"),
+            (SessionStats, "refresh_stats"),
+        ]
+
     def _refresh_dashboard_panels(self) -> None:
         """Refresh dashboard widgets that depend on live/persisted state."""
-        self._refresh_widget(MetricsRow, "refresh_metrics")
-        self._refresh_widget(SessionStats, "refresh_stats")
-        self._refresh_widget(SourcesBreakdown, "refresh_sources")
-        self._refresh_widget(HourlyActivity, "refresh_hourly")
-        self._refresh_widget(JobsPreview, "refresh_jobs")
+        for widget_class, method_name in self._dashboard_refresh_targets():
+            self._refresh_widget(
+                widget_class,
+                method_name,
+                missing_level=logging.WARNING,
+            )
 
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""
