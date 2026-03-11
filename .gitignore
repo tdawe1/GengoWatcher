@@ -53,6 +53,7 @@ wakapi_db.db
 
 # Application files (user-specific)
 config.ini
+config.ini.lock
 config.ini.new
 state.json
 stats.json
@@ -101,3 +102,5 @@ thoughts/
 stats.json
 
 archives/
+docs/plans/
+scripts/run_codex_exec_cycle.sh

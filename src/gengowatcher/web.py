@@ -107,6 +107,7 @@ class WatcherStatus(BaseModel):
     session_stats: Dict[str, Any]
     failure_count: int
     cancellation_stats: Optional[Dict[str, Any]] = None
+    health: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("websocket_status", "rss_status")
     @classmethod
@@ -217,6 +218,13 @@ class WebAPI:
                     # Assume it's a datetime object
                     last_check = self.watcher.last_check_time.timestamp()
 
+            health_snapshot = {}
+            health_getter = getattr(self.watcher, "get_health_snapshot", None)
+            if callable(health_getter):
+                candidate = health_getter()
+                if isinstance(candidate, dict):
+                    health_snapshot = candidate
+
             return WatcherStatus(
                 is_running=not self.watcher.shutdown_event.is_set(),
                 websocket_status=self.watcher.websocket_status,
@@ -230,6 +238,7 @@ class WebAPI:
                 },
                 failure_count=self.watcher.failure_count,
                 cancellation_stats=self.watcher.get_cancellation_stats(),
+                health=health_snapshot,
             )
 
     async def cancel_current_job(self) -> bool:

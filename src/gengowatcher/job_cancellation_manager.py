@@ -35,7 +35,7 @@ class JobCancellationManager:
         self.job_start_time: Optional[float] = None
 
         # Cancellation settings
-        self.cancellation_enabled = True
+        self.cancellation_enabled = False
         self.min_improvement_ratio = 2.0  # New job must be worth 2x more
         self.extreme_threshold = 1000.0  # Always cancel for jobs > $1000
 
@@ -250,9 +250,9 @@ class JobCancellationManager:
                                 # Update stats
                                 with self._lock:
                                     self.stats["successful_cancellations"] += 1
-                                    self.stats["total_lost_rewards"] += (
-                                        self.current_job_reward
-                                    )
+                                    self.stats[
+                                        "total_lost_rewards"
+                                    ] += self.current_job_reward
                                     # Record cancellation
                                     self.stats["jobs_saved"].append(
                                         {
@@ -289,9 +289,9 @@ class JobCancellationManager:
                             # Update stats
                             with self._lock:
                                 self.stats["successful_cancellations"] += 1
-                                self.stats["total_lost_rewards"] += (
-                                    self.current_job_reward
-                                )
+                                self.stats[
+                                    "total_lost_rewards"
+                                ] += self.current_job_reward
 
                             self.clear_current_job()
                             self._save_job_state()

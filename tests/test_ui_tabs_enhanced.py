@@ -93,7 +93,7 @@ async def test_tab_switching_cycle():
 
         tabbed = pilot.app.query_one(TabbedContent)
 
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "stats"]
+        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
 
         for tab_id in tabs:
             tabbed.active = tab_id
@@ -225,7 +225,7 @@ async def test_rapid_tab_switching():
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "stats"]
+        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
 
         for _ in range(3):
             for tab_id in tabs:
@@ -248,12 +248,12 @@ async def test_dashboard_hourly_activity_exists():
 
 
 @pytest.mark.asyncio
-async def test_dashboard_session_stats_exists():
-    """Test that dashboard contains SessionStats."""
+async def test_dashboard_telemetry_panel_exists():
+    """Test that dashboard contains TelemetryPanel."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from gengowatcher.ui_textual import SessionStats
+        from gengowatcher.ui_textual import TelemetryPanel
 
-        stats = pilot.app.query_one(SessionStats)
+        stats = pilot.app.query_one(TelemetryPanel)
         assert stats is not None

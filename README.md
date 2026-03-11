@@ -42,6 +42,18 @@ Get WebSocket credentials from your browser's DevTools:
 - **user_id** and **user_session**: Application → Cookies → gengo.com
 - **user_key**: Application → Local Storage → gengo.com → userKey
 
+### Browser Worker
+
+The browser worker is an optional local Playwright sidecar that keeps a long-lived headed browser with a dedicated persistent profile. Configure the `BrowserWorker` section in `config.ini`, then start it separately with:
+
+```bash
+PYTHONPATH=src python -m gengowatcher.browser_worker.main \
+  --profile-path profiles/browser-worker \
+  --socket-path /tmp/gengowatcher-browser-worker.sock
+```
+
+The operator procedure for black-box validation is documented in `docs/browser-worker-black-box-test-procedure.md`.
+
 ## Commands
 
 | Command | Description |

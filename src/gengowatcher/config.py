@@ -46,6 +46,10 @@ class AppConfig:
             "user_id": 0,
             "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
             "user_key": "REPLACE_WITH_YOUR_USER_KEY",
+            "browser_debug_url": "",
+            "session_sync_interval_sec": 14400,
+            "session_sync_fail_hard": True,
+            "session_sync_alert_on_failure": True,
         },
         "Paths": {
             "sound_file": "assets/alert.wav",
@@ -108,6 +112,14 @@ class AppConfig:
             "attempt_timeout_sec": 12,
             "selenium_attempt_timeout_sec": 8,
         },
+        "BrowserWorker": {
+            "enabled": False,
+            "socket_path": "",
+            "profile_path": "profiles/browser-worker",
+            "seed_profile_path": "",
+            "headless": False,
+            "artifacts_dir": "logs/browser-worker-artifacts",
+        },
         "HighValue": {
             "threshold": 500.0,
             "very_high_threshold": 1000.0,
@@ -122,7 +134,7 @@ class AppConfig:
             "extreme_value_no_interval": True,
         },
         "Cancellation": {
-            "enabled": True,
+            "enabled": False,
             "min_improvement_ratio": 2.0,
             "extreme_threshold": 1000.0,
             "auto_cancel_extreme_value": True,
@@ -493,13 +505,6 @@ class AppConfig:
         except (TypeError, ValueError):
             pass
 
-        return str(value)
-
-    @staticmethod
-    def _serialize_for_parser(value: Any) -> str:
-        """Serialize values for ConfigParser while preserving list round-tripping."""
-        if isinstance(value, list):
-            return json.dumps(value)
         return str(value)
 
     def _validate_auto_accept_config(self):

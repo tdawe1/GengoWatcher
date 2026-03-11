@@ -245,6 +245,23 @@ class TestWebAPI:
             assert status.websocket_status == "Live"
             assert status.rss_status == "Checking"
 
+    def test_get_status_includes_health_snapshot(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Web status should expose structured subsystem health."""
+        mock_watcher.get_health_snapshot.return_value = {
+            "websocket": {"state": "stale", "detail": "pong overdue"},
+            "rss": {"state": "healthy", "detail": "last check 4s ago"},
+        }
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+
+            status = api.get_status()
+
+            assert status.health["websocket"]["state"] == "stale"
+
     def test_get_recent_jobs(self, mock_config, mock_state, mock_logger, mock_watcher):
         """Test getting recent jobs with pagination."""
         mock_state.get_recent_jobs.return_value = [

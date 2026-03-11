@@ -169,8 +169,8 @@ class TestJobProcessing:
         self, watcher_instance, mock_config
     ):
         """Test job filtering by minimum reward."""
-        mock_config.get.side_effect = (
-            lambda _s, key: 50.0 if key == "min_reward" else None
+        mock_config.get.side_effect = lambda _s, key: (
+            50.0 if key == "min_reward" else None
         )
         watcher_instance.show_notification = MagicMock()
 
@@ -370,6 +370,26 @@ class TestConfigValidation:
 
         # Should call set_config_value
         watcher_instance.config.set.assert_called()
+
+    def test_is_config_complete_ignores_disabled_optional_fields(
+        self, watcher_instance
+    ):
+        """Disabled feature placeholders should not make core config incomplete."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "feed_url"): "https://gengo.com/rss/test",
+            ("Watcher", "check_interval"): 45,
+            ("WebSocket", "enable_websocket"): True,
+            ("WebSocket", "user_id"): 789487,
+            ("WebSocket", "user_session"): "live-session-token",
+            ("WebSocket", "user_key"): "REPLACE_WITH_YOUR_USER_KEY",
+            ("WebsiteMonitor", "enabled"): False,
+            ("AutoAccept", "enabled"): False,
+            ("BrowserWorker", "enabled"): False,
+        }.get((s, k), kw.get("fallback"))
+
+        result = watcher_instance.is_config_complete()
+
+        assert result is True
 
 
 class TestFeedProcessing:

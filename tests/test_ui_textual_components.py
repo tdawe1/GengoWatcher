@@ -13,6 +13,8 @@ from gengowatcher.ui_textual import (
     MetricsRow,
     StatusIndicator,
     StatusRow,
+    TelemetryPanel,
+    TelemetryTab,
     ActivityPreview,
     JobsPreview,
     HourlyActivity,
@@ -301,6 +303,165 @@ class TestStatusRow:
             await pilot.pause(0.1)
             ws_indicator = app.query_one("#ind-ws", StatusIndicator)
             assert ws_indicator.current_state == "live"
+
+    @pytest.mark.asyncio
+    async def test_status_row_prefers_health_snapshot_states(self, mock_watcher):
+        """Health snapshot should drive honest indicator states."""
+        from textual.app import App
+
+        mock_watcher.get_health_snapshot.return_value = {
+            "websocket": {"state": "stale", "detail": "pong overdue"},
+            "rss": {"state": "healthy", "detail": "last check 4s ago"},
+            "auto": {"state": "disabled", "detail": "off"},
+            "workflow": {"state": "error", "detail": "broken pipeline"},
+        }
+
+        class TestApp(App):
+            def compose(self):
+                yield StatusRow(watcher=mock_watcher)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            status_row = app.query_one(StatusRow)
+            status_row.refresh_status()
+            await pilot.pause(0.1)
+            assert app.query_one("#ind-ws", StatusIndicator).current_state == "stale"
+            assert app.query_one("#ind-rss", StatusIndicator).current_state == "live"
+            assert (
+                app.query_one("#ind-auto", StatusIndicator).current_state == "disabled"
+            )
+            assert app.query_one("#ind-work", StatusIndicator).current_state == "error"
+
+    @pytest.mark.asyncio
+    async def test_telemetry_panel_renders_health_snapshot(self, mock_watcher):
+        """Telemetry panel should group enabled/disabled modules with details."""
+        from textual.app import App
+        from textual.widgets import Static
+
+        mock_watcher.get_health_snapshot.return_value = {
+            "websocket": {
+                "state": "stale",
+                "detail": "pong 52s",
+                "last_pong_age_sec": 52,
+                "last_message_age_sec": 4,
+            },
+            "rss": {
+                "state": "healthy",
+                "detail": "ok",
+                "last_success_age_sec": 4,
+                "failure_count": 0,
+            },
+            "session": {
+                "state": "error",
+                "detail": "sync failed",
+                "last_sync_age_sec": 12,
+            },
+            "workflow": {
+                "state": "disabled",
+                "detail": "manual",
+                "processing": False,
+            },
+            "email": {
+                "state": "disabled",
+                "detail": "off",
+            },
+            "browser": {
+                "state": "healthy",
+                "detail": "ready",
+                "last_check_age_sec": 6,
+            },
+        }
+
+        class TestApp(App):
+            def compose(self):
+                yield TelemetryPanel(watcher=mock_watcher)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TelemetryPanel)
+            panel.refresh_telemetry()
+            await pilot.pause(0.1)
+            content = panel.query_one("#telemetry-content", Static)
+            rendered = str(content.render())
+            rich_text = content.render()
+            assert "Enabled" in rendered
+            assert "Disabled" in rendered
+            assert "WS" in rendered
+            assert "Browser" in rendered
+            assert "Email" in rendered
+            assert "RSS" in rendered
+            assert "Session" in rendered
+            assert "sync failed" in rendered
+            assert "52s" in rendered
+            assert "4s" in rendered
+            assert getattr(rich_text, "spans", [])
+
+    @pytest.mark.asyncio
+    async def test_telemetry_tab_renders_detailed_sections(self, mock_watcher):
+        """Telemetry tab should render enabled/disabled sections and details."""
+        from textual.app import App
+        from textual.widgets import Static
+
+        mock_watcher.get_health_snapshot.return_value = {
+            "websocket": {
+                "state": "stale",
+                "detail": "pong 52s",
+                "status": "Live",
+                "last_pong_age_sec": 52,
+                "last_message_age_sec": 4,
+                "ping_latency_ms": 91,
+            },
+            "rss": {
+                "state": "healthy",
+                "detail": "ok",
+                "status": "Waiting",
+                "last_success_age_sec": 4,
+                "failure_count": 0,
+            },
+            "email": {
+                "state": "disabled",
+                "detail": "off",
+            },
+            "browser": {
+                "state": "healthy",
+                "detail": "ready",
+                "last_check_age_sec": 6,
+            },
+        }
+
+        class TestApp(App):
+            def compose(self):
+                yield TelemetryTab(watcher=mock_watcher)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(TelemetryTab)
+            tab.refresh_telemetry()
+            await pilot.pause(0.1)
+            content = tab.query_one("#telemetry-tab-content", Static)
+            rendered = str(content.render())
+            assert "ENABLED MODULES" in rendered
+            assert "DISABLED MODULES" in rendered
+            assert "WEBSOCKET" in rendered
+            assert "BROWSER" in rendered
+            assert "EMAIL" in rendered
+            assert "last_pong_age_sec" in rendered
+            assert "ping_latency_ms" in rendered
+            assert "RSS" in rendered
+
+    def test_status_indicator_uses_distinct_pulse_cadence_by_state(self):
+        """Critical states should pulse faster than non-critical ones."""
+        indicator = StatusIndicator("x", "Test")
+
+        assert indicator._pulse_step_for_state(
+            "live"
+        ) > indicator._pulse_step_for_state("working")
+        assert indicator._pulse_step_for_state(
+            "working"
+        ) > indicator._pulse_step_for_state("stale")
+        assert indicator._pulse_step_for_state(
+            "stale"
+        ) >= indicator._pulse_step_for_state("error")
 
     @pytest.mark.asyncio
     async def test_status_row_refresh_email_polling(self, mock_watcher):

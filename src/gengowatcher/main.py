@@ -11,6 +11,10 @@ from rich.console import Console
 from rich.text import Text
 from rich.theme import Theme
 
+from .browser_session import (
+    DEFAULT_BROWSER_DEBUG_URL,
+    fetch_browser_session_token_sync,
+)
 from .config import AppConfig
 from .state import AppState
 from .stats import StatsManager
@@ -69,9 +73,9 @@ class CategoryFilter(logging.Filter):
 
         for category, keywords in CATEGORY_KEYWORDS.items():
             if any(kw in msg_lower for kw in keywords):
-                return self.config.get("DebugCategories", category)
+                return bool(self.config.get("DebugCategories", category))
 
-        return self.config.get("DebugCategories", "system")
+        return bool(self.config.get("DebugCategories", "system"))
 
 
 APP_THEME = Theme(
@@ -152,6 +156,39 @@ def handle_cli_config_commands(args, config: AppConfig, console: Console) -> boo
         _interactive_configure(config, console)
         return True
 
+    if args.sync_session_from_browser or args.check_session_from_browser:
+        debug_url = (
+            args.browser_debug_url
+            or config.get("WebSocket", "browser_debug_url")
+            or DEFAULT_BROWSER_DEBUG_URL
+        )
+        token = fetch_browser_session_token_sync(debug_url=debug_url)
+        current = config.get("WebSocket", "user_session")
+
+        def _mask(value):
+            text = str(value or "")
+            if len(text) <= 8:
+                return text
+            return f"{text[:4]}...{text[-4:]}"
+
+        if args.check_session_from_browser:
+            if current == token:
+                print(
+                    f"Browser session token matches [WebSocket] user_session at {debug_url}"
+                )
+            else:
+                print(
+                    "Browser session token differs from [WebSocket] user_session: "
+                    f"config={_mask(current)} browser={_mask(token)}"
+                )
+            return True
+
+        config.set("WebSocket", "user_session", token)
+        config.set("WebSocket", "browser_debug_url", debug_url)
+        config.save_config()
+        print(f"Updated [WebSocket] user_session from browser at {debug_url}")
+        return True
+
     return False
 
 
@@ -215,6 +252,20 @@ def main():
         help="Interactively configure missing/required values",
     )
     parser.add_argument(
+        "--sync-session-from-browser",
+        action="store_true",
+        help="Read my_gengo_session from a live browser via CDP and save it to config.ini",
+    )
+    parser.add_argument(
+        "--check-session-from-browser",
+        action="store_true",
+        help="Compare config.ini session token against a live browser session via CDP",
+    )
+    parser.add_argument(
+        "--browser-debug-url",
+        help="Browser remote debugging base URL (default: [WebSocket] browser_debug_url or http://127.0.0.1:9222)",
+    )
+    parser.add_argument(
         "--web",
         action="store_true",
         help="Start web UI server alongside TUI",
@@ -255,7 +306,14 @@ def main():
     # Handle config commands BEFORE initializing the heavy GengoWatcher instance.
     # This allows CLI config operations to work even if another watcher is running.
 
-    if args.set or args.get or args.list or args.configure:
+    if (
+        args.set
+        or args.get
+        or args.list
+        or args.configure
+        or args.sync_session_from_browser
+        or args.check_session_from_browser
+    ):
         try:
             config = AppConfig()
             if handle_cli_config_commands(args, config, console):
@@ -280,7 +338,9 @@ def main():
         ui_handler.addFilter(category_filter)
         if config.get("Logging", "log_main_enabled"):
             try:
-                log_file = Path(config.get("Paths", "log_file"))
+                log_file = Path(
+                    str(config.get("Paths", "log_file") or "logs/gengowatcher.log")
+                )
                 log_file.parent.mkdir(parents=True, exist_ok=True)
                 # Validate log_max_bytes to prevent handler crash
                 log_max_bytes = config.get("Logging", "log_max_bytes") or 0
@@ -380,7 +440,8 @@ def main():
     # Exit if only web server was requested
     if args.web_only:
         try:
-            web_thread.join()
+            if web_thread is not None:
+                web_thread.join()
         except KeyboardInterrupt:
             console.print("[info]Web server shutting down...[/]")
         sys.exit(0)

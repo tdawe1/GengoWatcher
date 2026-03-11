@@ -128,6 +128,131 @@ class TestWatcherInitialization:
         assert watcher.session_new_entries == 0
         assert watcher.websocket_status == "Disabled"
 
+    def test_initialization_warns_when_browser_session_differs(
+        self, mock_config, mock_state
+    ):
+        """Warn when config token differs from the live browser token."""
+        logger = MagicMock()
+        mock_config.config["WebSocket"]["browser_debug_url"] = "http://127.0.0.1:9222"
+
+        with patch(
+            "gengowatcher.watcher.fetch_browser_session_token_sync",
+            return_value="fresh-browser-token",
+        ):
+            GengoWatcher(mock_config, mock_state, logger)
+
+        warning_messages = [str(call.args[0]) for call in logger.warning.call_args_list]
+        assert any(
+            "differs from the live browser session" in message
+            for message in warning_messages
+        )
+
+    def test_initialization_skips_browser_session_check_without_debug_url(
+        self, mock_config, mock_state
+    ):
+        """No browser session lookup should happen without a debug URL."""
+        logger = MagicMock()
+
+        with patch(
+            "gengowatcher.watcher.fetch_browser_session_token_sync"
+        ) as mock_fetch:
+            GengoWatcher(mock_config, mock_state, logger)
+
+        mock_fetch.assert_not_called()
+
+    def test_sync_session_from_browser_updates_config(self, watcher_instance):
+        """Browser session sync should persist a newer token."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+            ("WebSocket", "user_session"): "stale-token",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        with patch(
+            "gengowatcher.watcher.fetch_browser_session_token_sync",
+            return_value="fresh-token",
+        ):
+            changed = watcher_instance._sync_session_from_browser()
+
+        assert changed is True
+        watcher_instance.config.set.assert_any_call(
+            "WebSocket", "user_session", "fresh-token"
+        )
+        watcher_instance.config.save_config.assert_called()
+
+    def test_sync_session_from_browser_fail_hard_alerts_and_stops(
+        self, watcher_instance
+    ):
+        """Strict sync failures should alert immediately and mark websocket fatal."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+            ("WebSocket", "user_session"): "stale-token",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+        watcher_instance.show_notification = MagicMock()
+
+        with patch(
+            "gengowatcher.watcher.fetch_browser_session_token_sync",
+            side_effect=RuntimeError("browser gone"),
+        ):
+            changed = watcher_instance._sync_session_from_browser(
+                fail_hard=True,
+                alert_on_failure=True,
+            )
+
+        assert changed is False
+        assert watcher_instance._websocket_sync_failed is True
+        watcher_instance.show_notification.assert_called_once()
+
+    def test_get_health_snapshot_marks_websocket_stale_and_auto_disabled(
+        self, watcher_instance
+    ):
+        """Health snapshot should surface stale and disabled states honestly."""
+        watcher_instance.websocket_status = "Live"
+        watcher_instance.websocket_last_pong_ts = None
+        watcher_instance.last_check_time = None
+        watcher_instance.rss_action = "Waiting"
+        watcher_instance.is_processing = False
+        watcher_instance._browser_session_last_sync_ts = None
+        watcher_instance._browser_session_last_sync_state = "idle"
+        watcher_instance._browser_session_last_sync_detail = "never synced"
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "check_interval"): 45,
+            ("WebSocket", "enable_websocket"): True,
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+            ("EmailMonitor", "enabled"): False,
+            ("WebsiteMonitor", "enabled"): True,
+            ("AutoAccept", "enabled"): False,
+            ("AutoAccept", "browser_profile_path"): "",
+            ("BrowserWorker", "enabled"): False,
+            ("Cancellation", "enabled"): False,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+        watcher_instance.config.getboolean.side_effect = lambda s, k, **kw: bool(
+            {
+                ("WebSocket", "enable_websocket"): True,
+                ("EmailMonitor", "enabled"): False,
+                ("WebsiteMonitor", "enabled"): True,
+                ("AutoAccept", "enabled"): False,
+                ("BrowserWorker", "enabled"): False,
+                ("Cancellation", "enabled"): False,
+            }.get((s, k), kw.get("fallback", False))
+        )
+        watcher_instance.website_monitor_status = "Monitoring"
+        watcher_instance.website_last_check_time = 999_996.0
+
+        health = watcher_instance.get_health_snapshot(now=1_000_000.0)
+
+        assert health["websocket"]["state"] == "stale"
+        assert health["session"]["state"] == "stale"
+        assert health["email"]["state"] == "disabled"
+        assert health["browser"]["state"] == "healthy"
+        assert health["auto"]["state"] == "disabled"
+        assert health["workflow"]["state"] == "disabled"
+
     def test_initialization_validates_check_interval(
         self, mock_config, mock_state, logger
     ):

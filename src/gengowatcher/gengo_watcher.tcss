@@ -53,7 +53,7 @@ TitleBar {
 
 /* Metrics Row */
 MetricsRow {
-    height: 5;
+    height: 4;
     margin: 0 1;
     align: center middle;
     layout: horizontal;
@@ -151,7 +151,7 @@ MetricCard.today:focus {
 
 /* Status Row - seamless, matches surface */
 StatusRow {
-    height: 3;
+    height: 2;
     width: 100%;
     layout: horizontal;
     align: center middle;
@@ -163,7 +163,7 @@ StatusRow {
 StatusIndicator {
     layout: horizontal;
     margin: 0 2;
-    min-width: 10;
+    min-width: 8;
     align: center middle;
     width: 1fr;
 }
@@ -185,8 +185,15 @@ StatusIndicator {
     color: $accent-red; 
     text-style: bold;
 }
+.status-stale {
+    color: $accent-yellow;
+    text-style: bold;
+}
 .status-idle { 
     color: $text-muted; 
+}
+.status-disabled {
+    color: $text-muted;
 }
 
 .status-live .status-label {
@@ -195,7 +202,9 @@ StatusIndicator {
 }
 .status-working .status-label { color: $accent-orange; }
 .status-error .status-label { color: $accent-red; }
+.status-stale .status-label { color: $accent-yellow; }
 .status-idle .status-label { color: $text-muted; }
+.status-disabled .status-label { color: $text-muted; }
 
 .status-icon {
     margin-right: 1;
@@ -265,7 +274,7 @@ JobsPreview {
 }
 
 ActivityPreview {
-    height: 100%;
+    height: 8;
     border-title-color: $accent-aqua;
 }
 
@@ -288,6 +297,14 @@ ConfigPreview {
 
 SessionStats {
     border-title-color: $accent-orange;
+}
+
+TelemetryPanel {
+    border-title-color: $accent-red;
+}
+
+TelemetryTab {
+    padding: 1 2;
 }
 
 RichLog {
