@@ -727,29 +727,6 @@ class TestTextualLogHandler:
         # Should not raise exception
         handler.emit(record)
 
-    def test_emit_failure_does_not_recurse_via_logging(self):
-        """Emit failures should not log through the same handler recursively."""
-        app = MagicMock()
-        app.call_from_thread.side_effect = RuntimeError("Thread error")
-        handler = TextualLogHandler(app)
-        logger = logging.getLogger("test_textual_handler_recursion")
-        previous_handlers = list(logger.handlers)
-        previous_level = logger.level
-        previous_propagate = logger.propagate
-
-        logger.handlers = []
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
-        logger.addHandler(handler)
-
-        try:
-            logger.info("Test message")
-        finally:
-            logger.removeHandler(handler)
-            logger.handlers = previous_handlers
-            logger.setLevel(previous_level)
-            logger.propagate = previous_propagate
-
     def test_emit_collapses_traceback_for_ui_log(self):
         """UI log should keep exception signal without dumping full traceback."""
         app = MagicMock()

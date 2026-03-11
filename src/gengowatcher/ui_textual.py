@@ -2028,7 +2028,7 @@ class TextualLogHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            msg = self.format(record)
+            msg = self._format_ui_message(record)
             level = record.levelno
             app_thread_id = getattr(self.app, "_thread_id", None)
             if app_thread_id == threading.get_ident():
@@ -2056,6 +2056,20 @@ class TextualLogHandler(logging.Handler):
                 sys.stderr.flush()
             except Exception:
                 pass  # Logging failures should not crash the app
+
+    def _format_ui_message(self, record: logging.LogRecord) -> str:
+        """Render a concise single-line message for TUI log panels."""
+        message = str(record.getMessage()).replace("\r", " ").replace("\n", " ")
+
+        if record.exc_info:
+            exc_type, exc_value, _ = record.exc_info
+            if exc_type is not None:
+                exc_name = exc_type.__name__
+                exc_text = str(exc_value).strip()
+                suffix = exc_name if not exc_text else f"{exc_name}: {exc_text}"
+                return f"{message} | {suffix}" if message else suffix
+
+        return message
 
     def _write_to_log(self, widget_id: str, colored_text: Text) -> None:
         try:
