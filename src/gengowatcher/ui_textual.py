@@ -71,7 +71,6 @@ class Icons:
     PANEL_CHART = ""
     PANEL_CONFIG = ""
     PANEL_SESSION = ""
-    PANEL_SOURCES = ""
 
     IDLE = "○"
     LIVE = "∿∿∿"
@@ -1449,205 +1448,6 @@ class SessionStats(DashboardQuadrant):
                 pass  # Widget not mounted yet
 
 
-class SourcesBreakdown(DashboardQuadrant):
-    """Job source breakdown."""
-
-    def __init__(self, state: "AppState", **kwargs):
-        super().__init__(f"{Icons.PANEL_SOURCES} Sources", **kwargs)
-        self.state = state
-
-    def compose(self) -> ComposeResult:
-        yield Static(
-            "WS: 0%\nEmail: 0%\nWebsite: 0%\nRSS: 0%\nUnknown: 0%", id="sources-content"
-        )
-
-    def on_mount(self) -> None:
-        """Start periodic sources refresh."""
-        self.set_interval(5.0, self.refresh_sources)
-
-    def refresh_sources(self):
-        """Refresh sources breakdown with job source statistics."""
-        if not self.state:
-            return
-        try:
-            jobs = self.state.get_recent_jobs(limit=1000)
-            total = len(jobs) if jobs else 1  # Avoid division by zero
-
-            # Count jobs by source
-            counts = {source: 0 for source in SOURCE_BUCKET_CONFIG}
-            for job in jobs:
-                counts[_normalize_source(job.get("source"))] += 1
-
-            # Calculate percentages
-            ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
-            email_pct = (counts["email"] / total) * 100 if total > 0 else 0
-            website_pct = (counts["website"] / total) * 100 if total > 0 else 0
-            rss_pct = (counts["rss"] / total) * 100 if total > 0 else 0
-            unknown_pct = (counts["unknown"] / total) * 100 if total > 0 else 0
-
-            content = (
-                f"WS: {ws_pct:.0f}%\n"
-                f"Email: {email_pct:.0f}%\n"
-                f"Website: {website_pct:.0f}%\n"
-                f"RSS: {rss_pct:.0f}%\n"
-                f"Unknown: {unknown_pct:.0f}%"
-            )
-            self.query_one("#sources-content", Static).update(content)
-        except NoMatches:
-            pass  # Widget not mounted yet
-
-
-class TelemetryPanel(DashboardQuadrant):
-    """Compact telemetry summary for the dashboard."""
-
-    def __init__(self, watcher: "GengoWatcher", **kwargs):
-        super().__init__(" Telemetry", **kwargs)
-        self.watcher = watcher
-
-    def compose(self) -> ComposeResult:
-        yield Static("Telemetry unavailable", id="telemetry-content")
-
-    def on_mount(self) -> None:
-        self.set_interval(2.0, self.refresh_telemetry)
-        self.refresh_telemetry()
-
-    def refresh_telemetry(self) -> None:
-        if not self.watcher:
-            return
-        getter = getattr(self.watcher, "get_health_snapshot", None)
-        if not callable(getter):
-            return
-        try:
-            snapshot = getter()
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "TelemetryPanel.refresh_telemetry: failed to read health snapshot",
-                exc_info=True,
-            )
-            return
-        if not isinstance(snapshot, dict):
-            return
-
-        text = Text()
-        colors = _build_semantic_color_palette(_get_active_theme(self))
-        enabled = []
-        disabled = []
-        for key, entry in _iter_telemetry_entries(snapshot):
-            state = str(entry.get("state") or "unknown")
-            collection = disabled if state == "disabled" else enabled
-            collection.append((key, entry))
-
-        text.append("Enabled\n", style=f"bold {colors['success']}")
-        if enabled:
-            for key, entry in enabled:
-                short_label = TELEMETRY_LABELS.get(key, (key.title(), key.upper()))[0]
-                state = str(entry.get("state") or "unknown")
-                detail = str(entry.get("detail") or "n/a")
-                text.append(f"  {short_label:<8}", style=colors["default"])
-                text.append(f"{state:<9}", style=_telemetry_state_style(self, state))
-                text.append(detail, style=colors["default"])
-                metrics = []
-                for metric_name, metric_value in entry.items():
-                    if metric_name in {"state", "detail", "status"}:
-                        continue
-                    rendered = _format_telemetry_metric(metric_name, metric_value)
-                    if rendered:
-                        metrics.append(rendered)
-                    if len(metrics) == 2:
-                        break
-                if metrics:
-                    text.append(f" [{', '.join(metrics)}]", style=colors["timestamp"])
-                text.append("\n")
-        else:
-            text.append("  none\n", style=colors["timestamp"])
-
-        text.append("\nDisabled\n", style=f"bold {colors['timestamp']}")
-        if disabled:
-            for key, entry in disabled:
-                short_label = TELEMETRY_LABELS.get(key, (key.title(), key.upper()))[0]
-                detail = str(entry.get("detail") or "off")
-                text.append(f"  {short_label:<8}", style=colors["default"])
-                text.append(detail, style=colors["timestamp"])
-                text.append("\n")
-        else:
-            text.append("  none\n", style=colors["timestamp"])
-
-        try:
-            self.query_one("#telemetry-content", Static).update(text)
-        except NoMatches:
-            pass
-
-
-class TelemetryTab(Static):
-    """Detailed telemetry view for release triage."""
-
-    def __init__(self, watcher: "GengoWatcher", **kwargs):
-        super().__init__(**kwargs)
-        self.watcher = watcher
-
-    def compose(self) -> ComposeResult:
-        yield Static("Telemetry unavailable", id="telemetry-tab-content")
-
-    def on_mount(self) -> None:
-        self.set_interval(2.0, self.refresh_telemetry)
-        self.refresh_telemetry()
-
-    def refresh_telemetry(self) -> None:
-        getter = getattr(self.watcher, "get_health_snapshot", None)
-        if not callable(getter):
-            return
-        try:
-            snapshot = getter()
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "TelemetryTab.refresh_telemetry: failed to read health snapshot",
-                exc_info=True,
-            )
-            return
-        if not isinstance(snapshot, dict):
-            return
-
-        colors = _build_semantic_color_palette(_get_active_theme(self))
-        text = Text()
-        enabled = []
-        disabled = []
-        for key, entry in _iter_telemetry_entries(snapshot):
-            state = str(entry.get("state") or "unknown")
-            (disabled if state == "disabled" else enabled).append((key, entry))
-
-        def render_section(title: str, items: list[tuple[str, dict[str, Any]]]) -> None:
-            text.append(f"{title}\n", style=f"bold {colors['level_job']}")
-            if not items:
-                text.append("  none\n\n", style=colors["timestamp"])
-                return
-            for key, entry in items:
-                label = TELEMETRY_LABELS.get(key, (key.title(), key.upper()))[1]
-                state = str(entry.get("state") or "unknown")
-                detail = str(entry.get("detail") or "n/a")
-                text.append(f"{label}\n", style=f"bold {_telemetry_state_style(self, state)}")
-                text.append("  state: ", style=colors["key"] if "key" in colors else colors["timestamp"])
-                text.append(f"{state}\n", style=_telemetry_state_style(self, state))
-                text.append("  detail: ", style=colors["timestamp"])
-                text.append(f"{detail}\n", style=colors["default"])
-                for metric_name, metric_value in entry.items():
-                    if metric_name in {"state", "detail"}:
-                        continue
-                    rendered = _format_telemetry_metric(metric_name, metric_value)
-                    if not rendered:
-                        continue
-                    text.append(f"  {metric_name}: ", style=colors["timestamp"])
-                    text.append(f"{rendered}\n", style=colors["default"])
-                text.append("\n")
-
-        render_section("ENABLED MODULES", enabled)
-        render_section("DISABLED MODULES", disabled)
-
-        try:
-            self.query_one("#telemetry-tab-content", Static).update(text)
-        except NoMatches:
-            pass
-
-
 class StatsPanel(Static):
     """Full statistics panel for the Stats tab."""
 
@@ -1966,12 +1766,7 @@ class GengoWatcherApp(App):
             active_tab_id = None
 
         # Widgets that live on the dashboard tab.
-        dashboard_widgets = [
-            (MetricsRow, "refresh_metrics"),
-            (JobsPreview, "refresh_jobs"),
-            (HourlyActivity, "refresh_hourly"),
-            (SessionStats, "refresh_stats"),
-        ]
+        dashboard_widgets = self._dashboard_refresh_targets()
 
         widgets_to_refresh = []
 
@@ -1995,20 +1790,15 @@ class GengoWatcherApp(App):
         self,
         widget_class,
         method_name: str,
-        missing_level: Optional[int] = None,
+        *,
+        missing_level: int = logging.DEBUG,
     ) -> None:
-        """Attempt to refresh a specific widget.
-
-        The ``missing_level`` parameter is accepted for backward compatibility
-        with older callers, but is currently unused.
-        """
-        widget_name = (
-            widget_class if isinstance(widget_class, str) else widget_class.__name__
-        )
+        """Attempt to refresh a specific widget and log when it's missing."""
         try:
             widget = self.query_one(widget_class)
         except NoMatches:
-            logging.getLogger(__name__).debug(
+            logging.getLogger(__name__).log(
+                missing_level,
                 "Widget %s missing while refreshing %s",
                 widget_name,
                 method_name,
@@ -2032,10 +1822,8 @@ class GengoWatcherApp(App):
             )
 
     def _setup_logging(self):
-        if self._logging_attached:
-            return
-        self._log_source.addHandler(self._textual_log_handler)
-        self._logging_attached = True
+        handler = TextualLogHandler(self)
+        logging.getLogger().addHandler(handler)
 
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
@@ -2044,128 +1832,23 @@ class GengoWatcherApp(App):
         self._refresh_dashboard_panels()
         self.set_interval(1.0, self._refresh_dashboard_panels)
 
-    def on_unmount(self) -> None:
-        """Remove the Textual log handler when the app shuts down."""
-        self.watcher.on_job_added_callback = None
-        if not self._logging_attached:
-            return
-        self._log_source.removeHandler(self._textual_log_handler)
-        self._logging_attached = False
-
-    def _log_command_feedback(self, message: str, level: int = logging.INFO) -> None:
-        self._log_source.log(level, message)
-
-    def _show_setup_hint(self, command_flag: str, description: str) -> None:
-        self._log_command_feedback(
-            f"{description} is configured outside the live TUI. "
-            f"Run `gengowatcher {command_flag}` in a terminal, then restart the app."
-        )
-
-    def _set_pause_state(self, paused: bool) -> None:
-        pause_file = str(getattr(self.watcher, "PAUSE_FILE", "gengowatcher.pause"))
-        if paused:
-            with open(pause_file, "w", encoding="utf-8") as handle:
-                handle.write("")
-            self._log_command_feedback("Watcher paused.")
-            return
-        try:
-            os.remove(pause_file)
-        except FileNotFoundError:
-            pass
-        self._log_command_feedback("Watcher resumed.")
-
-    def _normalize_command(
-        self, raw_command: str, args: list[str]
-    ) -> tuple[str, list[str]]:
-        command = self.COMMAND_ALIASES.get(raw_command, raw_command)
-        if command == "setup" and args:
-            target = self.COMMAND_ALIASES.get(args[0], args[0])
-            if target in {"setup-email", "setup-website"}:
-                return target, args[1:]
-        if command == "configure" and args:
-            target = self.COMMAND_ALIASES.get(args[0], args[0])
-            if target in {"setup-email", "setup-website"}:
-                return target, args[1:]
-        return command, args
-
-    def _execute_command(self, raw_value: str) -> None:
-        try:
-            parts = shlex.split(raw_value)
-        except ValueError as exc:
-            self._log_command_feedback(f"Command parse error: {exc}", logging.WARNING)
-            return
-        if not parts:
-            return
-
-        command, _args = self._normalize_command(parts[0].lower(), parts[1:])
-        if command == "help":
-            self._log_command_feedback(
-                "Commands: check/c, pause/p, resume/r, notify/n, "
-                "setup-email, setup-website, configure/cfg, quit/q"
-            )
-            return
-        if command == "check":
-            self.watcher.check_now_event.set()
-            self._log_command_feedback("Immediate RSS check requested.")
-            return
-        if command == "pause":
-            self._set_pause_state(True)
-            return
-        if command == "resume":
-            self._set_pause_state(False)
-            return
-        if command == "notify":
-            simulator = getattr(self.watcher, "_simulate_new_job_notification", None)
-            if callable(simulator):
-                simulator()
-                self._log_command_feedback("Test notification requested.")
-            else:
-                self._log_command_feedback(
-                    "Watcher does not expose a notification test command.",
-                    logging.WARNING,
-                )
-            return
-        if command == "setup-email":
-            self._show_setup_hint("--setup-email", "Email monitor")
-            return
-        if command == "setup-website":
-            self._show_setup_hint("--setup-website", "Website monitor")
-            return
-        if command == "configure":
-            self._show_setup_hint("--configure", "Interactive configuration")
-            return
-        if command == "quit":
-            self.exit()
-            return
-
-        self._log_command_feedback(
-            f"Unknown command: {command}. Type `help` for available commands.",
-            logging.WARNING,
-        )
-
-    def action_check(self) -> None:
-        self._execute_command("check")
-
-    def action_pause(self) -> None:
-        pause_file = str(getattr(self.watcher, "PAUSE_FILE", "gengowatcher.pause"))
-        self._execute_command("resume" if os.path.exists(pause_file) else "pause")
-
-    def action_help(self) -> None:
-        self._execute_command("help")
-
-    @on(Input.Submitted)
-    def _on_input_submitted(self, event: Input.Submitted) -> None:
-        command_text = event.value.strip()
-        event.input.value = ""
-        self._execute_command(command_text)
+    def _dashboard_refresh_targets(self) -> list[tuple[type, str]]:
+        """Return the required refresh targets for mounted dashboard widgets."""
+        return [
+            (MetricsRow, "refresh_metrics"),
+            (JobsPreview, "refresh_jobs"),
+            (HourlyActivity, "refresh_hourly"),
+            (SessionStats, "refresh_stats"),
+        ]
 
     def _refresh_dashboard_panels(self) -> None:
         """Refresh dashboard widgets that depend on live/persisted state."""
-        self._refresh_widget(MetricsRow, "refresh_metrics")
-        self._refresh_widget(SessionStats, "refresh_stats")
-        self._refresh_widget(HourlyActivity, "refresh_hourly")
-        self._refresh_widget(JobsPreview, "refresh_jobs")
-        self._refresh_widget(TelemetryPanel, "refresh_telemetry")
+        for widget_class, method_name in self._dashboard_refresh_targets():
+            self._refresh_widget(
+                widget_class,
+                method_name,
+                missing_level=logging.WARNING,
+            )
 
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""

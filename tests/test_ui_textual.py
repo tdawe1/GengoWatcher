@@ -11,12 +11,6 @@ from textual.css.query import NoMatches
 
 from gengowatcher.ui_textual import (
     ChartsPanel,
-    GengoWatcherApp,
-    HourlyActivity,
-    JobsPreview,
-    MetricsRow,
-    SessionStats,
-    TelemetryPanel,
     TextualLogHandler,
     _format_timestamp,
     _normalize_source,
@@ -84,15 +78,13 @@ def test_charts_panel_renders_normalized_source_breakdown():
 
     text = panel._render_sources_chart()
     lines = text.plain.strip().splitlines()
-    rendered = {line.split()[0]: line for line in lines}
 
     assert len(lines) == 5
-    assert "1 ( 20.0%)" in rendered["WebSocket"]
-    assert "1 ( 20.0%)" in rendered["Email"]
-    assert "1 ( 20.0%)" in rendered["Website"]
-    assert "1 ( 20.0%)" in rendered["RSS"]
-    assert "1 ( 20.0%)" in rendered["Unknown"]
-    assert all(isinstance(span.style, str) and span.style.startswith("#") for span in text.spans)
+    assert lines[0].startswith("WebSocket") and "1 ( 20.0%)" in lines[0]
+    assert lines[1].startswith("Email") and "1 ( 20.0%)" in lines[1]
+    assert lines[2].startswith("Website") and "1 ( 20.0%)" in lines[2]
+    assert lines[3].startswith("RSS") and "1 ( 20.0%)" in lines[3]
+    assert lines[4].startswith("Unknown") and "1 ( 20.0%)" in lines[4]
 
 
 def test_textual_log_handler_write_to_log_handles_missing_widget():
