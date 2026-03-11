@@ -50,10 +50,10 @@ def main(argv: list[str] | None = None) -> int:
         args.socket_path = str(BrowserRuntimeConfig(profile_path=Path(args.profile_path)).socket_path)
 
     logging.basicConfig(level=logging.INFO)
-    try:
-        asyncio.run(_run_forever(args))
-    except KeyboardInterrupt:
-        logging.getLogger(__name__).info("browser worker stopped")
+    runtime = asyncio.run(run_worker(build_runtime_config(args)))
+    logging.getLogger(__name__).info(
+        "browser worker started with %s", runtime.config.profile_path
+    )
     return 0
 
 

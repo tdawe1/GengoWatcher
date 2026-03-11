@@ -93,7 +93,7 @@ async def test_tab_switching_cycle():
 
         tabbed = pilot.app.query_one(TabbedContent)
 
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "stats"]
+        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
 
         for tab_id in tabs:
             tabbed.active = tab_id
@@ -255,7 +255,7 @@ async def test_rapid_tab_switching():
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "stats"]
+        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
 
         for _ in range(3):
             for tab_id in tabs:

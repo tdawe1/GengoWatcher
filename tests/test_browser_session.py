@@ -136,7 +136,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_cdp():
             "webSocketDebuggerUrl": "ws://gengo-target",
         }
     ]
-    cookie_response = {
+    cdp_response = {
         "id": 1,
         "result": {
             "cookies": [
@@ -168,7 +168,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_cdp():
         ),
         patch(
             "gengowatcher.browser_session.websockets.connect",
-            return_value=_MockCDPWebSocket([cookie_response, runtime_response]),
+            return_value=_MockCDPWebSocket(cdp_response),
         ),
     ):
         token = await fetch_browser_session_token("http://127.0.0.1:9222")
@@ -401,13 +401,8 @@ def test_handle_cli_sync_session_updates_config_and_debug_url(capsys):
     }.get((section, key), None)
 
     with patch(
-        "gengowatcher.main.fetch_browser_session_snapshot_sync",
-        return_value=MagicMock(
-            session_token="fresh-token",
-            user_key="browser-user-key",
-            user_agent="Helium Browser",
-            accept_language="en-GB,en-US;q=0.9",
-        ),
+        "gengowatcher.main.fetch_browser_session_token_sync",
+        return_value="fresh-token",
     ):
         handled = handle_cli_config_commands(args, config, console=MagicMock())
 
@@ -420,7 +415,7 @@ def test_handle_cli_sync_session_updates_config_and_debug_url(capsys):
         (("WebSocket", "browser_debug_url", "http://127.0.0.1:9222"),),
     ]
     config.save_config.assert_called_once()
-    assert "Updated [WebSocket] browser session" in capsys.readouterr().out
+    assert "Updated [WebSocket] user_session" in capsys.readouterr().out
 
 
 def test_handle_cli_check_session_reports_mismatch(capsys):
@@ -440,8 +435,8 @@ def test_handle_cli_check_session_reports_mismatch(capsys):
     }.get((section, key), None)
 
     with patch(
-        "gengowatcher.main.fetch_browser_session_snapshot_sync",
-        return_value=MagicMock(session_token="fresh-token", user_key="browser-user-key"),
+        "gengowatcher.main.fetch_browser_session_token_sync",
+        return_value="fresh-token",
     ):
         handled = handle_cli_config_commands(args, config, console=MagicMock())
 

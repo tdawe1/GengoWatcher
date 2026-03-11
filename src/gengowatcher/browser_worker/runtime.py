@@ -77,7 +77,7 @@ class BrowserRuntime:
         self.tab_roles = TabRoles(hold_page=pages[0], candidate_page=pages[1])
         return self.tab_roles
 
-    async def prepare_candidate(self, intent: JobIntent) -> str:
+    async def prepare_candidate(self, intent) -> str:
         roles = await self.ensure_tabs()
         self.registry.register(intent)
         await roles.candidate_page.goto(intent.canonical_url, wait_until="domcontentloaded")
@@ -111,14 +111,11 @@ class BrowserRuntime:
         except Exception as exc:
             self.logger.exception("browser worker command failed")
             response = {"ok": False, "error": str(exc)}
-        finally:
-            try:
-                if response is not None:
-                    writer.write(encode_message(response))
-                    await writer.drain()
-            finally:
-                writer.close()
-                await writer.wait_closed()
+
+        writer.write(encode_message(response))
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
 
     async def serve_forever(self) -> None:
         socket_path = self.config.socket_path

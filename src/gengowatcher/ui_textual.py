@@ -4,7 +4,6 @@ Textual-based TUI for GengoWatcher.
 Strict implementation of the v2.0 Design Doc.
 """
 
-import asyncio
 import datetime
 import logging
 import re
@@ -12,33 +11,29 @@ import shlex
 import sys
 import threading
 import time
-import traceback
-from collections import deque
 from typing import Any, ClassVar, cast
 
+from rich.text import Text
+from textual import on
 from textual.app import App, ComposeResult
-from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal, Vertical, Container, Grid
-from textual.widgets import (
-    Footer,
-    Input,
-    Label,
-    Static,
-    RichLog,
-    TabbedContent,
-    TabPane,
-    DataTable,
-)
-from textual import work, on
+from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.theme import BUILTIN_THEMES, Theme
-from rich.text import Text
+from textual.widgets import (
+    DataTable,
+    Footer,
+    Input,
+    RichLog,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 
-from .watcher import GengoWatcher, __version__, TIER_UNIT_RATES
 from .config import AppConfig
 from .state import AppState
 from .stats import StatsManager
+from .watcher import TIER_UNIT_RATES, GengoWatcher
 
 try:
     import plotext as plotext
@@ -71,7 +66,7 @@ class Icons:
     PANEL_CHART = ""
     PANEL_CONFIG = ""
     PANEL_SESSION = ""
-
+    PANEL_TELEMETRY = ""
     IDLE = "○"
     LIVE = "∿∿∿"
     POLLING = "↻"
@@ -120,11 +115,18 @@ def _format_timestamp(timestamp: Any) -> str:
 
 
 _TIMESTAMP_PREFIX_PATTERN = re.compile(
-    r"^\s*(?:\[\d{2}:\d{2}:\d{2}\]|\d{2}:\d{2}:\d{2}\b|\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\]?)"
+    r"^\s*(?:"
+    r"\[\d{2}:\d{2}:\d{2}\]"
+    r"|\d{2}:\d{2}:\d{2}\b"
+    r"|\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\]?"
+    r")"
 )
 
 
-def _with_timestamp_prefix(message: str, now: datetime.datetime | None = None) -> str:
+def _with_timestamp_prefix(
+    message: str,
+    now: datetime.datetime | None = None,
+) -> str:
     """Prefix a message with [HH:MM:SS] if it has no leading timestamp."""
     text = "" if message is None else str(message)
     if _TIMESTAMP_PREFIX_PATTERN.match(text):
@@ -164,7 +166,7 @@ TELEMETRY_LABELS = {
 
 
 def _get_active_theme(owner: Any) -> Theme:
-    """Get the currently active Textual theme for an app/widget/handler owner."""
+    """Get the current Textual theme for an app/widget/handler owner."""
     app = None
     try:
         app = owner.app
@@ -363,7 +365,8 @@ def _derive_display_word_count(job: dict[str, Any]) -> int:
     elif any(token in normalized for token in ("edit", "proofread", "proofreading")):
         rate = TIER_UNIT_RATES["edit"]
     else:
-        # Default to Standard when tier is absent so historic WS rows still show an estimate.
+        # Default to Standard when tier is absent so historic WS rows still
+        # show an estimate.
         rate = TIER_UNIT_RATES["standard"]
 
     return max(1, int(round(reward / rate)))
@@ -374,7 +377,11 @@ def _derive_display_word_count(job: dict[str, Any]) -> int:
 BAR_CHARS = " ▁▂▃▄▅▆▇█"
 
 
-def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
+def _render_chart(
+    values: list[float],
+    width: int = 20,
+    height: int = 5,
+) -> str:
     """
     Render a bar chart using fractional block characters.
 
@@ -410,7 +417,8 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
         values = list(values) + [0.0] * (width - len(values))
 
     # Normalize to chart height (using fractional blocks)
-    # Each position can be 0 to (height * 8) where 8 is the number of fractional states
+    # Each position can be 0 to (height * 8) where 8 is the number of
+    # fractional states
     max_units = height * 8
     normalized = [(v / max_val) * max_units for v in values]
 
@@ -420,7 +428,8 @@ def _render_chart(values: list[float], width: int = 20, height: int = 5) -> str:
         line = ""
         for col_val in normalized:
             # Determine which character to use for this row
-            # row represents height from bottom (0 = bottom row, height-1 = top row)
+            # row represents height from bottom (0 = bottom row, height-1 = top
+            # row)
             units_at_col = col_val
             units_needed_for_row = row * 8
 
@@ -556,7 +565,8 @@ class TitleBar(Static):
         # Line 1: Brand
         yield Static("◆ GENGOWATCHER v2.0", classes="brand")
 
-        # Line 2: Separator (handled by CSS border-bottom usually, but explicit line requested)
+        # Line 2: Separator (handled by CSS border-bottom usually, but explicit
+        # line requested)
         yield Static("─" * 200, classes="separator")
 
         # Line 3: Info Row (Config | Session | Clock)
@@ -615,12 +625,13 @@ class MetricCard(Static):
         self.border_title = label
 
     def compose(self) -> ComposeResult:
-        with Grid(classes="metric-grid"):
-            yield Static(self.icon, classes="metric-icon")
-            yield Static(
-                self.value, classes="metric-value", id=f"val-{self.label.lower()}"
-            )
-        yield Static(self.label, classes="metric-label")
+        # Border title already provides the card label, so the card body only
+        # renders the current stat value centered.
+        yield Static(
+            self.value,
+            classes="metric-value",
+            id=f"val-{self.label.lower()}",
+        )
 
     def update_value(self, value: str):
         try:
@@ -694,17 +705,32 @@ class StatusIndicator(Static):
         "live": "●",  # Filled circle (will pulse)
         "working": "◐",  # Half circle (activity)
         "error": "✗",  # X mark
+        "stale": "!",
+        "disabled": "·",
     }
 
-    # Pulse animation frames for live state
-    PULSE_FRAMES = ("●", "◉", "○", "◉")
+    STATE_FRAMES: ClassVar[dict[str, list[str]]] = {
+        "live": ["●", "◉", "●", "○"],
+        "working": ["◐", "◓", "◑", "◒"],
+        "stale": ["!", "‼", "!", "·"],
+        "error": ["✗", "✖", "✗", "✖"],
+    }
+
+    PULSE_STEPS: ClassVar[dict[str, int]] = {
+        "live": 4,
+        "working": 3,
+        "stale": 2,
+        "error": 1,
+    }
 
     def __init__(self, base_icon: str, name: str, **kwargs):
         super().__init__(**kwargs)
         self.base_icon = base_icon
         self.label_text = name
+        self.detail_text = ""
         self.current_state = "idle"
         self._pulse_index = 0
+        self._tick_count = 0
         self.add_class("status-indicator")
         self.add_class("status-idle")
 
@@ -717,49 +743,60 @@ class StatusIndicator(Static):
 
     def on_mount(self) -> None:
         """Start the pulse animation timer."""
-        self.set_interval(0.5, self._pulse_tick)
+        self.set_interval(0.2, self._pulse_tick)
+
+    @classmethod
+    def _pulse_frames_for_state(cls, state: str) -> list[str]:
+        return cls.STATE_FRAMES.get(state, [cls.ICONS.get(state, "·")])
+
+    @classmethod
+    def _pulse_step_for_state(cls, state: str) -> int:
+        return cls.PULSE_STEPS.get(state, 999999)
 
     def _pulse_tick(self) -> None:
         """Update pulse animation for live indicators."""
-        if self.current_state == "live":
-            self._pulse_index = (self._pulse_index + 1) % len(self.PULSE_FRAMES)
+        self._tick_count += 1
+        frames = self._pulse_frames_for_state(self.current_state)
+        step = self._pulse_step_for_state(self.current_state)
+        if len(frames) > 1 and step > 0 and self._tick_count % step == 0:
+            self._pulse_index = (self._pulse_index + 1) % len(frames)
             self._update_display()
 
     def _update_display(self) -> None:
         """Update the displayed icon based on current state."""
         try:
             label = self.query_one(f"#{self.id}-label", Static)
-            if self.current_state == "live":
-                icon = self.PULSE_FRAMES[self._pulse_index]
-            elif self.current_state == "working":
-                # Rotate through working icons
-                working_frames = ["◐", "◓", "◑", "◒"]
-                self._pulse_index = (self._pulse_index + 1) % len(working_frames)
-                icon = working_frames[self._pulse_index]
-            else:
-                icon = self.ICONS.get(self.current_state, self.base_icon)
+            frames = self._pulse_frames_for_state(self.current_state)
+            icon = (
+                frames[self._pulse_index]
+                if len(frames) > 1
+                else self.ICONS.get(self.current_state, self.base_icon)
+            )
             label.update(self._render_label(icon))
         except NoMatches:
             pass
 
     def _render_label(self, status_icon: str) -> str:
+        detail = f" {self.detail_text}" if self.detail_text else ""
         if self.base_icon:
-            return f"{status_icon} {self.base_icon}  {self.label_text}"
-        return f"{status_icon} {self.label_text}"
+            return f"{status_icon} {self.base_icon}  {self.label_text}{detail}"
+        return f"{status_icon} {self.label_text}{detail}"
 
-    def set_state(self, state: str) -> None:
+    def set_state(self, state: str, detail: str = "") -> None:
         """Set the indicator state and update styling."""
         old_state = self.current_state
         self.current_state = state
+        self.detail_text = detail
 
         # Update CSS classes
-        for s in ("live", "working", "idle", "error"):
+        for s in ("live", "working", "idle", "error", "stale", "disabled"):
             self.remove_class(f"status-{s}")
         self.add_class(f"status-{state}")
 
         # Reset pulse index when state changes
         if old_state != state:
             self._pulse_index = 0
+            self._tick_count = 0
             self._update_display()
 
 
@@ -775,7 +812,8 @@ class StatusRow(Horizontal):
         self.set_interval(1.0, self.refresh_status)
 
     def compose(self) -> ComposeResult:
-        # 7 Indicators - reordered: WS, RSS next to each other, then Mail, Web, Captcha, Workflow, Auto
+        # 7 Indicators - reordered: WS, RSS next to each other, then Mail, Web,
+        # Captcha, Workflow, Auto
         yield StatusIndicator(Icons.WEBSOCKET, "WS", id="ind-ws")
         yield StatusIndicator(Icons.RSS, "RSS", id="ind-rss")
         yield StatusIndicator(Icons.EMAIL, "Mail", id="ind-email")
@@ -784,84 +822,142 @@ class StatusRow(Horizontal):
         yield StatusIndicator(Icons.WORKFLOW, "Workflow", id="ind-work")
         yield StatusIndicator(Icons.AUTO, "Auto", id="ind-auto")
 
+    def _set_indicator_state(self, selector: str, state: str) -> None:
+        self.query_one(selector, StatusIndicator).set_state(state)
+
+    @staticmethod
+    def _state_from_health(snapshot: dict | None, key: str) -> tuple[str, str]:
+        if not isinstance(snapshot, dict):
+            return "idle", ""
+        entry = snapshot.get(key)
+        if not isinstance(entry, dict):
+            return "idle", ""
+        state = str(entry.get("state") or "idle")
+        detail = str(entry.get("detail") or "")
+        mapping = {
+            "healthy": "live",
+            "working": "working",
+            "stale": "stale",
+            "error": "error",
+            "disabled": "disabled",
+            "idle": "idle",
+        }
+        compact = {
+            "ok": "ok",
+            "off": "off",
+            "ready": "ready",
+            "manual": "manual",
+            "running": "run",
+            "sync failed": "sync!",
+            "misconfig": "cfg!",
+            "blocked": "blocked",
+            "never checked": "never",
+            "no pong": "nopong",
+        }
+        return mapping.get(state, "idle"), compact.get(detail, detail[:10])
+
+    @staticmethod
+    def _has_error(status: str) -> bool:
+        return bool(status and "error" in status.lower())
+
+    def _websocket_state(self) -> str:
+        ws_status = getattr(self.watcher, "websocket_status", "")
+        ws_connected = getattr(self.watcher, "websocket_connected", False)
+        if ws_connected or ws_status == "Live":
+            return "live"
+        if ws_status in ("Connecting", "Reconnecting"):
+            return "working"
+        if self._has_error(ws_status):
+            return "error"
+        return "idle"
+
+    def _email_state(self) -> str:
+        email_status = getattr(self.watcher, "email_monitor_status", "")
+        if email_status in ("Polling", "Connected"):
+            return "live"
+        if email_status == "Checking":
+            return "working"
+        if self._has_error(email_status):
+            return "error"
+        return "idle"
+
+    def _website_state(self) -> str:
+        web_status = getattr(self.watcher, "website_monitor_status", "")
+        if web_status == "Monitoring":
+            return "live"
+        if web_status == "Checking":
+            return "working"
+        if self._has_error(web_status):
+            return "error"
+        return "idle"
+
+    def _rss_state(self) -> str:
+        rss_action = getattr(self.watcher, "rss_action", "")
+        if "Fetching" in rss_action or "Checking" in rss_action:
+            return "working"
+        if self._has_error(rss_action):
+            return "error"
+        if rss_action:
+            return "live"
+        return "idle"
+
+    def _captcha_state(self) -> str:
+        captcha_enabled = getattr(self.watcher, "captcha_enabled", False)
+        captcha_solving = getattr(self.watcher, "captcha_solving", False)
+        if captcha_solving:
+            return "working"
+        if captcha_enabled:
+            return "live"
+        return "idle"
+
+    def _workflow_state(self) -> str:
+        is_processing = getattr(self.watcher, "is_processing", False)
+        return "working" if is_processing else "idle"
+
+    def _auto_state(self) -> str:
+        auto_accept = getattr(self.watcher, "auto_accept_enabled", False)
+        return "live" if auto_accept else "idle"
+
     def refresh_status(self) -> None:
         """Refresh all status indicators based on watcher state."""
         if not self.watcher:
             return
 
         try:
-            # WebSocket status
-            ws_status = getattr(self.watcher, "websocket_status", "")
-            ws_connected = getattr(self.watcher, "websocket_connected", False)
-            if ws_connected or ws_status == "Live":
-                self.query_one("#ind-ws", StatusIndicator).set_state("live")
-            elif ws_status in ("Connecting", "Reconnecting"):
-                self.query_one("#ind-ws", StatusIndicator).set_state("working")
-            elif "error" in ws_status.lower() if ws_status else False:
-                self.query_one("#ind-ws", StatusIndicator).set_state("error")
-            else:
-                self.query_one("#ind-ws", StatusIndicator).set_state("idle")
+            health_snapshot = None
+            health_getter = getattr(self.watcher, "get_health_snapshot", None)
+            if callable(health_getter):
+                candidate = health_getter()
+                if isinstance(candidate, dict):
+                    health_snapshot = candidate
 
-            # Email monitor status
-            email_status = getattr(self.watcher, "email_monitor_status", "")
-            email_enabled = getattr(self.watcher, "_email_monitor", None) is not None
-            if email_status == "Polling" or email_status == "Connected":
-                self.query_one("#ind-email", StatusIndicator).set_state("live")
-            elif email_status == "Checking":
-                self.query_one("#ind-email", StatusIndicator).set_state("working")
-            elif "error" in email_status.lower() if email_status else False:
-                self.query_one("#ind-email", StatusIndicator).set_state("error")
-            elif email_enabled:
-                self.query_one("#ind-email", StatusIndicator).set_state("idle")
+            if health_snapshot:
+                alert_health = getattr(self.watcher, "alert_on_health_snapshot", None)
+                if callable(alert_health):
+                    alert_health(health_snapshot)
+                ws_state, ws_detail = self._state_from_health(
+                    health_snapshot, "websocket"
+                )
+                rss_state, rss_detail = self._state_from_health(health_snapshot, "rss")
+                auto_state, auto_detail = self._state_from_health(
+                    health_snapshot, "auto"
+                )
+                workflow_state, workflow_detail = self._state_from_health(
+                    health_snapshot, "workflow"
+                )
+                self.query_one("#ind-ws", StatusIndicator).set_state(ws_state)
+                self.query_one("#ind-rss", StatusIndicator).set_state(rss_state)
+                self.query_one("#ind-auto", StatusIndicator).set_state(auto_state)
+                self.query_one("#ind-work", StatusIndicator).set_state(workflow_state)
             else:
-                self.query_one("#ind-email", StatusIndicator).set_state("idle")
+                self._set_indicator_state("#ind-ws", self._websocket_state())
+                self._set_indicator_state("#ind-rss", self._rss_state())
+                self._set_indicator_state("#ind-work", self._workflow_state())
+                self._set_indicator_state("#ind-auto", self._auto_state())
 
-            # Website monitor status
-            web_enabled = getattr(self.watcher, "_website_monitor", None) is not None
-            web_status = getattr(self.watcher, "website_monitor_status", "")
-            if web_status == "Monitoring":
-                self.query_one("#ind-web", StatusIndicator).set_state("live")
-            elif web_status == "Checking":
-                self.query_one("#ind-web", StatusIndicator).set_state("working")
-            elif "error" in web_status.lower() if web_status else False:
-                self.query_one("#ind-web", StatusIndicator).set_state("error")
-            else:
-                self.query_one("#ind-web", StatusIndicator).set_state("idle")
-
-            # RSS status
-            rss_action = getattr(self.watcher, "rss_action", "")
-            if "Fetching" in rss_action or "Checking" in rss_action:
-                self.query_one("#ind-rss", StatusIndicator).set_state("working")
-            elif "error" in rss_action.lower() if rss_action else False:
-                self.query_one("#ind-rss", StatusIndicator).set_state("error")
-            elif rss_action:
-                self.query_one("#ind-rss", StatusIndicator).set_state("live")
-            else:
-                self.query_one("#ind-rss", StatusIndicator).set_state("idle")
-
-            # Captcha solver status - check if captcha solving is enabled in config
-            # For now, this feature isn't implemented, so show as idle
-            captcha_enabled = getattr(self.watcher, "captcha_enabled", False)
-            captcha_solving = getattr(self.watcher, "captcha_solving", False)
-            if captcha_solving:
-                self.query_one("#ind-cap", StatusIndicator).set_state("working")
-            elif captcha_enabled:
-                self.query_one("#ind-cap", StatusIndicator).set_state("live")
-            else:
-                self.query_one("#ind-cap", StatusIndicator).set_state("idle")
-
-            # Workflow/job processing - only show as working when actively processing
-            is_processing = getattr(self.watcher, "is_processing", False)
-            if is_processing:
-                self.query_one("#ind-work", StatusIndicator).set_state("working")
-            else:
-                self.query_one("#ind-work", StatusIndicator).set_state("idle")
-
-            # Auto-accept status
-            auto_accept = getattr(self.watcher, "auto_accept_enabled", False)
-            self.query_one("#ind-auto", StatusIndicator).set_state(
-                "live" if auto_accept else "idle"
-            )
+            self._set_indicator_state("#ind-email", self._email_state())
+            self._set_indicator_state("#ind-web", self._website_state())
+            self._set_indicator_state("#ind-cap", self._captcha_state())
 
         except NoMatches:
             pass  # Widgets not mounted yet
@@ -906,14 +1002,19 @@ class ActivityPreview(DashboardQuadrant):
         (r"\b[A-Z]{2}[→\->][A-Z]{2}\b", "lang_pair"),
         (r"https?://[^\s]+", "url"),
         (
-            r"\b(?:found|accepted|success|connected|started|completed|ok|passed)\b",
+            r"\b(?:found|accepted|success|connected|started|completed|ok|"
+            r"passed)\b",
             "success",
         ),
         (
-            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|denied)\b",
+            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|"
+            r"denied)\b",
             "error_word",
         ),
-        (r"\b(?:warning|warn|caution|retry|retrying|slow|delayed)\b", "warning_word"),
+        (
+            r"\b(?:warning|warn|caution|retry|retrying|slow|delayed)\b",
+            "warning_word",
+        ),
         (r"\b(?:websocket|ws|socket)\b", "source_ws"),
         (r"\b(?:email|imap|mail)\b", "source_email"),
         (r"\b(?:rss|feed)\b", "source_rss"),
@@ -999,7 +1100,11 @@ class JobsPreview(DashboardQuadrant):
         """
         Refresh the jobs preview table from the current application state.
 
-        Populates the jobs DataTable with up to 10 most recent jobs from state, showing a truncated job ID (first 8 chars), language pair, word count and formatted reward. If the state is unavailable the method returns immediately. If the table widget is not mounted yet, the method quietly does nothing.
+        Populates the jobs DataTable with up to 10 most recent jobs from
+        state, showing a truncated job ID (first 8 chars), language pair,
+        word count and formatted reward. If state is unavailable, the method
+        returns immediately. If the table widget is not mounted yet, the
+        method quietly does nothing.
         """
         if not self.state:
             return
@@ -1168,7 +1273,10 @@ class HourlyActivity(DashboardQuadrant):
 
         return None
 
-    def _rolling_hourly_counts_from_state(self, window_hours: int = 24) -> list[float]:
+    def _rolling_hourly_counts_from_state(
+        self,
+        window_hours: int = 24,
+    ) -> list[float]:
         """
         Build rolling hourly buckets from oldest->newest for recent state jobs.
 
@@ -1200,14 +1308,18 @@ class HourlyActivity(DashboardQuadrant):
         self, bucket_index: int, total_buckets: int = 24
     ) -> str:
         """Format a rolling bucket index as an HH-HH one-hour period."""
-        now_hour = datetime.datetime.now().replace(minute=0, second=0, microsecond=0)
+        now_hour = datetime.datetime.now().replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
         hours_ago = max(0, (total_buckets - 1) - bucket_index)
         start = now_hour - datetime.timedelta(hours=hours_ago)
         end = start + datetime.timedelta(hours=1)
         return f"{start:%H}-{end:%H}"
 
     def _peak_hour_from_state(self) -> tuple[int, float]:
-        """Compute peak hour from AppState jobs when StatsManager has no activity."""
+        """Compute peak hour from state when stats has no activity."""
         hourly_counts = self._hourly_counts_from_state()
 
         if not hourly_counts:
@@ -1313,7 +1425,8 @@ class ConfigPreview(DashboardQuadrant):
             content.update(config_text)
         except NoMatches:
             logging.getLogger(__name__).debug(
-                "ConfigPreview.refresh_config: '#config-content' widget not found; skipping update."
+                "ConfigPreview.refresh_config: '#config-content' widget "
+                "not found; skipping update."
             )
 
     def _is_sensitive(self, key: str) -> bool:
@@ -1353,11 +1466,13 @@ class ConfigPreview(DashboardQuadrant):
         config = getattr(self, "config", None)
         list_all = getattr(config, "list_all", None)
         if not callable(list_all):
-            # Gracefully handle cases where config is a mock or non-AppConfig without list_all()
+            # Gracefully handle cases where config is a mock or non-AppConfig
+            # without list_all()
             return text
         all_config = cast(dict[str, dict[str, Any]], list_all())
 
-        # Render known sections first in preferred order, then any additional sections
+        # Render known sections first in preferred order, then any additional
+        # sections
         sections_to_render = list(self.SECTION_ORDER) + [
             s for s in all_config if s not in self.SECTION_ORDER
         ]
@@ -1395,7 +1510,7 @@ class ConfigPreview(DashboardQuadrant):
                 elif isinstance(value, bool):
                     text.append(
                         formatted_value,
-                        style=styles["bool_true"] if value else styles["bool_false"],
+                        style=(styles["bool_true"] if value else styles["bool_false"]),
                     )
                 elif isinstance(value, (int, float)):
                     text.append(formatted_value, style=styles["number"])
@@ -1448,6 +1563,225 @@ class SessionStats(DashboardQuadrant):
                 pass  # Widget not mounted yet
 
 
+class TelemetryPanel(DashboardQuadrant):
+    """Compact dashboard telemetry card for quick health checks."""
+
+    HEALTH_ICONS: ClassVar[dict[str, str]] = {
+        "healthy": "●",
+        "working": "◐",
+        "stale": "!",
+        "error": "✗",
+        "disabled": "·",
+    }
+
+    ROWS: ClassVar[list[tuple[str, str]]] = [
+        ("websocket", "WS"),
+        ("rss", "RSS"),
+        ("session", "Session"),
+        ("email", "Email"),
+        ("browser", "Browser"),
+        ("workflow", "Workflow"),
+        ("auto", "Auto"),
+    ]
+
+    DETAIL_FIELDS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "websocket": ("last_pong_age_sec", "last_message_age_sec", "ping_latency_ms"),
+        "rss": ("last_success_age_sec", "failure_count", "next_check_in_sec"),
+        "session": ("last_sync_age_sec", "sync_interval_sec"),
+        "email": ("last_check_age_sec", "jobs_found_session"),
+        "browser": ("last_check_age_sec", "jobs_found_session"),
+        "workflow": tuple(),
+        "auto": tuple(),
+    }
+
+    STATE_STYLE_KEYS: ClassVar[dict[str, str]] = {
+        "healthy": "success",
+        "working": "warning_word",
+        "stale": "warning_word",
+        "error": "error_word",
+        "disabled": "timestamp",
+    }
+
+    def __init__(self, watcher: "GengoWatcher", **kwargs):
+        super().__init__(f"{Icons.PANEL_TELEMETRY} Telemetry", **kwargs)
+        self.watcher = watcher
+        self._tick_count = 0
+        self._last_snapshot: dict[str, dict[str, object]] = {}
+
+    def compose(self) -> ComposeResult:
+        yield Static("Loading telemetry...", id="telemetry-content")
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self.refresh_telemetry)
+        self.set_interval(0.2, self._pulse_tick)
+
+    def _pulse_tick(self) -> None:
+        self._tick_count += 1
+        self._render_cached_snapshot()
+
+    def _render_compact(self, snapshot: dict[str, dict[str, object]]) -> Text:
+        text = Text()
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+        enabled_rows = []
+        disabled_rows = []
+        for key, label in self.ROWS:
+            entry = snapshot.get(key, {}) if isinstance(snapshot, dict) else {}
+            state = str(entry.get("state") or "disabled")
+            payload = (key, label, entry if isinstance(entry, dict) else {}, state)
+            (disabled_rows if state == "disabled" else enabled_rows).append(payload)
+
+        self._append_section(text, "Enabled", enabled_rows, colors)
+        if enabled_rows and disabled_rows:
+            text.append("\n\n")
+        self._append_section(text, "Disabled", disabled_rows, colors)
+        return text
+
+    def _append_section(
+        self, text: Text, title: str, rows, colors: dict[str, str]
+    ) -> None:
+        if not rows:
+            return
+        text.append(f"{title}\n", style=f"bold {colors['source_ws']}")
+        for idx, (key, label, entry, state) in enumerate(rows):
+            detail = str(entry.get("detail") or "")
+            icon = self._animated_icon(state)
+            state_style = colors[self.STATE_STYLE_KEYS.get(state, "default")]
+            text.append(f"{icon} {label:<10}  ", style="bold")
+            text.append(f"{state.upper():<9}", style=f"bold {state_style}")
+            extras = self._compact_extras(key, entry)
+            segments = [detail] if detail else []
+            if extras:
+                segments.append(extras)
+            if segments:
+                text.append("  " + "  ".join(segments), style=colors["default"])
+            if idx < len(rows) - 1:
+                text.append("\n")
+
+    def _animated_icon(self, state: str) -> str:
+        frames = StatusIndicator._pulse_frames_for_state(
+            {"healthy": "live"}.get(state, state)
+        )
+        step = StatusIndicator._pulse_step_for_state(
+            {"healthy": "live"}.get(state, state)
+        )
+        if len(frames) > 1 and step > 0:
+            return frames[(self._tick_count // step) % len(frames)]
+        return self.HEALTH_ICONS.get(state, "·")
+
+    def _compact_extras(self, key: str, entry: dict[str, object]) -> str:
+        extras = []
+        for field in self.DETAIL_FIELDS.get(key, tuple()):
+            value = entry.get(field)
+            formatted = self._format_detail_field(field, value)
+            if formatted:
+                extras.append(formatted)
+        return " ".join(extras[:2])
+
+    @staticmethod
+    def _format_detail_field(field: str, value: object) -> str:
+        if value is None:
+            return ""
+        if field.endswith("_age_sec") or field.endswith("_in_sec"):
+            try:
+                return f"{int(float(str(value)))}s"
+            except (TypeError, ValueError):
+                return ""
+        if field.endswith("_ms"):
+            try:
+                return f"{int(float(str(value)))}ms"
+            except (TypeError, ValueError):
+                return ""
+        return str(value)
+
+    def refresh_telemetry(self) -> None:
+        if not self.watcher:
+            return
+        getter = getattr(self.watcher, "get_health_snapshot", None)
+        snapshot = getter() if callable(getter) else {}
+        self._last_snapshot = snapshot if isinstance(snapshot, dict) else {}
+        self._render_cached_snapshot()
+
+    def _render_cached_snapshot(self) -> None:
+        try:
+            content = self.query_one("#telemetry-content", Static)
+            content.update(self._render_compact(self._last_snapshot))
+        except NoMatches:
+            pass
+
+
+class TelemetryTab(Static):
+    """Detailed telemetry diagnostics tab."""
+
+    def __init__(self, watcher: "GengoWatcher", **kwargs):
+        super().__init__(**kwargs)
+        self.watcher = watcher
+        self._tick_count = 0
+        self._last_snapshot: dict[str, dict[str, object]] = {}
+
+    def compose(self) -> ComposeResult:
+        yield Static("Telemetry details unavailable", id="telemetry-tab-content")
+
+    def on_mount(self) -> None:
+        self.refresh_telemetry()
+        self.set_interval(1.0, self.refresh_telemetry)
+        self.set_interval(0.2, self._pulse_tick)
+
+    def _pulse_tick(self) -> None:
+        self._tick_count += 1
+        self._render_cached_snapshot()
+
+    def refresh_telemetry(self) -> None:
+        getter = getattr(self.watcher, "get_health_snapshot", None)
+        snapshot = getter() if callable(getter) else {}
+        self._last_snapshot = snapshot if isinstance(snapshot, dict) else {}
+        self._render_cached_snapshot()
+
+    def _render_cached_snapshot(self) -> None:
+        text = Text()
+        snapshot = self._last_snapshot
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+        if isinstance(snapshot, dict):
+            ordered = []
+            for key, _label in TelemetryPanel.ROWS:
+                entry = snapshot.get(key)
+                if isinstance(entry, dict):
+                    ordered.append((key, entry, str(entry.get("state") or "disabled")))
+            enabled = [row for row in ordered if row[2] != "disabled"]
+            disabled = [row for row in ordered if row[2] == "disabled"]
+            self._append_detailed_section(text, "ENABLED MODULES", enabled, colors)
+            if enabled and disabled:
+                text.append("\n")
+            self._append_detailed_section(text, "DISABLED MODULES", disabled, colors)
+        try:
+            self.query_one("#telemetry-tab-content", Static).update(text)
+        except NoMatches:
+            pass
+
+    def _append_detailed_section(
+        self, text: Text, title: str, rows, colors: dict[str, str]
+    ) -> None:
+        if not rows:
+            return
+        text.append(f"{title}\n", style=f"bold {colors['source_ws']}")
+        for idx, (key, entry, state) in enumerate(rows):
+            pulse_state = str({"healthy": "live"}.get(state, state))
+            frames = StatusIndicator._pulse_frames_for_state(pulse_state)
+            step = StatusIndicator._pulse_step_for_state(pulse_state)
+            icon = (
+                frames[(self._tick_count // step) % len(frames)]
+                if len(frames) > 1 and step > 0
+                else TelemetryPanel.HEALTH_ICONS.get(state, "·")
+            )
+            state_style = colors[TelemetryPanel.STATE_STYLE_KEYS.get(state, "default")]
+            text.append(f"{icon} {key.upper():<12}  ", style="bold")
+            text.append(f"{state.upper()}\n", style=f"bold {state_style}")
+            for field, value in entry.items():
+                text.append(f"  {field:<20}  ", style=colors["timestamp"])
+                text.append(f"{value}\n", style=colors["default"])
+            if idx < len(rows) - 1:
+                text.append("\n")
+
+
 class StatsPanel(Static):
     """Full statistics panel for the Stats tab."""
 
@@ -1464,7 +1798,8 @@ class StatsPanel(Static):
             # Session Stats Section
             yield Static("── Session Stats ──", classes="stats-section-header")
             yield Static(
-                "Jobs Found: 0\nAccepted: 0\nValue: $0.00", id="stats-session-content"
+                "Jobs Found: 0\nAccepted: 0\nValue: $0.00",
+                id="stats-session-content",
             )
 
             # All-Time Stats Section
@@ -1512,7 +1847,13 @@ class JobsPanel(Static):
         try:
             dt = self.query_one("#jobs-table-full", DataTable)
             dt.add_columns(
-                "ID", "Lang Pair", "Words", "Reward", "Source", "Status", "Time"
+                "ID",
+                "Lang Pair",
+                "Words",
+                "Reward",
+                "Source",
+                "Status",
+                "Time",
             )
             dt.cursor_type = "row"
         except NoMatches:
@@ -1549,7 +1890,15 @@ class JobsPanel(Static):
                 status = "✓" if job.get("accepted", False) else "○"
                 timestamp_raw = job.get("timestamp", job.get("found_at"))
                 timestamp = _format_timestamp(timestamp_raw)
-                dt.add_row(job_id, pair, words, reward, source, status, timestamp)
+                dt.add_row(
+                    job_id,
+                    pair,
+                    words,
+                    reward,
+                    source,
+                    status,
+                    timestamp,
+                )
         except NoMatches:
             logging.getLogger(__name__).debug(
                 "JobsPanel.refresh_jobs: full jobs table missing during refresh"
@@ -1592,7 +1941,8 @@ class ChartsPanel(Static):
             value_text = self._render_value_trend()
             self.query_one("#chart-value", Static).update(value_text)
         except NoMatches:
-            # Chart widgets may not be present yet (e.g., during initial layout);
+            # Chart widgets may not be present yet
+            # (e.g., during initial layout);
             # safely ignore missing targets when refreshing charts.
             logging.getLogger(__name__).debug(
                 "ChartsPanel.refresh_charts: chart widgets not found; skipping update"
@@ -1614,7 +1964,10 @@ class ChartsPanel(Static):
             bar = "█" * bar_width
             bar_padded = bar.ljust(20, "░")
             text.append(f"{hour:02d}:00 ", style="#737c73")
-            text.append(bar_padded, style="#8a9a7b" if count > 0 else "#393836")
+            text.append(
+                bar_padded,
+                style="#8a9a7b" if count > 0 else "#393836",
+            )
             text.append(f" {count:3d}\n", style="#737c73")
         return text
 
@@ -1757,12 +2110,14 @@ class GengoWatcherApp(App):
 
     def _refresh_all_panels(self):
         """Refresh relevant data panels when a new job is detected."""
-        # Determine which tab is currently active so we only refresh visible panels.
+        # Determine which tab is currently active so we only refresh visible
+        # panels.
         try:
             tabbed_content = self.query_one(TabbedContent)
             active_tab_id = tabbed_content.active
         except NoMatches:
-            # If TabbedContent can't be found, fall back to refreshing dashboard widgets.
+            # If TabbedContent can't be found, fall back to refreshing
+            # dashboard widgets.
             active_tab_id = None
 
         # Widgets that live on the dashboard tab.
@@ -1775,7 +2130,8 @@ class GengoWatcherApp(App):
         if active_tab_id in (None, "dashboard"):
             widgets_to_refresh.extend(dashboard_widgets)
 
-        # Only refresh widgets belonging to the currently active non-dashboard tab.
+        # Only refresh widgets belonging to the currently active non-dashboard
+        # tab.
         if active_tab_id == "jobs":
             widgets_to_refresh.append((JobsPanel, "refresh_jobs"))
         elif active_tab_id == "charts":
@@ -1818,7 +2174,9 @@ class GengoWatcherApp(App):
                 )
         else:
             logging.getLogger(__name__).warning(
-                "Widget %s has no method %s", widget_name, method_name
+                "Widget %s has no method %s",
+                widget_class.__name__,
+                method_name,
             )
 
     def _setup_logging(self):
@@ -1838,7 +2196,7 @@ class GengoWatcherApp(App):
             (MetricsRow, "refresh_metrics"),
             (JobsPreview, "refresh_jobs"),
             (HourlyActivity, "refresh_hourly"),
-            (SessionStats, "refresh_stats"),
+            (TelemetryPanel, "refresh_telemetry"),
         ]
 
     def _refresh_dashboard_panels(self) -> None:
@@ -1853,6 +2211,8 @@ class GengoWatcherApp(App):
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""
         try:
+            from textual.widgets import DataTable
+
             dt = self.query_one("#jobs-table-full", DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$", "Source", "Time")
         except NoMatches:
@@ -1868,7 +2228,6 @@ class GengoWatcherApp(App):
             return
         try:
             from textual.widgets import DataTable
-            from textual.css.query import NoMatches
 
             dt = self.query_one("#jobs-table-full", DataTable)
             dt.clear()
@@ -1901,19 +2260,21 @@ class GengoWatcherApp(App):
         elif pane_id == "output":
             self._refresh_widget("#output-log", "refresh")
         elif pane_id == "charts":
-            self._refresh_widget(ChartsPanel, "refresh_charts")
-        elif pane_id == "stats":
+            self._refresh_widget("#charts-content", "refresh")
+        elif pane_id == "telemetry":
             self._refresh_widget(TelemetryTab, "refresh_telemetry")
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
         """
-        Builds and yields the application's main UI layout: title bar, tabbed
-        content (Dashboard, Jobs, Activity, Output, Charts, Telemetry), and the
-        bottom input and footer.
+        Build and yield the main UI layout: title bar, tabbed content
+        (Dashboard, Jobs, Activity, Output, Charts, Stats), and the
+        bottom input/footer.
 
         Returns:
-            ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
+            ComposeResult: Yields the top TitleBar, TabbedContent with
+            dashboard panels and other tab panes, and the bottom Input
+            and Footer widgets.
         """
         yield TitleBar(config=self.config)
 
@@ -1927,10 +2288,11 @@ class GengoWatcherApp(App):
                 with Vertical(id="dashboard-content"):
                     with Container(classes="dashboard-grid"):
                         yield JobsPreview(state=self.state)
-                        yield HourlyActivity(stats=self.stats, state=self.state)
+                        yield HourlyActivity(
+                            stats=self.stats,
+                            state=self.state,
+                        )
                         yield ConfigPreview(config=self.config)
-                        yield SessionStats(watcher=self.watcher, state=self.state)
-                        yield SourcesBreakdown(state=self.state)
                         yield TelemetryPanel(watcher=self.watcher)
 
                     yield ActivityPreview()
@@ -1950,8 +2312,8 @@ class GengoWatcherApp(App):
                     max_lines=OUTPUT_LOG_MAX_LINES,
                 )
             with TabPane("Charts", id="charts"):
-                yield ChartsPanel(stats=self.stats, state=self.state)
-            with TabPane("Telemetry", id="stats"):
+                yield Static("Charts Content", id="charts-content")
+            with TabPane("Telemetry", id="telemetry"):
                 yield TelemetryTab(watcher=self.watcher)
 
         # 3. Input & Footer
@@ -1964,7 +2326,7 @@ class GengoWatcherApp(App):
 
 
 class TextualLogHandler(logging.Handler):
-    """Redirects logs to the ActivityPreview widget with Rich markup coloring."""
+    """Redirect logs to ActivityPreview with Rich markup coloring."""
 
     # Mapping of logging levels to color keys
     LEVEL_COLORS = {
@@ -1991,23 +2353,30 @@ class TextualLogHandler(logging.Handler):
         # Language pairs: JA→EN, EN-JA, Japanese→English
         (r"\b[A-Z]{2}[→\->][A-Z]{2}\b", "lang_pair"),
         (
-            r"\b(?:Japanese|English|Chinese|Korean|German|French|Spanish)[→\->](?:Japanese|English|Chinese|Korean|German|French|Spanish)\b",
+            r"\b(?:Japanese|English|Chinese|Korean|German|French|Spanish)"
+            r"[→\->](?:Japanese|English|Chinese|Korean|German|French|"
+            r"Spanish)\b",
             "lang_pair",
         ),
         # URLs
         (r"https?://[^\s]+", "url"),
         # Success words
         (
-            r"\b(?:found|accepted|success|connected|started|completed|ok|passed)\b",
+            r"\b(?:found|accepted|success|connected|started|completed|ok|"
+            r"passed)\b",
             "success",
         ),
         # Error words
         (
-            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|denied)\b",
+            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|"
+            r"denied)\b",
             "error_word",
         ),
         # Warning words
-        (r"\b(?:warning|warn|caution|retry|retrying|slow|delayed)\b", "warning_word"),
+        (
+            r"\b(?:warning|warn|caution|retry|retrying|slow|delayed)\b",
+            "warning_word",
+        ),
         # Source indicators
         (r"\b(?:websocket|ws|socket)\b", "source_ws"),
         (r"\b(?:email|imap|mail)\b", "source_email"),
@@ -2030,32 +2399,11 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self._format_ui_message(record)
             level = record.levelno
-            app_thread_id = getattr(self.app, "_thread_id", None)
-            if app_thread_id == threading.get_ident():
-                self.write_log(msg, level)
-            else:
-                # Use call_from_thread only for background threads; Textual rejects
-                # same-thread calls and can wedge the TUI if we route UI-thread
-                # logging through it.
-                self.app.call_from_thread(self.write_log, msg, level)
-        except Exception as e:
-            try:
-                formatted_message = locals().get("msg")
-                if formatted_message is None:
-                    formatted_message = getattr(
-                        record, "getMessage", lambda: repr(record)
-                    )()
-                sys.stderr.write(
-                    "GengowatcherLogHandler.emit failed while using "
-                    "self.format(record) or "
-                    "self.app.call_from_thread(self.write_log, ...).\n"
-                )
-                sys.stderr.write(f"Log message: {formatted_message}\n")
-                sys.stderr.write(f"Exception: {e}\n")
-                sys.stderr.write(traceback.format_exc())
-                sys.stderr.flush()
-            except Exception:
-                pass  # Logging failures should not crash the app
+            # Use call_from_thread for thread-safe UI updates - Textual handles
+            # scheduling
+            self.app.call_from_thread(self.write_log, msg, level)
+        except Exception:
+            pass  # Logging failures should not crash the app
 
     def _format_ui_message(self, record: logging.LogRecord) -> str:
         """Render a concise single-line message for TUI log panels."""

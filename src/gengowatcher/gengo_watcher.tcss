@@ -53,7 +53,7 @@ TitleBar {
 
 /* Metrics Row */
 MetricsRow {
-    height: 5;
+    height: 4;
     margin: 0 1;
     align: center middle;
     layout: horizontal;
@@ -157,7 +157,7 @@ MetricCard.today:focus {
 
 /* Status Row - seamless, matches surface */
 StatusRow {
-    height: 3;
+    height: 2;
     width: 100%;
     layout: horizontal;
     align: center middle;
@@ -169,7 +169,7 @@ StatusRow {
 StatusIndicator {
     layout: horizontal;
     margin: 0 2;
-    min-width: 10;
+    min-width: 8;
     align: center middle;
     width: 1fr;
 }
@@ -286,7 +286,7 @@ JobsPreview {
 }
 
 ActivityPreview {
-    height: 7;
+    height: 8;
     border-title-color: $accent-aqua;
 }
 

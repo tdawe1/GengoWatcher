@@ -30,11 +30,7 @@ def workbench_url_for_job(job_id: str) -> str:
     return f"https://gengo.com/t/workbench/{job_id}"
 
 
-async def wait_for_workbench(
-    page: "Page",
-    job_id: str,
-    timeout_ms: int = 12000,
-) -> str:
+async def wait_for_workbench(page, job_id: str, timeout_ms: int = 12000) -> str:
     def is_expected(url: str) -> bool:
         return is_workbench_url(url, expected_job_id=job_id)
 

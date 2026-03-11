@@ -35,15 +35,7 @@ class BrowserWorkerClient:
         try:
             writer.write(encode_message(payload))
             await writer.drain()
-            try:
-                response = await asyncio.wait_for(
-                    reader.readline(),
-                    timeout=self.response_timeout,
-                )
-            except asyncio.TimeoutError as exc:
-                raise RuntimeError(
-                    f"browser worker timed out after {self.response_timeout:.1f}s"
-                ) from exc
+            response = await reader.readline()
         finally:
             writer.close()
             await writer.wait_closed()
@@ -71,29 +63,4 @@ class BrowserWorkerClient:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.send_command(payload))
-        return self._submit_from_running_loop(payload)
-
-    def _submit_from_running_loop(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        error: list[BaseException] = []
-
-        def runner() -> None:
-            try:
-                result["value"] = asyncio.run(self.send_command(payload))
-            except BaseException as exc:  # pragma: no cover - defensive propagation
-                error.append(exc)
-
-        thread = threading.Thread(
-            target=runner,
-            daemon=True,
-            name="BrowserWorkerClientSubmit",
-        )
-        thread.start()
-        thread.join()
-        if error:
-            raise error[0]
-        return dict(result.get("value") or {})
+        return asyncio.run(self.send_command(payload))

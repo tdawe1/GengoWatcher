@@ -52,12 +52,6 @@ class AppConfig:
             "user_key": "REPLACE_WITH_YOUR_USER_KEY",
             "browser_debug_url": "",
             "session_sync_interval_sec": 14400,
-            "session_quiet_probe_sec": 90,
-            "session_quiet_stale_after_sec": 300,
-            "planned_reconnect_min_sec": 300,
-            "planned_reconnect_max_sec": 3600,
-            "browser_activity_min_sec": 300,
-            "browser_activity_max_sec": 3600,
             "session_sync_fail_hard": True,
             "session_sync_alert_on_failure": True,
         },
@@ -163,8 +157,6 @@ class AppConfig:
             "extreme_value_no_interval": True,
         },
         "Cancellation": {
-            # Migration note: keep cancellation opt-in unless explicitly enabled
-            # in config.toml so older installs don't auto-cancel accepted jobs.
             "enabled": False,
             "min_improvement_ratio": 2.0,
             "extreme_threshold": 1000.0,
@@ -570,41 +562,13 @@ class AppConfig:
             return "true" if value else "false"
         if isinstance(value, int):
             return str(value)
-        if isinstance(value, float):
-            return repr(value)
-        if isinstance(value, str):
-            escaped = (
-                value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-            )
-            return f'"{escaped}"'
-        if isinstance(value, list):
-            return (
-                "["
-                + ", ".join(AppConfig._serialize_toml_value(item) for item in value)
-                + "]"
-            )
-        if isinstance(value, dict):
-            items = ", ".join(
-                f"{key} = {AppConfig._serialize_toml_value(item)}"
-                for key, item in value.items()
-            )
-            return "{ " + items + " }"
-        if value is None:
-            return '""'
-        return AppConfig._serialize_toml_value(str(value))
 
-    @classmethod
-    def _dump_toml(cls, data: Dict[str, Dict[str, Any]]) -> str:
-        """Serialize the nested config dictionary to a TOML document."""
-        lines: list[str] = []
-        for section, settings in data.items():
-            if not isinstance(settings, dict):
-                continue
-            lines.append(f"[{section}]")
-            for key, value in settings.items():
-                lines.append(f"{key} = {cls._serialize_toml_value(value)}")
-            lines.append("")
-        return "\n".join(lines).rstrip() + "\n"
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            pass
+
+        return str(value)
 
     def _validate_auto_accept_config(self):
         """

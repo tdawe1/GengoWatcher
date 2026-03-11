@@ -35,21 +35,9 @@ class JobCancellationManager:
         self.job_start_time: Optional[float] = None
 
         # Cancellation settings
-        self.cancellation_enabled = self._config_getboolean(
-            "Cancellation",
-            "enabled",
-            fallback=False,
-        )
-        self.min_improvement_ratio = self._config_getfloat(
-            "Cancellation",
-            "min_improvement_ratio",
-            fallback=2.0,
-        )
-        self.extreme_threshold = self._config_getfloat(
-            "Cancellation",
-            "extreme_threshold",
-            fallback=1000.0,
-        )
+        self.cancellation_enabled = False
+        self.min_improvement_ratio = 2.0  # New job must be worth 2x more
+        self.extreme_threshold = 1000.0  # Always cancel for jobs > $1000
 
         # Statistics (protected by _lock)
         self.stats = {

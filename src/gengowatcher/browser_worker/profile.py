@@ -20,6 +20,7 @@ class BrowserProfileManager:
             self._remove_singleton_artifacts()
             return self.profile_path
 
+        self.profile_path.parent.mkdir(parents=True, exist_ok=True)
         if self.seed_profile:
             if not self.seed_profile.exists():
                 raise ValueError(

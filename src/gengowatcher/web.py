@@ -247,16 +247,9 @@ class WebAPI:
             health_snapshot = {}
             health_getter = getattr(self.watcher, "get_health_snapshot", None)
             if callable(health_getter):
-                try:
-                    candidate = health_getter()
-                except Exception as exc:
-                    self.logger.warning(
-                        "Failed to collect watcher health snapshot: %s",
-                        exc,
-                    )
-                else:
-                    if isinstance(candidate, dict):
-                        health_snapshot = candidate
+                candidate = health_getter()
+                if isinstance(candidate, dict):
+                    health_snapshot = candidate
 
             return WatcherStatus(
                 is_running=not self.watcher.shutdown_event.is_set(),

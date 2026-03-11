@@ -95,8 +95,12 @@ def mock_config(tmp_path):
         get_side_effect(s, k, **_) or 0.0
     )
     config.config = config_data
-    config.CONFIG_FILE = "test_config.toml"
-    config.list_all.return_value = config_data
+    config.CONFIG_FILE = "test_config.ini"
+    config._config_parser = MagicMock()
+    config._config_parser.sections.return_value = list(config_data.keys())
+    config._config_parser.options.side_effect = lambda s: list(
+        config_data.get(s, {}).keys()
+    )
 
     return config
 
