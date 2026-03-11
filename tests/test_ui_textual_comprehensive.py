@@ -714,6 +714,32 @@ class TestTextualLogHandler:
         # Should not raise exception
         handler.emit(record)
 
+    def test_emit_collapses_traceback_for_ui_log(self):
+        """UI log should keep exception signal without dumping full traceback."""
+        app = MagicMock()
+        handler = TextualLogHandler(app)
+
+        try:
+            raise TimeoutError("open timed out")
+        except TimeoutError:
+            import sys
+
+            record = logging.LogRecord(
+                "test",
+                logging.ERROR,
+                "test.py",
+                1,
+                "WebSocket: Unexpected error",
+                (),
+                sys.exc_info(),
+            )
+
+        handler.emit(record)
+
+        _, args, _ = app.call_from_thread.mock_calls[0]
+        assert args[1] == "WebSocket: Unexpected error | TimeoutError: open timed out"
+        assert "\n" not in args[1]
+
 
 class TestGengoWatcherApp:
     """Test main GengoWatcherApp."""

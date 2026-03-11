@@ -418,7 +418,9 @@ class TestRSSFetching:
         assert "request_headers" in call_args.kwargs
         assert "User-Agent" in call_args.kwargs["request_headers"]
 
-    def test_fetch_rss_timeout_does_not_spawn_new_worker_threads(self, watcher_instance):
+    def test_fetch_rss_timeout_does_not_spawn_new_worker_threads(
+        self, watcher_instance
+    ):
         """Test that repeated timeouts reuse the same in-flight future."""
 
         class HangingFuture:
@@ -501,6 +503,24 @@ class TestShutdown:
 class TestWebSocketIntegration:
     """Test WebSocket-related functionality."""
 
+    def test_websocket_timeout_is_logged_as_warning(self, watcher_instance):
+        """Handshake timeout should not fall through as an unexpected error."""
+        watcher_instance.logger.warning = MagicMock()
+        watcher_instance.logger.error = MagicMock()
+
+        with patch(
+            "gengowatcher.watcher.websockets.connect",
+            side_effect=TimeoutError("open timed out"),
+        ) as mock_connect:
+            asyncio.run(watcher_instance._websocket_logic())
+
+        assert mock_connect.call_args.kwargs["open_timeout"] == 20
+        watcher_instance.logger.warning.assert_any_call(
+            "WebSocket: Connection timed out during handshake/open: open timed out"
+        )
+        watcher_instance.logger.error.assert_not_called()
+        assert watcher_instance.websocket_status == "Offline"
+
     def test_capture_raw_ws_message(self, watcher_instance):
         """Test raw message capture."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: (
@@ -556,8 +576,8 @@ class TestPromptConfiguration:
 
     def test_is_config_complete_with_placeholders(self, watcher_instance):
         """Test detection of incomplete config."""
-        watcher_instance.config.get.side_effect = (
-            lambda *_, **__: "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        watcher_instance.config.get.side_effect = lambda *_, **__: (
+            "REPLACE_WITH_YOUR_SESSION_TOKEN"
         )
 
         result = watcher_instance.is_config_complete([("WebSocket", "user_session")])

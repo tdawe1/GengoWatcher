@@ -900,6 +900,7 @@ class GengoWatcher:
                 async with websockets.connect(  # type: ignore
                     ws_url,
                     additional_headers=headers,
+                    open_timeout=20,
                     ping_interval=20,
                     ping_timeout=10,
                     compression=None,
@@ -1165,6 +1166,11 @@ class GengoWatcher:
             reason = getattr(e, "reason", None)
             self.logger.warning(
                 f"WebSocket: Connection failed: code={code}, reason={reason}, error={e}"
+            )
+            self.websocket_status = "Offline"
+        except TimeoutError as e:
+            self.logger.warning(
+                f"WebSocket: Connection timed out during handshake/open: {e}"
             )
             self.websocket_status = "Offline"
         except Exception as e:
