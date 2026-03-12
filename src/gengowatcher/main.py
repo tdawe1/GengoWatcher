@@ -13,7 +13,7 @@ from rich.theme import Theme
 
 from .browser_session import (
     DEFAULT_BROWSER_DEBUG_URL,
-    fetch_browser_session_token_sync,
+    fetch_browser_session_snapshot_sync,
 )
 from .config import AppConfig
 from .state import AppState
@@ -162,8 +162,10 @@ def handle_cli_config_commands(args, config: AppConfig, console: Console) -> boo
             or config.get("WebSocket", "browser_debug_url")
             or DEFAULT_BROWSER_DEBUG_URL
         )
-        token = fetch_browser_session_token_sync(debug_url=debug_url)
+        snapshot = fetch_browser_session_snapshot_sync(debug_url=debug_url)
+        token = snapshot.session_token
         current = config.get("WebSocket", "user_session")
+        current_user_key = config.get("WebSocket", "user_key")
 
         def _mask(value):
             text = str(value or "")
@@ -172,21 +174,33 @@ def handle_cli_config_commands(args, config: AppConfig, console: Console) -> boo
             return f"{text[:4]}...{text[-4:]}"
 
         if args.check_session_from_browser:
-            if current == token:
+            key_matches = str(current_user_key or "").strip() == str(
+                snapshot.user_key or ""
+            ).strip()
+            if current == token and key_matches:
                 print(
-                    f"Browser session token matches [WebSocket] user_session at {debug_url}"
+                    f"Browser session data matches [WebSocket] credentials at {debug_url}"
                 )
             else:
                 print(
-                    "Browser session token differs from [WebSocket] user_session: "
-                    f"config={_mask(current)} browser={_mask(token)}"
+                    "Browser session data differs from [WebSocket] credentials: "
+                    f"user_session config={_mask(current)} browser={_mask(token)}; "
+                    f"user_key config={_mask(current_user_key)} browser={_mask(snapshot.user_key)}"
                 )
             return True
 
         config.set("WebSocket", "user_session", token)
+        if str(snapshot.user_key or "").strip():
+            config.set("WebSocket", "user_key", snapshot.user_key)
+        if str(snapshot.user_agent or "").strip():
+            config.set("Network", "browser_user_agent", snapshot.user_agent)
+        if str(snapshot.accept_language or "").strip():
+            config.set(
+                "Network", "browser_accept_language", snapshot.accept_language
+            )
         config.set("WebSocket", "browser_debug_url", debug_url)
         config.save_config()
-        print(f"Updated [WebSocket] user_session from browser at {debug_url}")
+        print(f"Updated [WebSocket] browser session from browser at {debug_url}")
         return True
 
     return False

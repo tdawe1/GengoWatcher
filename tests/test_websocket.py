@@ -73,8 +73,8 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
     """
     Test that a valid job received from the WebSocket is correctly processed.
 
-    Note: The actual WebSocket auth payload only includes user_id and user_session,
-    not user_key. The user_key is stored but not sent in the auth message.
+    The websocket auth payload should mirror the browser-aligned credentials
+    available in config, including user_key when present.
     """
     w = watcher_instance
     job_payload = {
@@ -101,19 +101,21 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
         else "extra_headers"
     )
     assert kwargs[header_key] is not None
+    assert kwargs[header_key]["Accept-Language"] == "en-GB,en-US;q=0.9,en;q=0.8"
     assert kwargs["ping_interval"] == 20
     assert kwargs["ping_timeout"] == 10
     mock_ws_client.send.assert_awaited_once()
     auth_call = mock_ws_client.send.await_args[0][0]
     assert '"user_id": 12345' in auth_call
     assert '"user_session": "fake_session_token"' in auth_call
-    # Note: user_key may or may not be in the auth payload depending on implementation
+    assert '"user_key": "fake_browser_user_key"' in auth_call
     w._process_new_job.assert_called_once_with(
         9876,
         "English > Japanese",
         25.50,
         "https://gengo.com/t/jobs/details/9876",
         source="WebSocket",
+        source_meta=job_payload["collection"],
     )
 
 
@@ -150,15 +152,18 @@ async def test_websocket_logic_processes_job(mock_connect, watcher_instance):
         else "extra_headers"
     )
     assert kwargs[header_key] is not None
+    assert kwargs[header_key]["Accept-Language"] == "en-GB,en-US;q=0.9,en;q=0.8"
     assert kwargs["ping_interval"] == 20
     assert kwargs["ping_timeout"] == 10
     mock_ws_client.send.assert_awaited_once()
     auth_call = mock_ws_client.send.await_args[0][0]
     assert '"user_id": 12345' in auth_call
+    assert '"user_key": "fake_browser_user_key"' in auth_call
     w._process_new_job.assert_called_once_with(
         9876,
         "English > Japanese",
         25.50,
         "https://gengo.com/t/jobs/details/9876",
         source="WebSocket",
+        source_meta=job_payload["collection"],
     )
