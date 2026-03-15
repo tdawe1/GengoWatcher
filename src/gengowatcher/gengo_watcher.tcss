@@ -215,10 +215,10 @@ StatusIndicator {
     layout: grid;
     grid-size: 2 2;
     grid-columns: 1fr 1fr;
-    grid-rows: 1fr 1fr;
+    grid-rows: 9 1fr;
     margin: 0 1;
     height: 1fr;
-    min-height: 20;
+    min-height: 18;
 }
 
 /* Panel styling - unified with surface */
@@ -255,7 +255,7 @@ StatusIndicator {
 
 DashboardQuadrant {
     border: round $surface-muted;
-    margin: 0 1 1 1;
+    margin: 0 1;
     padding: 0 1;
     height: 100%;
     border-title-color: $accent-blue;
@@ -274,7 +274,7 @@ JobsPreview {
 }
 
 ActivityPreview {
-    height: 8;
+    height: 7;
     border-title-color: $accent-aqua;
 }
 
@@ -293,6 +293,19 @@ JobsHourChart {
 
 ConfigPreview {
     border-title-color: $accent-violet;
+}
+
+.config-scroll {
+    width: 100%;
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: auto;
+    scrollbar-color: $surface-muted;
+}
+
+.config-display {
+    width: auto;
+    min-width: 100%;
 }
 
 SessionStats {

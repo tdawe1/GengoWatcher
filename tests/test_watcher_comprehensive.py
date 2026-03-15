@@ -166,6 +166,18 @@ class TestWatcherInitialization:
 
         mock_fetch.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("secret", "expected"),
+        [
+            ("", ""),
+            ("abc", "***"),
+            ("abcdefgh", "a******h"),
+            ("abcdefghij", "abcd...ghij"),
+        ],
+    )
+    def test_mask_secret_masks_short_values(self, secret, expected):
+        assert GengoWatcher._mask_secret(secret) == expected
+
     def test_sync_session_from_browser_updates_config(self, watcher_instance):
         """Browser session sync should persist a newer token."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {

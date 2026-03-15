@@ -23,6 +23,7 @@ import feedparser
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatusCode
 
+from .browser_detector import get_preferred_browser_user_agent
 from .browser_session import (
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
@@ -201,8 +202,12 @@ class GengoWatcher:
     @staticmethod
     def _mask_secret(value) -> str:
         text = str(value or "").strip()
+        if not text:
+            return ""
+        if len(text) <= 4:
+            return "*" * len(text)
         if len(text) <= 8:
-            return text
+            return f"{text[0]}{'*' * (len(text) - 2)}{text[-1]}"
         return f"{text[:4]}...{text[-4:]}"
 
     def _warn_if_browser_session_mismatch(self) -> None:
@@ -1343,7 +1348,7 @@ class GengoWatcher:
     def fetch_rss(self):
         """Fetch and parse the RSS feed from Gengo.
 
-        Retrieves the RSS feed using feedparser with optional custom user agent.
+        Retrieves the RSS feed using feedparser with an optional browser-like user agent.
         Handles various error conditions and logs appropriate messages.
 
         Returns:
@@ -1354,8 +1359,9 @@ class GengoWatcher:
         """
         headers = {}
         if self.config.get("Watcher", "use_custom_user_agent"):
-            email = self.config.get("Network", "user_agent_email")
-            headers["User-Agent"] = f"GengoWatcher/{__version__} ({email})"
+            headers["User-Agent"] = get_preferred_browser_user_agent(
+                self.config, self.logger
+            )
         self.logger.debug(
             f"Fetching RSS feed: {self.config.get('Watcher', 'feed_url')} with headers: {headers}"
         )
@@ -2189,7 +2195,7 @@ class GengoWatcher:
         try:
             settings = {
                 "cancellation_enabled": self.config.getboolean(
-                    "Cancellation", "enabled", fallback=True
+                    "Cancellation", "enabled", fallback=False
                 ),
                 "min_improvement_ratio": self.config.getfloat(
                     "Cancellation", "min_improvement_ratio", fallback=2.0

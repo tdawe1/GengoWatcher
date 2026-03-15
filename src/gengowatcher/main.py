@@ -117,6 +117,17 @@ class UILoggingHandler(logging.Handler):
         self.log_queue.append(Text.from_markup(message, style=style))
 
 
+def _should_enable_stdio_logging(
+    args: argparse.Namespace, config: AppConfig, *, tui_enabled: bool
+) -> bool:
+    """Decide whether raw stderr logging should remain active."""
+    if getattr(args, "stdio_logs", False):
+        return True
+    if tui_enabled:
+        return False
+    return bool(config.getboolean("Logging", "log_stdio_enabled", fallback=False))
+
+
 def handle_cli_config_commands(args, config: AppConfig, console: Console) -> bool:
     """Handle CLI config commands using AppConfig directly.
 
@@ -342,6 +353,7 @@ def main():
 
     log = logging.getLogger("gengowatcher")
     log.setLevel(logging.DEBUG)
+    log.propagate = False
     ui_handler = UILoggingHandler()
     log.addHandler(ui_handler)
 
@@ -371,8 +383,10 @@ def main():
                 log.addHandler(file_handler)
             except IOError as e:
                 console.print(f"[error]Could not set up file logging: {e}[/]")
-        if args.stdio_logs or config.getboolean(
-            "Logging", "log_stdio_enabled", fallback=False
+        if _should_enable_stdio_logging(
+            args,
+            config,
+            tui_enabled=not args.web_only,
         ):
             stdio_handler = logging.StreamHandler(stream=sys.stderr)
             stdio_handler.setFormatter(

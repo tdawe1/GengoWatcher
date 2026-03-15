@@ -11,11 +11,24 @@ class BrowserProfileManager:
 
     def ensure_ready(self) -> Path:
         if self.profile_path.exists():
+            if not self.profile_path.is_dir():
+                raise ValueError(
+                    f"browser profile path exists but is not a directory: {self.profile_path}"
+                )
             return self.profile_path
 
-        self.profile_path.parent.mkdir(parents=True, exist_ok=True)
         if self.seed_profile:
+            if not self.seed_profile.exists():
+                raise ValueError(
+                    f"seed profile does not exist: {self.seed_profile}"
+                )
+            if not self.seed_profile.is_dir():
+                raise ValueError(
+                    f"seed profile is not a directory: {self.seed_profile}"
+                )
+            self.profile_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(self.seed_profile, self.profile_path)
         else:
+            self.profile_path.parent.mkdir(parents=True, exist_ok=True)
             self.profile_path.mkdir(parents=True, exist_ok=True)
         return self.profile_path

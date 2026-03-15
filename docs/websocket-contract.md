@@ -17,7 +17,7 @@ GengoWatcher reads these values from a live `gengo.com` browser tab via CDP:
   `navigator.languages` or `navigator.language`
 
 The CDP helper lives in
-[`src/gengowatcher/browser_session.py`](/home/thomas/GengoWatcher/src/gengowatcher/browser_session.py).
+[`src/gengowatcher/browser_session.py`](../src/gengowatcher/browser_session.py).
 
 ## Handshake Headers
 
@@ -50,14 +50,14 @@ The current websocket auth payload is:
 The current contract is grounded in:
 
 - browser-state extraction and sync in
-  [`src/gengowatcher/browser_session.py`](/home/thomas/GengoWatcher/src/gengowatcher/browser_session.py)
+  [`src/gengowatcher/browser_session.py`](../src/gengowatcher/browser_session.py)
 - production websocket connection logic in
-  [`src/gengowatcher/watcher.py`](/home/thomas/GengoWatcher/src/gengowatcher/watcher.py)
+  [`src/gengowatcher/watcher.py`](../src/gengowatcher/watcher.py)
 - probe harnesses in
-  [`scripts/debug_ws_full.py`](/home/thomas/GengoWatcher/scripts/debug_ws_full.py),
-  [`scripts/test_ws_connection.py`](/home/thomas/GengoWatcher/scripts/test_ws_connection.py),
+  [`scripts/debug_ws_full.py`](../scripts/debug_ws_full.py),
+  [`scripts/test_ws_connection.py`](../scripts/test_ws_connection.py),
   and
-  [`scripts/test_ws_connection_v2.py`](/home/thomas/GengoWatcher/scripts/test_ws_connection_v2.py)
+  [`scripts/test_ws_connection_v2.py`](../scripts/test_ws_connection_v2.py)
 
 ## Scope
 

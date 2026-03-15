@@ -6,6 +6,7 @@ Strict implementation of the v2.0 Design Doc.
 
 import datetime
 import logging
+import os
 import re
 import time
 from typing import Any, ClassVar, cast
@@ -14,7 +15,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.color import Color
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.theme import BUILTIN_THEMES, Theme
 from textual.widgets import (
@@ -871,14 +872,17 @@ class StatusRow(Horizontal):
                 alert_health = getattr(self.watcher, "alert_on_health_snapshot", None)
                 if callable(alert_health):
                     alert_health(health_snapshot)
-                ws_state, ws_detail = self._state_from_health(
+                ws_state, _ws_detail = self._state_from_health(
                     health_snapshot, "websocket"
                 )
-                rss_state, rss_detail = self._state_from_health(health_snapshot, "rss")
-                auto_state, auto_detail = self._state_from_health(
+                rss_state, _rss_detail = self._state_from_health(
+                    health_snapshot,
+                    "rss",
+                )
+                auto_state, _auto_detail = self._state_from_health(
                     health_snapshot, "auto"
                 )
-                workflow_state, workflow_detail = self._state_from_health(
+                workflow_state, _workflow_detail = self._state_from_health(
                     health_snapshot, "workflow"
                 )
                 self.query_one("#ind-ws", StatusIndicator).set_state(ws_state)
@@ -1341,7 +1345,8 @@ class ConfigPreview(DashboardQuadrant):
         self.config = config
 
     def compose(self) -> ComposeResult:
-        yield Static(id="config-content", classes="config-display")
+        with ScrollableContainer(id="config-scroll", classes="config-scroll"):
+            yield Static(id="config-content", classes="config-display")
 
     def on_mount(self):
         """Populate config display on mount."""
@@ -1360,6 +1365,10 @@ class ConfigPreview(DashboardQuadrant):
                 "ConfigPreview.refresh_config: '#config-content' widget "
                 "not found; skipping update."
             )
+
+    def on_resize(self) -> None:
+        """Re-render when the panel width changes."""
+        self.refresh_config()
 
     def _is_sensitive(self, key: str) -> bool:
         """Check if a key contains sensitive information."""
@@ -1391,9 +1400,121 @@ class ConfigPreview(DashboardQuadrant):
 
         return formatted
 
+    def _value_width_limit(self) -> int:
+        """Derive a truncation limit from the mounted widget width."""
+        try:
+            widget_width = int(getattr(self.size, "width", 0) or 0)
+        except Exception:
+            widget_width = 0
+        if widget_width <= 0:
+            return self.MAX_VALUE_LENGTH
+
+        # Border, padding, key label, and separator consume most of the fixed space.
+        usable_width = widget_width - (self.SECTION_HEADER_WIDTH + 12)
+        return max(self.MAX_VALUE_LENGTH, min(60, usable_width))
+
+    def _column_count(self) -> int:
+        """Choose a multi-column layout when the dashboard card is wide enough."""
+        try:
+            widget_width = int(getattr(self.size, "width", 0) or 0)
+        except Exception:
+            widget_width = 0
+        return 2 if widget_width >= 56 else 1
+
+    def _render_section_block(
+        self,
+        section: str,
+        options: dict[str, Any],
+        styles: dict[str, str],
+        *,
+        max_value_length: int,
+        max_value_length_short: int,
+    ) -> list[Text]:
+        """Render a section into styled lines for later column layout."""
+        lines: list[Text] = []
+
+        header = Text()
+        header.append(f"─ {section} ", style=styles["section_header"])
+        header.append(
+            "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)),
+            style=styles["section_rule"],
+        )
+        lines.append(header)
+
+        for key, value in options.items():
+            formatted_value = self._format_value(key, value)
+            if len(formatted_value) > max_value_length:
+                formatted_value = formatted_value[:max_value_length_short] + "..."
+
+            line = Text()
+            line.append(f"  {key}: ", style=styles["key"])
+            if self._is_sensitive(key):
+                line.append(formatted_value, style="#957FB8")
+            elif isinstance(value, bool):
+                line.append(
+                    formatted_value,
+                    style=(styles["bool_true"] if value else styles["bool_false"]),
+                )
+            elif isinstance(value, (int, float)):
+                line.append(formatted_value, style=styles["number"])
+            else:
+                line.append(formatted_value, style=styles["value"])
+            lines.append(line)
+
+        return lines
+
+    @staticmethod
+    def _flatten_section_blocks(blocks: list[list[Text]]) -> list[Text]:
+        """Flatten blocks into lines with blank separators between sections."""
+        flattened: list[Text] = []
+        for index, block in enumerate(blocks):
+            flattened.extend(block)
+            if index < len(blocks) - 1:
+                flattened.append(Text(""))
+        return flattened
+
+    def _render_two_column_blocks(self, blocks: list[list[Text]]) -> Text:
+        """Lay out rendered config blocks in two columns to use spare width."""
+        result = Text()
+        if not blocks:
+            return result
+
+        total_lines = sum(len(block) + 1 for block in blocks)
+        target_left_lines = max(1, total_lines // 2)
+        left_blocks: list[list[Text]] = []
+        right_blocks: list[list[Text]] = []
+        current_left_lines = 0
+
+        for block in blocks:
+            block_height = len(block) + 1
+            if current_left_lines < target_left_lines:
+                left_blocks.append(block)
+                current_left_lines += block_height
+            else:
+                right_blocks.append(block)
+
+        left_lines = self._flatten_section_blocks(left_blocks)
+        right_lines = self._flatten_section_blocks(right_blocks)
+        left_width = max((line.cell_len for line in left_lines), default=0)
+        gap = 4
+
+        max_lines = max(len(left_lines), len(right_lines))
+        for index in range(max_lines):
+            left_line = left_lines[index] if index < len(left_lines) else Text("")
+            right_line = right_lines[index] if index < len(right_lines) else Text("")
+            row = Text()
+            row.append_text(left_line)
+            if right_lines:
+                row.append(" " * max(1, left_width - left_line.cell_len + gap))
+                row.append_text(right_line)
+            result.append_text(row)
+            if index < max_lines - 1:
+                result.append("\n")
+        return result
+
     def _render_config(self) -> Text:
         """Render all config sections and options."""
-        text = Text()
+        text = Text(no_wrap=True, overflow="ignore")
         styles = _build_config_style_palette(_get_active_theme(self))
         config = getattr(self, "config", None)
         list_all = getattr(config, "list_all", None)
@@ -1403,11 +1524,15 @@ class ConfigPreview(DashboardQuadrant):
             return text
         all_config = cast(dict[str, dict[str, Any]], list_all())
 
+        max_value_length = self._value_width_limit()
+        max_value_length_short = max(8, max_value_length - 3)
+
         # Render known sections first in preferred order, then any additional
         # sections
         sections_to_render = list(self.SECTION_ORDER) + [
             s for s in all_config if s not in self.SECTION_ORDER
         ]
+        blocks: list[list[Text]] = []
 
         for section in sections_to_render:
             if section not in all_config:
@@ -1415,40 +1540,24 @@ class ConfigPreview(DashboardQuadrant):
             options = all_config[section]
             if not options:
                 continue
-
-            # Section header
-            text.append(f"─ {section} ", style=styles["section_header"])
-            text.append(
-                "─" * max(1, self.SECTION_HEADER_WIDTH - len(section)),
-                style=styles["section_rule"],
+            blocks.append(
+                self._render_section_block(
+                    section,
+                    options,
+                    styles,
+                    max_value_length=max_value_length,
+                    max_value_length_short=max_value_length_short,
+                )
             )
-            text.append("\n")
 
-            # Options
-            for key, value in options.items():
-                formatted_value = self._format_value(key, value)
-                # Truncate long values
-                if len(formatted_value) > self.MAX_VALUE_LENGTH:
-                    formatted_value = (
-                        formatted_value[: self.MAX_VALUE_LENGTH_SHORT] + "..."
-                    )
+        if self._column_count() > 1:
+            return self._render_two_column_blocks(blocks)
 
-                # Key styling
-                text.append(f"  {key}: ", style=styles["key"])
-
-                # Value styling based on type/content
-                if self._is_sensitive(key):
-                    text.append(formatted_value, style="#957FB8")
-                elif isinstance(value, bool):
-                    text.append(
-                        formatted_value,
-                        style=(styles["bool_true"] if value else styles["bool_false"]),
-                    )
-                elif isinstance(value, (int, float)):
-                    text.append(formatted_value, style=styles["number"])
-                else:
-                    text.append(formatted_value, style=styles["value"])
-                text.append("\n")
+        for block_index, block in enumerate(blocks):
+            for line_index, line in enumerate(block):
+                text.append_text(line)
+                if block_index < len(blocks) - 1 or line_index < len(block) - 1:
+                    text.append("\n")
 
         return text
 
@@ -1564,8 +1673,8 @@ class TelemetryPanel(DashboardQuadrant):
 
         self._append_section(text, "Enabled", enabled_rows, colors)
         if enabled_rows and disabled_rows:
-            text.append("\n\n")
-        self._append_section(text, "Disabled", disabled_rows, colors)
+            text.append("\n")
+        self._append_disabled_summary(text, disabled_rows, colors)
         return text
 
     def _append_section(
@@ -1588,6 +1697,19 @@ class TelemetryPanel(DashboardQuadrant):
                 text.append("  " + "  ".join(segments), style=colors["default"])
             if idx < len(rows) - 1:
                 text.append("\n")
+
+    def _append_disabled_summary(
+        self,
+        text: Text,
+        rows,
+        colors: dict[str, str],
+    ) -> None:
+        """Render disabled modules on a single summary line to save dashboard space."""
+        if not rows:
+            return
+        labels = ", ".join(label for _key, label, _entry, _state in rows)
+        text.append("Disabled  ", style=f"bold {colors['timestamp']}")
+        text.append(labels, style=colors["default"])
 
     def _animated_icon(self, state: str) -> str:
         frames = StatusIndicator._pulse_frames_for_state(
@@ -1977,6 +2099,15 @@ class ChartsPanel(Static):
 class GengoWatcherApp(App):
     CSS_PATH = "gengo_watcher.tcss"
     DEFAULT_THEME_NAME = "nord"
+    SUPPORTED_COMMANDS: ClassVar[tuple[str, ...]] = (
+        "help",
+        "check",
+        "pause",
+        "resume",
+        "ping",
+        "notify",
+        "cancel",
+    )
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("c", "check", "Check"),
@@ -1997,6 +2128,8 @@ class GengoWatcherApp(App):
         self.state = state
         self.watcher = watcher
         self.stats = stats
+        self._textual_log_handler: TextualLogHandler | None = None
+        self._log_source: logging.Logger | None = None
 
         # Setup logging redirection
         self._setup_logging()
@@ -2081,8 +2214,22 @@ class GengoWatcherApp(App):
             )
 
     def _setup_logging(self):
+        logger = getattr(self.watcher, "logger", None)
+        if not isinstance(logger, logging.Logger):
+            logger = logging.getLogger("gengowatcher")
+
         handler = TextualLogHandler(self)
-        logging.getLogger().addHandler(handler)
+        logger.addHandler(handler)
+        self._textual_log_handler = handler
+        self._log_source = logger
+
+    def on_unmount(self) -> None:
+        """Detach the UI log handler when the TUI exits."""
+        if self._log_source is not None and self._textual_log_handler is not None:
+            try:
+                self._log_source.removeHandler(self._textual_log_handler)
+            except Exception:
+                pass
 
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
@@ -2117,6 +2264,70 @@ class GengoWatcherApp(App):
             dt.add_columns("ID", "Pair", "Words", "$$$", "Source", "Time")
         except Exception:
             pass  # Widget not mounted yet
+
+    def _write_command_feedback(self, message: str, *, level: int = logging.INFO) -> None:
+        """Render command feedback into the TUI logs immediately."""
+        TextualLogHandler(self).write_log(_with_timestamp_prefix(message), level)
+
+    def _queue_test_command(self, command: str) -> bool:
+        """Queue a websocket test command if the watcher supports it."""
+        lock = getattr(self.watcher, "_test_command_lock", None)
+        if lock is None or not hasattr(lock, "__enter__"):
+            return False
+        try:
+            with lock:
+                self.watcher._test_command = command
+        except Exception:
+            return False
+        return True
+
+    def _execute_command(
+        self, command: str, args: list[str] | None = None
+    ) -> tuple[bool, str]:
+        """Execute a command entered in the footer input or via key bindings."""
+        normalized = command.strip().lower()
+        command_args = list(args or [])
+
+        if normalized in {"", "help", "?"}:
+            return (
+                True,
+                "Commands: help, check, pause, resume, ping, notify, cancel",
+            )
+        if normalized == "check":
+            self.watcher.check_now_event.set()
+            return True, "Check triggered"
+        if normalized == "pause":
+            with open(self.watcher.PAUSE_FILE, "w", encoding="utf-8") as handle:
+                handle.write("")
+            return True, "Watcher paused"
+        if normalized == "resume":
+            try:
+                os.remove(self.watcher.PAUSE_FILE)
+            except FileNotFoundError:
+                pass
+            return True, "Watcher resumed"
+        if normalized == "cancel":
+            cancel_current_job = getattr(self.watcher, "cancel_current_job_sync", None)
+            if callable(cancel_current_job) and cancel_current_job():
+                return True, "Current job cancelled"
+            return False, "No active job to cancel or cancellation failed"
+        if normalized in {"ping", "notify"}:
+            if self._queue_test_command(normalized):
+                return True, f"{normalized.upper()} queued"
+            return False, f"{normalized.upper()} is unavailable without a live websocket"
+
+        if command_args:
+            normalized = f"{normalized} {' '.join(command_args)}".strip()
+        return False, f"Unknown command: {normalized}"
+
+    def _run_command(self, command: str, args: list[str] | None = None) -> bool:
+        """Execute a command and report the result into the UI logs."""
+        ok, message = self._execute_command(command, args=args)
+        self._write_command_feedback(
+            message,
+            level=logging.INFO if ok else logging.WARNING,
+        )
+        return ok
 
     def _load_jobs_into_table(self) -> None:
         """Load current jobs from state into the jobs DataTable."""
@@ -2159,6 +2370,32 @@ class GengoWatcherApp(App):
             self._refresh_widget("#charts-content", "refresh")
         elif pane_id == "telemetry":
             self._refresh_widget(TelemetryTab, "refresh_telemetry")
+
+    @on(Input.Submitted)
+    def _submit_command(self, event: Input.Submitted) -> None:
+        """Execute footer commands when the user presses Enter."""
+        raw_value = str(event.value or "").strip()
+        event.input.value = ""
+        event.stop()
+        if not raw_value:
+            self._run_command("help")
+            return
+
+        cleaned = raw_value[1:].strip() if raw_value.startswith(">") else raw_value
+        parts = cleaned.split()
+        command = parts[0] if parts else "help"
+        args = parts[1:]
+        self._run_command(command, args=args)
+
+    def action_check(self) -> None:
+        self._run_command("check")
+
+    def action_pause(self) -> None:
+        command = "resume" if os.path.exists(self.watcher.PAUSE_FILE) else "pause"
+        self._run_command(command)
+
+    def action_help(self) -> None:
+        self._run_command("help")
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
@@ -2291,7 +2528,9 @@ class TextualLogHandler(logging.Handler):
             # scheduling
             self.app.call_from_thread(self.write_log, msg, level)
         except Exception:
-            pass  # Logging failures should not crash the app
+            # Avoid logging here: this handler may already be on the active logger,
+            # which would recurse back into emit().
+            pass
 
     def _format_ui_message(self, record: logging.LogRecord) -> str:
         """Render a concise single-line message for TUI log panels."""

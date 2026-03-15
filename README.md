@@ -52,6 +52,15 @@ PYTHONPATH=src python -m gengowatcher.browser_worker.main \
   --socket-path /tmp/gengowatcher-browser-worker.sock
 ```
 
+On Windows PowerShell, use a temp socket path instead of the Unix `/tmp/...` example:
+
+```powershell
+$socket = Join-Path $env:TEMP "gengowatcher-browser-worker.sock"
+PYTHONPATH=src python -m gengowatcher.browser_worker.main `
+  --profile-path profiles/browser-worker `
+  --socket-path $socket
+```
+
 The operator procedure for black-box validation is documented in `docs/browser-worker-black-box-test-procedure.md`.
 
 ## Commands

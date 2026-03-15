@@ -205,6 +205,36 @@ async def test_input_exists():
 
 
 @pytest.mark.asyncio
+async def test_input_submit_executes_check_command():
+    """Pressing Enter in the footer input should dispatch the typed command."""
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        from textual.widgets import Input
+
+        input_widget = pilot.app.query_one(Input)
+        input_widget.focus()
+        input_widget.value = "check"
+        await input_widget.action_submit()
+        await pilot.pause()
+
+        app.watcher.check_now_event.set.assert_called_once()
+        assert input_widget.value == ""
+
+
+@pytest.mark.asyncio
+async def test_check_action_triggers_same_command_path():
+    """The bound check action should trigger an immediate check."""
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        pilot.app.action_check()
+        await pilot.pause()
+
+        app.watcher.check_now_event.set.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_title_bar_exists():
     """Test that app has a title bar."""
     app = create_mock_app()

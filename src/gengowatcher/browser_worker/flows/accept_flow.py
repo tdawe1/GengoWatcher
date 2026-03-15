@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 
 WORKBENCH_RE = re.compile(r"/t/workbench/(?P<job_id>\d+)")
@@ -26,7 +30,11 @@ def workbench_url_for_job(job_id: str) -> str:
     return f"https://gengo.com/t/workbench/{job_id}"
 
 
-async def wait_for_workbench(page, job_id: str, timeout_ms: int = 12000) -> str:
+async def wait_for_workbench(
+    page: "Page",
+    job_id: str,
+    timeout_ms: int = 12000,
+) -> str:
     def is_expected(url: str) -> bool:
         return is_workbench_url(url, expected_job_id=job_id)
 

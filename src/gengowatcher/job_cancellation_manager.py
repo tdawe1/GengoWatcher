@@ -35,9 +35,21 @@ class JobCancellationManager:
         self.job_start_time: Optional[float] = None
 
         # Cancellation settings
-        self.cancellation_enabled = False
-        self.min_improvement_ratio = 2.0  # New job must be worth 2x more
-        self.extreme_threshold = 1000.0  # Always cancel for jobs > $1000
+        self.cancellation_enabled = self._config_getboolean(
+            "Cancellation",
+            "enabled",
+            fallback=False,
+        )
+        self.min_improvement_ratio = self._config_getfloat(
+            "Cancellation",
+            "min_improvement_ratio",
+            fallback=2.0,
+        )
+        self.extreme_threshold = self._config_getfloat(
+            "Cancellation",
+            "extreme_threshold",
+            fallback=1000.0,
+        )
 
         # Statistics (protected by _lock)
         self.stats = {
@@ -49,6 +61,31 @@ class JobCancellationManager:
         }
 
         self.logger.info("Job Cancellation Manager initialized")
+
+    def _config_getboolean(self, section: str, key: str, *, fallback: bool) -> bool:
+        getter = getattr(self.config, "getboolean", None)
+        if callable(getter):
+            return bool(getter(section, key, fallback=fallback))
+        return bool(self._config_get(section, key, fallback))
+
+    def _config_getfloat(self, section: str, key: str, *, fallback: float) -> float:
+        getter = getattr(self.config, "getfloat", None)
+        if callable(getter):
+            return float(getter(section, key, fallback=fallback))
+        try:
+            return float(self._config_get(section, key, fallback))
+        except (TypeError, ValueError):
+            return fallback
+
+    def _config_get(self, section: str, key: str, fallback: Any) -> Any:
+        getter = getattr(self.config, "get", None)
+        if callable(getter):
+            return getter(section, key, fallback=fallback)
+
+        config_dict = getattr(self.config, "config", None)
+        if isinstance(config_dict, dict):
+            return config_dict.get(section, {}).get(key, fallback)
+        return fallback
 
     async def initialize_session(self):
         """Initialize the HTTP session for API requests."""

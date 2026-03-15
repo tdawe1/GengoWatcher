@@ -3,6 +3,7 @@ import json
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import websockets
 
@@ -15,6 +16,7 @@ PRIMARY_GENGO_COOKIE_NAMES = (
 GENGO_LOCAL_STORAGE_USER_KEY = "userKey"
 DEFAULT_GENGO_ORIGIN = "https://gengo.com"
 DEFAULT_ACCEPT_LANGUAGE = "en-GB,en-US;q=0.9,en;q=0.8"
+DEFAULT_CDP_RECEIVE_TIMEOUT_SEC = 5
 
 
 class BrowserSessionError(RuntimeError):
@@ -37,6 +39,11 @@ def _normalize_debug_url(debug_url: str | None) -> str:
 
 
 def _load_cdp_targets(debug_url: str) -> list[dict[str, Any]]:
+    parsed = urlparse(debug_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            f"unsupported browser debug URL scheme for CDP target fetch: {parsed.scheme}"
+        )
     with urllib.request.urlopen(f"{debug_url}/json/list", timeout=5) as response:
         return json.load(response)
 
@@ -78,12 +85,21 @@ async def _cdp_call(
     method: str,
     params: dict[str, Any] | None = None,
     call_id: int = 1,
+    receive_timeout_sec: float = DEFAULT_CDP_RECEIVE_TIMEOUT_SEC,
 ) -> dict[str, Any]:
     await websocket.send(
         json.dumps({"id": call_id, "method": method, "params": params or {}})
     )
     while True:
-        raw_message = await websocket.recv()
+        try:
+            raw_message = await asyncio.wait_for(
+                websocket.recv(),
+                timeout=receive_timeout_sec,
+            )
+        except asyncio.TimeoutError as exc:
+            raise BrowserSessionError(
+                f"CDP call timed out waiting for response: method={method} call_id={call_id}"
+            ) from exc
         message = json.loads(raw_message)
         if message.get("id") != call_id:
             continue

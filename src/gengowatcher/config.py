@@ -137,6 +137,8 @@ class AppConfig:
             "extreme_value_no_interval": True,
         },
         "Cancellation": {
+            # Migration note: keep cancellation opt-in unless explicitly enabled
+            # in config.ini so older installs don't auto-cancel accepted jobs.
             "enabled": False,
             "min_improvement_ratio": 2.0,
             "extreme_threshold": 1000.0,

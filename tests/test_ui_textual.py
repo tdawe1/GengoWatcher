@@ -1,6 +1,7 @@
 """Unit tests for shared helpers in the textual UI."""
 
 import datetime
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,6 +10,7 @@ from textual.css.query import NoMatches
 
 from gengowatcher.ui_textual import (
     ChartsPanel,
+    GengoWatcherApp,
     TextualLogHandler,
     _format_timestamp,
     _normalize_source,
@@ -76,13 +78,14 @@ def test_charts_panel_renders_normalized_source_breakdown():
 
     text = panel._render_sources_chart()
     lines = text.plain.strip().splitlines()
+    rendered = {line.split()[0]: line for line in lines}
 
     assert len(lines) == 5
-    assert lines[0].startswith("WebSocket") and "1 ( 20.0%)" in lines[0]
-    assert lines[1].startswith("Email") and "1 ( 20.0%)" in lines[1]
-    assert lines[2].startswith("Website") and "1 ( 20.0%)" in lines[2]
-    assert lines[3].startswith("RSS") and "1 ( 20.0%)" in lines[3]
-    assert lines[4].startswith("Unknown") and "1 ( 20.0%)" in lines[4]
+    assert "1 ( 20.0%)" in rendered["WebSocket"]
+    assert "1 ( 20.0%)" in rendered["Email"]
+    assert "1 ( 20.0%)" in rendered["Website"]
+    assert "1 ( 20.0%)" in rendered["RSS"]
+    assert "1 ( 20.0%)" in rendered["Unknown"]
 
 
 def test_textual_log_handler_write_to_log_handles_missing_widget():
@@ -103,3 +106,26 @@ def test_textual_log_handler_write_to_log_writes_to_widget():
     handler._write_to_log("#activity-log", colored_text)
 
     log_widget.write.assert_called_once_with(colored_text)
+
+
+def test_app_setup_logging_attaches_handler_to_watcher_logger(tmp_path):
+    watcher_logger = logging.getLogger("test_ui_textual_app_logger")
+    watcher_logger.handlers = []
+    watcher_logger.propagate = False
+
+    watcher = MagicMock()
+    watcher.logger = watcher_logger
+
+    app = GengoWatcherApp(
+        config=MagicMock(),
+        state=MagicMock(),
+        watcher=watcher,
+        stats=MagicMock(),
+    )
+
+    try:
+        assert app._log_source is watcher_logger
+        assert isinstance(app._textual_log_handler, TextualLogHandler)
+        assert app._textual_log_handler in watcher_logger.handlers
+    finally:
+        app.on_unmount()

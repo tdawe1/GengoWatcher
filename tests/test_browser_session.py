@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -6,6 +7,7 @@ import pytest
 
 from gengowatcher.browser_session import (
     BrowserSessionError,
+    _cdp_call,
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     extract_cookie_value,
@@ -46,6 +48,14 @@ class _MockCDPWebSocket:
 
     async def recv(self):
         return json.dumps(next(self._responses))
+
+
+class _NeverRespondingWebSocket:
+    async def send(self, data):
+        return None
+
+    async def recv(self):
+        await asyncio.sleep(3600)
 
 
 def test_select_gengo_target_returns_first_page_with_cdp_url():
@@ -194,6 +204,25 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage():
     assert snapshot.user_agent == "Helium Browser"
     assert snapshot.accept_language == "en-GB,en-US;q=0.9"
     assert snapshot.target_title == "Realtime Jobs"
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_snapshot_rejects_non_http_debug_url():
+    with pytest.raises(ValueError, match="unsupported browser debug URL scheme"):
+        await fetch_browser_session_snapshot("ftp://127.0.0.1:9222")
+
+
+@pytest.mark.asyncio
+async def test_cdp_call_times_out_when_browser_never_replies():
+    websocket = _NeverRespondingWebSocket()
+
+    with pytest.raises(BrowserSessionError, match="CDP call timed out"):
+        await _cdp_call(
+            websocket,
+            "Runtime.evaluate",
+            {"expression": "1"},
+            receive_timeout_sec=0.01,
+        )
 
 
 def test_build_browser_aligned_websocket_headers_uses_browser_profile():
