@@ -704,6 +704,9 @@ class GengoWatcher:
         if browser_user_key and browser_user_key != str(current_user_key or "").strip():
             self.config.set("WebSocket", "user_key", browser_user_key)
             changed_fields.append("user_key")
+        elif not browser_user_key and current_user_key:
+            self.config.set("WebSocket", "user_key", "")
+            changed_fields.append("user_key")
         if (
             browser_user_agent
             and browser_user_agent != str(current_user_agent or "").strip()
