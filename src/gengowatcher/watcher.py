@@ -1938,7 +1938,8 @@ class GengoWatcher:
 
             debug_url = self.config.get("WebSocket", "browser_debug_url")
             if debug_url:
-                self._sync_session_from_browser(
+                changed = await asyncio.to_thread(
+                    self._sync_session_from_browser,
                     fail_hard=self.config.getboolean(
                         "WebSocket", "session_sync_fail_hard", fallback=True
                     ),
