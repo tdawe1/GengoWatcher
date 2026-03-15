@@ -163,7 +163,7 @@ def show_setup_instructions():
     print("=" * 60)
     print("""
 1. CONFIGURATION:
-   - Copy config_high_value.ini to config.ini
+   - Copy config_high_value.ini to config.toml
    - Update YOUR_RSS_KEY_HERE with your actual RSS key
    - Set your user_id, user_session, and user_key from Gengo
 

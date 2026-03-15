@@ -205,7 +205,7 @@ def setup_website_interactive(config: AppConfig, logger=None) -> bool:
     log("    Setup Complete!")
     log("=" * 60)
     log("")
-    log("Configuration saved to config.ini:")
+    log("Configuration saved to config.toml:")
     log(f"  Jobs URL:        {jobs_url}")
     log(f"  Session Cookie:  {'*' * 20} (hidden)")
     log(f"  Headless Mode:   {'Yes' if headless else 'No'}")

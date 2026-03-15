@@ -782,6 +782,32 @@ class TestGengoWatcherApp:
         assert app.theme == "nord"
 
     @pytest.mark.asyncio
+    async def test_app_initialization_uses_saved_theme(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        mock_config.get.side_effect = lambda section, key: {
+            ("UI", "theme_name"): "gruvbox",
+        }.get((section, key), "test_value")
+
+        app = GengoWatcherApp(
+            config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
+        )
+
+        assert app.theme == "gruvbox"
+
+    def test_watch_theme_persists_selection(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        app = GengoWatcherApp(
+            config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
+        )
+
+        app.watch_theme("gruvbox")
+
+        mock_config.set.assert_called_with("UI", "theme_name", "gruvbox")
+        mock_config.save_config.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_app_has_bindings(
         self, mock_config, mock_state, mock_watcher, mock_stats
     ):

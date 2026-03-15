@@ -636,10 +636,21 @@ class GengoWatcher:
             self._health_alert_states[key] = state
             if state not in {"stale", "error"} or previous == state:
                 continue
+            sound_file = None
+            if key == "websocket" and state == "stale":
+                sound_file = (
+                    self.config.get(
+                        "Paths",
+                        "websocket_stale_sound_file",
+                        fallback="",
+                    )
+                    or None
+                )
             self.show_notification(
                 message=f"{key.title()} is {state}: {detail}",
                 title="GengoWatcher Telemetry Alert",
                 play_sound=True,
+                sound_file=sound_file,
             )
 
     def _sync_session_from_browser(
@@ -842,7 +853,13 @@ class GengoWatcher:
             self._csv_writer = None
 
     def show_notification(
-        self, message, title="GengoWatcher", play_sound=False, open_link=False, url=None
+        self,
+        message,
+        title="GengoWatcher",
+        play_sound=False,
+        open_link=False,
+        url=None,
+        sound_file=None,
     ):
         """
         Send a desktop notification and optionally play a sound or open a URL.
@@ -853,14 +870,15 @@ class GengoWatcher:
             play_sound (bool): If True and sound is enabled in configuration, play the configured sound.
             open_link (bool): If True and `url` is provided, open the URL in the configured browser.
             url (str | None): URL to open when `open_link` is True; ignored if not provided.
+            sound_file (str | None): Optional override sound path; defaults to Paths.sound_file.
         """
         if self.config.get("Watcher", "enable_notifications"):
             icon_path = self.config.get("Paths", "notification_icon_path")
             notifier.send_notification(title, message, icon_path)
 
         if play_sound and self.config.get("Watcher", "enable_sound"):
-            sound_file = self.config.get("Paths", "sound_file")
-            notifier.play_sound(sound_file)
+            chosen_sound = sound_file or self.config.get("Paths", "sound_file")
+            notifier.play_sound(chosen_sound)
 
         if open_link and url:
             self.open_in_browser(url)
@@ -1944,7 +1962,7 @@ class GengoWatcher:
             # Validate session token (required)
             if not session_token or session_token == session_placeholder:
                 self.logger.warning(
-                    "WebSocket disabled: Please set 'user_session' in config.ini."
+                    "WebSocket disabled: Please set 'user_session' in config.toml."
                 )
                 self.websocket_status = "Disabled"
                 self.shutdown_event.wait()
@@ -2161,9 +2179,7 @@ class GengoWatcher:
         return value
 
     def list_config_values(self):
-        config_dict = {}
-        for section in self.config._config_parser.sections():
-            config_dict[section] = dict(self.config._config_parser.items(section))
+        config_dict = self.config.list_all()
         self.logger.debug(f"Listing all config values: {config_dict}")
         return config_dict
 

@@ -25,4 +25,4 @@
 - Output and logs live under `logs/`, `archives/`, `stats.json`, and `analysis/` directories, meaning scripts serve as both producers and consumers of the same persisted telemetry the core services rely on.
 - WebSocket helpers talk to `wss://live-dashboard.gengo.com` using the same cookies/payload shape as `src/gengowatcher/websocket.py`, making them natural playgrounds for manual debugging.
 - Validation tooling (`validate_captcha_implementation.py`) and safe automation demos reference docs in `docs/` and modules under `src/gengowatcher/captcha`, linking repository documentation with implementation readiness.
-- Test scripts also depend on external services (Gengo API, captcha solvers) and expect credential/config tokens provided through `config.ini` or environment variables, so they sit at the boundary between local experimentation and production readiness.
+- Test scripts also depend on external services (Gengo API, captcha solvers) and expect credential/config tokens provided through `config.toml` or environment variables, so they sit at the boundary between local experimentation and production readiness.

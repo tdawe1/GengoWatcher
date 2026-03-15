@@ -5,6 +5,7 @@ Strict implementation of the v2.0 Design Doc.
 """
 
 import datetime
+from functools import partial
 import logging
 import os
 import re
@@ -1299,7 +1300,7 @@ class HourlyActivity(DashboardQuadrant):
 
 
 class ConfigPreview(DashboardQuadrant):
-    """Configuration preview showing all config.ini options."""
+    """Configuration preview showing all config.toml options."""
 
     # Keys that should be masked for security
     SENSITIVE_KEYS: ClassVar[frozenset[str]] = frozenset(
@@ -2123,19 +2124,69 @@ class GengoWatcherApp(App):
         stats: StatsManager,
     ):
         super().__init__()
-        self.theme = self.DEFAULT_THEME_NAME
         self.config = config
         self.state = state
         self.watcher = watcher
         self.stats = stats
         self._textual_log_handler: TextualLogHandler | None = None
         self._log_source: logging.Logger | None = None
+        self._theme_persistence_ready = False
+        self._persisted_theme_name = self.DEFAULT_THEME_NAME
 
         # Setup logging redirection
         self._setup_logging()
+        self.theme = self._load_theme_name_from_config()
+        self._persisted_theme_name = self.theme
+        self._theme_persistence_ready = True
 
         # Register callback for when new jobs are detected
         self.watcher.on_job_added_callback = self._on_job_added_from_thread
+
+    def _normalize_theme_name(self, theme_name: object) -> str:
+        """Return a valid Textual theme name or the app default."""
+        candidate = str(theme_name or "").strip() or self.DEFAULT_THEME_NAME
+        return (
+            candidate
+            if candidate in self.available_themes
+            else self.DEFAULT_THEME_NAME
+        )
+
+    def _load_theme_name_from_config(self) -> str:
+        """Read the saved UI theme from config."""
+        getter = getattr(self.config, "get", None)
+        configured_theme = getter("UI", "theme_name") if callable(getter) else None
+        return self._normalize_theme_name(configured_theme)
+
+    def watch_theme(self, theme_name: str) -> None:
+        """Persist theme changes triggered by the command palette."""
+        theme = self.current_theme
+        dark = theme.dark
+        self.ansi_color = theme_name == "textual-ansi"
+        self.set_class(dark, "-dark-mode", update=False)
+        self.set_class(not dark, "-light-mode", update=False)
+        self._refresh_truecolor_filter(self.ansi_theme)
+        self._invalidate_css()
+        self.call_next(partial(self.refresh_css, animate=False))
+        self.call_next(self.theme_changed_signal.publish, theme)
+        normalized_theme = self._normalize_theme_name(theme_name)
+        if not self._theme_persistence_ready:
+            return
+        if normalized_theme == self._persisted_theme_name:
+            return
+
+        setter = getattr(self.config, "set", None)
+        saver = getattr(self.config, "save_config", None)
+        try:
+            if callable(setter):
+                setter("UI", "theme_name", normalized_theme)
+            if callable(saver):
+                saver()
+            self._persisted_theme_name = normalized_theme
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to persist Textual theme selection",
+                exc_info=True,
+            )
 
     def _on_job_added_from_thread(self, _job_data: dict):
         """Called from watcher thread when a new job is added."""

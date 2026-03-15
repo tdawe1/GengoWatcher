@@ -241,9 +241,7 @@ class TestConfigManagement:
 
     def test_list_config_values(self, watcher_instance):
         """Test listing all configuration values."""
-        watcher_instance.config._config_parser = MagicMock()
-        watcher_instance.config._config_parser.sections.return_value = ["Watcher"]
-        watcher_instance.config._config_parser.items.return_value = [("key", "value")]
+        watcher_instance.config.list_all.return_value = {"Watcher": {"key": "value"}}
 
         config_dict = watcher_instance.list_config_values()
 
@@ -337,7 +335,7 @@ class TestConfigValidation:
             60 if (s, k) == ("Watcher", "check_interval") else kw.get("fallback")
         )
 
-        result = watcher_instance.is_config_complete()
+        result = watcher_instance.is_config_complete([("Watcher", "check_interval")])
 
         assert result is True
 
@@ -362,7 +360,7 @@ class TestConfigValidation:
         inputs = iter(["test_value"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
         monkeypatch.setattr("getpass.getpass", lambda _prompt: "test_value")
-        config_path = tmp_path / "config.ini"
+        config_path = tmp_path / "config.toml"
         config_path.write_text("[Watcher]\ntest_key=REPLACE_WITH_YOUR_SESSION_TOKEN\n")
         watcher_instance.config.CONFIG_FILE = str(config_path)
 

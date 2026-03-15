@@ -1,6 +1,7 @@
 import logging
 import threading
 import sys
+import os
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 import collections
@@ -95,6 +96,8 @@ APP_THEME = Theme(
         "input": "white",
     }
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class UILoggingHandler(logging.Handler):
@@ -279,12 +282,12 @@ def main():
     parser.add_argument(
         "--sync-session-from-browser",
         action="store_true",
-        help="Read my_gengo_session from a live browser via CDP and save it to config.ini",
+        help="Read my_gengo_session from a live browser via CDP and save it to config.toml",
     )
     parser.add_argument(
         "--check-session-from-browser",
         action="store_true",
-        help="Compare config.ini session token against a live browser session via CDP",
+        help="Compare config.toml session token against a live browser session via CDP",
     )
     parser.add_argument(
         "--browser-debug-url",
@@ -512,6 +515,12 @@ def main():
         console.print("[info]GengoWatcher has shut down.[/]")
     except KeyboardInterrupt:
         console.print("[info]Shutting down...[/]")
+
+
+def run():
+    """Console-script entrypoint that preserves the repo-root runtime layout."""
+    os.chdir(PROJECT_ROOT)
+    main()
 
 
 if __name__ == "__main__":

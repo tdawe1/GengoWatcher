@@ -1,9 +1,9 @@
 """Tests for CLI/runtime logging decisions in main.py."""
 
 from argparse import Namespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from gengowatcher.main import _should_enable_stdio_logging
+from gengowatcher.main import PROJECT_ROOT, _should_enable_stdio_logging, run
 
 
 def test_should_enable_stdio_logging_disables_configured_stdio_in_tui_mode():
@@ -28,3 +28,13 @@ def test_should_enable_stdio_logging_uses_config_when_no_tui_is_active():
     args = Namespace(stdio_logs=False)
 
     assert _should_enable_stdio_logging(args, config, tui_enabled=False) is True
+
+
+def test_run_changes_to_project_root_before_calling_main():
+    with patch("gengowatcher.main.os.chdir") as mock_chdir, patch(
+        "gengowatcher.main.main"
+    ) as mock_main:
+        run()
+
+    mock_chdir.assert_called_once_with(PROJECT_ROOT)
+    mock_main.assert_called_once_with()

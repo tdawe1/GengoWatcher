@@ -89,12 +89,8 @@ def mock_config(tmp_path):
         get_side_effect(s, k, **_) or 0.0
     )
     config.config = config_data
-    config.CONFIG_FILE = "test_config.ini"
-    config._config_parser = MagicMock()
-    config._config_parser.sections.return_value = list(config_data.keys())
-    config._config_parser.options.side_effect = lambda s: list(
-        config_data.get(s, {}).keys()
-    )
+    config.CONFIG_FILE = "test_config.toml"
+    config.list_all.return_value = config_data
 
     return config
 
@@ -442,6 +438,38 @@ class TestNotifications:
                 )
                 mock_notify.assert_called_once()
                 mock_sound.assert_called_once()
+
+    def test_show_notification_uses_override_sound_when_provided(self, watcher_instance):
+        """Explicit sound overrides should bypass the default alert sound."""
+        with patch("gengowatcher.notifier.send_notification"):
+            with patch("gengowatcher.notifier.play_sound") as mock_sound:
+                watcher_instance.show_notification(
+                    "Test message",
+                    title="Test",
+                    play_sound=True,
+                    sound_file="assets/ws-stale.wav",
+                )
+                mock_sound.assert_called_once_with("assets/ws-stale.wav")
+
+    def test_alert_on_health_snapshot_uses_websocket_stale_sound_override(
+        self, watcher_instance
+    ):
+        """Websocket stale alerts should use the dedicated sound override when set."""
+        watcher_instance.config.get.side_effect = lambda section, key, **kwargs: {
+            ("Paths", "websocket_stale_sound_file"): "assets/ws-stale.wav",
+        }.get((section, key), kwargs.get("fallback", ""))
+
+        with patch.object(watcher_instance, "show_notification") as mock_notify:
+            watcher_instance.alert_on_health_snapshot(
+                {"websocket": {"state": "stale", "detail": "pong overdue"}}
+            )
+
+        mock_notify.assert_called_once_with(
+            message="Websocket is stale: pong overdue",
+            title="GengoWatcher Telemetry Alert",
+            play_sound=True,
+            sound_file="assets/ws-stale.wav",
+        )
 
     def test_show_notification_with_link(self, watcher_instance):
         """Test notification with link opening."""

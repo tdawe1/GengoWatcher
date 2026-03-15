@@ -226,14 +226,10 @@ class TestConfigurationManagement:
 
     def test_list_config_values(self, watcher_with_mocks):
         """Test listing all configuration values."""
-        mock_parser = MagicMock()
-        mock_parser.sections.return_value = ["Watcher", "WebSocket"]
-        mock_parser.items.side_effect = lambda s: {
-            "Watcher": [("check_interval", "60")],
-            "WebSocket": [("enable_websocket", "True")],
-        }.get(s, [])
-
-        watcher_with_mocks.config._config_parser = mock_parser
+        watcher_with_mocks.config.list_all.return_value = {
+            "Watcher": {"check_interval": "60"},
+            "WebSocket": {"enable_websocket": "True"},
+        }
 
         config_dict = watcher_with_mocks.list_config_values()
         assert "Watcher" in config_dict
@@ -317,15 +313,10 @@ class TestPromptForConfigValues:
 
     def test_prompt_for_config_values_auto_detect(self, watcher_with_mocks, tmp_path):
         """Test auto-detecting missing config values."""
-        mock_parser = MagicMock()
-        mock_parser.sections.return_value = ["WebSocket"]
-        mock_parser.options.return_value = ["user_session"]
-
-        watcher_with_mocks.config._config_parser = mock_parser
         watcher_with_mocks.config.get.return_value = "REPLACE_WITH_YOUR_SESSION_TOKEN"
-        config_path = tmp_path / "config.ini"
+        config_path = tmp_path / "config.toml"
         config_path.write_text(
-            "[WebSocket]\nuser_session=REPLACE_WITH_YOUR_SESSION_TOKEN\n"
+            '[WebSocket]\nuser_session = "REPLACE_WITH_YOUR_SESSION_TOKEN"\n'
         )
         watcher_with_mocks.config.CONFIG_FILE = str(config_path)
 
@@ -336,11 +327,7 @@ class TestPromptForConfigValues:
         self, watcher_with_mocks, capsys, tmp_path
     ):
         """Test when no config values are missing."""
-        mock_parser = MagicMock()
-        mock_parser.sections.return_value = []
-
-        watcher_with_mocks.config._config_parser = mock_parser
-        config_path = tmp_path / "config.ini"
+        config_path = tmp_path / "config.toml"
         config_path.write_text("")
         watcher_with_mocks.config.CONFIG_FILE = str(config_path)
 
@@ -353,15 +340,10 @@ class TestPromptForConfigValues:
         """Test that sensitive fields use hidden input."""
         import getpass
 
-        mock_parser = MagicMock()
-        mock_parser.sections.return_value = ["WebSocket"]
-        mock_parser.options.return_value = ["user_session"]
-
-        watcher_with_mocks.config._config_parser = mock_parser
         watcher_with_mocks.config.get.return_value = "REPLACE_WITH_YOUR_SESSION_TOKEN"
-        config_path = tmp_path / "config.ini"
+        config_path = tmp_path / "config.toml"
         config_path.write_text(
-            "[WebSocket]\nuser_session=REPLACE_WITH_YOUR_SESSION_TOKEN\n"
+            '[WebSocket]\nuser_session = "REPLACE_WITH_YOUR_SESSION_TOKEN"\n'
         )
         watcher_with_mocks.config.CONFIG_FILE = str(config_path)
 
