@@ -25,18 +25,26 @@ def run_application(args: argparse.Namespace, console: Console) -> None:
     try:
         config = AppConfig()
         configure_logger(log, ui_handler, args, config, tui_enabled=not args.web_only)
+    except Exception as e:
+        if log.handlers:
+            log.critical(f"A critical error occurred during initialization: {e}")
+        console.print(
+            f"[error]A critical error occurred during initialization: {e}[/]"
+        )
+        sys.exit(1)
+
+    _handle_setup_commands(args, config, console)
+
+    try:
         state = AppState(logger=log)
         watcher = GengoWatcher(config=config, state=state, logger=log)
     except Exception as e:
         if log.handlers:
             log.critical(f"A critical error occurred during initialization: {e}")
-        else:
-            console.print(
-                f"[error]A critical error occurred during initialization: {e}[/]"
-            )
+        console.print(
+            f"[error]A critical error occurred during initialization: {e}[/]"
+        )
         sys.exit(1)
-
-    _handle_setup_commands(args, config, console)
 
     if not watcher.is_config_complete():
         print("\n⚠️  Configuration is incomplete or contains placeholder values.")

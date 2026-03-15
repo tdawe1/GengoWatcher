@@ -144,13 +144,25 @@ def configure_logger(
 def _attach_file_handler(log: logging.Logger, config: AppConfig) -> None:
     log_file = Path(str(config.get("Paths", "log_file") or "logs/gengowatcher.log"))
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    log_max_bytes = config.get("Logging", "log_max_bytes") or 0
+
+    # Coerce log_max_bytes to int with safe fallback
+    try:
+        log_max_bytes = int(config.get("Logging", "log_max_bytes") or 0)
+    except (TypeError, ValueError):
+        log_max_bytes = 0
     if log_max_bytes < 1024:
         log_max_bytes = 10485760
+
+    # Coerce log_backup_count to int with safe fallback
+    try:
+        log_backup_count = int(config.get("Logging", "log_backup_count") or 5)
+    except (TypeError, ValueError):
+        log_backup_count = 5
+
     file_handler = RotatingFileHandler(
         log_file,
         maxBytes=log_max_bytes,
-        backupCount=config.get("Logging", "log_backup_count") or 5,
+        backupCount=log_backup_count,
     )
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")

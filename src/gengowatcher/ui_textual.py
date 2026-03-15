@@ -1400,11 +1400,9 @@ class SourcesBreakdown(DashboardQuadrant):
             # Count jobs by source
             counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0, "unknown": 0}
             for j in jobs:
-                src = str(j.get("source", "unknown")).lower()
-                if src in counts:
-                    counts[src] += 1
-                else:
-                    counts["unknown"] += 1
+                raw_source = j.get("source", "unknown")
+                normalized = self._normalize_source(str(raw_source).lower())
+                counts[normalized] += 1
 
             # Calculate percentages
             ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
