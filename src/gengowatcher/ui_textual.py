@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from collections import deque
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -600,6 +600,12 @@ class MetricsRow(Horizontal):
             else:
                 elapsed_hours = 1.0  # Default to 1 hour if no session start
             rate = found / elapsed_hours
+        except Exception as e:
+            logging.error(f"Error calculating metrics: {e}")
+            found = 0
+            accepted = 0
+            total_value = 0.0
+            rate = 0.0
 
         updates = {
             "#card-found": str(found),
@@ -1392,10 +1398,13 @@ class SourcesBreakdown(DashboardQuadrant):
             total = len(jobs) if jobs else 1  # Avoid division by zero
 
             # Count jobs by source
-            ws_count = sum(1 for j in jobs if j.get("source") == "websocket")
-            email_count = sum(1 for j in jobs if j.get("source") == "email")
-            web_count = sum(1 for j in jobs if j.get("source") == "website")
-            rss_count = sum(1 for j in jobs if j.get("source") == "rss")
+            counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0, "unknown": 0}
+            for j in jobs:
+                src = str(j.get("source", "unknown")).lower()
+                if src in counts:
+                    counts[src] += 1
+                else:
+                    counts["unknown"] += 1
 
             # Calculate percentages
             ws_pct = (counts["websocket"] / total) * 100 if total > 0 else 0
