@@ -141,8 +141,10 @@ def interactive_configure(config: AppConfig, console: Console) -> None:
             prompt_text = f"[label]{description}[/] [{masked}]: "
 
         console.print(prompt_text, end="")
-        new_value = input().strip()
-
+        if option in {"user_key", "user_session"}:
+            new_value = getpass("").strip()
+        else:
+            new_value = input().strip()
         if new_value:
             config.set(section, option, new_value)
             console.print("  [success]✓ Updated[/]")
