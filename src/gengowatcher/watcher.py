@@ -2047,7 +2047,8 @@ class GengoWatcher:
                     break
                 backoff = min(backoff * 2, max_backoff)
         self.logger.info("WebSocket monitor thread stopped.")
-        self.websocket_status = "Stopped"
+        if not self._websocket_sync_failed:
+            self.websocket_status = "Stopped"
 
     def run(self):
         self.logger.debug("Starting watcher parent thread.")
