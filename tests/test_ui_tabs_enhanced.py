@@ -93,7 +93,7 @@ async def test_tab_switching_cycle():
 
         tabbed = pilot.app.query_one(TabbedContent)
 
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "stats"]
+        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
 
         for tab_id in tabs:
             tabbed.active = tab_id
@@ -205,6 +205,36 @@ async def test_input_exists():
 
 
 @pytest.mark.asyncio
+async def test_input_submit_executes_check_command():
+    """Pressing Enter in the footer input should dispatch the typed command."""
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        from textual.widgets import Input
+
+        input_widget = pilot.app.query_one(Input)
+        input_widget.focus()
+        input_widget.value = "check"
+        await input_widget.action_submit()
+        await pilot.pause()
+
+        app.watcher.check_now_event.set.assert_called_once()
+        assert input_widget.value == ""
+
+
+@pytest.mark.asyncio
+async def test_check_action_triggers_same_command_path():
+    """The bound check action should trigger an immediate check."""
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        pilot.app.action_check()
+        await pilot.pause()
+
+        app.watcher.check_now_event.set.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_title_bar_exists():
     """Test that app has a title bar."""
     app = create_mock_app()
@@ -225,7 +255,7 @@ async def test_rapid_tab_switching():
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "stats"]
+        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
 
         for _ in range(3):
             for tab_id in tabs:
@@ -248,12 +278,12 @@ async def test_dashboard_hourly_activity_exists():
 
 
 @pytest.mark.asyncio
-async def test_dashboard_session_stats_exists():
-    """Test that dashboard contains SessionStats."""
+async def test_dashboard_telemetry_panel_exists():
+    """Test that dashboard contains TelemetryPanel."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from gengowatcher.ui_textual import SessionStats
+        from gengowatcher.ui_textual import TelemetryPanel
 
-        stats = pilot.app.query_one(SessionStats)
+        stats = pilot.app.query_one(TelemetryPanel)
         assert stats is not None

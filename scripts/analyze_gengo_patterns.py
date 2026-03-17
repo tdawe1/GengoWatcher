@@ -343,11 +343,11 @@ async def main():
     session = config.get("WebSocket", "user_session")
     user_key = config.get("WebSocket", "user_key")
     if not session or session == "REPLACE_WITH_YOUR_SESSION_TOKEN":
-        logger.error("Please configure your session token in config.ini")
+        logger.error("Please configure your session token in config.toml")
         return
     if not user_key or user_key == "REPLACE_WITH_YOUR_USER_KEY":
         logger.error(
-            "Please configure your browser user key (DevTools → Application → Local Storage → userKey) in config.ini"
+            "Please configure your browser user key (DevTools → Application → Local Storage → userKey) in config.toml"
         )
         return
 

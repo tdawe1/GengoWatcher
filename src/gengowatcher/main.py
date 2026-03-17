@@ -1,6 +1,7 @@
 import logging
 import threading
 import sys
+import os
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 import collections
@@ -11,6 +12,10 @@ from rich.console import Console
 from rich.text import Text
 from rich.theme import Theme
 
+from .browser_session import (
+    DEFAULT_BROWSER_DEBUG_URL,
+    fetch_browser_session_snapshot_sync,
+)
 from .config import AppConfig
 from .state import AppState
 from .stats import StatsManager
@@ -69,9 +74,9 @@ class CategoryFilter(logging.Filter):
 
         for category, keywords in CATEGORY_KEYWORDS.items():
             if any(kw in msg_lower for kw in keywords):
-                return self.config.get("DebugCategories", category)
+                return bool(self.config.get("DebugCategories", category))
 
-        return self.config.get("DebugCategories", "system")
+        return bool(self.config.get("DebugCategories", "system"))
 
 
 APP_THEME = Theme(
@@ -92,6 +97,8 @@ APP_THEME = Theme(
     }
 )
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 class UILoggingHandler(logging.Handler):
     def __init__(self, *args, **kwargs):
@@ -111,6 +118,17 @@ class UILoggingHandler(logging.Handler):
             f"{record.getMessage()}"
         )
         self.log_queue.append(Text.from_markup(message, style=style))
+
+
+def _should_enable_stdio_logging(
+    args: argparse.Namespace, config: AppConfig, *, tui_enabled: bool
+) -> bool:
+    """Decide whether raw stderr logging should remain active."""
+    if getattr(args, "stdio_logs", False):
+        return True
+    if tui_enabled:
+        return False
+    return bool(config.getboolean("Logging", "log_stdio_enabled", fallback=False))
 
 
 def handle_cli_config_commands(args, config: AppConfig, console: Console) -> bool:
@@ -150,6 +168,53 @@ def handle_cli_config_commands(args, config: AppConfig, console: Console) -> boo
     if args.configure:
         # Interactive configuration - needs special handling
         _interactive_configure(config, console)
+        return True
+
+    if args.sync_session_from_browser or args.check_session_from_browser:
+        debug_url = (
+            args.browser_debug_url
+            or config.get("WebSocket", "browser_debug_url")
+            or DEFAULT_BROWSER_DEBUG_URL
+        )
+        snapshot = fetch_browser_session_snapshot_sync(debug_url=debug_url)
+        token = snapshot.session_token
+        current = config.get("WebSocket", "user_session")
+        current_user_key = config.get("WebSocket", "user_key")
+
+        def _mask(value):
+            text = str(value or "")
+            if len(text) <= 8:
+                return text
+            return f"{text[:4]}...{text[-4:]}"
+
+        if args.check_session_from_browser:
+            key_matches = str(current_user_key or "").strip() == str(
+                snapshot.user_key or ""
+            ).strip()
+            if current == token and key_matches:
+                print(
+                    f"Browser session data matches [WebSocket] credentials at {debug_url}"
+                )
+            else:
+                print(
+                    "Browser session data differs from [WebSocket] credentials: "
+                    f"user_session config={_mask(current)} browser={_mask(token)}; "
+                    f"user_key config={_mask(current_user_key)} browser={_mask(snapshot.user_key)}"
+                )
+            return True
+
+        config.set("WebSocket", "user_session", token)
+        if str(snapshot.user_key or "").strip():
+            config.set("WebSocket", "user_key", snapshot.user_key)
+        if str(snapshot.user_agent or "").strip():
+            config.set("Network", "browser_user_agent", snapshot.user_agent)
+        if str(snapshot.accept_language or "").strip():
+            config.set(
+                "Network", "browser_accept_language", snapshot.accept_language
+            )
+        config.set("WebSocket", "browser_debug_url", debug_url)
+        config.save_config()
+        print(f"Updated [WebSocket] browser session from browser at {debug_url}")
         return True
 
     return False
@@ -215,6 +280,20 @@ def main():
         help="Interactively configure missing/required values",
     )
     parser.add_argument(
+        "--sync-session-from-browser",
+        action="store_true",
+        help="Read my_gengo_session from a live browser via CDP and save it to config.toml",
+    )
+    parser.add_argument(
+        "--check-session-from-browser",
+        action="store_true",
+        help="Compare config.toml session token against a live browser session via CDP",
+    )
+    parser.add_argument(
+        "--browser-debug-url",
+        help="Browser remote debugging base URL (default: [WebSocket] browser_debug_url or http://127.0.0.1:9222)",
+    )
+    parser.add_argument(
         "--web",
         action="store_true",
         help="Start web UI server alongside TUI",
@@ -255,7 +334,14 @@ def main():
     # Handle config commands BEFORE initializing the heavy GengoWatcher instance.
     # This allows CLI config operations to work even if another watcher is running.
 
-    if args.set or args.get or args.list or args.configure:
+    if (
+        args.set
+        or args.get
+        or args.list
+        or args.configure
+        or args.sync_session_from_browser
+        or args.check_session_from_browser
+    ):
         try:
             config = AppConfig()
             if handle_cli_config_commands(args, config, console):
@@ -270,6 +356,7 @@ def main():
 
     log = logging.getLogger("gengowatcher")
     log.setLevel(logging.DEBUG)
+    log.propagate = False
     ui_handler = UILoggingHandler()
     log.addHandler(ui_handler)
 
@@ -280,7 +367,9 @@ def main():
         ui_handler.addFilter(category_filter)
         if config.get("Logging", "log_main_enabled"):
             try:
-                log_file = Path(config.get("Paths", "log_file"))
+                log_file = Path(
+                    str(config.get("Paths", "log_file") or "logs/gengowatcher.log")
+                )
                 log_file.parent.mkdir(parents=True, exist_ok=True)
                 # Validate log_max_bytes to prevent handler crash
                 log_max_bytes = config.get("Logging", "log_max_bytes") or 0
@@ -297,8 +386,10 @@ def main():
                 log.addHandler(file_handler)
             except IOError as e:
                 console.print(f"[error]Could not set up file logging: {e}[/]")
-        if args.stdio_logs or config.getboolean(
-            "Logging", "log_stdio_enabled", fallback=False
+        if _should_enable_stdio_logging(
+            args,
+            config,
+            tui_enabled=not args.web_only,
         ):
             stdio_handler = logging.StreamHandler(stream=sys.stderr)
             stdio_handler.setFormatter(
@@ -380,7 +471,8 @@ def main():
     # Exit if only web server was requested
     if args.web_only:
         try:
-            web_thread.join()
+            if web_thread is not None:
+                web_thread.join()
         except KeyboardInterrupt:
             console.print("[info]Web server shutting down...[/]")
         sys.exit(0)
@@ -423,6 +515,12 @@ def main():
         console.print("[info]GengoWatcher has shut down.[/]")
     except KeyboardInterrupt:
         console.print("[info]Shutting down...[/]")
+
+
+def run():
+    """Console-script entrypoint that preserves the repo-root runtime layout."""
+    os.chdir(PROJECT_ROOT)
+    main()
 
 
 if __name__ == "__main__":

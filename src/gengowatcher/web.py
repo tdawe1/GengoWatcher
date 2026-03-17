@@ -107,6 +107,7 @@ class WatcherStatus(BaseModel):
     session_stats: Dict[str, Any]
     failure_count: int
     cancellation_stats: Optional[Dict[str, Any]] = None
+    health: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("websocket_status", "rss_status")
     @classmethod
@@ -217,6 +218,20 @@ class WebAPI:
                     # Assume it's a datetime object
                     last_check = self.watcher.last_check_time.timestamp()
 
+            health_snapshot = {}
+            health_getter = getattr(self.watcher, "get_health_snapshot", None)
+            if callable(health_getter):
+                try:
+                    candidate = health_getter()
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed to collect watcher health snapshot: %s",
+                        exc,
+                    )
+                else:
+                    if isinstance(candidate, dict):
+                        health_snapshot = candidate
+
             return WatcherStatus(
                 is_running=not self.watcher.shutdown_event.is_set(),
                 websocket_status=self.watcher.websocket_status,
@@ -230,6 +245,7 @@ class WebAPI:
                 },
                 failure_count=self.watcher.failure_count,
                 cancellation_stats=self.watcher.get_cancellation_stats(),
+                health=health_snapshot,
             )
 
     async def cancel_current_job(self) -> bool:
@@ -586,18 +602,16 @@ async def lifespan(app: FastAPI):
         # Check if config exists, create it if needed
         from pathlib import Path
 
-        config_path = Path("config.ini")
+        config_path = Path(AppConfig.CONFIG_FILE)
         if not config_path.exists():
-            logger.info("Creating default config.ini for web API")
-            # Create default config without exiting
-            import configparser
-
-            config = configparser.ConfigParser()
-            config.read_dict(AppConfig.DEFAULT_CONFIG)
-            with open(config_path, "w") as f:
-                config.write(f)
+            logger.info("Creating default %s for web API", AppConfig.CONFIG_FILE)
+            config_path.write_text(
+                AppConfig._dump_toml(AppConfig.DEFAULT_CONFIG),
+                encoding="utf-8",
+            )
             logger.info(
-                "Default config created. Please review config.ini before using the web API."
+                "Default config created. Please review %s before using the web API.",
+                AppConfig.CONFIG_FILE,
             )
 
         config = AppConfig()
@@ -614,7 +628,8 @@ async def lifespan(app: FastAPI):
                 "No WebServer auth_token found or it was a placeholder. Generated a new one."
             )
             logger.warning(
-                "Check config.ini [WebServer] section for the auth_token value."
+                "Check %s [WebServer] for the auth_token value.",
+                AppConfig.CONFIG_FILE,
             )
 
         global authenticator

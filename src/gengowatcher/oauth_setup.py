@@ -212,7 +212,7 @@ async def setup_gmail_oauth(config: AppConfig, logger=None) -> bool:
 
             log("\n✓ OAuth setup complete!")
             log(f"  Email: {email_addr}")
-            log("  Refresh token saved to config.ini")
+            log("  Refresh token saved to config.toml")
             log("  Email monitor is now enabled\n")
 
             return True

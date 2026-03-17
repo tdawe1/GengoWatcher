@@ -21,6 +21,32 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 
+def _config_to_dict(config: Any) -> Dict[str, Any]:
+    """Normalize AppConfig-like objects into the nested dict BrowserDetector expects."""
+    if isinstance(config, dict):
+        return config
+
+    list_all = getattr(config, "list_all", None)
+    if callable(list_all):
+        try:
+            config_dict = list_all()
+        except Exception:
+            config_dict = None
+        if isinstance(config_dict, dict):
+            return config_dict
+
+    config_dict = getattr(config, "config", None)
+    if isinstance(config_dict, dict):
+        return config_dict
+
+    return {}
+
+
+def get_preferred_browser_user_agent(config: Any, logger=None) -> str:
+    """Resolve the best browser-like User-Agent for an AppConfig-like object."""
+    return BrowserDetector(_config_to_dict(config), logger).get_user_agent()
+
+
 class BrowserDetector:
     """
     Detects and provides User-Agent strings for installed browsers.
@@ -55,22 +81,28 @@ class BrowserDetector:
         Returns:
             User-Agent string for HTTP requests
         """
-        # 0. Check if browser detection is disabled - early return with fallback
-        detect_ua_flag = self.config.get("Network", {}).get("detect_browser_ua", False)
-        # Coerce string values to boolean (config may return "true"/"false" strings)
-        if isinstance(detect_ua_flag, str):
-            detect_ua_flag = detect_ua_flag.lower() in ("1", "true", "yes", "on", "enabled")
-        if not detect_ua_flag:
-            if self.logger:
-                self.logger.debug("Browser detection disabled, using fallback")
-            return self._get_fallback_user_agent()
-
-        # 1. Check for manual override in config
+        # 0. Check for manual override in config
         manual_ua = self._get_manual_user_agent()
         if manual_ua:
             if self.logger:
                 self.logger.debug(f"Using manually configured User-Agent: {manual_ua}")
             return manual_ua
+
+        # 1. Check if browser detection is disabled - early return with fallback
+        detect_ua_flag = self.config.get("Network", {}).get("detect_browser_ua", False)
+        # Coerce string values to boolean (config may return "true"/"false" strings)
+        if isinstance(detect_ua_flag, str):
+            detect_ua_flag = detect_ua_flag.lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+                "enabled",
+            )
+        if not detect_ua_flag:
+            if self.logger:
+                self.logger.debug("Browser detection disabled, using fallback")
+            return self._get_fallback_user_agent()
 
         # 2. Check cache first
         cached_ua = self._get_cached_user_agent()
@@ -100,10 +132,14 @@ class BrowserDetector:
         Returns:
             Manual User-Agent string or None if not configured
         """
-        # Check for manual override
-        manual_ua = self.config.get("Network", {}).get("user_agent", "")
-        if manual_ua and manual_ua.strip():
-            return manual_ua.strip()
+        network_config = self.config.get("Network", {})
+        if not isinstance(network_config, dict):
+            return None
+
+        for key in ("browser_user_agent", "user_agent"):
+            manual_ua = str(network_config.get(key, "") or "").strip()
+            if manual_ua:
+                return manual_ua
 
         return None
 

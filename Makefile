@@ -10,8 +10,15 @@ lint:
 format:
 	.venv/bin/black .
 
+install:
+	.venv/bin/pip install -e .
+
+install-user:
+	mkdir -p "$(HOME)/.local/bin"
+	ln -snf "$(CURDIR)/bin/gengowatcher" "$(HOME)/.local/bin/gengowatcher"
+
 run:
-	PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main
+	./bin/gengowatcher
 
 run-web:
 	PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main --web

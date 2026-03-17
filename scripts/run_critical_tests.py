@@ -67,7 +67,7 @@ async def test_captcha_solver():
         return False
 
     # Test 3: Check CAPTCHA configuration exists
-    config_file = Path("config.ini")
+    config_file = Path("config.toml")
     if config_file.exists():
         with open(config_file, "r") as f:
             config_content = f.read()

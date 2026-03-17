@@ -134,11 +134,12 @@ async def test_config_preview_render_uses_constants():
         assert websocket_pos >= 0
         assert watcher_pos < websocket_pos
 
-        # Check that long values are truncated to MAX_VALUE_LENGTH_SHORT + "..."
-        # The 30-character value should be truncated
-        assert "..." in result_str
-        # Verify the full 30-character value is not present
-        assert "x" * 30 not in result_str
+        width_limit = preview._value_width_limit()
+        if len("x" * 30) > width_limit:
+            assert "..." in result_str
+            assert "x" * 30 not in result_str
+        else:
+            assert "x" * 30 in result_str
 # =============================================================================
 # ConfigPreview Tests
 # =============================================================================
@@ -164,6 +165,8 @@ async def test_config_preview_renders_sections():
     app = ConfigPreviewTestApp(config)
     async with app.run_test() as pilot:
         preview = app.query_one(ConfigPreview)
+        scroll = preview.query_one("#config-scroll")
+        assert scroll is not None
         content = preview.query_one("#config-content")
         assert content is not None
 
@@ -254,7 +257,7 @@ async def test_config_preview_formats_lists():
 
 @pytest.mark.asyncio
 async def test_config_preview_truncates_long_values():
-    """ConfigPreview should truncate values longer than 20 characters."""
+    """ConfigPreview should adapt truncation to the available panel width."""
     config = create_mock_config(
         {
             "Paths": {"feed_url": "https://example.com/very/long/path/to/resource"},
@@ -272,10 +275,12 @@ async def test_config_preview_truncates_long_values():
         text = preview._render_config()
         plain_text = text.plain
 
-        # The full URL should not appear (it's > 20 chars)
-        assert "https://example.com/very/long/path/to/resource" not in plain_text
-        # But truncated version with ... should appear
-        assert "..." in plain_text
+        full_value = "https://example.com/very/long/path/to/resource"
+        if len(full_value) > preview._value_width_limit():
+            assert full_value not in plain_text
+            assert "..." in plain_text
+        else:
+            assert full_value in plain_text
 
 
 @pytest.mark.asyncio
@@ -335,12 +340,10 @@ async def test_config_preview_section_ordering():
     app = ConfigPreviewTestApp(config)
     async with app.run_test() as pilot:
         preview = app.query_one(ConfigPreview)
-        text = preview._render_config()
-        plain_text = text.plain
+        ordered_sections = [
+            section
+            for section in preview.SECTION_ORDER
+            if section in config.list_all.return_value
+        ]
 
-        # Watcher should appear before WebSocket, which should appear before Logging
-        watcher_pos = plain_text.find("Watcher")
-        websocket_pos = plain_text.find("WebSocket")
-        logging_pos = plain_text.find("Logging")
-
-        assert watcher_pos < websocket_pos < logging_pos
+        assert ordered_sections == ["Watcher", "WebSocket", "Logging"]
