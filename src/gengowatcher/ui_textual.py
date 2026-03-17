@@ -1401,7 +1401,7 @@ class SourcesBreakdown(DashboardQuadrant):
             counts = {"websocket": 0, "email": 0, "website": 0, "rss": 0, "unknown": 0}
             for j in jobs:
                 raw_source = j.get("source", "unknown")
-                normalized = self._normalize_source(str(raw_source).lower())
+                normalized = _normalize_source(raw_source)
                 counts[normalized] += 1
 
             # Calculate percentages

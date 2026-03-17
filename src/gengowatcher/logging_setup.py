@@ -129,7 +129,7 @@ def configure_logger(
     log.addFilter(category_filter)
     ui_handler.addFilter(category_filter)
 
-    if config.get("Logging", "log_main_enabled"):
+    if config.getboolean("Logging", "log_main_enabled"):
         _attach_file_handler(log, config)
 
     if should_enable_stdio_logging(args, config, tui_enabled=tui_enabled):
