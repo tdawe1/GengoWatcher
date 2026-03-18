@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+set -eu
+
+SOURCE_PATH=$0
+while [ -L "$SOURCE_PATH" ]; do
+    LINK_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE_PATH")" && pwd)
+    LINK_TARGET=$(readlink "$SOURCE_PATH")
+    case "$LINK_TARGET" in
+        /*) SOURCE_PATH=$LINK_TARGET ;;
+        *) SOURCE_PATH=$LINK_DIR/$LINK_TARGET ;;
+    esac
+done
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE_PATH")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    cd "$REPO_ROOT"
+    exec "$REPO_ROOT/.venv/bin/python" -m gengowatcher.main "$@"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+    cd "$REPO_ROOT"
+    exec env PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m gengowatcher.main "$@"
+fi
+
+printf '%s\n' "No Python interpreter found. Create .venv or install python3." >&2
+exit 1

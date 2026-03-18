@@ -52,7 +52,11 @@ logs/
 wakapi_db.db
 
 # Application files (user-specific)
+config.toml
+config.toml.lock
+config.toml.new
 config.ini
+config.ini.lock
 config.ini.new
 state.json
 stats.json
@@ -101,3 +105,5 @@ thoughts/
 stats.json
 
 archives/
+docs/plans/
+scripts/run_codex_exec_cycle.sh

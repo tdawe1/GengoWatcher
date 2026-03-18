@@ -21,6 +21,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     BeautifulSoup = None  # type: ignore
 
+from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
 
 
@@ -150,9 +151,10 @@ class JobAcceptanceEngine:
     async def initialize_session(self):
         """Initialize the HTTP session for API requests."""
         if self.session is None or self.session.closed:
+            user_agent = get_preferred_browser_user_agent(self.config, self.logger)
             self.session = aiohttp.ClientSession(
                 headers={
-                    "User-Agent": "GengoWatcher/2.1.5",
+                    "User-Agent": user_agent,
                     "Content-Type": "application/json",
                 },
                 timeout=aiohttp.ClientTimeout(total=30),
@@ -375,6 +377,7 @@ class JobAcceptanceEngine:
         """Construct authenticated headers for HTTP acceptance."""
         user_session = self.config.get("WebSocket", "user_session")
         user_id = self.config.get("WebSocket", "user_id")
+        user_agent = get_preferred_browser_user_agent(self.config, self.logger)
 
         if not user_session or user_session == "REPLACE_WITH_YOUR_SESSION_TOKEN":
             self.logger.error("User session token not configured for job acceptance")
@@ -385,7 +388,7 @@ class JobAcceptanceEngine:
 
         return {
             "Cookie": f"my_gengo_session={user_session}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            "User-Agent": user_agent,
             "Origin": "https://gengo.com",
             "Referer": "https://gengo.com/t/jobs/status/available",
         }

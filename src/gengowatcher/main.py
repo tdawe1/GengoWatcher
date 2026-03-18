@@ -30,5 +30,11 @@ def main() -> None:
     run_application(args, console)
 
 
+def run():
+    """Console-script entrypoint that preserves the repo-root runtime layout."""
+    os.chdir(PROJECT_ROOT)
+    main()
+
+
 if __name__ == "__main__":
     main()

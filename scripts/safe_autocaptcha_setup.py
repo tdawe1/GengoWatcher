@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""
-Safe Auto-Captcha Setup for GengoWatcher
-Provides conservative, safe configuration for auto-captcha functionality
-"""
+"""Safe Auto-Captcha Setup for GengoWatcher."""
 
-import configparser
+import copy
 import logging
+import tomllib
 from pathlib import Path
 from typing import Dict, Any, List
+
+from gengowatcher.config import AppConfig
 
 
 class SafeAutoCaptchaSetup:
     """Provides safe, conservative auto-captcha configuration"""
 
-    def __init__(self, config_file: str = "config.ini"):
+    def __init__(self, config_file: str = "config.toml"):
         self.config_file = Path(config_file)
         self.logger = logging.getLogger("safe_setup")
 
@@ -54,53 +54,77 @@ class SafeAutoCaptchaSetup:
             },
         }
 
+    def _load_raw_config(self) -> dict[str, Any]:
+        if not self.config_file.exists():
+            return {}
+        with open(self.config_file, "rb") as handle:
+            loaded = tomllib.load(handle)
+        return loaded if isinstance(loaded, dict) else {}
+
+    @staticmethod
+    def _coerce_value(value: str) -> Any:
+        lowered = value.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        try:
+            if "." in value:
+                return float(value)
+            return int(value)
+        except ValueError:
+            return value
+
     def create_safe_config(self) -> str:
-        """Create a safe configuration file"""
-        config = configparser.ConfigParser()
+        """Create or update a TOML config file with conservative defaults."""
+        raw_config = self._load_raw_config()
+        config = copy.deepcopy(AppConfig.DEFAULT_CONFIG)
 
-        # Load existing config if it exists
-        if self.config_file.exists():
-            config.read(self.config_file)
+        for section, values in raw_config.items():
+            if not isinstance(values, dict):
+                continue
+            config.setdefault(section, {}).update(values)
 
-        # Update with safe defaults
         for section, settings in self.safe_defaults.items():
-            if not config.has_section(section):
-                config.add_section(section)
-
+            existing_section = raw_config.get(section, {})
+            if not isinstance(existing_section, dict):
+                existing_section = {}
+            target_section = config.setdefault(section, {})
             for key, value in settings.items():
-                if not config.has_option(section, key):
-                    config.set(section, key, value)
+                if key not in existing_section:
+                    target_section[key] = self._coerce_value(value)
                     self.logger.info(f"Added safe default: [{section}] {key} = {value}")
 
-        # Save the configuration
-        with open(self.config_file, "w") as f:
-            config.write(f)
+        self.config_file.write_text(
+            AppConfig._dump_toml(config),
+            encoding="utf-8",
+        )
 
         return f"Safe configuration created at {self.config_file}"
 
     def validate_config(self) -> Dict[str, Any]:
-        """Validate current configuration for safety"""
+        """Validate current configuration for safety."""
         if not self.config_file.exists():
             return {"valid": False, "issues": ["Configuration file does not exist"]}
 
-        config = configparser.ConfigParser()
-        config.read(self.config_file)
+        config = self._load_raw_config()
 
         issues = []
         warnings = []
 
         # Check AutoAccept settings
-        if config.has_section("AutoAccept"):
-            if config.getboolean("AutoAccept", "enabled", fallback=False):
+        auto_accept = config.get("AutoAccept")
+        if isinstance(auto_accept, dict):
+            if bool(auto_accept.get("enabled", False)):
                 warnings.append("Auto-acceptance is enabled - monitor closely")
 
-            min_reward = config.getfloat("AutoAccept", "min_reward", fallback=0.0)
+            min_reward = float(auto_accept.get("min_reward", 0.0))
             if min_reward < 2.0:
                 issues.append(
                     f"Minimum reward ({min_reward}) is very low - consider increasing to reduce volume"
                 )
 
-            max_delay = config.getint("AutoAccept", "accept_delay_max", fallback=30)
+            max_delay = int(auto_accept.get("accept_delay_max", 30))
             if max_delay < 30:
                 warnings.append(
                     f"Maximum delay ({max_delay}s) is short - consider increasing for safety"
@@ -109,14 +133,15 @@ class SafeAutoCaptchaSetup:
             issues.append("AutoAccept section missing from configuration")
 
         # Check Captcha settings
-        if config.has_section("Captcha"):
-            api_key = config.get("Captcha", "api_key", fallback="")
+        captcha = config.get("Captcha")
+        if isinstance(captcha, dict):
+            api_key = str(captcha.get("api_key", ""))
             if api_key and not api_key.startswith("YOUR_"):
                 self.logger.info("CAPTCHA API key appears to be configured")
             else:
                 issues.append("CAPTCHA API key not configured")
 
-            rate_limit = config.getint("Captcha", "rate_limit", fallback=60)
+            rate_limit = int(captcha.get("rate_limit", 60))
             if rate_limit > 50:
                 warnings.append(
                     f"CAPTCHA rate limit ({rate_limit}) is high - consider reducing"
@@ -205,7 +230,7 @@ def main():
 
     print("\n" + "=" * 50)
     print("🎯 Next Steps:")
-    print("   1. Edit config.ini and set your CAPTCHA API key")
+    print("   1. Edit config.toml and set your CAPTCHA API key")
     print("   2. Run: python -m gengowatcher.main")
     print("   3. Test with auto-acceptance DISABLED first")
     print("   4. Monitor logs and costs closely")

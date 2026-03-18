@@ -1,0 +1,320 @@
+import asyncio
+import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from gengowatcher.browser_session import (
+    BrowserSessionError,
+    _cdp_call,
+    build_browser_aligned_websocket_headers,
+    build_websocket_auth_payload,
+    extract_cookie_value,
+    fetch_browser_session_snapshot,
+    fetch_browser_session_token,
+    select_gengo_target,
+)
+from gengowatcher.main import handle_cli_config_commands
+
+
+class _MockUrlResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return json.dumps(self._payload).encode("utf-8")
+
+
+class _MockCDPWebSocket:
+    def __init__(self, responses):
+        self._responses = iter(responses)
+        self._sent = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def send(self, data):
+        self._sent.append(json.loads(data))
+
+    async def recv(self):
+        return json.dumps(next(self._responses))
+
+
+class _NeverRespondingWebSocket:
+    async def send(self, data):
+        return None
+
+    async def recv(self):
+        await asyncio.sleep(3600)
+
+
+def test_select_gengo_target_returns_first_page_with_cdp_url():
+    target = select_gengo_target(
+        [
+            {
+                "type": "page",
+                "url": "https://example.com",
+                "webSocketDebuggerUrl": "ws://example",
+            },
+            {
+                "type": "page",
+                "url": "https://gengo.com/t/jobs/",
+                "webSocketDebuggerUrl": "ws://gengo",
+            },
+        ]
+    )
+
+    assert target["webSocketDebuggerUrl"] == "ws://gengo"
+
+
+def test_extract_cookie_value_returns_gengo_session_cookie():
+    value = extract_cookie_value(
+        [
+            {"name": "other", "value": "ignore"},
+            {"name": "myG_myGSession_", "value": "fresh-token"},
+        ]
+    )
+
+    assert value == "fresh-token"
+
+
+def test_extract_cookie_value_prefers_primary_cookie_name():
+    value = extract_cookie_value(
+        [
+            {"name": "myG_rdsessID", "value": "secondary-token"},
+            {"name": "myG_myGSession_", "value": "primary-token"},
+        ]
+    )
+
+    assert value == "primary-token"
+
+
+def test_extract_cookie_value_raises_when_missing():
+    with pytest.raises(BrowserSessionError, match="session cookies"):
+        extract_cookie_value([])
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_token_reads_cookie_from_cdp():
+    targets = [
+        {
+            "type": "page",
+            "url": "https://gengo.com/t/jobs/status/available/realtime",
+            "webSocketDebuggerUrl": "ws://gengo-target",
+        }
+    ]
+    cookie_response = {
+        "id": 1,
+        "result": {
+            "cookies": [
+                {"name": "myG_myGSession_", "value": "fresh-token"},
+            ]
+        },
+    }
+    runtime_response = {
+        "id": 2,
+        "result": {
+            "result": {
+                "type": "object",
+                "value": {
+                    "userKey": "browser-user-key",
+                    "userAgent": "Helium Browser",
+                    "acceptLanguage": "en-GB,en-US;q=0.9",
+                    "origin": "https://gengo.com",
+                    "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    "title": "Gengo",
+                },
+            }
+        },
+    }
+
+    with (
+        patch(
+            "gengowatcher.browser_session.urllib.request.urlopen",
+            return_value=_MockUrlResponse(targets),
+        ),
+        patch(
+            "gengowatcher.browser_session.websockets.connect",
+            return_value=_MockCDPWebSocket([cookie_response, runtime_response]),
+        ),
+    ):
+        token = await fetch_browser_session_token("http://127.0.0.1:9222")
+
+    assert token == "fresh-token"
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage():
+    targets = [
+        {
+            "type": "page",
+            "url": "https://gengo.com/t/jobs/status/available/realtime",
+            "webSocketDebuggerUrl": "ws://gengo-target",
+        }
+    ]
+    cookie_response = {
+        "id": 1,
+        "result": {
+            "cookies": [
+                {"name": "myG_myGSession_", "value": "fresh-token"},
+            ]
+        },
+    }
+    runtime_response = {
+        "id": 2,
+        "result": {
+            "result": {
+                "type": "object",
+                "value": {
+                    "userKey": "browser-user-key",
+                    "userAgent": "Helium Browser",
+                    "acceptLanguage": "en-GB,en-US;q=0.9",
+                    "origin": "https://gengo.com",
+                    "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    "title": "Realtime Jobs",
+                },
+            }
+        },
+    }
+
+    with (
+        patch(
+            "gengowatcher.browser_session.urllib.request.urlopen",
+            return_value=_MockUrlResponse(targets),
+        ),
+        patch(
+            "gengowatcher.browser_session.websockets.connect",
+            return_value=_MockCDPWebSocket([cookie_response, runtime_response]),
+        ),
+    ):
+        snapshot = await fetch_browser_session_snapshot("http://127.0.0.1:9222")
+
+    assert snapshot.session_token == "fresh-token"
+    assert snapshot.user_key == "browser-user-key"
+    assert snapshot.user_agent == "Helium Browser"
+    assert snapshot.accept_language == "en-GB,en-US;q=0.9"
+    assert snapshot.target_title == "Realtime Jobs"
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_snapshot_rejects_non_http_debug_url():
+    with pytest.raises(ValueError, match="unsupported browser debug URL scheme"):
+        await fetch_browser_session_snapshot("ftp://127.0.0.1:9222")
+
+
+@pytest.mark.asyncio
+async def test_cdp_call_times_out_when_browser_never_replies():
+    websocket = _NeverRespondingWebSocket()
+
+    with pytest.raises(BrowserSessionError, match="CDP call timed out"):
+        await _cdp_call(
+            websocket,
+            "Runtime.evaluate",
+            {"expression": "1"},
+            receive_timeout_sec=0.01,
+        )
+
+
+def test_build_browser_aligned_websocket_headers_uses_browser_profile():
+    headers = build_browser_aligned_websocket_headers(
+        session_token="fresh-token",
+        user_agent="Helium Browser",
+        origin="https://gengo.com",
+        accept_language="en-GB,en-US;q=0.9",
+    )
+
+    assert headers == {
+        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
+        "Origin": "https://gengo.com",
+        "User-Agent": "Helium Browser",
+        "Accept-Language": "en-GB,en-US;q=0.9",
+    }
+
+
+def test_build_websocket_auth_payload_includes_user_key_when_present():
+    payload = build_websocket_auth_payload(
+        user_id=12345,
+        session_token="fresh-token",
+        user_key="browser-user-key",
+    )
+
+    assert payload == {
+        "user_id": 12345,
+        "user_session": "fresh-token",
+        "user_key": "browser-user-key",
+    }
+
+
+def test_handle_cli_sync_session_updates_config_and_debug_url(capsys):
+    args = SimpleNamespace(
+        set=None,
+        get=None,
+        list=False,
+        configure=False,
+        sync_session_from_browser=True,
+        check_session_from_browser=False,
+        browser_debug_url="http://127.0.0.1:9222",
+    )
+    config = MagicMock()
+    config.get.side_effect = lambda section, key: {
+        ("WebSocket", "browser_debug_url"): "",
+    }.get((section, key), None)
+
+    with patch(
+        "gengowatcher.main.fetch_browser_session_snapshot_sync",
+        return_value=MagicMock(
+            session_token="fresh-token",
+            user_key="browser-user-key",
+            user_agent="Helium Browser",
+            accept_language="en-GB,en-US;q=0.9",
+        ),
+    ):
+        handled = handle_cli_config_commands(args, config, console=MagicMock())
+
+    assert handled is True
+    assert config.set.call_args_list == [
+        (("WebSocket", "user_session", "fresh-token"),),
+        (("WebSocket", "user_key", "browser-user-key"),),
+        (("Network", "browser_user_agent", "Helium Browser"),),
+        (("Network", "browser_accept_language", "en-GB,en-US;q=0.9"),),
+        (("WebSocket", "browser_debug_url", "http://127.0.0.1:9222"),),
+    ]
+    config.save_config.assert_called_once()
+    assert "Updated [WebSocket] browser session" in capsys.readouterr().out
+
+
+def test_handle_cli_check_session_reports_mismatch(capsys):
+    args = SimpleNamespace(
+        set=None,
+        get=None,
+        list=False,
+        configure=False,
+        sync_session_from_browser=False,
+        check_session_from_browser=True,
+        browser_debug_url="http://127.0.0.1:9222",
+    )
+    config = MagicMock()
+    config.get.side_effect = lambda section, key: {
+        ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+        ("WebSocket", "user_session"): "stale-token",
+    }.get((section, key), None)
+
+    with patch(
+        "gengowatcher.main.fetch_browser_session_snapshot_sync",
+        return_value=MagicMock(session_token="fresh-token", user_key="browser-user-key"),
+    ):
+        handled = handle_cli_config_commands(args, config, console=MagicMock())
+
+    assert handled is True
+    config.save_config.assert_not_called()
+    assert "differs" in capsys.readouterr().out
