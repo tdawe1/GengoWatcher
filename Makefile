@@ -1,3 +1,10 @@
+build:
+	@echo "Compiling Python files..."
+	python3 -m py_compile src/gengowatcher/*.py
+	python3 -m py_compile tests/*.py
+	python3 -m py_compile scripts/*.py
+	@echo "Build successful!"
+
 test:
 	.venv/bin/pytest
 
@@ -10,15 +17,8 @@ lint:
 format:
 	.venv/bin/black .
 
-install:
-	.venv/bin/pip install -e .
-
-install-user:
-	mkdir -p "$(HOME)/.local/bin"
-	ln -snf "$(CURDIR)/bin/gengowatcher" "$(HOME)/.local/bin/gengowatcher"
-
 run:
-	./bin/gengowatcher
+	PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main
 
 run-web:
 	PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main --web
