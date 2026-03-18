@@ -600,7 +600,7 @@ class MetricsRow(Horizontal):
             else:
                 elapsed_hours = 1.0  # Default to 1 hour if no session start
             rate = found / elapsed_hours
-        except (ValueError, TypeError, KeyError) as e:
+        except Exception as e:
             logging.error(f"Error calculating metrics: {e}")
             found = 0
             accepted = 0
