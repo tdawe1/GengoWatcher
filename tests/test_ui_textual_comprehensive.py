@@ -714,6 +714,29 @@ class TestTextualLogHandler:
         # Should not raise exception
         handler.emit(record)
 
+    def test_emit_failure_does_not_recurse_via_logging(self):
+        """Emit failures should not log through the same handler recursively."""
+        app = MagicMock()
+        app.call_from_thread.side_effect = RuntimeError("Thread error")
+        handler = TextualLogHandler(app)
+        logger = logging.getLogger("test_textual_handler_recursion")
+        previous_handlers = list(logger.handlers)
+        previous_level = logger.level
+        previous_propagate = logger.propagate
+
+        logger.handlers = []
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        logger.addHandler(handler)
+
+        try:
+            logger.info("Test message")
+        finally:
+            logger.removeHandler(handler)
+            logger.handlers = previous_handlers
+            logger.setLevel(previous_level)
+            logger.propagate = previous_propagate
+
     def test_emit_collapses_traceback_for_ui_log(self):
         """UI log should keep exception signal without dumping full traceback."""
         app = MagicMock()
@@ -757,6 +780,32 @@ class TestGengoWatcherApp:
         assert app.watcher == mock_watcher
         assert app.stats == mock_stats
         assert app.theme == "nord"
+
+    @pytest.mark.asyncio
+    async def test_app_initialization_uses_saved_theme(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        mock_config.get.side_effect = lambda section, key: {
+            ("UI", "theme_name"): "gruvbox",
+        }.get((section, key), "test_value")
+
+        app = GengoWatcherApp(
+            config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
+        )
+
+        assert app.theme == "gruvbox"
+
+    def test_watch_theme_persists_selection(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        app = GengoWatcherApp(
+            config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
+        )
+
+        app.watch_theme("gruvbox")
+
+        mock_config.set.assert_called_with("UI", "theme_name", "gruvbox")
+        mock_config.save_config.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_app_has_bindings(

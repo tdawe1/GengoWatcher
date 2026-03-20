@@ -1,10 +1,9 @@
-import pytest
 import os
-import json
-import configparser
+import tomllib
 from pathlib import Path
-
 from unittest.mock import patch
+
+import pytest
 
 from gengowatcher.config import AppConfig
 
@@ -19,8 +18,8 @@ def test_dir(tmp_path):
 
 
 def test_config_creates_default_file(test_dir):
-    """Test that AppConfig creates a default config.ini if one doesn't exist."""
-    config_file = test_dir / "config.ini"
+    """Test that AppConfig creates a default config.toml if one doesn't exist."""
+    config_file = test_dir / "config.toml"
     assert not config_file.is_file()
 
     with patch("sys.exit") as mock_exit:
@@ -39,6 +38,8 @@ def test_config_loads_default_values(test_dir):
     assert app_config.get("Watcher", "check_interval") == 31
     assert app_config.get("Watcher", "enable_notifications") is True
     assert app_config.get("Network", "user_agent_email") == ""
+    assert app_config.get("Paths", "websocket_stale_sound_file") == ""
+    assert app_config.get("UI", "theme_name") == "nord"
 
     assert app_config.get("WebSocket", "enable_websocket") is True
     assert app_config.get("WebSocket", "user_id") == 0
@@ -65,40 +66,58 @@ def test_save_config_uses_sidecar_lock_file(test_dir):
     with patch("builtins.open", side_effect=tracking_open):
         app_config.save_config()
 
-    assert ("config.ini.lock", "a+") in open_calls
-    assert ("config.ini", "a+") not in open_calls
+    assert ("config.toml.lock", "a+") in open_calls
+    assert ("config.toml", "a+") not in open_calls
 
 
-def test_default_list_values_are_stored_as_json(test_dir):
-    """Default list values should be serialized as JSON in config.ini."""
+def test_default_list_values_are_stored_as_toml_arrays(test_dir):
+    """Default list values should be serialized as TOML arrays in config.toml."""
     with patch("sys.exit"):
         AppConfig()
 
-    parser = configparser.ConfigParser()
-    parser.read(test_dir / "config.ini")
+    with open(test_dir / "config.toml", "rb") as handle:
+        parsed = tomllib.load(handle)
 
-    assert parser.get("WebServer", "cors_origins") == json.dumps(
-        AppConfig.DEFAULT_CONFIG["WebServer"]["cors_origins"]
+    assert parsed["WebServer"]["cors_origins"] == AppConfig.DEFAULT_CONFIG["WebServer"][
+        "cors_origins"
+    ]
+
+
+def test_missing_list_option_is_repaired_using_toml_array(test_dir):
+    """Repairing a missing list option should restore a TOML array value."""
+    with patch("sys.exit"):
+        AppConfig()
+
+    config_file = test_dir / "config.toml"
+    config_file.write_text(
+        """
+[Watcher]
+check_interval = 31
+
+[WebServer]
+enabled = false
+host = "127.0.0.1"
+port = 8000
+auth_token = "REPLACE_WITH_YOUR_WEB_API_TOKEN"
+""".strip()
+        + "\n",
+        encoding="utf-8",
     )
 
-
-def test_missing_list_option_is_repaired_using_json(test_dir):
-    """Repairing a missing list option should write JSON, not repr()."""
     with patch("sys.exit"):
         AppConfig()
 
-    config_file = test_dir / "config.ini"
-    parser = configparser.ConfigParser()
-    parser.read(config_file)
-    parser.remove_option("WebServer", "cors_origins")
-    with open(config_file, "w", encoding="utf-8") as handle:
-        parser.write(handle)
+    with open(config_file, "rb") as handle:
+        repaired = tomllib.load(handle)
 
+    assert repaired["WebServer"]["cors_origins"] == AppConfig.DEFAULT_CONFIG["WebServer"][
+        "cors_origins"
+    ]
+
+
+def test_get_returns_fallback_for_missing_keys(test_dir):
+    """Missing values should honor the explicit fallback."""
     with patch("sys.exit"):
-        AppConfig()
+        app_config = AppConfig()
 
-    repaired = configparser.ConfigParser()
-    repaired.read(config_file)
-    assert repaired.get("WebServer", "cors_origins") == json.dumps(
-        AppConfig.DEFAULT_CONFIG["WebServer"]["cors_origins"]
-    )
+    assert app_config.get("Watcher", "does_not_exist", fallback="fallback") == "fallback"

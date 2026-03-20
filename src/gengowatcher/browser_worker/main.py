@@ -27,6 +27,17 @@ async def run_worker(config: BrowserRuntimeConfig) -> BrowserRuntime:
     return runtime
 
 
+async def _run_forever(args: argparse.Namespace) -> None:
+    runtime = await run_worker(build_runtime_config(args))
+    logging.getLogger(__name__).info(
+        "browser worker started with %s", runtime.config.profile_path
+    )
+    try:
+        await runtime.serve_forever()
+    finally:
+        await runtime.stop()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="GengoWatcher browser worker")
     parser.add_argument("--profile-path", required=True)
@@ -39,10 +50,10 @@ def main(argv: list[str] | None = None) -> int:
         args.socket_path = str(BrowserRuntimeConfig(profile_path=Path(args.profile_path)).socket_path)
 
     logging.basicConfig(level=logging.INFO)
-    runtime = asyncio.run(run_worker(build_runtime_config(args)))
-    logging.getLogger(__name__).info(
-        "browser worker started with %s", runtime.config.profile_path
-    )
+    try:
+        asyncio.run(_run_forever(args))
+    except KeyboardInterrupt:
+        logging.getLogger(__name__).info("browser worker stopped")
     return 0
 
 

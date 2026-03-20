@@ -1,3 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gengowatcher"
+version = "2.1.5"
+description = "Terminal monitor for Gengo translation jobs"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.8.0",
+    "feedparser",
+    "rich",
+    "textual>=0.86.2",
+    "websockets>=16.0",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "python-multipart",
+    "cryptography>=3.4.8",
+    "requests>=2.25.1",
+    "imapclient>=2.3.0",
+    "playwright>=1.40.0",
+    "playwright-stealth>=1.0.6",
+]
+
+[project.scripts]
+gengowatcher = "gengowatcher.main:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gengowatcher = ["gengo_watcher.tcss"]
+
 [tool.black]
 line-length = 88
 extend-exclude = '''

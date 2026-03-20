@@ -1,11 +1,10 @@
-import configparser
 import copy
-import json
 import os
 import shutil
 import sys
-from pathlib import Path
 import threading
+import tomllib
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
@@ -30,7 +29,7 @@ PLACEHOLDER_CONFIG_VALUES = [
 
 
 class AppConfig:
-    CONFIG_FILE = "config.ini"
+    CONFIG_FILE = "config.toml"
     DEFAULT_CONFIG = {
         "Watcher": {
             "feed_url": "https://www.theguardian.com/uk/rss",
@@ -48,11 +47,14 @@ class AppConfig:
             "user_key": "REPLACE_WITH_YOUR_USER_KEY",
             "browser_debug_url": "",
             "session_sync_interval_sec": 14400,
+            "session_quiet_probe_sec": 90,
+            "session_quiet_stale_after_sec": 300,
             "session_sync_fail_hard": True,
             "session_sync_alert_on_failure": True,
         },
         "Paths": {
             "sound_file": "assets/alert.wav",
+            "websocket_stale_sound_file": "",
             "log_file": "logs/gengowatcher.log",
             "notification_icon_path": "",
             "browser_path": "",
@@ -65,6 +67,9 @@ class AppConfig:
             "log_main_enabled": True,
             "log_stdio_enabled": False,
             "log_all_entries_enabled": True,
+        },
+        "UI": {
+            "theme_name": "nord",
         },
         "DebugCategories": {
             "websocket": False,
@@ -82,6 +87,7 @@ class AppConfig:
             "max_backoff": 300,
             "user_agent_email": "",
             "browser_user_agent": "",
+            "browser_accept_language": "",
             "detect_browser_ua": False,
             "clean_close_backoff_min": 20,
             "clean_close_backoff_max": 45,
@@ -134,6 +140,8 @@ class AppConfig:
             "extreme_value_no_interval": True,
         },
         "Cancellation": {
+            # Migration note: keep cancellation opt-in unless explicitly enabled
+            # in config.toml so older installs don't auto-cancel accepted jobs.
             "enabled": False,
             "min_improvement_ratio": 2.0,
             "extreme_threshold": 1000.0,
@@ -173,9 +181,8 @@ class AppConfig:
     }
 
     def __init__(self):
-        self._config_parser = configparser.ConfigParser()
         self._lock = threading.Lock()
-        self.config = {}
+        self.config: Dict[str, Dict[str, Any]] = {}
 
         if not Path(self.CONFIG_FILE).is_file():
             self._create_default_config()
@@ -183,17 +190,11 @@ class AppConfig:
         self.load_config()
 
     def _create_default_config(self):
-        parser = configparser.ConfigParser()
-        for section, settings in self.DEFAULT_CONFIG.items():
-            parser.add_section(section)
-            for key, value in settings.items():
-                parser.set(section, key, self._serialize_for_parser(value))
-
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
 
         with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
-            parser.write(f)
+            f.write(self._dump_toml(self.DEFAULT_CONFIG))
         try:
             os.chmod(self.CONFIG_FILE, 0o600)
         except OSError:
@@ -208,94 +209,48 @@ class AppConfig:
         """
         Load configuration from disk into the in-memory configuration, apply defaults and repair missing sections/options.
 
-        Reads the CONFIG_FILE into the internal parser, populates self.config with existing user-defined values, ensures every section and option from DEFAULT_CONFIG exists (adding any missing entries), and persists the updated config file when modifications are made. After loading and repair, calls _validate_auto_accept_config to enforce AutoAccept invariants. On parsing or value errors the function prints a critical message and exits the process.
+        Reads the CONFIG_FILE as TOML, populates self.config with user-defined values merged over DEFAULT_CONFIG, repairs missing sections/options by preserving defaults, and persists the updated file when modifications are made. After loading and repair, calls _validate_auto_accept_config to enforce AutoAccept invariants. On parsing or value errors the function prints a critical message and exits the process.
         """
-        with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
-            self._config_parser.read_file(f)
         with self._lock:
             try:
+                with open(self.CONFIG_FILE, "rb") as f:
+                    raw_config = tomllib.load(f)
+                if not isinstance(raw_config, dict):
+                    raise ValueError("Top-level TOML document must be a table")
+
                 config_modified = False
+                merged = copy.deepcopy(self.DEFAULT_CONFIG)
 
-                # First, populate self.config with everything from the parser
-                # This ensures user-defined sections are available
-                for section in self._config_parser.sections():
-                    self.config[section] = {}
-                    for key, value in self._config_parser.items(section):
-                        self.config[section][key] = value
+                for section, settings in raw_config.items():
+                    if not isinstance(settings, dict):
+                        raise ValueError(
+                            f"Section [{section}] must be a TOML table, got {type(settings).__name__}"
+                        )
+                    if section not in merged:
+                        merged[section] = {}
+                    for key, value in settings.items():
+                        merged[section][key] = value
 
-                # Then, ensure all defaults are present and typed correctly where possible
                 for section, defaults in self.DEFAULT_CONFIG.items():
-                    # Add missing sections
-                    if not self._config_parser.has_section(section):
-                        self._config_parser.add_section(section)
+                    if section not in raw_config:
                         print(f"WARNING: Added missing config section: [{section}]")
                         config_modified = True
-
-                    if section not in self.config:
-                        self.config[section] = {}
-
+                        continue
+                    current = raw_config.get(section, {})
+                    if not isinstance(current, dict):
+                        continue
                     for key, default_val in defaults.items():
-                        if isinstance(default_val, bool):
-                            method = self._config_parser.getboolean
-                        elif isinstance(default_val, int):
-                            method = self._config_parser.getint
-                        elif isinstance(default_val, float):
-                            method = self._config_parser.getfloat
-                        elif isinstance(default_val, list):
-                            method = None
-                        else:
-                            method = self._config_parser.get
-
-                        try:
-                            if method is None:
-                                raw_val = self._config_parser.get(
-                                    section, key, fallback=None
-                                )
-                                if raw_val is not None:
-                                    try:
-                                        self.config[section][key] = json.loads(raw_val)
-                                    except json.JSONDecodeError:
-                                        self.config[section][key] = default_val
-                                        self._config_parser.set(
-                                            section,
-                                            key,
-                                            self._serialize_for_parser(default_val),
-                                        )
-                                        config_modified = True
-                                else:
-                                    self.config[section][key] = default_val
-                                    self._config_parser.set(
-                                        section,
-                                        key,
-                                        self._serialize_for_parser(default_val),
-                                    )
-                                    print(
-                                        f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
-                                    )
-                                    config_modified = True
-                            else:
-                                self.config[section][key] = method(
-                                    section, key, fallback=default_val
-                                )
-                        except (
-                            configparser.NoSectionError,
-                            configparser.NoOptionError,
-                        ):
-                            # Add missing option with default value
-                            self._config_parser.set(
-                                section, key, self._serialize_for_parser(default_val)
-                            )
-                            self.config[section][key] = default_val
+                        if key not in current:
                             print(
                                 f"WARNING: Added missing config option: [{section}]{key} = {default_val}"
                             )
                             config_modified = True
 
-                # Save config if it was modified
+                self.config = merged
+
                 if config_modified:
                     try:
-                        with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
-                            self._config_parser.write(f)
+                        self._write_config_unlocked()
                         print("Config file updated with missing sections/options")
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
@@ -303,7 +258,7 @@ class AppConfig:
                 # Validate auto-accept configuration
                 self._validate_auto_accept_config()
 
-            except (configparser.Error, ValueError) as e:
+            except (tomllib.TOMLDecodeError, ValueError) as e:
                 print(
                     f"CRITICAL: Error reading '{self.CONFIG_FILE}': {e}. "
                     "Please fix or delete the file."
@@ -312,12 +267,6 @@ class AppConfig:
 
     def save_config(self):
         with self._lock:
-            for section, settings in self.config.items():
-                if not self._config_parser.has_section(section):
-                    self._config_parser.add_section(section)
-                for key, value in settings.items():
-                    serialized = self._serialize_for_parser(value)
-                    self._config_parser.set(section, key, serialized)
             lock_file = None
             config_path = Path(self.CONFIG_FILE)
             lock_path = config_path.with_suffix(f"{config_path.suffix}.lock")
@@ -336,10 +285,7 @@ class AppConfig:
                         pass
 
                 tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    self._config_parser.write(f)
-                    f.flush()
-                    os.fsync(f.fileno())
+                self._write_config_unlocked(tmp_path)
                 if config_path.exists():
                     try:
                         shutil.copymode(config_path, tmp_path)
@@ -366,6 +312,14 @@ class AppConfig:
                             pass
                     lock_file.close()
 
+    def _write_config_unlocked(self, path: Path | None = None) -> None:
+        """Write the current in-memory config to TOML while the caller holds the lock."""
+        target = path or Path(self.CONFIG_FILE)
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(self._dump_toml(self.config))
+            f.flush()
+            os.fsync(f.fileno())
+
     def list_all(self) -> Dict[str, Dict[str, Any]]:
         """Return all config values as a nested dictionary.
 
@@ -389,71 +343,47 @@ class AppConfig:
     def getboolean(
         self, section: str, key: str, fallback: Optional[bool] = None
     ) -> bool:
-        """Get a boolean value from config with case-insensitive parsing.
-
-        Args:
-            section: Config section name
-            key: Config key name
-            fallback: Default value if key not found
-
-        Returns:
-            bool: The parsed boolean value
-        """
+        """Get a boolean value from config with tolerant string parsing."""
         with self._lock:
-            try:
-                value = self._config_parser.get(section, key)
-                # Case-insensitive boolean parsing
+            section_values = self.config.get(section)
+            if section_values is None or key not in section_values:
+                if fallback is not None:
+                    return fallback
+                raise KeyError(f"Missing config value [{section}]{key}")
+            value = section_values[key]
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            if isinstance(value, str):
                 value_lower = value.lower().strip()
                 if value_lower in ("true", "1", "yes", "on", "enabled"):
                     return True
-                elif value_lower in ("false", "0", "no", "off", "disabled"):
+                if value_lower in ("false", "0", "no", "off", "disabled"):
                     return False
-                else:
-                    raise ValueError(f"Invalid boolean value: {value}")
-            except (configparser.NoSectionError, configparser.NoOptionError):
-                if fallback is not None:
-                    return fallback
-                raise
+            raise ValueError(f"Invalid boolean value: {value}")
 
     def getint(self, section: str, key: str, fallback: Optional[int] = None) -> int:
-        """Get an integer value from config.
-
-        Args:
-            section: Config section name
-            key: Config key name
-            fallback: Default value if key not found
-
-        Returns:
-            int: The parsed integer value
-        """
+        """Get an integer value from config."""
         with self._lock:
-            try:
-                return self._config_parser.getint(section, key)
-            except (configparser.NoSectionError, configparser.NoOptionError):
+            section_values = self.config.get(section)
+            if section_values is None or key not in section_values:
                 if fallback is not None:
                     return fallback
-                raise
+                raise KeyError(f"Missing config value [{section}]{key}")
+            return int(section_values[key])
 
     def getfloat(
         self, section: str, key: str, fallback: Optional[float] = None
     ) -> float:
-        """Get a float value from config.
-
-        Args:
-            section: Config section name
-            key: Config key name
-            fallback: Default value if key not found
-
-        Returns:
-            float: The parsed float value
-        """
+        """Get a float value from config."""
         with self._lock:
-            try:
-                return self._config_parser.getfloat(section, key)
-            except (configparser.NoSectionError, configparser.NoOptionError):
+            section_values = self.config.get(section)
+            if section_values is None or key not in section_values:
                 if fallback is not None:
                     return fallback
-                raise
+                raise KeyError(f"Missing config value [{section}]{key}")
+            return float(section_values[key])
 
     def _get_env_or_config(self, section: str, key: str, env_var: str) -> Any:
         """Return the environment override for a key or fall back to config."""
@@ -462,16 +392,16 @@ class AppConfig:
             return env_value
         return self.config.get(section, {}).get(key)
 
-    def get(self, section, key):
+    def get(self, section, key, fallback=None):
         env_override = self.ENV_VAR_OVERRIDES.get((section, key))
         with self._lock:
             if env_override:
-                return self._get_env_or_config(section, key, env_override)
+                value = self._get_env_or_config(section, key, env_override)
+                return fallback if value is None else value
             try:
                 return self.config[section][key]
             except KeyError:
-                # Section or key doesn't exist, return None
-                return None
+                return fallback
 
     def set(self, section, key, value):
         """
@@ -486,26 +416,51 @@ class AppConfig:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
-            if not self._config_parser.has_section(section):
-                self._config_parser.add_section(section)
-            serialized = self._serialize_for_parser(value)
-            self._config_parser.set(section, key, serialized)
 
     @staticmethod
-    def _serialize_for_parser(value: Any) -> str:
-        """Serialize values for ConfigParser while preserving JSON round-tripping."""
-        if isinstance(value, (list, dict)):
-            return json.dumps(value)
-
-        if isinstance(value, (str, int, float, bool)) or value is None:
+    def _serialize_toml_value(value: Any) -> str:
+        """Serialize Python values to TOML literals."""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, int):
             return str(value)
+        if isinstance(value, float):
+            return repr(value)
+        if isinstance(value, str):
+            escaped = (
+                value.replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("\n", "\\n")
+            )
+            return f'"{escaped}"'
+        if isinstance(value, list):
+            return (
+                "["
+                + ", ".join(AppConfig._serialize_toml_value(item) for item in value)
+                + "]"
+            )
+        if isinstance(value, dict):
+            items = ", ".join(
+                f"{key} = {AppConfig._serialize_toml_value(item)}"
+                for key, item in value.items()
+            )
+            return "{ " + items + " }"
+        if value is None:
+            return '""'
+        return AppConfig._serialize_toml_value(str(value))
 
-        try:
-            return json.dumps(value)
-        except (TypeError, ValueError):
-            pass
-
-        return str(value)
+    @classmethod
+    def _dump_toml(cls, data: Dict[str, Dict[str, Any]]) -> str:
+        """Serialize the nested config dictionary to a TOML document."""
+        lines: list[str] = []
+        for section, settings in data.items():
+            if not isinstance(settings, dict):
+                continue
+            lines.append(f"[{section}]")
+            for key, value in settings.items():
+                lines.append(f"{key} = {cls._serialize_toml_value(value)}")
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
 
     def _validate_auto_accept_config(self):
         """

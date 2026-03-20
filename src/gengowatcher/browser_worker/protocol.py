@@ -40,4 +40,11 @@ def encode_message(payload: dict[str, Any]) -> bytes:
 
 
 def decode_message(payload: bytes) -> dict[str, Any]:
-    return json.loads(payload.decode("utf-8").strip())
+    text = payload.decode("utf-8").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        snippet = text[:120]
+        raise ValueError(
+            f"invalid browser worker message payload: {snippet!r}"
+        ) from exc

@@ -13,30 +13,41 @@ git clone https://github.com/tdawe1/GengoWatcher.git
 cd GengoWatcher
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
+
+That installs a `gengowatcher` command on your PATH, so you can launch it from any directory.
+
+If you want a simpler repo-local launcher without relying on Python packaging, install the bundled script into `~/.local/bin`:
+
+```bash
+make install-user
+```
+
+That symlinks [bin/gengowatcher](/home/thomas/GengoWatcher/bin/gengowatcher) into `~/.local/bin/gengowatcher` and runs the app through this repo's `.venv` from any directory.
 ## Quick Start
 ```bash
-make run
+gengowatcher
 ```
 Or directly:
 ```bash
-PYTHONPATH=src python -m gengowatcher.main
+./bin/gengowatcher
 ```
 On the first run, you'll be guided through configuration setup.
 
 ## Configuration
-Settings are stored in `config.ini`. Key sections:
-```ini
+Settings are stored in `config.toml`. Key sections:
+```toml
 [Watcher]
-feed_url = https://your-rss-feed-url
+feed_url = "https://your-rss-feed-url"
 check_interval = 31
 min_reward = 0.0
+
 [WebSocket]
 enable_websocket = true
 user_id = 12345
-user_session = YOUR_SESSION_TOKEN
-user_key = YOUR_USER_KEY
+user_session = "YOUR_SESSION_TOKEN"
+user_key = "YOUR_USER_KEY"
 ```
 Get WebSocket credentials from your browser's DevTools:
 - **user_id** and **user_session**: Application → Cookies → gengo.com
@@ -44,12 +55,21 @@ Get WebSocket credentials from your browser's DevTools:
 
 ### Browser Worker
 
-The browser worker is an optional local Playwright sidecar that keeps a long-lived headed browser with a dedicated persistent profile. Configure the `BrowserWorker` section in `config.ini`, then start it separately with:
+The browser worker is an optional local Playwright sidecar that keeps a long-lived headed browser with a dedicated persistent profile. Configure the `BrowserWorker` section in `config.toml`, then start it separately with:
 
 ```bash
 PYTHONPATH=src python -m gengowatcher.browser_worker.main \
   --profile-path profiles/browser-worker \
   --socket-path /tmp/gengowatcher-browser-worker.sock
+```
+
+On Windows PowerShell, use a temp socket path instead of the Unix `/tmp/...` example:
+
+```powershell
+$socket = Join-Path $env:TEMP "gengowatcher-browser-worker.sock"
+PYTHONPATH=src python -m gengowatcher.browser_worker.main `
+  --profile-path profiles/browser-worker `
+  --socket-path $socket
 ```
 
 The operator procedure for black-box validation is documented in `docs/browser-worker-black-box-test-procedure.md`.

@@ -1,3 +1,10 @@
+build:
+	@echo "Compiling Python files..."
+	python3 -m py_compile src/gengowatcher/*.py
+	python3 -m py_compile tests/*.py
+	python3 -m py_compile scripts/*.py
+	@echo "Build successful!"
+
 test:
 	.venv/bin/pytest
 

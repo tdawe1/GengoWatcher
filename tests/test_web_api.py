@@ -262,6 +262,19 @@ class TestWebAPI:
 
             assert status.health["websocket"]["state"] == "stale"
 
+    def test_get_status_tolerates_health_snapshot_failures(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        mock_watcher.get_health_snapshot.side_effect = RuntimeError("boom")
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+
+            status = api.get_status()
+
+            assert status.health == {}
+
     def test_get_recent_jobs(self, mock_config, mock_state, mock_logger, mock_watcher):
         """Test getting recent jobs with pagination."""
         mock_state.get_recent_jobs.return_value = [

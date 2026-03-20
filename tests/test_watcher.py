@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import collections
 
 from gengowatcher import watcher
+from gengowatcher.browser_detector import BrowserDetector
 from gengowatcher.config import AppConfig
 from gengowatcher.state import AppState
 
@@ -86,6 +87,42 @@ def test_fetch_rss(mock_parse, watcher_instance):
 
     assert isinstance(feed, DummyFeed)
     mock_parse.assert_called_once_with("https://example.com/feed", request_headers={})
+
+
+@patch("gengowatcher.watcher.feedparser.parse")
+def test_fetch_rss_custom_user_agent_uses_browser_identity(mock_parse, watcher_instance):
+    """Custom RSS requests should use a browser-like User-Agent, not the app name."""
+
+    class DummyFeed:
+        bozo = False
+        entries = []
+
+    watcher_instance.config.get.side_effect = lambda section, key, **kwargs: {
+        ("Watcher", "use_custom_user_agent"): True,
+        ("Watcher", "feed_url"): "https://example.com/feed",
+        ("Network", "browser_user_agent"): "Helium Browser",
+    }.get((section, key), kwargs.get("fallback"))
+    watcher_instance.config.config = {
+        "Watcher": {
+            "use_custom_user_agent": True,
+            "feed_url": "https://example.com/feed",
+        },
+        "Network": {"browser_user_agent": "Helium Browser"},
+    }
+    mock_parse.return_value = DummyFeed()
+
+    watcher_instance.fetch_rss()
+
+    mock_parse.assert_called_once_with(
+        "https://example.com/feed",
+        request_headers={"User-Agent": "Helium Browser"},
+    )
+
+
+def test_browser_detector_prefers_browser_user_agent_key():
+    detector = BrowserDetector({"Network": {"browser_user_agent": "Helium Browser"}})
+
+    assert detector.get_user_agent() == "Helium Browser"
 
 
 def test_process_feed_entries(watcher_instance):
