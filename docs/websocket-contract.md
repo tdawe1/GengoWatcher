@@ -1,7 +1,7 @@
 # WebSocket Contract
 
 This document records the browser-aligned websocket contract that GengoWatcher
-currently uses for `wss://live-dashboard.gengo.com`.
+currently uses for `wss://live-dashboard.gengo.com/`.
 
 ## Browser-Derived Inputs
 
@@ -23,13 +23,13 @@ The CDP helper lives in
 
 The current handshake profile is:
 
-- `Cookie: myG_myGSession_=<token>; myG_rdsessID=<token>`
 - `Origin: https://gengo.com`
 - `User-Agent: <browser-derived or configured browser UA>`
 - `Accept-Language: <browser-derived or configured browser languages>`
+- `Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits`
 
-If the server or an upstream proxy rejects custom headers with an "extra headers"
-style handshake error, GengoWatcher retries once without custom headers.
+The browser authenticates after the handshake via the first websocket frame rather
+than via a cookie header in the upgrade request.
 
 ## Auth Payload
 

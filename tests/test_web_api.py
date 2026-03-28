@@ -573,6 +573,33 @@ class TestFastAPIEndpoints:
         data = response.json()
         assert "status" in data
 
+    def test_metrics_endpoint_exposes_prometheus_format(self, client):
+        """Test metrics endpoint returns Prometheus text format."""
+        response = client.get("/metrics")
+
+        assert response.status_code == 200
+        assert "text/plain" in response.headers["content-type"]
+        assert (
+            "python_info" in response.text
+            or "process_start_time_seconds" in response.text
+        )
+
+    def test_metrics_endpoint_includes_gengowatcher_metrics(
+        self, client, mock_config, mock_state, mock_logger, mock_watcher, monkeypatch
+    ):
+        """Test metrics endpoint exposes GengoWatcher watcher state metrics."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+            monkeypatch.setattr("gengowatcher.web.api_instance", api)
+
+            response = client.get("/metrics")
+
+            assert response.status_code == 200
+            assert "gengowatcher_api_initialized" in response.text
+            assert "gengowatcher_watcher_running" in response.text
+            assert "gengowatcher_failure_count" in response.text
+
 
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""

@@ -249,6 +249,13 @@ class GengoWatcher:
             self._mask_secret(browser_user_key),
         )
 
+    def _has_cached_websocket_auth(self) -> bool:
+        user_id = self.config.get("WebSocket", "user_id")
+        session_token = str(
+            self.config.get("WebSocket", "user_session") or ""
+        ).strip()
+        return bool(user_id) and session_token not in PLACEHOLDER_CONFIG_VALUES
+
     def _get_default_required_config_fields(self) -> list[tuple[str, str]]:
         """Return the required config fields for currently enabled features."""
         required_fields = [("Watcher", "feed_url"), ("Watcher", "check_interval")]
@@ -637,7 +644,10 @@ class GengoWatcher:
             if state not in {"stale", "error"} or previous == state:
                 continue
             sound_file = None
+            play_sound = True
             if key == "websocket" and state == "stale":
+                if detail.startswith("quiet "):
+                    play_sound = False
                 sound_file = (
                     self.config.get(
                         "Paths",
@@ -649,7 +659,7 @@ class GengoWatcher:
             self.show_notification(
                 message=f"{key.title()} is {state}: {detail}",
                 title="GengoWatcher Telemetry Alert",
-                play_sound=True,
+                play_sound=play_sound,
                 sound_file=sound_file,
             )
 
@@ -682,9 +692,17 @@ class GengoWatcher:
                     play_sound=True,
                 )
             if fail_hard:
-                self._websocket_sync_failed = True
-                self._websocket_sync_failure_reason = str(exc)
-                self.websocket_status = "Session Sync Failed"
+                if self._has_cached_websocket_auth():
+                    self.logger.warning(
+                        "Browser session sync failed for %s, but cached WebSocket "
+                        "credentials are present. Continuing with the last known "
+                        "session instead of stopping realtime monitoring.",
+                        debug_url,
+                    )
+                else:
+                    self._websocket_sync_failed = True
+                    self._websocket_sync_failure_reason = str(exc)
+                    self.websocket_status = "Session Sync Failed"
             return False
 
         current_token = self.config.get("WebSocket", "user_session")
@@ -1463,7 +1481,7 @@ class GengoWatcher:
         Establishes a connection to the configured WebSocket URL, sends authentication payload (user/session and optional key), and updates connection state. Maintains a periodic heartbeat to measure latency and detect stalls, monitors for manual test commands, and listens for incoming messages; when an "available_collection" event is received it extracts job details and delegates handling to the watcher. Records socket close codes and reasons, performs a retry without custom headers when handshakes fail due to header restrictions, and sets websocket_status to reflect connection state or offline on failure.
         """
         ws_url = (
-            self.config.get("WebSocket", "wss_url") or "wss://live-dashboard.gengo.com"
+            self.config.get("WebSocket", "wss_url") or "wss://live-dashboard.gengo.com/"
         )
         self.websocket_status = "Connecting"
         self.logger.info(f"WebSocket: Initializing connection to {ws_url}")
@@ -1505,6 +1523,7 @@ class GengoWatcher:
                 origin="https://gengo.com",
                 accept_language=accept_language,
             )
+            ua_only_headers = {"User-Agent": user_agent} if user_agent else None
 
             # Log headers (masking sensitive info)
             safe_headers = []
@@ -1548,7 +1567,6 @@ class GengoWatcher:
                     open_timeout=20,
                     ping_interval=20,
                     ping_timeout=10,
-                    compression=None,
                 ) as websocket:
                     connected_at = time.time()
                     self.websocket_connected_at_ts = connected_at
@@ -1873,18 +1891,35 @@ class GengoWatcher:
                     self.websocket_connected_at_ts = None
                     self.websocket_next_ping_ts = None
 
-            try:
-                await run_session(additional_headers)
-            except (InvalidStatusCode, InvalidHandshake) as e:
-                # Some load balancers/proxies reject any custom headers; retry without them.
-                message = str(e).lower()
-                if "extra headers" in message or "extra header" in message:
+            header_profiles = [
+                ("browser-aligned headers", additional_headers),
+                ("user-agent only headers", ua_only_headers),
+                ("no custom headers", None),
+            ]
+            last_error = None
+            for index, (profile_name, headers) in enumerate(header_profiles):
+                if headers is None and index == 1 and ua_only_headers is None:
+                    continue
+                try:
+                    if index > 0:
+                        self.logger.warning(
+                            "WebSocket: Retrying handshake with %s.",
+                            profile_name,
+                        )
+                    await run_session(headers)
+                    last_error = None
+                    break
+                except (InvalidStatusCode, InvalidHandshake, TimeoutError) as e:
+                    last_error = e
+                    if index == len(header_profiles) - 1:
+                        raise
                     self.logger.warning(
-                        "WebSocket handshake rejected due to extra headers; retrying without custom headers."
+                        "WebSocket handshake failed using %s: %s",
+                        profile_name,
+                        e,
                     )
-                    await run_session(None)
-                else:
-                    raise
+            if last_error is not None:
+                raise last_error
         except (
             ConnectionClosed,
             InvalidStatusCode,

@@ -1,0 +1,15 @@
+[Unit]
+Description=GengoWatcher web API with Prometheus metrics
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/GengoWatcher
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/GengoWatcher/.venv/bin/gengowatcher --web-only --web-port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

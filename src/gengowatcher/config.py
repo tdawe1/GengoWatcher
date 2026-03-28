@@ -41,7 +41,7 @@ class AppConfig:
         },
         "WebSocket": {
             "enable_websocket": True,
-            "wss_url": "wss://live-dashboard.gengo.com",
+            "wss_url": "wss://live-dashboard.gengo.com/",
             "user_id": 0,
             "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
             "user_key": "REPLACE_WITH_YOUR_USER_KEY",
@@ -95,6 +95,11 @@ class AppConfig:
         },
         "RateLimit": {
             "max_acceptances_per_hour": 30,
+        },
+        "Metrics": {
+            "enabled": False,
+            "host": "127.0.0.1",
+            "port": 9091,
         },
         "WebServer": {
             "enabled": False,
@@ -428,9 +433,7 @@ class AppConfig:
             return repr(value)
         if isinstance(value, str):
             escaped = (
-                value.replace("\\", "\\\\")
-                .replace('"', '\\"')
-                .replace("\n", "\\n")
+                value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
             )
             return f'"{escaped}"'
         if isinstance(value, list):

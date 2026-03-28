@@ -47,6 +47,9 @@ def test_config_loads_default_values(test_dir):
         app_config.get("WebSocket", "user_session") == "REPLACE_WITH_YOUR_SESSION_TOKEN"
     )
     assert app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"
+    assert app_config.get("Metrics", "enabled") is False
+    assert app_config.get("Metrics", "host") == "127.0.0.1"
+    assert app_config.get("Metrics", "port") == 9091
 
 
 def test_save_config_uses_sidecar_lock_file(test_dir):
@@ -78,9 +81,10 @@ def test_default_list_values_are_stored_as_toml_arrays(test_dir):
     with open(test_dir / "config.toml", "rb") as handle:
         parsed = tomllib.load(handle)
 
-    assert parsed["WebServer"]["cors_origins"] == AppConfig.DEFAULT_CONFIG["WebServer"][
-        "cors_origins"
-    ]
+    assert (
+        parsed["WebServer"]["cors_origins"]
+        == AppConfig.DEFAULT_CONFIG["WebServer"]["cors_origins"]
+    )
 
 
 def test_missing_list_option_is_repaired_using_toml_array(test_dir):
@@ -110,9 +114,34 @@ auth_token = "REPLACE_WITH_YOUR_WEB_API_TOKEN"
     with open(config_file, "rb") as handle:
         repaired = tomllib.load(handle)
 
-    assert repaired["WebServer"]["cors_origins"] == AppConfig.DEFAULT_CONFIG["WebServer"][
-        "cors_origins"
-    ]
+    assert (
+        repaired["WebServer"]["cors_origins"]
+        == AppConfig.DEFAULT_CONFIG["WebServer"]["cors_origins"]
+    )
+
+
+def test_missing_metrics_section_is_repaired_with_defaults(test_dir):
+    """Repairing config should restore the Metrics section with default values."""
+    with patch("sys.exit"):
+        AppConfig()
+
+    config_file = test_dir / "config.toml"
+    config_file.write_text(
+        """
+[Watcher]
+check_interval = 31
+feed_url = "https://example.com/feed"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with patch("sys.exit"):
+        repaired_config = AppConfig()
+
+    assert repaired_config.get("Metrics", "enabled") is False
+    assert repaired_config.get("Metrics", "host") == "127.0.0.1"
+    assert repaired_config.get("Metrics", "port") == 9091
 
 
 def test_get_returns_fallback_for_missing_keys(test_dir):
@@ -120,4 +149,6 @@ def test_get_returns_fallback_for_missing_keys(test_dir):
     with patch("sys.exit"):
         app_config = AppConfig()
 
-    assert app_config.get("Watcher", "does_not_exist", fallback="fallback") == "fallback"
+    assert (
+        app_config.get("Watcher", "does_not_exist", fallback="fallback") == "fallback"
+    )

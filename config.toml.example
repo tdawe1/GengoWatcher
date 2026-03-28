@@ -12,7 +12,7 @@ use_custom_user_agent = false
 
 [WebSocket]
 enable_websocket = true
-wss_url = "wss://live-dashboard.gengo.com"
+wss_url = "wss://live-dashboard.gengo.com/"
 # Set via GENGO_USER_ID env var or here
 user_id = "YOUR_USER_ID"
 # Set via GENGO_USER_SESSION env var or here

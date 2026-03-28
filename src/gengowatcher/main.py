@@ -17,6 +17,7 @@ from .browser_session import (
     fetch_browser_session_snapshot_sync,
 )
 from .config import AppConfig
+from .prom_metrics import start_watcher_metrics_server
 from .state import AppState
 from .stats import StatsManager
 from .watcher import GengoWatcher
@@ -131,6 +132,20 @@ def _should_enable_stdio_logging(
     return bool(config.getboolean("Logging", "log_stdio_enabled", fallback=False))
 
 
+def _start_metrics_server_if_enabled(config: AppConfig, watcher: GengoWatcher, logger):
+    if not config.getboolean("Metrics", "enabled", fallback=False):
+        return None
+
+    host = str(config.get("Metrics", "host", fallback="127.0.0.1") or "127.0.0.1")
+    port = config.getint("Metrics", "port", fallback=9091)
+    return start_watcher_metrics_server(
+        host=host,
+        port=port,
+        watcher=watcher,
+        logger=logger,
+    )
+
+
 def handle_cli_config_commands(args, config: AppConfig, console: Console) -> bool:
     """Handle CLI config commands using AppConfig directly.
 
@@ -188,9 +203,10 @@ def handle_cli_config_commands(args, config: AppConfig, console: Console) -> boo
             return f"{text[:4]}...{text[-4:]}"
 
         if args.check_session_from_browser:
-            key_matches = str(current_user_key or "").strip() == str(
-                snapshot.user_key or ""
-            ).strip()
+            key_matches = (
+                str(current_user_key or "").strip()
+                == str(snapshot.user_key or "").strip()
+            )
             if current == token and key_matches:
                 print(
                     f"Browser session data matches [WebSocket] credentials at {debug_url}"
@@ -209,9 +225,7 @@ def handle_cli_config_commands(args, config: AppConfig, console: Console) -> boo
         if str(snapshot.user_agent or "").strip():
             config.set("Network", "browser_user_agent", snapshot.user_agent)
         if str(snapshot.accept_language or "").strip():
-            config.set(
-                "Network", "browser_accept_language", snapshot.accept_language
-            )
+            config.set("Network", "browser_accept_language", snapshot.accept_language)
         config.set("WebSocket", "browser_debug_url", debug_url)
         config.save_config()
         print(f"Updated [WebSocket] browser session from browser at {debug_url}")
@@ -442,6 +456,8 @@ def main():
         )
         watcher.prompt_for_config_values()
 
+    metrics_server = _start_metrics_server_if_enabled(config, watcher, log)
+
     # Start web server if requested
     web_thread = None
     if args.web or args.web_only:
@@ -500,6 +516,13 @@ def main():
             stats_manager.end_session()
         except Exception:
             log.exception("Failed to persist session stats on shutdown")
+        if metrics_server is not None:
+            server, thread = metrics_server
+            try:
+                server.shutdown()
+                thread.join(timeout=2)
+            except Exception:
+                log.exception("Failed to shut down Prometheus metrics server")
         if not watcher.shutdown_event.is_set():
             watcher.handle_exit()
 

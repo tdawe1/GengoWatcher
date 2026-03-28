@@ -225,7 +225,6 @@ def build_browser_aligned_websocket_headers(
     accept_language: str = "",
 ) -> dict[str, str]:
     headers = {
-        "Cookie": f"myG_myGSession_={session_token}; myG_rdsessID={session_token}",
         "Origin": origin or DEFAULT_GENGO_ORIGIN,
     }
     if user_agent:
