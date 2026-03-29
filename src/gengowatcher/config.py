@@ -385,6 +385,7 @@ class AppConfig:
                 self._backfill_from_legacy_config()
                 # Validate auto-accept configuration after backfill
                 self._validate_auto_accept_config()
+                self._backfill_from_legacy_config()
 
             except (tomllib.TOMLDecodeError, ValueError) as e:
                 print(
@@ -562,6 +563,28 @@ class AppConfig:
             return "true" if value else "false"
         if isinstance(value, int):
             return str(value)
+        if isinstance(value, float):
+            return repr(value)
+        if isinstance(value, str):
+            escaped = (
+                value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+            )
+            return f'"{escaped}"'
+        if isinstance(value, list):
+            return (
+                "["
+                + ", ".join(AppConfig._serialize_toml_value(item) for item in value)
+                + "]"
+            )
+        if isinstance(value, dict):
+            items = ", ".join(
+                f"{key} = {AppConfig._serialize_toml_value(item)}"
+                for key, item in value.items()
+            )
+            return "{ " + items + " }"
+        if value is None:
+            return '""'
+        return AppConfig._serialize_toml_value(str(value))
 
         try:
             return json.dumps(value)

@@ -122,30 +122,6 @@ auth_token = "REPLACE_WITH_YOUR_WEB_API_TOKEN"
     )
 
 
-def test_missing_metrics_section_is_repaired_with_defaults(test_dir):
-    """Repairing config should restore the Metrics section with default values."""
-    with patch("sys.exit"):
-        AppConfig()
-
-    config_file = test_dir / "config.toml"
-    config_file.write_text(
-        """
-[Watcher]
-check_interval = 31
-feed_url = "https://example.com/feed"
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
-
-    with patch("sys.exit"):
-        repaired_config = AppConfig()
-
-    assert repaired_config.get("Metrics", "enabled") is False
-    assert repaired_config.get("Metrics", "host") == "127.0.0.1"
-    assert repaired_config.get("Metrics", "port") == 9091
-
-
 def test_get_returns_fallback_for_missing_keys(test_dir):
     """Missing values should honor the explicit fallback."""
     with patch("sys.exit"):
@@ -156,10 +132,74 @@ def test_get_returns_fallback_for_missing_keys(test_dir):
     )
 
 
-def test_coerce_bool_accepts_common_truthy_and_falsey_values():
-    """Boolean coercion should be shared and tolerant of config-like values."""
-    assert AppConfig.coerce_bool("enabled") is True
-    assert AppConfig.coerce_bool("off") is False
-    assert AppConfig.coerce_bool(1) is True
-    assert AppConfig.coerce_bool(0) is False
-    assert AppConfig.coerce_bool(None, fallback=True) is True
+def test_legacy_config_ini_is_migrated_when_toml_is_missing(test_dir):
+    """Existing config.ini values should be migrated into config.toml on first load."""
+    legacy_config = test_dir / "config.ini"
+    legacy_config.write_text(
+        """
+[Watcher]
+check_interval = 45
+
+[WebSocket]
+user_id = 123456
+user_session = legacy-session-token
+user_key = legacy-user-key
+
+[Paths]
+log_file = logs/custom.log
+all_entries_log = logs/custom_entries.csv
+
+[Logging]
+log_stdio_enabled = true
+
+[WebServer]
+cors_origins = http://localhost:3000, http://127.0.0.1:5173
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app_config = AppConfig()
+
+    assert (test_dir / "config.toml").is_file()
+    assert app_config.get("Watcher", "check_interval") == 45
+    assert app_config.get("WebSocket", "user_id") == 123456
+    assert app_config.get("WebSocket", "user_session") == "legacy-session-token"
+    assert app_config.get("WebSocket", "user_key") == "legacy-user-key"
+    assert app_config.get("Paths", "log_file") == "logs/custom.log"
+    assert app_config.get("Paths", "all_entries_log") == "logs/custom_entries.csv"
+    assert app_config.get("Logging", "log_stdio_enabled") is True
+    assert app_config.get("WebServer", "cors_origins") == [
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+    ]
+
+
+def test_legacy_config_backfills_placeholder_toml_values(test_dir):
+    """Existing config.ini values should repair a placeholder config.toml."""
+    (test_dir / "config.toml").write_text(
+        """
+[WebSocket]
+user_id = 0
+user_session = "REPLACE_WITH_YOUR_SESSION_TOKEN"
+user_key = "REPLACE_WITH_YOUR_USER_KEY"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (test_dir / "config.ini").write_text(
+        """
+[WebSocket]
+user_id = 789487
+user_session = migrated-session-token
+user_key = migrated-user-key
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app_config = AppConfig()
+
+    assert app_config.get("WebSocket", "user_id") == 789487
+    assert app_config.get("WebSocket", "user_session") == "migrated-session-token"
+    assert app_config.get("WebSocket", "user_key") == "migrated-user-key"
