@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
 from rich.console import Console
 
-from .cli import build_argument_parser, handle_cli_config_commands, should_handle_lightweight_command
+from .cli import (
+    build_argument_parser,
+    handle_cli_config_commands,
+    should_handle_lightweight_command,
+)
 from .config import AppConfig
 from .logging_setup import APP_THEME
+from .logging_setup import should_enable_stdio_logging as _should_enable_stdio_logging
 from .runtime import run_application
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> None:
