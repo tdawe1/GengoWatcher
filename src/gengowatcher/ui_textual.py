@@ -1177,7 +1177,7 @@ class HourlyActivity(DashboardQuadrant):
 
 
 class ConfigPreview(DashboardQuadrant):
-    """Configuration preview showing all config.ini options."""
+    """Configuration preview showing all config.toml options."""
 
     # Keys that should be masked for security
     SENSITIVE_KEYS: ClassVar[frozenset[str]] = frozenset(
