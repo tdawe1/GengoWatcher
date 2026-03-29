@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from getpass import getpass
 
 from rich.console import Console
 
