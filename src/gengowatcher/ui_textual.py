@@ -1768,18 +1768,6 @@ class GengoWatcherApp(App):
         handler = TextualLogHandler(self)
         logging.getLogger().addHandler(handler)
 
-    def _refresh_widget(self, selector_or_type, method_name: str) -> None:
-        try:
-            widget = self.query_one(selector_or_type)
-        except NoMatches:
-            return
-        method = getattr(widget, method_name, None)
-        if callable(method):
-            try:
-                method()
-            except Exception:
-                pass
-
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
         self._setup_jobs_table()
