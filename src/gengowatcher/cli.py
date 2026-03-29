@@ -73,8 +73,62 @@ def should_handle_lightweight_command(args: argparse.Namespace) -> bool:
     )
 
 
-def _coerce_cli_value(value: str):
-    """Convert simple CLI strings into bool/int/float where appropriate."""
+def _coerce_cli_value(value: str, expected_type=None):
+    """Convert CLI strings into appropriate types.
+
+    Args:
+        value: The raw string value from CLI input
+        expected_type: The expected Python type from the config schema (if known)
+
+    Returns:
+        The coerced value matching the expected type where possible
+    """
+    import json
+
+    # If we know the expected type, use it
+    if expected_type is not None:
+        # Handle list/sequence types
+        if expected_type is list or (hasattr(expected_type, '__origin__') and expected_type.__origin__ is list):
+            # Try parsing as JSON first
+            if value.startswith('[') and value.endswith(']'):
+                try:
+                    parsed = json.loads(value)
+                    if isinstance(parsed, list):
+                        return parsed
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            # Fall back to comma-separated
+            return [item.strip() for item in value.split(',') if item.strip()]
+
+        # Handle dict/object types
+        if expected_type is dict or (hasattr(expected_type, '__origin__') and expected_type.__origin__ is dict):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return value
+
+        # Handle boolean
+        if expected_type is bool:
+            return value.lower() in ("true", "1", "yes", "on")
+
+        # Handle int
+        if expected_type is int:
+            try:
+                return int(value)
+            except ValueError:
+                pass
+
+        # Handle float
+        if expected_type is float:
+            try:
+                return float(value)
+            except ValueError:
+                pass
+
+    # Fall back to auto-detection if no type hint or coercion failed
     if value.lower() in ("true", "false"):
         return value.lower() == "true"
     if re.match(r"^[+-]?\d+$", value):
@@ -90,7 +144,12 @@ def handle_cli_config_commands(
     """Handle CLI config commands using AppConfig directly."""
     if args.set:
         section, option, raw_value = args.set
-        value = _coerce_cli_value(raw_value)
+        # Look up expected type from schema
+        expected_type = None
+        schema_default = config.DEFAULT_CONFIG.get(section, {}).get(option)
+        if schema_default is not None:
+            expected_type = type(schema_default)
+        value = _coerce_cli_value(raw_value, expected_type)
         config.set(section, option, value)
         config.save_config()
         print(f"Set [{section}] {option} = {value}")
@@ -107,7 +166,17 @@ def handle_cli_config_commands(
         for section, options in all_values.items():
             print(f"[{section}]")
             for option, value in options.items():
-                print(f"  {option} = {value}")
+                # Redact sensitive values
+                option_lower = option.lower()
+                is_sensitive = any(
+                    keyword in option_lower
+                    for keyword in ["token", "secret", "key", "password", "oauth", "api"]
+                )
+                if is_sensitive:
+                    display_value = "******"
+                else:
+                    display_value = value
+                print(f"  {option} = {display_value}")
         return True
 
     if args.configure:

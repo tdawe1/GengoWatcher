@@ -366,9 +366,10 @@ class AppConfig:
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 
-                # Validate auto-accept configuration
-                self._validate_auto_accept_config()
+                # Backfill from legacy config before validation
                 self._backfill_from_legacy_config()
+                # Validate auto-accept configuration after backfill
+                self._validate_auto_accept_config()
 
             except (tomllib.TOMLDecodeError, ValueError) as e:
                 print(
