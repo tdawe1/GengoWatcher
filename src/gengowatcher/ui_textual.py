@@ -15,7 +15,7 @@ from typing import Any, ClassVar, cast
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal, Vertical, Container
+from textual.containers import Horizontal, Vertical, Container, Grid
 from textual.widgets import (
     Footer,
     Input,
@@ -550,12 +550,13 @@ class MetricCard(Static):
         self.label = label
         self.icon = icon
         self.value = value
-        self.border_title = f"{icon} {label}" if icon else label
+        self.border_title = label
 
     def compose(self) -> ComposeResult:
-        # Border title already provides the card label, so the card body only
-        # renders the current stat value centered.
-        yield Static(self.value, classes="metric-value", id=f"val-{self.label.lower()}")
+        with Grid(classes="metric-grid"):
+            yield Static(self.icon, classes="metric-icon")
+            yield Static(self.value, classes="metric-value", id=f"val-{self.label.lower()}")
+        yield Static(self.label, classes="metric-label")
 
     def update_value(self, value: str):
         try:

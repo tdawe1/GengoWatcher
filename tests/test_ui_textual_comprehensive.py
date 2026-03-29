@@ -206,6 +206,19 @@ class TestThemeIntegration:
         # No hardcoded hex color literals in the main stylesheet.
         assert re.search(r"#[0-9A-Fa-f]{3,8}", css) is None
 
+    def test_css_restores_balanced_dashboard_grid_layout(self):
+        """The dashboard grid should use two balanced rows again."""
+        css_path = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "src"
+            / "gengowatcher"
+            / "gengo_watcher.tcss"
+        )
+        css = css_path.read_text(encoding="utf-8")
+
+        assert "grid-rows: 1fr 1fr;" in css
+        assert ".metric-label" in css
+
 
 class TestTitleBar:
     """Test TitleBar widget."""
@@ -243,7 +256,7 @@ class TestMetricCard:
     def test_metric_card_border_title(self):
         """Test that border_title is set."""
         card = MetricCard("Found", "▲", "10")
-        assert card.border_title == "▲ Found"
+        assert card.border_title == "Found"
 
     @pytest.mark.asyncio
     async def test_update_value_not_mounted(self):
