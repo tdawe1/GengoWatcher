@@ -59,13 +59,21 @@ def select_gengo_target(
     targets: list[dict[str, Any]],
     preferred_url_fragments: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    candidates = [
-        target
-        for target in targets
-        if target.get("type") == "page"
-        and "gengo.com" in str(target.get("url", ""))
-        and target.get("webSocketDebuggerUrl")
-    ]
+    candidates: list[dict[str, Any]] = []
+    for target in targets:
+        if target.get("type") != "page":
+            continue
+        raw_url = str(target.get("url", ""))
+        parsed = urlparse(raw_url)
+        hostname = parsed.hostname or ""
+        if not (
+            hostname == "gengo.com"
+            or hostname.endswith(".gengo.com")
+        ):
+            continue
+        if not target.get("webSocketDebuggerUrl"):
+            continue
+        candidates.append(target)
     for fragment in preferred_url_fragments:
         for target in candidates:
             if fragment in str(target.get("url", "")):
