@@ -158,6 +158,7 @@ class GengoWatcher:
         self._browser_session_last_sync_state = "idle"
         self._browser_session_last_sync_detail = "never synced"
         self._last_browser_activity_action = None
+        self._next_quiet_socket_sync_ts = None
         self._browser_debug_lock = threading.RLock()
         self._health_alert_states = {}
         # Thread references for health monitoring
@@ -403,6 +404,13 @@ class GengoWatcher:
         )
         return max(0.0, current_time - last_activity_ts)
 
+    def _pick_quiet_socket_sync_delay_seconds(self) -> float:
+        recovery_min, recovery_max = self._get_browser_activity_interval_range_seconds()
+        stale_after = float(self._get_session_quiet_stale_seconds())
+        recovery_min = max(recovery_min, stale_after)
+        recovery_max = max(recovery_max, recovery_min)
+        return self._pick_interval_seconds(recovery_min, recovery_max)
+
     def _sync_browser_session_for_quiet_socket(
         self,
         *,
@@ -416,25 +424,35 @@ class GengoWatcher:
 
         now = current_time if current_time is not None else time.time()
         quiet_age = self._get_websocket_quiet_age(now)
-        quiet_probe_after = self._get_session_quiet_probe_seconds()
-        if quiet_age is None or quiet_age < quiet_probe_after:
+        quiet_stale_after = self._get_session_quiet_stale_seconds()
+        if quiet_age is None or quiet_age < quiet_stale_after:
+            self._next_quiet_socket_sync_ts = None
             return False
 
-        if self._browser_session_last_sync_ts is not None:
-            sync_age = max(0.0, now - self._browser_session_last_sync_ts)
-            if sync_age < quiet_probe_after:
-                return False
+        if (
+            self._next_quiet_socket_sync_ts is not None
+            and now < self._next_quiet_socket_sync_ts
+        ):
+            return False
+
+        next_attempt_delay = self._pick_quiet_socket_sync_delay_seconds()
+        self._next_quiet_socket_sync_ts = now + next_attempt_delay
 
         self.logger.warning(
             "WebSocket: No application messages for %.1fs while live; syncing browser"
-            " session from %s before continuing.",
+            " session from %s before continuing. Next stale recovery check eligible"
+            " in %.1fs.",
             quiet_age,
             debug_url,
+            next_attempt_delay,
         )
-        return self._sync_session_from_browser(
+        changed = self._sync_session_from_browser(
             fail_hard=fail_hard,
             alert_on_failure=alert_on_failure,
         )
+        if changed or self._websocket_sync_failed:
+            self._next_quiet_socket_sync_ts = None
+        return changed
 
     def _perform_browser_activity(self) -> str | None:
         debug_url = self.config.get("WebSocket", "browser_debug_url")
@@ -1679,6 +1697,7 @@ class GengoWatcher:
                 self.websocket_last_pong_ts = None
                 self.websocket_ping_latency_ms = None
                 self.websocket_next_ping_ts = None
+                self._next_quiet_socket_sync_ts = None
                 self.logger.debug(
                     f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
                 )
@@ -1910,6 +1929,7 @@ class GengoWatcher:
                         )
                         messages_received = True
                         self.websocket_last_message_ts = time.time()
+                        self._next_quiet_socket_sync_ts = None
                         self.logger.debug(
                             f"WebSocket: First message received: {first_message[:100]}..."
                         )
@@ -1986,6 +2006,7 @@ class GengoWatcher:
                         async for message in websocket:
                             messages_received = True
                             self.websocket_last_message_ts = time.time()
+                            self._next_quiet_socket_sync_ts = None
                             self.logger.debug(
                                 f"WebSocket: Message received (len={len(message)})"
                             )

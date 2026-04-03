@@ -430,6 +430,7 @@ class TestWatcherInitialization:
         watcher_instance.config.getint.side_effect = lambda s, k, **kw: int(
             {
                 ("WebSocket", "session_quiet_probe_sec"): 90,
+                ("WebSocket", "session_quiet_stale_after_sec"): 300,
             }.get(
                 (s, k),
                 watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
@@ -439,14 +440,64 @@ class TestWatcherInitialization:
 
         with patch.object(
             watcher_instance,
+            "_pick_quiet_socket_sync_delay_seconds",
+            return_value=900.0,
+        ), patch.object(
+            watcher_instance,
             "_sync_session_from_browser",
             return_value=True,
         ) as mock_sync:
             changed = watcher_instance._sync_browser_session_for_quiet_socket(
-                current_time=220.0
+                current_time=450.0
             )
 
         assert changed is True
+        assert watcher_instance._next_quiet_socket_sync_ts is None
+        mock_sync.assert_called_once_with(fail_hard=False, alert_on_failure=False)
+
+    def test_sync_browser_session_for_quiet_socket_respects_randomized_cooldown(
+        self, watcher_instance
+    ):
+        watcher_instance.websocket_status = "Live"
+        watcher_instance.websocket_connected_at_ts = 100.0
+        watcher_instance.websocket_last_message_ts = None
+        watcher_instance._browser_session_last_sync_ts = None
+        watcher_instance._next_quiet_socket_sync_ts = None
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+        watcher_instance.config.getint.side_effect = lambda s, k, **kw: int(
+            {
+                ("WebSocket", "session_quiet_probe_sec"): 90,
+                ("WebSocket", "session_quiet_stale_after_sec"): 300,
+            }.get(
+                (s, k),
+                watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+                or 0,
+            )
+        )
+
+        with patch.object(
+            watcher_instance,
+            "_pick_quiet_socket_sync_delay_seconds",
+            return_value=900.0,
+        ), patch.object(
+            watcher_instance,
+            "_sync_session_from_browser",
+            return_value=False,
+        ) as mock_sync:
+            first = watcher_instance._sync_browser_session_for_quiet_socket(
+                current_time=450.0
+            )
+            second = watcher_instance._sync_browser_session_for_quiet_socket(
+                current_time=800.0
+            )
+
+        assert first is False
+        assert second is False
+        assert watcher_instance._next_quiet_socket_sync_ts == 1350.0
         mock_sync.assert_called_once_with(fail_hard=False, alert_on_failure=False)
 
     def test_get_health_snapshot_marks_quiet_live_websocket_stale(
