@@ -16,10 +16,26 @@ from .cli import (
 from .config import AppConfig
 from .logging_setup import APP_THEME
 from .logging_setup import should_enable_stdio_logging as _should_enable_stdio_logging
+from .prom_metrics import start_watcher_metrics_server
 from .runtime import run_application
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _start_metrics_server_if_enabled(config: AppConfig, watcher, logger):
+    """Start the Prometheus exporter when metrics are enabled in config."""
+    if not config.getboolean("Metrics", "enabled", fallback=False):
+        return None
+
+    host = str(config.get("Metrics", "host", fallback="127.0.0.1") or "127.0.0.1")
+    port = int(config.getint("Metrics", "port", fallback=9091) or 9091)
+    return start_watcher_metrics_server(
+        host=host,
+        port=port,
+        watcher=watcher,
+        logger=logger,
+    )
 
 
 def main() -> None:

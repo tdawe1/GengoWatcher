@@ -12,6 +12,7 @@ from rich.console import Console
 
 from .config import AppConfig
 from .logging_setup import configure_logger, create_logger
+from .prom_metrics import start_watcher_metrics_server
 from .state import AppState
 from .stats import StatsManager
 from .ui_textual import GengoWatcherApp
@@ -28,9 +29,7 @@ def run_application(args: argparse.Namespace, console: Console) -> None:
     except Exception as e:
         if log.handlers:
             log.critical(f"A critical error occurred during initialization: {e}")
-        console.print(
-            f"[error]A critical error occurred during initialization: {e}[/]"
-        )
+        console.print(f"[error]A critical error occurred during initialization: {e}[/]")
         sys.exit(1)
 
     _handle_setup_commands(args, config, console)
@@ -38,12 +37,11 @@ def run_application(args: argparse.Namespace, console: Console) -> None:
     try:
         state = AppState(logger=log)
         watcher = GengoWatcher(config=config, state=state, logger=log)
+        _start_metrics_server_if_enabled(config, watcher, log)
     except Exception as e:
         if log.handlers:
             log.critical(f"A critical error occurred during initialization: {e}")
-        console.print(
-            f"[error]A critical error occurred during initialization: {e}[/]"
-        )
+        console.print(f"[error]A critical error occurred during initialization: {e}[/]")
         sys.exit(1)
 
     if not watcher.is_config_complete():
@@ -58,6 +56,24 @@ def run_application(args: argparse.Namespace, console: Console) -> None:
         _run_web_only(console, web_thread)
 
     _run_tui(args, console, log, config, state, watcher)
+
+
+def _start_metrics_server_if_enabled(
+    config: AppConfig,
+    watcher: GengoWatcher,
+    logger: logging.Logger,
+):
+    if not config.getboolean("Metrics", "enabled", fallback=False):
+        return None
+
+    host = str(config.get("Metrics", "host", fallback="127.0.0.1") or "127.0.0.1")
+    port = int(config.getint("Metrics", "port", fallback=9091) or 9091)
+    return start_watcher_metrics_server(
+        host=host,
+        port=port,
+        watcher=watcher,
+        logger=logger,
+    )
 
 
 def _handle_setup_commands(
