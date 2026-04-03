@@ -4,6 +4,7 @@ import shutil
 import sys
 import threading
 import tomllib
+from configparser import ConfigParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,10 +31,13 @@ PLACEHOLDER_CONFIG_VALUES = [
 
 class AppConfig:
     CONFIG_FILE = "config.toml"
+    LEGACY_CONFIG_FILE = "config.ini"
     DEFAULT_CONFIG = {
         "Watcher": {
             "feed_url": "https://www.theguardian.com/uk/rss",
             "check_interval": 31,
+            "gengo_rss_interval_min_sec": 31,
+            "gengo_rss_interval_max_sec": 60,
             "min_reward": 0.0,
             "enable_notifications": True,
             "enable_sound": True,
@@ -49,6 +53,10 @@ class AppConfig:
             "session_sync_interval_sec": 14400,
             "session_quiet_probe_sec": 90,
             "session_quiet_stale_after_sec": 300,
+            "planned_reconnect_min_sec": 300,
+            "planned_reconnect_max_sec": 3600,
+            "browser_activity_min_sec": 300,
+            "browser_activity_max_sec": 3600,
             "session_sync_fail_hard": True,
             "session_sync_alert_on_failure": True,
         },
@@ -190,9 +198,118 @@ class AppConfig:
         self.config: Dict[str, Dict[str, Any]] = {}
 
         if not Path(self.CONFIG_FILE).is_file():
-            self._create_default_config()
+            if Path(self.LEGACY_CONFIG_FILE).is_file():
+                self._migrate_legacy_config()
+            else:
+                self._create_default_config()
 
         self.load_config()
+
+    @classmethod
+    def _coerce_legacy_value(cls, value: str, default: Any) -> Any:
+        value = value.strip()
+
+        if isinstance(default, bool):
+            return value.lower() in {"1", "true", "yes", "on"}
+
+        if isinstance(default, int) and not isinstance(default, bool):
+            try:
+                return int(value)
+            except ValueError:
+                return default
+
+        if isinstance(default, float):
+            try:
+                return float(value)
+            except ValueError:
+                return default
+
+        if isinstance(default, list):
+            if not value:
+                return []
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    import ast
+
+                    parsed = ast.literal_eval(value)
+                except (SyntaxError, ValueError):
+                    parsed = None
+                if isinstance(parsed, list):
+                    return parsed
+            return [item.strip() for item in value.split(",") if item.strip()]
+
+        return value
+
+    def _migrate_legacy_config(self):
+        legacy_parser = ConfigParser()
+        legacy_parser.read(self.LEGACY_CONFIG_FILE, encoding="utf-8")
+
+        migrated = copy.deepcopy(self.DEFAULT_CONFIG)
+        for section in legacy_parser.sections():
+            if section not in migrated:
+                migrated[section] = {}
+            for key, value in legacy_parser.items(section):
+                default = self.DEFAULT_CONFIG.get(section, {}).get(key)
+                migrated[section][key] = self._coerce_legacy_value(value, default)
+
+        log_dir = Path(str(migrated["Paths"]["log_file"])).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(self._dump_toml(migrated))
+        try:
+            os.chmod(self.CONFIG_FILE, 0o600)
+        except OSError:
+            pass
+
+        print(f"Migrated existing '{self.LEGACY_CONFIG_FILE}' to '{self.CONFIG_FILE}'.")
+
+    def _backfill_from_legacy_config(self) -> bool:
+        legacy_path = Path(self.LEGACY_CONFIG_FILE)
+        if not legacy_path.is_file():
+            return False
+
+        legacy_parser = ConfigParser()
+        legacy_parser.read(legacy_path, encoding="utf-8")
+
+        config_modified = False
+        for section in legacy_parser.sections():
+            if section not in self.config:
+                continue
+
+            for key, raw_value in legacy_parser.items(section):
+                if key not in self.config[section]:
+                    continue
+
+                default = self.DEFAULT_CONFIG.get(section, {}).get(key)
+                legacy_value = self._coerce_legacy_value(raw_value, default)
+                current_value = self.config[section][key]
+
+                legacy_is_meaningful = (
+                    legacy_value not in PLACEHOLDER_CONFIG_VALUES
+                    and (
+                        legacy_value != default
+                        or current_value in PLACEHOLDER_CONFIG_VALUES
+                    )
+                )
+                current_needs_backfill = current_value in PLACEHOLDER_CONFIG_VALUES or (
+                    default is not None
+                    and current_value == default
+                    and legacy_value != default
+                )
+
+                if legacy_is_meaningful and current_needs_backfill:
+                    self.config[section][key] = legacy_value
+                    config_modified = True
+
+        if config_modified:
+            self._write_config_unlocked()
+            try:
+                os.chmod(self.CONFIG_FILE, 0o600)
+            except OSError:
+                pass
+
+        return config_modified
 
     def _create_default_config(self):
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
@@ -260,7 +377,9 @@ class AppConfig:
                     except IOError as e:
                         print(f"Warning: Could not save updated config: {e}")
 
-                # Validate auto-accept configuration
+                # Backfill from legacy config before validation
+                self._backfill_from_legacy_config()
+                # Validate auto-accept configuration after backfill
                 self._validate_auto_accept_config()
 
             except (tomllib.TOMLDecodeError, ValueError) as e:

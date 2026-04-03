@@ -27,7 +27,9 @@ from .browser_detector import get_preferred_browser_user_agent
 from .browser_session import (
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
+    describe_browser_activity_action,
     fetch_browser_session_snapshot_sync,
+    refresh_browser_page_activity_sync,
 )
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
@@ -149,11 +151,15 @@ class GengoWatcher:
         self._rss_future = None
         self._rss_future_started_at = None
         self._websocket_session_refresh_requested = False
+        self._websocket_planned_reconnect_requested = False
         self._websocket_sync_failed = False
         self._websocket_sync_failure_reason = None
         self._browser_session_last_sync_ts = None
         self._browser_session_last_sync_state = "idle"
         self._browser_session_last_sync_detail = "never synced"
+        self._last_browser_activity_action = None
+        self._next_quiet_socket_sync_ts = None
+        self._browser_debug_lock = threading.RLock()
         self._health_alert_states = {}
         # Thread references for health monitoring
         self._monitor_threads = {}  # name -> threading.Thread
@@ -219,7 +225,8 @@ class GengoWatcher:
             return
 
         try:
-            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
+            with self._browser_debug_lock:
+                snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
         except Exception as exc:
             self.logger.debug(
                 "Browser session check skipped for %s: %s",
@@ -304,6 +311,91 @@ class GengoWatcher:
             return configured
         return max(self._get_session_quiet_probe_seconds() * 2, 300)
 
+    def _get_interval_range(
+        self,
+        section: str,
+        min_key: str,
+        max_key: str,
+        *,
+        default_min: float,
+        default_max: float,
+    ) -> tuple[float, float]:
+        min_value = self.config.get(section, min_key, fallback=default_min)
+        max_value = self.config.get(section, max_key, fallback=default_max)
+        try:
+            min_seconds = float(min_value)
+        except (TypeError, ValueError):
+            min_seconds = float(default_min)
+        try:
+            max_seconds = float(max_value)
+        except (TypeError, ValueError):
+            max_seconds = float(default_max)
+        if min_seconds <= 0 or max_seconds <= 0:
+            return (0.0, 0.0)
+        if min_seconds > max_seconds:
+            min_seconds, max_seconds = max_seconds, min_seconds
+        return (min_seconds, max_seconds)
+
+    @staticmethod
+    def _pick_interval_seconds(min_seconds: float, max_seconds: float) -> float:
+        if min_seconds <= 0 or max_seconds <= 0:
+            return 0.0
+        if min_seconds == max_seconds:
+            return min_seconds
+        return random.uniform(min_seconds, max_seconds)
+
+    def _get_planned_websocket_reconnect_range_seconds(self) -> tuple[float, float]:
+        return self._get_interval_range(
+            "WebSocket",
+            "planned_reconnect_min_sec",
+            "planned_reconnect_max_sec",
+            default_min=300.0,
+            default_max=3600.0,
+        )
+
+    def _pick_planned_websocket_reconnect_delay_seconds(self) -> float:
+        reconnect_min, reconnect_max = (
+            self._get_planned_websocket_reconnect_range_seconds()
+        )
+        return self._pick_interval_seconds(reconnect_min, reconnect_max)
+
+    def _get_browser_activity_interval_range_seconds(self) -> tuple[float, float]:
+        return self._get_interval_range(
+            "WebSocket",
+            "browser_activity_min_sec",
+            "browser_activity_max_sec",
+            default_min=300.0,
+            default_max=3600.0,
+        )
+
+    def _pick_browser_activity_delay_seconds(self) -> float:
+        activity_min, activity_max = self._get_browser_activity_interval_range_seconds()
+        return self._pick_interval_seconds(activity_min, activity_max)
+
+    def _get_effective_rss_wait_range_seconds(self) -> tuple[float, float]:
+        interval = float(self.config.get("Watcher", "check_interval") or 45)
+        feed_url = str(self.config.get("Watcher", "feed_url") or "")
+        if "gengo.com/rss/available_jobs" not in feed_url:
+            return (interval, interval)
+        rss_min, rss_max = self._get_interval_range(
+            "Watcher",
+            "gengo_rss_interval_min_sec",
+            "gengo_rss_interval_max_sec",
+            default_min=31.0,
+            default_max=60.0,
+        )
+        if rss_min <= 0 or rss_max <= 0:
+            return (interval, interval)
+        return (rss_min, rss_max)
+
+    def _get_effective_rss_check_interval(self) -> float:
+        _min_wait, max_wait = self._get_effective_rss_wait_range_seconds()
+        return max_wait
+
+    def _pick_next_rss_wait_seconds(self) -> float:
+        min_wait, max_wait = self._get_effective_rss_wait_range_seconds()
+        return self._pick_interval_seconds(min_wait, max_wait)
+
     def _get_websocket_quiet_age(self, current_time: float) -> float | None:
         if self.websocket_connected_at_ts is None:
             return None
@@ -311,6 +403,13 @@ class GengoWatcher:
             self.websocket_last_message_ts or self.websocket_connected_at_ts
         )
         return max(0.0, current_time - last_activity_ts)
+
+    def _pick_quiet_socket_sync_delay_seconds(self) -> float:
+        recovery_min, recovery_max = self._get_browser_activity_interval_range_seconds()
+        stale_after = float(self._get_session_quiet_stale_seconds())
+        recovery_min = max(recovery_min, stale_after)
+        recovery_max = max(recovery_max, recovery_min)
+        return self._pick_interval_seconds(recovery_min, recovery_max)
 
     def _sync_browser_session_for_quiet_socket(
         self,
@@ -325,25 +424,61 @@ class GengoWatcher:
 
         now = current_time if current_time is not None else time.time()
         quiet_age = self._get_websocket_quiet_age(now)
-        quiet_probe_after = self._get_session_quiet_probe_seconds()
-        if quiet_age is None or quiet_age < quiet_probe_after:
+        quiet_stale_after = self._get_session_quiet_stale_seconds()
+        if quiet_age is None or quiet_age < quiet_stale_after:
+            self._next_quiet_socket_sync_ts = None
             return False
 
-        if self._browser_session_last_sync_ts is not None:
-            sync_age = max(0.0, now - self._browser_session_last_sync_ts)
-            if sync_age < quiet_probe_after:
-                return False
+        if (
+            self._next_quiet_socket_sync_ts is not None
+            and now < self._next_quiet_socket_sync_ts
+        ):
+            return False
+
+        next_attempt_delay = self._pick_quiet_socket_sync_delay_seconds()
+        self._next_quiet_socket_sync_ts = now + next_attempt_delay
 
         self.logger.warning(
             "WebSocket: No application messages for %.1fs while live; syncing browser"
-            " session from %s before continuing.",
+            " session from %s before continuing. Next stale recovery check eligible"
+            " in %.1fs.",
             quiet_age,
             debug_url,
+            next_attempt_delay,
         )
-        return self._sync_session_from_browser(
+        changed = self._sync_session_from_browser(
             fail_hard=fail_hard,
             alert_on_failure=alert_on_failure,
         )
+        if changed or self._websocket_sync_failed:
+            self._next_quiet_socket_sync_ts = None
+        return changed
+
+    def _perform_browser_activity(self) -> str | None:
+        debug_url = self.config.get("WebSocket", "browser_debug_url")
+        if not debug_url:
+            return None
+        try:
+            with self._browser_debug_lock:
+                action = refresh_browser_page_activity_sync(
+                    str(debug_url),
+                    previous_action=self._last_browser_activity_action,
+                )
+        except Exception as exc:
+            self.logger.warning(
+                "WebSocket: Browser activity refresh failed for %s: %s",
+                debug_url,
+                exc,
+            )
+            return None
+        self._last_browser_activity_action = action
+        self.logger.info(
+            "WebSocket: Browser activity completed by %s against %s (action=%s).",
+            describe_browser_activity_action(action),
+            debug_url,
+            action,
+        )
+        return action
 
     @staticmethod
     def _timestamp_or_none(value):
@@ -363,7 +498,7 @@ class GengoWatcher:
     ) -> dict[str, dict[str, object]]:
         """Return actionable subsystem health instead of coarse absolute state."""
         current_time = now if now is not None else time.time()
-        check_interval = float(self.config.get("Watcher", "check_interval") or 45)
+        check_interval = self._get_effective_rss_check_interval()
         browser_debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
         ws_enabled = self.config.getboolean(
             "WebSocket", "enable_websocket", fallback=True
@@ -675,7 +810,8 @@ class GengoWatcher:
             return False
 
         try:
-            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
+            with self._browser_debug_lock:
+                snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
         except Exception as exc:
             self._browser_session_last_sync_ts = time.time()
             self._browser_session_last_sync_state = "error"
@@ -722,7 +858,10 @@ class GengoWatcher:
         if browser_user_key and browser_user_key != str(current_user_key or "").strip():
             self.config.set("WebSocket", "user_key", browser_user_key)
             changed_fields.append("user_key")
-        elif not browser_user_key and current_user_key:
+        elif (
+            not browser_user_key
+            and str(current_user_key or "").strip() in PLACEHOLDER_CONFIG_VALUES
+        ):
             self.config.set("WebSocket", "user_key", "")
             changed_fields.append("user_key")
         if (
@@ -990,14 +1129,14 @@ class GengoWatcher:
         with self._seen_jobs_lock:
             if job_id in self._seen_jobs_session:
                 return
-            self._seen_jobs_session.add(job_id)
-            self.state.seen_job_ids.append(job_id)
             min_reward = self.config.get("Watcher", "min_reward")
             if min_reward > 0.0 and reward < min_reward:
                 self.logger.warning(
                     f"Job '{title}' (US$ {reward:.2f}) ignored due to [yellow]min_reward filter[/]."
                 )
                 return
+            self._seen_jobs_session.add(job_id)
+            self.state.seen_job_ids.append(job_id)
             self.state.total_new_entries_found += 1
             self.session_new_entries += 1
             self.session_total_value += reward
@@ -1558,6 +1697,7 @@ class GengoWatcher:
                 self.websocket_last_pong_ts = None
                 self.websocket_ping_latency_ms = None
                 self.websocket_next_ping_ts = None
+                self._next_quiet_socket_sync_ts = None
                 self.logger.debug(
                     f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
                 )
@@ -1660,6 +1800,8 @@ class GengoWatcher:
                     heartbeat_task = asyncio.create_task(heartbeat())
 
                     session_refresh_task = None
+                    browser_activity_task = None
+                    planned_reconnect_task = None
                     sync_interval = self._get_session_sync_interval_seconds()
                     sync_fail_hard = self.config.getboolean(
                         "WebSocket", "session_sync_fail_hard", fallback=True
@@ -1705,6 +1847,81 @@ class GengoWatcher:
                             refresh_session_token_periodically()
                         )
 
+                    browser_activity_delay = (
+                        self._pick_browser_activity_delay_seconds()
+                    )
+                    if debug_url and browser_activity_delay > 0:
+
+                        async def refresh_browser_activity_periodically():
+                            while True:
+                                delay = self._pick_browser_activity_delay_seconds()
+                                self.logger.debug(
+                                    "WebSocket: Scheduling browser activity refresh in %.1fs",
+                                    delay,
+                                )
+                                await asyncio.sleep(delay)
+                                action = await asyncio.to_thread(
+                                    self._perform_browser_activity
+                                )
+                                if not action:
+                                    continue
+                                changed = await asyncio.to_thread(
+                                    self._sync_session_from_browser,
+                                    fail_hard=sync_fail_hard,
+                                    alert_on_failure=sync_alert_on_failure,
+                                )
+                                if self._websocket_sync_failed:
+                                    self.logger.error(
+                                        "WebSocket: Browser activity session sync failed;"
+                                        " closing realtime connection immediately."
+                                    )
+                                    await websocket.close(
+                                        code=4002,
+                                        reason="browser activity session sync failed",
+                                    )
+                                    return
+                                if changed:
+                                    self._websocket_session_refresh_requested = True
+                                    self.logger.warning(
+                                        "WebSocket: Browser activity refreshed session state;"
+                                        " reconnecting now."
+                                    )
+                                    await websocket.close(
+                                        code=4001,
+                                        reason="browser activity refreshed session",
+                                    )
+                                    return
+
+                        browser_activity_task = asyncio.create_task(
+                            refresh_browser_activity_periodically()
+                        )
+
+                    planned_reconnect_delay = (
+                        self._pick_planned_websocket_reconnect_delay_seconds()
+                    )
+                    if planned_reconnect_delay > 0:
+
+                        async def planned_reconnect():
+                            delay = self._pick_planned_websocket_reconnect_delay_seconds()
+                            self.logger.debug(
+                                "WebSocket: Planned reconnect scheduled in %.1fs",
+                                delay,
+                            )
+                            await asyncio.sleep(delay)
+                            self._websocket_planned_reconnect_requested = True
+                            self.logger.info(
+                                "WebSocket: Triggering planned reconnect after %.1fs",
+                                delay,
+                            )
+                            await websocket.close(
+                                code=4003,
+                                reason="planned reconnect",
+                            )
+
+                        planned_reconnect_task = asyncio.create_task(
+                            planned_reconnect()
+                        )
+
                     try:
                         self.logger.debug("WebSocket: Waiting for first message...")
                         first_message = await asyncio.wait_for(
@@ -1712,6 +1929,7 @@ class GengoWatcher:
                         )
                         messages_received = True
                         self.websocket_last_message_ts = time.time()
+                        self._next_quiet_socket_sync_ts = None
                         self.logger.debug(
                             f"WebSocket: First message received: {first_message[:100]}..."
                         )
@@ -1788,6 +2006,7 @@ class GengoWatcher:
                         async for message in websocket:
                             messages_received = True
                             self.websocket_last_message_ts = time.time()
+                            self._next_quiet_socket_sync_ts = None
                             self.logger.debug(
                                 f"WebSocket: Message received (len={len(message)})"
                             )
@@ -1854,11 +2073,19 @@ class GengoWatcher:
                         heartbeat_task.cancel()
                         if session_refresh_task is not None:
                             session_refresh_task.cancel()
+                        if browser_activity_task is not None:
+                            browser_activity_task.cancel()
+                        if planned_reconnect_task is not None:
+                            planned_reconnect_task.cancel()
                         try:
                             await test_monitor_task
                             await heartbeat_task
                             if session_refresh_task is not None:
                                 await session_refresh_task
+                            if browser_activity_task is not None:
+                                await browser_activity_task
+                            if planned_reconnect_task is not None:
+                                await planned_reconnect_task
                         except asyncio.CancelledError:
                             self.logger.debug(
                                 "WebSocket: Auxiliary tasks cancelled cleanly."
@@ -1971,6 +2198,7 @@ class GengoWatcher:
         key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
         while not self.shutdown_event.is_set():
             self._websocket_session_refresh_requested = False
+            self._websocket_planned_reconnect_requested = False
             self._websocket_sync_failed = False
             self._websocket_sync_failure_reason = None
 
@@ -2034,6 +2262,12 @@ class GengoWatcher:
                 if self._websocket_session_refresh_requested:
                     self.logger.info(
                         "WebSocket: Reconnecting immediately after browser session refresh."
+                    )
+                    backoff = base_backoff
+                    continue
+                if self._websocket_planned_reconnect_requested:
+                    self.logger.info(
+                        "WebSocket: Reconnecting immediately after planned reconnect."
                     )
                     backoff = base_backoff
                     continue
@@ -2171,7 +2405,7 @@ class GengoWatcher:
                     if feed is None:
                         self.failure_count += 1
                         wait_time = min(
-                            self.config.get("Watcher", "check_interval")
+                            self._pick_next_rss_wait_seconds()
                             * (2**self.failure_count),
                             self.config.get("Network", "max_backoff"),
                         )
@@ -2183,7 +2417,7 @@ class GengoWatcher:
                         self.last_check_time = datetime.datetime.now()
                         self.rss_action = "Processing RSS"
                         self._process_feed_entries(feed.entries)
-                        wait_time = self.config.get("Watcher", "check_interval")
+                        wait_time = self._pick_next_rss_wait_seconds()
                         self.rss_action = "Waiting"
                 self.next_check_time = time.time() + wait_time
 

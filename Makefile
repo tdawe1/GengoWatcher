@@ -1,27 +1,31 @@
+PYTHON := $(shell if [ -x .venv/bin/python ]; then printf '%s' .venv/bin/python; else printf '%s' python3; fi)
+
+.PHONY: build test coverage lint format run run-web run-web-only
+
+build:
+	@echo "Compiling Python files..."
+	$(PYTHON) -m py_compile src/gengowatcher/*.py
+	$(PYTHON) -m py_compile tests/*.py
+	$(PYTHON) -m py_compile scripts/*.py
+	@echo "Build successful!"
+
 test:
-	.venv/bin/pytest
+	$(PYTHON) -m pytest
 
 coverage:
-	.venv/bin/pytest --cov=.
+	$(PYTHON) -m pytest --cov=.
 
 lint:
-	.venv/bin/flake8 .
+	$(PYTHON) -m flake8 .
 
 format:
-	.venv/bin/black .
-
-install:
-	.venv/bin/pip install -e .
-
-install-user:
-	mkdir -p "$(HOME)/.local/bin"
-	ln -snf "$(CURDIR)/bin/gengowatcher" "$(HOME)/.local/bin/gengowatcher"
+	$(PYTHON) -m black .
 
 run:
-	./bin/gengowatcher
+	PYTHONPATH=src $(PYTHON) -m gengowatcher.main
 
 run-web:
-	PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main --web
+	PYTHONPATH=src $(PYTHON) -m gengowatcher.main --web
 
 run-web-only:
-	PYTHONPATH=src .venv/bin/python3 -m gengowatcher.main --web-only
+	PYTHONPATH=src $(PYTHON) -m gengowatcher.main --web-only

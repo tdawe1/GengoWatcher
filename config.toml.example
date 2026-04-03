@@ -5,6 +5,8 @@
 [Watcher]
 feed_url = "https://gengo.com/rss/available_jobs/YOUR_RSS_FEED_TOKEN"
 check_interval = 31
+gengo_rss_interval_min_sec = 31
+gengo_rss_interval_max_sec = 60
 min_reward = 0.0
 enable_notifications = true
 enable_sound = true
@@ -22,6 +24,10 @@ browser_debug_url = ""
 session_sync_interval_sec = 14400
 session_quiet_probe_sec = 90
 session_quiet_stale_after_sec = 300
+planned_reconnect_min_sec = 300
+planned_reconnect_max_sec = 3600
+browser_activity_min_sec = 300
+browser_activity_max_sec = 3600
 session_sync_fail_hard = true
 session_sync_alert_on_failure = true
 

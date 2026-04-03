@@ -7,12 +7,15 @@ import pytest
 
 from gengowatcher.browser_session import (
     BrowserSessionError,
+    _choose_browser_activity_action,
     _cdp_call,
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
+    describe_browser_activity_action,
     extract_cookie_value,
     fetch_browser_session_snapshot,
     fetch_browser_session_token,
+    refresh_browser_page_activity,
     select_gengo_target,
 )
 from gengowatcher.main import handle_cli_config_commands
@@ -75,6 +78,26 @@ def test_select_gengo_target_returns_first_page_with_cdp_url():
     )
 
     assert target["webSocketDebuggerUrl"] == "ws://gengo"
+
+
+def test_select_gengo_target_prefers_requested_fragment():
+    target = select_gengo_target(
+        [
+            {
+                "type": "page",
+                "url": "https://gengo.com/t/dashboard",
+                "webSocketDebuggerUrl": "ws://dashboard",
+            },
+            {
+                "type": "page",
+                "url": "https://gengo.com/t/jobs/status/available/realtime",
+                "webSocketDebuggerUrl": "ws://realtime",
+            },
+        ],
+        preferred_url_fragments=("/t/jobs/status/available/realtime",),
+    )
+
+    assert target["webSocketDebuggerUrl"] == "ws://realtime"
 
 
 def test_extract_cookie_value_returns_gengo_session_cookie():
@@ -225,6 +248,100 @@ async def test_cdp_call_times_out_when_browser_never_replies():
         )
 
 
+@pytest.mark.asyncio
+async def test_refresh_browser_page_activity_summary_roundtrip_uses_cdp_navigation():
+    targets = [
+        {
+            "type": "page",
+            "url": "https://gengo.com/t/jobs/status/available/realtime",
+            "webSocketDebuggerUrl": "ws://gengo-target",
+        }
+    ]
+    responses = [
+        {"id": 1, "result": {}},
+        {
+            "id": 2,
+            "result": {
+                "result": {
+                    "type": "object",
+                    "value": {
+                        "href": "https://gengo.com/t/jobs/status/available/realtime",
+                        "jobHref": "",
+                    },
+                }
+            },
+        },
+        {"id": 3, "result": {}},
+        {
+            "id": 4,
+            "result": {
+                "result": {
+                    "type": "string",
+                    "value": "https://gengo.com/t/dashboard",
+                }
+            },
+        },
+        {"id": 5, "result": {}},
+        {
+            "id": 6,
+            "result": {
+                "result": {
+                    "type": "string",
+                    "value": "https://gengo.com/t/jobs/status/available/realtime",
+                }
+            },
+        },
+    ]
+    mock_ws = _MockCDPWebSocket(responses)
+
+    with (
+        patch(
+            "gengowatcher.browser_session.urllib.request.urlopen",
+            return_value=_MockUrlResponse(targets),
+        ),
+        patch(
+            "gengowatcher.browser_session.websockets.connect",
+            return_value=mock_ws,
+        ),
+    ):
+        action = await refresh_browser_page_activity(
+            "http://127.0.0.1:9222",
+            action="summary_roundtrip",
+        )
+
+    assert action == "summary_roundtrip"
+    assert mock_ws._sent[0]["method"] == "Page.enable"
+    assert mock_ws._sent[2]["method"] == "Page.navigate"
+    assert mock_ws._sent[2]["params"]["url"].endswith("/t/dashboard")
+    assert mock_ws._sent[4]["method"] == "Page.navigate"
+    assert mock_ws._sent[4]["params"]["url"].endswith(
+        "/t/jobs/status/available/realtime"
+    )
+
+
+def test_choose_browser_activity_action_avoids_repeating_previous_action():
+    with patch(
+        "gengowatcher.browser_session.random.choices",
+        return_value=["job_roundtrip"],
+    ) as mock_choices:
+        action = _choose_browser_activity_action(
+            job_href="https://gengo.com/t/jobs/details/123",
+            previous_action="summary_roundtrip",
+        )
+
+    assert action == "job_roundtrip"
+    args, kwargs = mock_choices.call_args
+    assert "summary_roundtrip" not in args[0]
+    assert kwargs["k"] == 1
+
+
+def test_describe_browser_activity_action_returns_human_readable_text():
+    assert (
+        describe_browser_activity_action("job_roundtrip")
+        == "opening a visible job details page and returning to realtime"
+    )
+
+
 def test_build_browser_aligned_websocket_headers_uses_browser_profile():
     headers = build_browser_aligned_websocket_headers(
         session_token="fresh-token",
@@ -252,6 +369,19 @@ def test_build_websocket_auth_payload_includes_user_key_when_present():
         "user_id": 12345,
         "user_session": "fresh-token",
         "user_key": "browser-user-key",
+    }
+
+
+def test_build_websocket_auth_payload_omits_placeholder_user_key():
+    payload = build_websocket_auth_payload(
+        user_id=12345,
+        session_token="fresh-token",
+        user_key="REPLACE_WITH_YOUR_USER_KEY",
+    )
+
+    assert payload == {
+        "user_id": 12345,
+        "user_session": "fresh-token",
     }
 
 

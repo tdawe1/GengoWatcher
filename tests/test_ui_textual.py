@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,6 +12,10 @@ from textual.css.query import NoMatches
 from gengowatcher.ui_textual import (
     ChartsPanel,
     GengoWatcherApp,
+    HourlyActivity,
+    JobsPreview,
+    MetricsRow,
+    SessionStats,
     TextualLogHandler,
     _format_timestamp,
     _normalize_source,
@@ -108,7 +113,39 @@ def test_textual_log_handler_write_to_log_writes_to_widget():
     log_widget.write.assert_called_once_with(colored_text)
 
 
-def test_app_setup_logging_attaches_handler_to_watcher_logger(tmp_path):
+def test_textual_log_handler_emit_on_app_thread_writes_directly():
+    app = MagicMock()
+    app._thread_id = threading.get_ident()
+    handler = TextualLogHandler(app)
+    handler.write_log = MagicMock()
+
+    record = logging.LogRecord(
+        "test_ui_textual", logging.INFO, __file__, 1, "hello", (), None
+    )
+    handler.emit(record)
+
+    handler.write_log.assert_called_once_with("hello", logging.INFO)
+    app.call_from_thread.assert_not_called()
+
+
+def test_textual_log_handler_emit_from_background_thread_uses_call_from_thread():
+    app = MagicMock()
+    app._thread_id = threading.get_ident() + 1
+    handler = TextualLogHandler(app)
+    handler.write_log = MagicMock()
+
+    record = logging.LogRecord(
+        "test_ui_textual", logging.WARNING, __file__, 1, "hello", (), None
+    )
+    handler.emit(record)
+
+    app.call_from_thread.assert_called_once_with(
+        handler.write_log, "hello", logging.WARNING
+    )
+    handler.write_log.assert_not_called()
+
+
+def test_app_setup_logging_attaches_handler_on_mount_and_removes_on_unmount(tmp_path):
     watcher_logger = logging.getLogger("test_ui_textual_app_logger")
     watcher_logger.handlers = []
     watcher_logger.propagate = False
@@ -124,8 +161,40 @@ def test_app_setup_logging_attaches_handler_to_watcher_logger(tmp_path):
     )
 
     try:
+        assert not any(
+            isinstance(handler, TextualLogHandler)
+            for handler in watcher_logger.handlers
+        )
+
+        app._setup_jobs_table = MagicMock()
+        app._refresh_dashboard_panels = MagicMock()
+        app.set_interval = MagicMock()
+        app.on_mount()
+
         assert app._log_source is watcher_logger
         assert isinstance(app._textual_log_handler, TextualLogHandler)
         assert app._textual_log_handler in watcher_logger.handlers
     finally:
         app.on_unmount()
+
+    assert watcher.on_job_added_callback is None
+    assert app._textual_log_handler not in watcher_logger.handlers
+
+
+def test_refresh_dashboard_panels_only_targets_mounted_dashboard_widgets():
+    app = GengoWatcherApp(
+        config=MagicMock(),
+        state=MagicMock(),
+        watcher=MagicMock(),
+        stats=MagicMock(),
+    )
+    app._refresh_widget = MagicMock()
+
+    app._refresh_dashboard_panels()
+
+    assert app._refresh_widget.call_args_list == [
+        ((MetricsRow, "refresh_metrics"),),
+        ((SessionStats, "refresh_stats"),),
+        ((HourlyActivity, "refresh_hourly"),),
+        ((JobsPreview, "refresh_jobs"),),
+    ]

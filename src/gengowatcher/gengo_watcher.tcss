@@ -53,7 +53,7 @@ TitleBar {
 
 /* Metrics Row */
 MetricsRow {
-    height: 4;
+    height: 5;
     margin: 0 1;
     align: center middle;
     layout: horizontal;
@@ -62,6 +62,7 @@ MetricsRow {
 MetricCard {
     width: 1fr;
     height: 100%;
+    background: $panel;
     border: round $surface-muted;
     layout: vertical;
     align: center middle;
@@ -143,15 +144,20 @@ MetricCard.today:focus {
 .metric-value {
     text-style: bold;
     color: $text;
-    width: 1fr;
+    width: 100%;
+    text-align: right;
+}
+
+.metric-label {
+    width: 100%;
     text-align: center;
-    height: 1fr;
-    content-align: center middle;
+    color: $text-muted;
+    padding-bottom: 0;
 }
 
 /* Status Row - seamless, matches surface */
 StatusRow {
-    height: 2;
+    height: 3;
     width: 100%;
     layout: horizontal;
     align: center middle;
@@ -163,7 +169,7 @@ StatusRow {
 StatusIndicator {
     layout: horizontal;
     margin: 0 2;
-    min-width: 8;
+    min-width: 10;
     align: center middle;
     width: 1fr;
 }
@@ -215,19 +221,21 @@ StatusIndicator {
     layout: grid;
     grid-size: 2 2;
     grid-columns: 1fr 1fr;
-    grid-rows: 9 1fr;
+    grid-rows: 1fr 1fr;
     margin: 0 1;
     height: 1fr;
-    min-height: 18;
+    min-height: 20;
 }
 
 /* Panel styling - unified with surface */
 .dashboard-panel {
+    background: $panel;
     border: round $surface-muted;
     padding: 0 1;
     height: 100%;
     margin: 0 1 1 1;
     border-title-color: $accent-blue;
+    border-title-background: $panel;
 }
 
 /* Specific panel accents */
@@ -238,6 +246,7 @@ StatusIndicator {
 
 /* Activity log at bottom */
 .activity-panel {
+    background: $panel;
     border: round $surface-muted;
     border-left: tall $accent-aqua;
     padding: 0 1;
@@ -248,6 +257,7 @@ StatusIndicator {
 
 .activity-panel .panel-title {
     color: $accent-blue;
+    background: $panel;
     text-style: bold;
     dock: top;
     padding: 0 1;
@@ -255,13 +265,15 @@ StatusIndicator {
 
 DashboardQuadrant {
     border: round $surface-muted;
-    margin: 0 1;
+    background: $panel;
+    margin: 0 1 1 1;
     padding: 0 1;
     height: 100%;
     border-title-color: $accent-blue;
 }
 
 .quadrant-title {
+    background: $panel;
     color: $accent-blue;
     dock: top;
     padding: 0 1;

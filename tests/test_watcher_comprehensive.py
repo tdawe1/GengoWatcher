@@ -33,6 +33,8 @@ def mock_config(tmp_path):
             "use_custom_user_agent": False,
             "feed_url": "https://example.com/feed",
             "check_interval": 60,
+            "gengo_rss_interval_min_sec": 31,
+            "gengo_rss_interval_max_sec": 60,
             "enable_notifications": True,
             "enable_sound": True,
         },
@@ -67,6 +69,10 @@ def mock_config(tmp_path):
             "browser_debug_url": "",
             "session_quiet_probe_sec": 90,
             "session_quiet_stale_after_sec": 300,
+            "planned_reconnect_min_sec": 300,
+            "planned_reconnect_max_sec": 3600,
+            "browser_activity_min_sec": 300,
+            "browser_activity_max_sec": 3600,
         },
         "EmailMonitor": {"enabled": False},
         "WebsiteMonitor": {"enabled": False},
@@ -235,32 +241,131 @@ class TestWatcherInitialization:
         assert watcher_instance._websocket_sync_failed is True
         watcher_instance.show_notification.assert_called_once()
 
-    def test_sync_session_from_browser_fail_hard_uses_cached_credentials(
+    def test_sync_session_from_browser_clears_placeholder_user_key_when_missing(
         self, watcher_instance
     ):
-        """Strict sync failures should degrade when cached websocket auth is usable."""
+        """Browser sync should remove placeholder keys when the live browser has none."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
-            ("WebSocket", "user_session"): "stale-token",
-            ("WebSocket", "user_id"): 12345,
+            ("WebSocket", "user_session"): "fresh-token",
+            ("WebSocket", "user_key"): "REPLACE_WITH_YOUR_USER_KEY",
         }.get(
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
         )
-        watcher_instance.show_notification = MagicMock()
 
         with patch(
             "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
-            side_effect=RuntimeError("browser gone"),
+            return_value=MagicMock(
+                session_token="fresh-token",
+                user_key="",
+                user_agent="Helium Browser",
+                accept_language="en-GB,en-US;q=0.9",
+            ),
         ):
-            changed = watcher_instance._sync_session_from_browser(
-                fail_hard=True,
-                alert_on_failure=True,
-            )
+            changed = watcher_instance._sync_session_from_browser()
 
-        assert changed is False
-        assert watcher_instance._websocket_sync_failed is False
-        assert watcher_instance.websocket_status != "Session Sync Failed"
-        watcher_instance.show_notification.assert_called_once()
+        assert changed is True
+        watcher_instance.config.set.assert_any_call("WebSocket", "user_key", "")
+
+    def test_get_effective_rss_wait_range_uses_randomized_gengo_window(
+        self, watcher_instance
+    ):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "check_interval"): 45,
+            ("Watcher", "feed_url"): "https://gengo.com/rss/available_jobs/token",
+            ("Watcher", "gengo_rss_interval_min_sec"): 31,
+            ("Watcher", "gengo_rss_interval_max_sec"): 60,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        assert watcher_instance._get_effective_rss_wait_range_seconds() == (31.0, 60.0)
+        assert watcher_instance._get_effective_rss_check_interval() == 60.0
+
+    def test_pick_next_rss_wait_seconds_randomizes_gengo_feed_window(
+        self, watcher_instance
+    ):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "check_interval"): 45,
+            ("Watcher", "feed_url"): "https://gengo.com/rss/available_jobs/token",
+            ("Watcher", "gengo_rss_interval_min_sec"): 31,
+            ("Watcher", "gengo_rss_interval_max_sec"): 60,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        with patch("gengowatcher.watcher.random.uniform", return_value=44.5) as mock_uniform:
+            wait_time = watcher_instance._pick_next_rss_wait_seconds()
+
+        assert wait_time == 44.5
+        mock_uniform.assert_called_once_with(31.0, 60.0)
+
+    def test_get_effective_rss_check_interval_leaves_non_gengo_feeds_unchanged(
+        self, watcher_instance
+    ):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "check_interval"): 45,
+            ("Watcher", "feed_url"): "https://example.com/feed.xml",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        assert watcher_instance._get_effective_rss_check_interval() == 45.0
+
+    def test_pick_planned_websocket_reconnect_delay_uses_configured_window(
+        self, watcher_instance
+    ):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "planned_reconnect_min_sec"): 300,
+            ("WebSocket", "planned_reconnect_max_sec"): 3600,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        with patch(
+            "gengowatcher.watcher.random.uniform", return_value=1800.0
+        ) as mock_uniform:
+            delay = watcher_instance._pick_planned_websocket_reconnect_delay_seconds()
+
+        assert delay == 1800.0
+        mock_uniform.assert_called_once_with(300.0, 3600.0)
+
+    def test_pick_browser_activity_delay_uses_configured_window(self, watcher_instance):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_activity_min_sec"): 300,
+            ("WebSocket", "browser_activity_max_sec"): 3600,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        with patch(
+            "gengowatcher.watcher.random.uniform", return_value=900.0
+        ) as mock_uniform:
+            delay = watcher_instance._pick_browser_activity_delay_seconds()
+
+        assert delay == 900.0
+        mock_uniform.assert_called_once_with(300.0, 3600.0)
+
+    def test_perform_browser_activity_uses_browser_debug_url(self, watcher_instance):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+        watcher_instance._last_browser_activity_action = "reload"
+
+        with patch(
+            "gengowatcher.watcher.refresh_browser_page_activity_sync",
+            return_value="summary_roundtrip",
+        ) as mock_refresh:
+            action = watcher_instance._perform_browser_activity()
+
+        assert action == "summary_roundtrip"
+        assert watcher_instance._last_browser_activity_action == "summary_roundtrip"
+        mock_refresh.assert_called_once_with(
+            "http://127.0.0.1:9222",
+            previous_action="reload",
+        )
 
     def test_get_health_snapshot_marks_websocket_stale_and_auto_disabled(
         self, watcher_instance
@@ -325,6 +430,7 @@ class TestWatcherInitialization:
         watcher_instance.config.getint.side_effect = lambda s, k, **kw: int(
             {
                 ("WebSocket", "session_quiet_probe_sec"): 90,
+                ("WebSocket", "session_quiet_stale_after_sec"): 300,
             }.get(
                 (s, k),
                 watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
@@ -334,14 +440,64 @@ class TestWatcherInitialization:
 
         with patch.object(
             watcher_instance,
+            "_pick_quiet_socket_sync_delay_seconds",
+            return_value=900.0,
+        ), patch.object(
+            watcher_instance,
             "_sync_session_from_browser",
             return_value=True,
         ) as mock_sync:
             changed = watcher_instance._sync_browser_session_for_quiet_socket(
-                current_time=220.0
+                current_time=450.0
             )
 
         assert changed is True
+        assert watcher_instance._next_quiet_socket_sync_ts is None
+        mock_sync.assert_called_once_with(fail_hard=False, alert_on_failure=False)
+
+    def test_sync_browser_session_for_quiet_socket_respects_randomized_cooldown(
+        self, watcher_instance
+    ):
+        watcher_instance.websocket_status = "Live"
+        watcher_instance.websocket_connected_at_ts = 100.0
+        watcher_instance.websocket_last_message_ts = None
+        watcher_instance._browser_session_last_sync_ts = None
+        watcher_instance._next_quiet_socket_sync_ts = None
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+        watcher_instance.config.getint.side_effect = lambda s, k, **kw: int(
+            {
+                ("WebSocket", "session_quiet_probe_sec"): 90,
+                ("WebSocket", "session_quiet_stale_after_sec"): 300,
+            }.get(
+                (s, k),
+                watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+                or 0,
+            )
+        )
+
+        with patch.object(
+            watcher_instance,
+            "_pick_quiet_socket_sync_delay_seconds",
+            return_value=900.0,
+        ), patch.object(
+            watcher_instance,
+            "_sync_session_from_browser",
+            return_value=False,
+        ) as mock_sync:
+            first = watcher_instance._sync_browser_session_for_quiet_socket(
+                current_time=450.0
+            )
+            second = watcher_instance._sync_browser_session_for_quiet_socket(
+                current_time=800.0
+            )
+
+        assert first is False
+        assert second is False
+        assert watcher_instance._next_quiet_socket_sync_ts == 1350.0
         mock_sync.assert_called_once_with(fail_hard=False, alert_on_failure=False)
 
     def test_get_health_snapshot_marks_quiet_live_websocket_stale(
@@ -590,6 +746,34 @@ class TestJobProcessing:
             456, "Low Value", 10.0, "http://example.com/456", "RSS"
         )
         assert watcher_instance.session_new_entries == 0
+        assert 456 not in watcher_instance.state.seen_job_ids
+
+    def test_process_new_job_filtered_event_does_not_block_later_eligible_copy(
+        self, watcher_instance
+    ):
+        """A filtered event must not prevent a later eligible update for the same job."""
+        min_reward = 20.0
+
+        def config_get(section, key, **_):
+            if (section, key) == ("Watcher", "min_reward"):
+                return min_reward
+            return watcher_instance.config.config.get(section, {}).get(key)
+
+        watcher_instance.config.get.side_effect = config_get
+        watcher_instance.show_notification = MagicMock()
+
+        watcher_instance._process_new_job(
+            456, "Low Value", 10.0, "http://example.com/456", "WebSocket"
+        )
+        assert watcher_instance.show_notification.call_count == 0
+        assert 456 not in watcher_instance.state.seen_job_ids
+
+        min_reward = 5.0
+        watcher_instance._process_new_job(
+            456, "Eligible Value", 25.0, "http://example.com/456", "RSS"
+        )
+
+        assert watcher_instance.show_notification.call_count == 1
         assert 456 in watcher_instance.state.seen_job_ids
 
     def test_process_new_job_stores_in_state(self, watcher_instance):
