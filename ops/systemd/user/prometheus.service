@@ -1,0 +1,18 @@
+[Unit]
+Description=Prometheus (user service)
+After=network-online.target node_exporter.service
+Wants=network-online.target node_exporter.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/GengoWatcher/ops/prometheus
+ExecStart=/usr/bin/prometheus \
+  --config.file=%h/GengoWatcher/ops/prometheus/prometheus.yml \
+  --storage.tsdb.path=%h/.local/share/prometheus \
+  --storage.tsdb.retention.time=30d \
+  --web.listen-address=127.0.0.1:9090
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

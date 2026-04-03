@@ -3,6 +3,7 @@ import asyncio
 import json
 from unittest.mock import patch, MagicMock, AsyncMock, ANY
 import collections
+from builtins import TimeoutError
 
 from gengowatcher.watcher import GengoWatcher
 from gengowatcher.config import AppConfig
@@ -67,6 +68,19 @@ class MockAsyncWebSocket:
         return await self.__anext__()
 
 
+class MockConnectFactory:
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        result = self._results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 @pytest.mark.asyncio
 @patch("gengowatcher.watcher.websockets.connect")
 async def test_websocket_receives_and_processes_job(mock_connect, watcher_instance):
@@ -94,13 +108,14 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
     await w._websocket_logic()
 
     kwargs = mock_connect.call_args.kwargs
-    assert mock_connect.call_args.args[0] == "wss://live-dashboard.gengo.com"
+    assert mock_connect.call_args.args[0] == "wss://live-dashboard.gengo.com/"
     header_key = (
         "additional_headers"
         if kwargs.get("additional_headers") is not None
         else "extra_headers"
     )
     assert kwargs[header_key] is not None
+    assert "Cookie" not in kwargs[header_key]
     assert kwargs[header_key]["Accept-Language"] == "en-GB,en-US;q=0.9,en;q=0.8"
     assert kwargs["ping_interval"] == 20
     assert kwargs["ping_timeout"] == 10
@@ -118,3 +133,26 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
         source_meta=job_payload["collection"],
     )
 
+
+@pytest.mark.asyncio
+@patch("gengowatcher.watcher.websockets.connect")
+async def test_websocket_retries_with_ua_only_after_handshake_timeout(
+    mock_connect, watcher_instance
+):
+    w = watcher_instance
+    dummy_message = '{"type": "welcome"}'
+    mock_ws_client = MockAsyncWebSocket([dummy_message])
+    connect_factory = MockConnectFactory(
+        [TimeoutError("timed out during opening handshake"), mock_ws_client]
+    )
+    mock_connect.side_effect = connect_factory
+
+    await w._websocket_logic()
+
+    assert len(connect_factory.calls) == 2
+    first_kwargs = connect_factory.calls[0][1]
+    second_kwargs = connect_factory.calls[1][1]
+    assert "Cookie" not in first_kwargs["additional_headers"]
+    assert second_kwargs["additional_headers"] == {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+    }

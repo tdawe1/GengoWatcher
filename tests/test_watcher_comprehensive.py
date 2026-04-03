@@ -215,13 +215,14 @@ class TestWatcherInitialization:
         )
         watcher_instance.config.save_config.assert_called()
 
-    def test_sync_session_from_browser_fail_hard_alerts_and_stops(
+    def test_sync_session_from_browser_fail_hard_alerts_and_stops_without_cache(
         self, watcher_instance
     ):
-        """Strict sync failures should alert immediately and mark websocket fatal."""
+        """Strict sync failures remain fatal when no cached websocket auth exists."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
-            ("WebSocket", "user_session"): "stale-token",
+            ("WebSocket", "user_session"): "REPLACE_WITH_YOUR_SESSION_TOKEN",
+            ("WebSocket", "user_id"): 0,
         }.get(
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
         )
@@ -595,6 +596,26 @@ class TestNotifications:
             message="Websocket is stale: pong overdue",
             title="GengoWatcher Telemetry Alert",
             play_sound=True,
+            sound_file="assets/ws-stale.wav",
+        )
+
+    def test_alert_on_health_snapshot_quiet_websocket_stale_is_silent(
+        self, watcher_instance
+    ):
+        """Quiet websocket periods should not play the stale alert sound."""
+        watcher_instance.config.get.side_effect = lambda section, key, **kwargs: {
+            ("Paths", "websocket_stale_sound_file"): "assets/ws-stale.wav",
+        }.get((section, key), kwargs.get("fallback", ""))
+
+        with patch.object(watcher_instance, "show_notification") as mock_notify:
+            watcher_instance.alert_on_health_snapshot(
+                {"websocket": {"state": "stale", "detail": "quiet 300s"}}
+            )
+
+        mock_notify.assert_called_once_with(
+            message="Websocket is stale: quiet 300s",
+            title="GengoWatcher Telemetry Alert",
+            play_sound=False,
             sound_file="assets/ws-stale.wav",
         )
 

@@ -27,10 +27,12 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
+from prometheus_client import Gauge, make_asgi_app
 import uvicorn
 import os
 
 from .config import AppConfig
+from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
 
@@ -591,6 +593,17 @@ class WebAPI:
 api_instance: Optional[WebAPI] = None
 
 
+PROM_API_INITIALIZED = Gauge(
+    "gengowatcher_api_initialized",
+    "Whether the GengoWatcher web API has been initialized.",
+)
+PROM_API_INITIALIZED.set_function(lambda: 1.0 if api_instance else 0.0)
+
+ensure_watcher_metrics_registered(
+    watcher_provider=lambda: api_instance.watcher if api_instance else None
+)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager."""
@@ -655,6 +668,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.mount("/metrics", make_asgi_app())
 
 # Add CORS middleware with security restrictions
 app.add_middleware(
