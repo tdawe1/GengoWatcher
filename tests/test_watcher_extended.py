@@ -547,6 +547,7 @@ class TestEdgeCases:
 
         # Should not show notification for filtered job
         watcher_with_mocks.show_notification.assert_not_called()
+        assert 123 not in watcher_with_mocks.state.seen_job_ids
 
     def test_process_feed_entries_empty_list(self, watcher_with_mocks):
         """Test processing empty feed entries list."""

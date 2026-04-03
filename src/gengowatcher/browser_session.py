@@ -1,11 +1,14 @@
 import asyncio
 import json
+import random
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
 import websockets
+
+from .config import PLACEHOLDER_CONFIG_VALUES
 
 DEFAULT_BROWSER_DEBUG_URL = "http://127.0.0.1:9222"
 PRIMARY_GENGO_COOKIE_NAMES = (
@@ -15,6 +18,10 @@ PRIMARY_GENGO_COOKIE_NAMES = (
 )
 GENGO_LOCAL_STORAGE_USER_KEY = "userKey"
 DEFAULT_GENGO_ORIGIN = "https://gengo.com"
+GENGO_REALTIME_PATH = "/t/jobs/status/available/realtime"
+GENGO_SUMMARY_PATH = "/t/dashboard"
+GENGO_REALTIME_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_REALTIME_PATH}"
+GENGO_SUMMARY_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_SUMMARY_PATH}"
 DEFAULT_ACCEPT_LANGUAGE = "en-GB,en-US;q=0.9,en;q=0.8"
 DEFAULT_CDP_RECEIVE_TIMEOUT_SEC = 5
 
@@ -48,14 +55,23 @@ def _load_cdp_targets(debug_url: str) -> list[dict[str, Any]]:
         return json.load(response)
 
 
-def select_gengo_target(targets: list[dict[str, Any]]) -> dict[str, Any]:
-    for target in targets:
-        if target.get("type") != "page":
-            continue
-        if "gengo.com" not in str(target.get("url", "")):
-            continue
-        if target.get("webSocketDebuggerUrl"):
-            return target
+def select_gengo_target(
+    targets: list[dict[str, Any]],
+    preferred_url_fragments: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    candidates = [
+        target
+        for target in targets
+        if target.get("type") == "page"
+        and "gengo.com" in str(target.get("url", ""))
+        and target.get("webSocketDebuggerUrl")
+    ]
+    for fragment in preferred_url_fragments:
+        for target in candidates:
+            if fragment in str(target.get("url", "")):
+                return target
+    if candidates:
+        return candidates[0]
     raise BrowserSessionError("No open gengo.com page target found in browser")
 
 
@@ -133,7 +149,10 @@ async def fetch_browser_session_snapshot(
     cookie_name: str | tuple[str, ...] = PRIMARY_GENGO_COOKIE_NAMES,
 ) -> BrowserSessionSnapshot:
     normalized_debug_url = _normalize_debug_url(debug_url)
-    target = select_gengo_target(_load_cdp_targets(normalized_debug_url))
+    target = select_gengo_target(
+        _load_cdp_targets(normalized_debug_url),
+        preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+    )
     websocket_url = str(target.get("webSocketDebuggerUrl", "")).strip()
     if not websocket_url:
         raise BrowserSessionError(
@@ -217,6 +236,176 @@ def fetch_browser_session_token_sync(
     )
 
 
+async def _evaluate_expression(
+    websocket,
+    expression: str,
+    *,
+    call_id: int,
+    expected_type: str | None = None,
+) -> Any:
+    result = await _cdp_call(
+        websocket,
+        "Runtime.evaluate",
+        {
+            "expression": expression,
+            "returnByValue": True,
+            "awaitPromise": True,
+        },
+        call_id=call_id,
+    )
+    return _extract_runtime_value(result, expected_type=expected_type)
+
+
+async def _wait_for_location_contains(
+    websocket,
+    fragment: str,
+    *,
+    call_id_start: int,
+    attempts: int = 12,
+    sleep_sec: float = 0.35,
+) -> tuple[str, int]:
+    call_id = call_id_start
+    last_location = ""
+    for _ in range(attempts):
+        try:
+            location = await _evaluate_expression(
+                websocket,
+                "location.href || ''",
+                call_id=call_id,
+                expected_type="string",
+            )
+            last_location = str(location or "")
+        except BrowserSessionError:
+            last_location = ""
+        call_id += 1
+        if fragment in last_location:
+            return last_location, call_id
+        await asyncio.sleep(sleep_sec)
+    return last_location, call_id
+
+
+async def refresh_browser_page_activity(
+    debug_url: str | None = None,
+    *,
+    action: str = "auto",
+) -> str:
+    normalized_debug_url = _normalize_debug_url(debug_url)
+    target = select_gengo_target(
+        _load_cdp_targets(normalized_debug_url),
+        preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+    )
+    websocket_url = str(target.get("webSocketDebuggerUrl", "")).strip()
+    if not websocket_url:
+        raise BrowserSessionError(
+            "Selected gengo.com page target has no CDP websocket URL"
+        )
+
+    async with websockets.connect(websocket_url, max_size=5_000_000) as websocket:
+        call_id = 1
+        await _cdp_call(websocket, "Page.enable", call_id=call_id)
+        call_id += 1
+        page_state = await _evaluate_expression(
+            websocket,
+            (
+                "(() => ({"
+                "href: location.href || '',"
+                "jobHref: (document.querySelector('a[href*=\"/jobs/details/\"]')?.href || '')"
+                "}))()"
+            ),
+            call_id=call_id,
+            expected_type="object",
+        )
+        call_id += 1
+
+        if not isinstance(page_state, dict):
+            raise BrowserSessionError("Browser page state did not return an object")
+
+        job_href = str(page_state.get("jobHref", "") or "").strip()
+        if action == "auto":
+            actions = ["reload", "summary_roundtrip"]
+            if job_href:
+                actions.append("job_roundtrip")
+            action = random.choice(actions)
+
+        if action == "reload":
+            await _cdp_call(
+                websocket,
+                "Page.reload",
+                {"ignoreCache": False},
+                call_id=call_id,
+            )
+            call_id += 1
+            await _wait_for_location_contains(
+                websocket,
+                "gengo.com",
+                call_id_start=call_id,
+            )
+            return "reload"
+
+        if action == "job_roundtrip" and job_href:
+            await _cdp_call(
+                websocket,
+                "Page.navigate",
+                {"url": job_href},
+                call_id=call_id,
+            )
+            call_id += 1
+            _location, call_id = await _wait_for_location_contains(
+                websocket,
+                "/t/jobs/details/",
+                call_id_start=call_id,
+            )
+            await asyncio.sleep(0.6)
+            await _cdp_call(
+                websocket,
+                "Page.navigate",
+                {"url": GENGO_REALTIME_URL},
+                call_id=call_id,
+            )
+            call_id += 1
+            await _wait_for_location_contains(
+                websocket,
+                GENGO_REALTIME_PATH,
+                call_id_start=call_id,
+            )
+            return "job_roundtrip"
+
+        await _cdp_call(
+            websocket,
+            "Page.navigate",
+            {"url": GENGO_SUMMARY_URL},
+            call_id=call_id,
+        )
+        call_id += 1
+        _location, call_id = await _wait_for_location_contains(
+            websocket,
+            GENGO_SUMMARY_PATH,
+            call_id_start=call_id,
+        )
+        await asyncio.sleep(0.6)
+        await _cdp_call(
+            websocket,
+            "Page.navigate",
+            {"url": GENGO_REALTIME_URL},
+            call_id=call_id,
+        )
+        call_id += 1
+        await _wait_for_location_contains(
+            websocket,
+            GENGO_REALTIME_PATH,
+            call_id_start=call_id,
+        )
+        return "summary_roundtrip"
+
+
+def refresh_browser_page_activity_sync(
+    debug_url: str | None = None,
+    *,
+    action: str = "auto",
+) -> str:
+    return asyncio.run(refresh_browser_page_activity(debug_url=debug_url, action=action))
+
+
 def build_browser_aligned_websocket_headers(
     *,
     session_token: str,
@@ -245,6 +434,7 @@ def build_websocket_auth_payload(
         "user_id": user_id,
         "user_session": session_token,
     }
-    if str(user_key or "").strip():
-        payload["user_key"] = str(user_key).strip()
+    normalized_user_key = str(user_key or "").strip()
+    if normalized_user_key and normalized_user_key not in PLACEHOLDER_CONFIG_VALUES:
+        payload["user_key"] = normalized_user_key
     return payload

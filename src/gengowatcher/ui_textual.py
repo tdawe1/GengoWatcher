@@ -8,9 +8,12 @@ import asyncio
 import datetime
 import logging
 import re
+import sys
+import threading
 import time
+import traceback
 from collections import deque
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Optional, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -121,9 +124,7 @@ _TIMESTAMP_PREFIX_PATTERN = re.compile(
 )
 
 
-def _with_timestamp_prefix(
-    message: str, now: datetime.datetime | None = None
-) -> str:
+def _with_timestamp_prefix(message: str, now: datetime.datetime | None = None) -> str:
     """Prefix a message with [HH:MM:SS] if it has no leading timestamp."""
     text = "" if message is None else str(message)
     if _TIMESTAMP_PREFIX_PATTERN.match(text):
@@ -140,6 +141,10 @@ SOURCE_BUCKET_CONFIG = {
     "rss": {"label": "RSS", "color": "success"},
     "unknown": {"label": "Unknown", "color": "text-muted"},
 }
+
+ACTIVITY_PREVIEW_MAX_LINES = 250
+ACTIVITY_LOG_MAX_LINES = 1000
+OUTPUT_LOG_MAX_LINES = 500
 
 
 def _get_active_theme(owner: Any) -> Theme:
@@ -555,7 +560,9 @@ class MetricCard(Static):
     def compose(self) -> ComposeResult:
         with Grid(classes="metric-grid"):
             yield Static(self.icon, classes="metric-icon")
-            yield Static(self.value, classes="metric-value", id=f"val-{self.label.lower()}")
+            yield Static(
+                self.value, classes="metric-value", id=f"val-{self.label.lower()}"
+            )
         yield Static(self.label, classes="metric-label")
 
     def update_value(self, value: str):
@@ -580,7 +587,9 @@ class MetricsRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield MetricCard("Found", Icons.FOUND, id="card-found", classes="found")
-        yield MetricCard("Accepted", Icons.ACCEPTED, id="card-accepted", classes="accepted")
+        yield MetricCard(
+            "Accepted", Icons.ACCEPTED, id="card-accepted", classes="accepted"
+        )
         yield MetricCard("Value", Icons.VALUE, id="card-value", classes="value")
         yield MetricCard("Rate", Icons.RATE, id="card-rate", classes="rate")
         yield MetricCard("Today", Icons.TODAY, id="card-today", classes="today")
@@ -634,7 +643,7 @@ class StatusIndicator(Static):
     }
 
     # Pulse animation frames for live state
-    PULSE_FRAMES = ["●", "◉", "○", "◉"]
+    PULSE_FRAMES = ("●", "◉", "○", "◉")
 
     def __init__(self, base_icon: str, name: str, **kwargs):
         super().__init__(**kwargs)
@@ -868,7 +877,11 @@ class ActivityPreview(DashboardQuadrant):
 
     def compose(self) -> ComposeResult:
         # Just yield content, border_title handles the header
-        yield RichLog(id="activity-log", markup=True)
+        yield RichLog(
+            id="activity-log",
+            markup=True,
+            max_lines=ACTIVITY_PREVIEW_MAX_LINES,
+        )
 
     def add_line(self, message: str, level: str = "info") -> None:
         """Add a colored line to the activity log.
@@ -991,7 +1004,12 @@ class HourlyActivity(DashboardQuadrant):
                 # Use 2-hour bins for readability in compact dashboard cards.
                 chart_values = _aggregate_series(rolling_values, bin_size=2)
                 chart = _render_plotext_bar_chart(
-                    chart_values, width=30, height=8, x_left="24h", x_mid="12h", x_right="now"
+                    chart_values,
+                    width=30,
+                    height=8,
+                    x_left="24h",
+                    x_mid="12h",
+                    x_right="now",
                 ) or _render_chart_with_axes(
                     chart_values,
                     width=len(chart_values),
@@ -1086,7 +1104,9 @@ class HourlyActivity(DashboardQuadrant):
             cleaned = timestamp.strip()
             if not cleaned:
                 return None
-            iso_candidate = cleaned[:-1] + "+00:00" if cleaned.endswith("Z") else cleaned
+            iso_candidate = (
+                cleaned[:-1] + "+00:00" if cleaned.endswith("Z") else cleaned
+            )
             try:
                 return datetime.datetime.fromisoformat(iso_candidate).timestamp()
             except ValueError:
@@ -1688,9 +1708,12 @@ class GengoWatcherApp(App):
         self.state = state
         self.watcher = watcher
         self.stats = stats
-
-        # Setup logging redirection
-        self._setup_logging()
+        self._log_source = cast(
+            logging.Logger,
+            getattr(self.watcher, "logger", logging.getLogger("gengowatcher")),
+        )
+        self._textual_log_handler = TextualLogHandler(self)
+        self._logging_attached = False
 
         # Register callback for when new jobs are detected
         self.watcher.on_job_added_callback = self._on_job_added_from_thread
@@ -1736,8 +1759,17 @@ class GengoWatcherApp(App):
         for widget_class, method_name in widgets_to_refresh:
             self._refresh_widget(widget_class, method_name)
 
-    def _refresh_widget(self, widget_class, method_name: str) -> None:
-        """Attempt to refresh a specific widget and log when it's missing."""
+    def _refresh_widget(
+        self,
+        widget_class,
+        method_name: str,
+        missing_level: Optional[int] = None,
+    ) -> None:
+        """Attempt to refresh a specific widget.
+
+        The ``missing_level`` parameter is accepted for backward compatibility
+        with older callers, but is currently unused.
+        """
         try:
             widget = self.query_one(widget_class)
         except NoMatches:
@@ -1765,32 +1797,44 @@ class GengoWatcherApp(App):
             )
 
     def _setup_logging(self):
-        handler = TextualLogHandler(self)
-        logging.getLogger().addHandler(handler)
+        if self._logging_attached:
+            return
+        self._log_source.addHandler(self._textual_log_handler)
+        self._logging_attached = True
 
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
+        self._setup_logging()
         self._setup_jobs_table()
         self._refresh_dashboard_panels()
         self.set_interval(1.0, self._refresh_dashboard_panels)
+
+    def on_unmount(self) -> None:
+        """Remove the Textual log handler when the app shuts down."""
+        self.watcher.on_job_added_callback = None
+        if not self._logging_attached:
+            return
+        self._log_source.removeHandler(self._textual_log_handler)
+        self._logging_attached = False
 
     def _refresh_dashboard_panels(self) -> None:
         """Refresh dashboard widgets that depend on live/persisted state."""
         self._refresh_widget(MetricsRow, "refresh_metrics")
         self._refresh_widget(SessionStats, "refresh_stats")
-        self._refresh_widget(SourcesBreakdown, "refresh_sources")
         self._refresh_widget(HourlyActivity, "refresh_hourly")
         self._refresh_widget(JobsPreview, "refresh_jobs")
 
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""
         try:
-            from textual.widgets import DataTable
-            from textual.css.query import NoMatches
             dt = self.query_one("#jobs-table-full", DataTable)
             dt.add_columns("ID", "Pair", "Words", "$$$", "Source", "Time")
-        except Exception:
+        except NoMatches:
             pass  # Widget not mounted yet
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Failed to set up jobs table: %s", e, exc_info=True
+            )
 
     def _load_jobs_into_table(self) -> None:
         """Load current jobs from state into the jobs DataTable."""
@@ -1799,6 +1843,7 @@ class GengoWatcherApp(App):
         try:
             from textual.widgets import DataTable
             from textual.css.query import NoMatches
+
             dt = self.query_one("#jobs-table-full", DataTable)
             dt.clear()
             jobs = self.state.get_recent_jobs(limit=100)
@@ -1819,7 +1864,6 @@ class GengoWatcherApp(App):
                 dt.add_row(job_id, pair, words, reward, source, timestamp)
         except Exception:
             pass  # Widget not mounted yet
-
 
     @on(TabbedContent.TabActivated)
     def _refresh_tab_content(self, event: TabbedContent.TabActivated) -> None:
@@ -1864,9 +1908,17 @@ class GengoWatcherApp(App):
             with TabPane("Jobs", id="jobs"):
                 yield JobsPanel(state=self.state)
             with TabPane("Activity", id="activity"):
-                yield RichLog(id="activity-log-full", markup=True)
+                yield RichLog(
+                    id="activity-log-full",
+                    markup=True,
+                    max_lines=ACTIVITY_LOG_MAX_LINES,
+                )
             with TabPane("Output", id="output"):
-                yield RichLog(id="output-log", markup=True)
+                yield RichLog(
+                    id="output-log",
+                    markup=True,
+                    max_lines=OUTPUT_LOG_MAX_LINES,
+                )
             with TabPane("Charts", id="charts"):
                 yield Static("Charts Content", id="charts-content")
             with TabPane("Stats", id="stats"):
@@ -1948,10 +2000,32 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self.format(record)
             level = record.levelno
-            # Use call_from_thread for thread-safe UI updates - Textual handles scheduling
-            self.app.call_from_thread(self.write_log, msg, level)
-        except Exception:
-            pass  # Logging failures should not crash the app
+            app_thread_id = getattr(self.app, "_thread_id", None)
+            if app_thread_id == threading.get_ident():
+                self.write_log(msg, level)
+            else:
+                # Use call_from_thread only for background threads; Textual rejects
+                # same-thread calls and can wedge the TUI if we route UI-thread
+                # logging through it.
+                self.app.call_from_thread(self.write_log, msg, level)
+        except Exception as e:
+            try:
+                formatted_message = locals().get("msg")
+                if formatted_message is None:
+                    formatted_message = getattr(
+                        record, "getMessage", lambda: repr(record)
+                    )()
+                sys.stderr.write(
+                    "GengowatcherLogHandler.emit failed while using "
+                    "self.format(record) or "
+                    "self.app.call_from_thread(self.write_log, ...).\n"
+                )
+                sys.stderr.write(f"Log message: {formatted_message}\n")
+                sys.stderr.write(f"Exception: {e}\n")
+                sys.stderr.write(traceback.format_exc())
+                sys.stderr.flush()
+            except Exception:
+                pass  # Logging failures should not crash the app
 
     def _write_to_log(self, widget_id: str, colored_text: Text) -> None:
         try:
