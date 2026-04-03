@@ -70,9 +70,9 @@ def mock_config(tmp_path):
             "session_quiet_probe_sec": 90,
             "session_quiet_stale_after_sec": 300,
             "planned_reconnect_min_sec": 300,
-            "planned_reconnect_max_sec": 540,
-            "browser_activity_min_sec": 120,
-            "browser_activity_max_sec": 240,
+            "planned_reconnect_max_sec": 3600,
+            "browser_activity_min_sec": 300,
+            "browser_activity_max_sec": 3600,
         },
         "EmailMonitor": {"enabled": False},
         "WebsiteMonitor": {"enabled": False},
@@ -316,16 +316,34 @@ class TestWatcherInitialization:
     ):
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "planned_reconnect_min_sec"): 300,
-            ("WebSocket", "planned_reconnect_max_sec"): 540,
+            ("WebSocket", "planned_reconnect_max_sec"): 3600,
         }.get(
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
         )
 
-        with patch("gengowatcher.watcher.random.uniform", return_value=412.0) as mock_uniform:
+        with patch(
+            "gengowatcher.watcher.random.uniform", return_value=1800.0
+        ) as mock_uniform:
             delay = watcher_instance._pick_planned_websocket_reconnect_delay_seconds()
 
-        assert delay == 412.0
-        mock_uniform.assert_called_once_with(300.0, 540.0)
+        assert delay == 1800.0
+        mock_uniform.assert_called_once_with(300.0, 3600.0)
+
+    def test_pick_browser_activity_delay_uses_configured_window(self, watcher_instance):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_activity_min_sec"): 300,
+            ("WebSocket", "browser_activity_max_sec"): 3600,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        with patch(
+            "gengowatcher.watcher.random.uniform", return_value=900.0
+        ) as mock_uniform:
+            delay = watcher_instance._pick_browser_activity_delay_seconds()
+
+        assert delay == 900.0
+        mock_uniform.assert_called_once_with(300.0, 3600.0)
 
     def test_perform_browser_activity_uses_browser_debug_url(self, watcher_instance):
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {

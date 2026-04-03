@@ -340,7 +340,7 @@ class GengoWatcher:
             "planned_reconnect_min_sec",
             "planned_reconnect_max_sec",
             default_min=300.0,
-            default_max=540.0,
+            default_max=3600.0,
         )
 
     def _pick_planned_websocket_reconnect_delay_seconds(self) -> float:
@@ -354,8 +354,8 @@ class GengoWatcher:
             "WebSocket",
             "browser_activity_min_sec",
             "browser_activity_max_sec",
-            default_min=120.0,
-            default_max=240.0,
+            default_min=300.0,
+            default_max=3600.0,
         )
 
     def _pick_browser_activity_delay_seconds(self) -> float:

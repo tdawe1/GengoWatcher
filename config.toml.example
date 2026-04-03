@@ -25,9 +25,9 @@ session_sync_interval_sec = 14400
 session_quiet_probe_sec = 90
 session_quiet_stale_after_sec = 300
 planned_reconnect_min_sec = 300
-planned_reconnect_max_sec = 540
-browser_activity_min_sec = 120
-browser_activity_max_sec = 240
+planned_reconnect_max_sec = 3600
+browser_activity_min_sec = 300
+browser_activity_max_sec = 3600
 session_sync_fail_hard = true
 session_sync_alert_on_failure = true
 
