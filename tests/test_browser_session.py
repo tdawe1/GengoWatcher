@@ -7,9 +7,11 @@ import pytest
 
 from gengowatcher.browser_session import (
     BrowserSessionError,
+    _choose_browser_activity_action,
     _cdp_call,
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
+    describe_browser_activity_action,
     extract_cookie_value,
     fetch_browser_session_snapshot,
     fetch_browser_session_token,
@@ -314,6 +316,29 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_cdp_navigati
     assert mock_ws._sent[4]["method"] == "Page.navigate"
     assert mock_ws._sent[4]["params"]["url"].endswith(
         "/t/jobs/status/available/realtime"
+    )
+
+
+def test_choose_browser_activity_action_avoids_repeating_previous_action():
+    with patch(
+        "gengowatcher.browser_session.random.choices",
+        return_value=["job_roundtrip"],
+    ) as mock_choices:
+        action = _choose_browser_activity_action(
+            job_href="https://gengo.com/t/jobs/details/123",
+            previous_action="summary_roundtrip",
+        )
+
+    assert action == "job_roundtrip"
+    args, kwargs = mock_choices.call_args
+    assert "summary_roundtrip" not in args[0]
+    assert kwargs["k"] == 1
+
+
+def test_describe_browser_activity_action_returns_human_readable_text():
+    assert (
+        describe_browser_activity_action("job_roundtrip")
+        == "opening a visible job details page and returning to realtime"
     )
 
 

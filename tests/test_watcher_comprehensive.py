@@ -352,6 +352,7 @@ class TestWatcherInitialization:
         }.get(
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
         )
+        watcher_instance._last_browser_activity_action = "reload"
 
         with patch(
             "gengowatcher.watcher.refresh_browser_page_activity_sync",
@@ -360,7 +361,11 @@ class TestWatcherInitialization:
             action = watcher_instance._perform_browser_activity()
 
         assert action == "summary_roundtrip"
-        mock_refresh.assert_called_once_with("http://127.0.0.1:9222")
+        assert watcher_instance._last_browser_activity_action == "summary_roundtrip"
+        mock_refresh.assert_called_once_with(
+            "http://127.0.0.1:9222",
+            previous_action="reload",
+        )
 
     def test_get_health_snapshot_marks_websocket_stale_and_auto_disabled(
         self, watcher_instance

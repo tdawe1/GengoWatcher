@@ -24,6 +24,11 @@ GENGO_REALTIME_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_REALTIME_PATH}"
 GENGO_SUMMARY_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_SUMMARY_PATH}"
 DEFAULT_ACCEPT_LANGUAGE = "en-GB,en-US;q=0.9,en;q=0.8"
 DEFAULT_CDP_RECEIVE_TIMEOUT_SEC = 5
+BROWSER_ACTIVITY_DESCRIPTIONS = {
+    "reload": "reloading the realtime dashboard",
+    "summary_roundtrip": "opening the summary dashboard and returning to realtime",
+    "job_roundtrip": "opening a visible job details page and returning to realtime",
+}
 
 
 class BrowserSessionError(RuntimeError):
@@ -292,10 +297,39 @@ async def _wait_for_location_contains(
     return last_location, call_id
 
 
+def describe_browser_activity_action(action: str) -> str:
+    return BROWSER_ACTIVITY_DESCRIPTIONS.get(action, action.replace("_", " "))
+
+
+def _choose_browser_activity_action(
+    *,
+    job_href: str,
+    previous_action: str | None = None,
+) -> str:
+    weighted_actions: list[tuple[str, float]] = [
+        ("summary_roundtrip", 0.55),
+        ("reload", 0.15),
+    ]
+    if job_href:
+        weighted_actions.append(("job_roundtrip", 0.30))
+
+    if previous_action:
+        filtered_actions = [
+            (name, weight) for name, weight in weighted_actions if name != previous_action
+        ]
+        if filtered_actions:
+            weighted_actions = filtered_actions
+
+    actions = [name for name, _weight in weighted_actions]
+    weights = [weight for _name, weight in weighted_actions]
+    return random.choices(actions, weights=weights, k=1)[0]
+
+
 async def refresh_browser_page_activity(
     debug_url: str | None = None,
     *,
     action: str = "auto",
+    previous_action: str | None = None,
 ) -> str:
     normalized_debug_url = _normalize_debug_url(debug_url)
     target = select_gengo_target(
@@ -330,10 +364,10 @@ async def refresh_browser_page_activity(
 
         job_href = str(page_state.get("jobHref", "") or "").strip()
         if action == "auto":
-            actions = ["reload", "summary_roundtrip"]
-            if job_href:
-                actions.append("job_roundtrip")
-            action = random.choice(actions)
+            action = _choose_browser_activity_action(
+                job_href=job_href,
+                previous_action=previous_action,
+            )
 
         if action == "reload":
             await _cdp_call(
@@ -410,8 +444,15 @@ def refresh_browser_page_activity_sync(
     debug_url: str | None = None,
     *,
     action: str = "auto",
+    previous_action: str | None = None,
 ) -> str:
-    return asyncio.run(refresh_browser_page_activity(debug_url=debug_url, action=action))
+    return asyncio.run(
+        refresh_browser_page_activity(
+            debug_url=debug_url,
+            action=action,
+            previous_action=previous_action,
+        )
+    )
 
 
 def build_browser_aligned_websocket_headers(

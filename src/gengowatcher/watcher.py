@@ -27,6 +27,7 @@ from .browser_detector import get_preferred_browser_user_agent
 from .browser_session import (
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
+    describe_browser_activity_action,
     fetch_browser_session_snapshot_sync,
     refresh_browser_page_activity_sync,
 )
@@ -156,6 +157,7 @@ class GengoWatcher:
         self._browser_session_last_sync_ts = None
         self._browser_session_last_sync_state = "idle"
         self._browser_session_last_sync_detail = "never synced"
+        self._last_browser_activity_action = None
         self._browser_debug_lock = threading.RLock()
         self._health_alert_states = {}
         # Thread references for health monitoring
@@ -440,7 +442,10 @@ class GengoWatcher:
             return None
         try:
             with self._browser_debug_lock:
-                action = refresh_browser_page_activity_sync(str(debug_url))
+                action = refresh_browser_page_activity_sync(
+                    str(debug_url),
+                    previous_action=self._last_browser_activity_action,
+                )
         except Exception as exc:
             self.logger.warning(
                 "WebSocket: Browser activity refresh failed for %s: %s",
@@ -448,10 +453,12 @@ class GengoWatcher:
                 exc,
             )
             return None
+        self._last_browser_activity_action = action
         self.logger.info(
-            "WebSocket: Browser activity action '%s' completed against %s.",
-            action,
+            "WebSocket: Browser activity completed by %s against %s (action=%s).",
+            describe_browser_activity_action(action),
             debug_url,
+            action,
         )
         return action
 
