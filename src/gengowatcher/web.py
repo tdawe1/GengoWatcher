@@ -5,6 +5,7 @@ for web UI integration while maintaining compatibility with existing TUI.
 
 import asyncio
 import csv
+from datetime import datetime
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ from fastapi import (
     Query,
     UploadFile,
     File,
+    Form,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -183,6 +185,10 @@ class StoredFileEntry(BaseModel):
     content_type: Optional[str] = None
     modified_at: float
     download_url: str
+    job_id: Optional[str] = None
+    tier: Optional[str] = None
+    word_count: Optional[int] = None
+    value: Optional[float] = None
 
 
 class WebAPI:
@@ -297,6 +303,10 @@ class WebAPI:
             content_type=content_type or metadata.get("content_type"),
             modified_at=float(metadata.get("uploaded_at") or stats.st_mtime),
             download_url=f"/api/files/{path.name}",
+            job_id=metadata.get("job_id"),
+            tier=metadata.get("tier"),
+            word_count=metadata.get("word_count"),
+            value=metadata.get("value"),
         )
 
     def _metadata_path(self, path: Path) -> Path:
@@ -342,9 +352,19 @@ class WebAPI:
         content: bytes,
         *,
         content_type: str | None = None,
+        job_id: str | None = None,
+        tier: str | None = None,
+        word_count: int | None = None,
+        value: float | None = None,
     ) -> StoredFileEntry:
         storage_dir = self._get_file_storage_dir()
-        safe_name = self._sanitize_filename(filename)
+        safe_name = self._build_stored_filename(
+            filename=filename,
+            job_id=job_id,
+            tier=tier,
+            word_count=word_count,
+            value=value,
+        )
         destination = storage_dir / safe_name
         counter = 1
         while destination.exists():
@@ -358,6 +378,10 @@ class WebAPI:
             "original_name": filename or destination.name,
             "content_type": content_type,
             "uploaded_at": time.time(),
+            "job_id": str(job_id).strip() if job_id else None,
+            "tier": self._normalize_tier(tier, word_count=word_count, value=value),
+            "word_count": int(word_count) if word_count is not None else None,
+            "value": float(value) if value is not None else None,
         }
         self._metadata_path(destination).write_text(
             json.dumps(metadata, indent=2, sort_keys=True),
@@ -390,6 +414,55 @@ class WebAPI:
         if path is None:
             return None
         return self._build_file_entry(path)
+
+    @staticmethod
+    def _normalize_tier(
+        tier: str | None,
+        *,
+        word_count: int | None = None,
+        value: float | None = None,
+    ) -> str | None:
+        normalized = str(tier or "").strip().lower()
+        if normalized in {"standard", "std", "basic"}:
+            return "standard"
+        if normalized in {"pro", "professional"}:
+            return "pro"
+        if word_count and word_count > 0 and value is not None:
+            unit_rate = float(value) / float(word_count)
+            return "pro" if unit_rate >= 0.035 else "standard"
+        return None
+
+    def _build_stored_filename(
+        self,
+        *,
+        filename: str,
+        job_id: str | None = None,
+        tier: str | None = None,
+        word_count: int | None = None,
+        value: float | None = None,
+    ) -> str:
+        safe_original = self._sanitize_filename(filename)
+        suffix = Path(safe_original).suffix or ".bin"
+        if job_id is None and tier is None and word_count is None and value is None:
+            return safe_original
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        normalized_tier = self._normalize_tier(
+            tier,
+            word_count=word_count,
+            value=value,
+        ) or "standard"
+        normalized_job_id = self._sanitize_filename(str(job_id or "job")).replace(
+            ".", "_"
+        )
+        normalized_word_count = max(int(word_count or 0), 0)
+        normalized_value = max(float(value or 0.0), 0.0)
+        value_component = f"{normalized_value:.2f}".replace("/", "_")
+        generated = (
+            f"{timestamp}_{normalized_job_id}_{normalized_tier}_"
+            f"{normalized_word_count}w_{value_component}{suffix}"
+        )
+        return self._sanitize_filename(generated)
 
     def get_recent_jobs(self, limit: int = 50, page: int = 1) -> Dict[str, Any]:
         """Get recent jobs from state with pagination."""
@@ -1010,6 +1083,10 @@ async def list_uploaded_files(authenticated: bool = Depends(verify_auth)):
 @app.post("/api/files/upload")
 async def upload_file(
     file: UploadFile = File(...),
+    job_id: str | None = Form(None),
+    tier: str | None = Form(None),
+    word_count: int | None = Form(None),
+    value: float | None = Form(None),
     authenticated: bool = Depends(verify_auth),
 ):
     """Store an uploaded file in the local file transfer directory."""
@@ -1021,6 +1098,10 @@ async def upload_file(
             file.filename or "upload.bin",
             content,
             content_type=file.content_type,
+            job_id=job_id,
+            tier=tier,
+            word_count=word_count,
+            value=value,
         )
         return {"status": "success", "file": entry.model_dump()}
     except Exception as e:

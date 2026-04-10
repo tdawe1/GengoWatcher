@@ -679,6 +679,10 @@ class TestRegressionCases:
                 "release-notes.txt",
                 b"ready for release",
                 content_type="text/plain",
+                job_id="job-12345",
+                tier="pro",
+                word_count=320,
+                value=16.0,
             )
 
             listed = api.list_files()
@@ -687,5 +691,10 @@ class TestRegressionCases:
             assert listed
             assert listed[0].stored_name == entry.stored_name
             assert listed[0].original_name == "release-notes.txt"
+            assert listed[0].job_id == "job-12345"
+            assert listed[0].tier == "pro"
+            assert listed[0].word_count == 320
+            assert listed[0].value == 16.0
+            assert entry.stored_name.endswith("_job-12345_pro_320w_16.00.txt")
             assert resolved is not None
             assert resolved.read_text(encoding="utf-8") == "ready for release"

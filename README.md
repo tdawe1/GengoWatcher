@@ -121,6 +121,19 @@ POST /api/files/upload
 GET  /api/files/{stored_name}
 ```
 
+When `POST /api/files/upload` includes `job_id`, `tier`, `word_count`, and `value`,
+stored files are renamed to:
+
+```text
+YYYYMMDD_HHMMSS_<job_id>_<pro|standard>_<word_count>w_<value>.<ext>
+```
+
+Example:
+
+```text
+20260410_163012_job-12345_pro_320w_16.00.txt
+```
+
 All three endpoints require the normal web API bearer token.
 
 ![GengoWatcher TUI Screenshot](assets/tui-screenshot.png)
