@@ -287,6 +287,15 @@ class WebAPI:
         safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", base_name).strip("._")
         return safe_name or "upload.bin"
 
+    def _ensure_within_storage_dir(self, path: Path) -> Path:
+        storage_dir = self._get_file_storage_dir().resolve()
+        resolved_path = path.resolve()
+        try:
+            resolved_path.relative_to(storage_dir)
+        except ValueError as exc:
+            raise ValueError("File path escapes storage directory") from exc
+        return resolved_path
+
     @staticmethod
     def _is_valid_stored_name(stored_name: str) -> bool:
         name = str(stored_name or "").strip()
@@ -294,15 +303,16 @@ class WebAPI:
             return False
         if "/" in name or "\\" in name:
             return False
-        if name.startswith("."):
-            return False
+        safe_path = self._ensure_within_storage_dir(path)
+        metadata = self._load_file_metadata(safe_path)
+        stats = safe_path.stat()
         return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is not None
-
-    def _build_file_entry(
+            stored_name=safe_path.name,
+            original_name=original_name or metadata.get("original_name") or safe_path.name,
         self,
         path: Path,
         *,
-        original_name: str | None = None,
+            download_url=f"/api/files/{safe_path.name}",
         content_type: str | None = None,
     ) -> StoredFileEntry:
         metadata = self._load_file_metadata(path)
@@ -365,12 +375,14 @@ class WebAPI:
         content_type: str | None = None,
         job_id: str | None = None,
         tier: str | None = None,
-        word_count: int | None = None,
+        destination = self._ensure_within_storage_dir(storage_dir / safe_name)
         value: float | None = None,
     ) -> StoredFileEntry:
         storage_dir = self._get_file_storage_dir()
         safe_name = self._build_stored_filename(
-            filename=filename,
+            destination = self._ensure_within_storage_dir(
+                storage_dir / f"{stem}-{counter}{suffix}"
+            )
             job_id=job_id,
             tier=tier,
             word_count=word_count,
