@@ -306,6 +306,12 @@ class WebAPI:
     def _ensure_within_storage_dir(self, path: Path) -> Path:
         storage_dir = self._get_file_storage_dir().resolve()
         resolved = path.resolve(strict=False)
+
+        storage_root = os.path.join(str(storage_dir), "")
+        resolved_path = str(resolved)
+        if not resolved_path.startswith(storage_root):
+            raise ValueError("Path escapes configured storage directory")
+
         try:
             resolved.relative_to(storage_dir)
         except ValueError as exc:
@@ -1166,6 +1172,8 @@ async def download_file(
     """Download a file from the local file transfer directory."""
     if not api_instance:
         raise HTTPException(status_code=503, detail="API not initialized")
+    if not api_instance._is_valid_stored_name(stored_name):
+        raise HTTPException(status_code=400, detail="Invalid file name")
     entry = api_instance.get_file_entry(stored_name)
     if entry is None:
         raise HTTPException(status_code=404, detail="File not found")
