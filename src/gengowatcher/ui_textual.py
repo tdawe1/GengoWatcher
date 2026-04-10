@@ -1831,6 +1831,15 @@ class ChartsPanel(Static):
             text.append("No data available")
             return text
 
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+        source_styles = {
+            "secondary": colors["source_ws"],
+            "accent": colors["source_email"],
+            "primary": colors["source_web"],
+            "success": colors["source_rss"],
+            "text-muted": colors["timestamp"],
+        }
+
         jobs = self.state.get_recent_jobs(limit=1000)
         sources = {key: 0 for key in SOURCE_BUCKET_CONFIG}
         for job in jobs:
@@ -1849,7 +1858,9 @@ class ChartsPanel(Static):
             bar = "█" * bar_width
             bar_padded = bar.ljust(15, "░")
             label = bucket["label"]
-            color = bucket["color"] if count > 0 else "#393836"
+            color = source_styles.get(bucket["color"], colors["default"])
+            if count <= 0:
+                color = "#393836"
             text.append(f"{label:10s} ", style="#737c73")
             text.append(bar_padded, style=color)
             text.append(f" {count:4d} ({pct:5.1f}%)\n", style="#737c73")
