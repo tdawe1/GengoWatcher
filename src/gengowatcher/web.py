@@ -345,7 +345,9 @@ class WebAPI:
 
     def _metadata_path(self, path: Path) -> Path:
         safe_path = self._ensure_within_storage_dir(path)
-        metadata_path = safe_path.with_name(f".{safe_path.name}.meta.json")
+        storage_dir = self._get_file_storage_dir().resolve()
+        metadata_name = f".{safe_path.name}.meta.json"
+        metadata_path = storage_dir / metadata_name
         return self._ensure_within_storage_dir(metadata_path)
 
     def _load_file_metadata(self, path: Path) -> dict[str, Any]:
@@ -431,6 +433,16 @@ class WebAPI:
         )
         self.logger.info("Stored uploaded file %s at %s", entry.stored_name, destination)
         return entry
+
+    def _resolve_stored_file_path(self, stored_name: str) -> Path | None:
+        if not self._is_valid_stored_name(stored_name):
+            return None
+        storage_dir = self._get_file_storage_dir().resolve()
+        candidate = storage_dir / stored_name
+        try:
+            return self._ensure_within_storage_dir(candidate)
+        except ValueError:
+            return None
 
     def get_file_path(self, stored_name: str) -> Path | None:
         if not self._is_valid_stored_name(stored_name):
