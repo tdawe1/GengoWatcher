@@ -389,6 +389,7 @@ class WebAPI:
         value: float | None = None,
     ) -> StoredFileEntry:
         storage_dir = self._get_file_storage_dir()
+        storage_root = storage_dir.resolve()
         safe_name = self._build_stored_filename(
             destination = self._ensure_within_storage_dir(
                 storage_dir / f"{stem}-{counter}{suffix}"
@@ -408,7 +409,13 @@ class WebAPI:
             )
             counter += 1
 
-        destination.write_bytes(content)
+        resolved_destination = destination.resolve()
+        try:
+            resolved_destination.relative_to(storage_root)
+        except ValueError as exc:
+            raise ValueError("Invalid upload path outside storage directory") from exc
+
+        resolved_destination.write_bytes(content)
         metadata = {
             "original_name": filename or destination.name,
             "content_type": content_type,
