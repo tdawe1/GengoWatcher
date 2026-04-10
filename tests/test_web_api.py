@@ -14,6 +14,7 @@ from gengowatcher.web import (
     APIAuthenticator,
     WebAPI,
     JobEntry,
+    StoredFileUploadResponse,
     WatcherStatus,
     ConfigSection,
     CommandRequest,
@@ -642,28 +643,30 @@ class TestFastAPIEndpoints:
                 value=16.0,
                 authenticated=True,
             )
-            upload_data = uploaded["file"]
-            assert upload_data["original_name"] == "Release Notes.txt"
-            assert upload_data["content_type"] == "text/plain"
-            assert upload_data["job_id"] == "job-12345"
-            assert upload_data["tier"] == "pro"
-            assert upload_data["word_count"] == 320
-            assert upload_data["value"] == 16.0
-            assert upload_data["stored_name"].endswith(
+            assert isinstance(uploaded, StoredFileUploadResponse)
+            assert uploaded.status == "success"
+            upload_data = uploaded.file
+            assert upload_data.original_name == "Release Notes.txt"
+            assert upload_data.content_type == "text/plain"
+            assert upload_data.job_id == "job-12345"
+            assert upload_data.tier == "pro"
+            assert upload_data.word_count == 320
+            assert upload_data.value == 16.0
+            assert upload_data.stored_name.endswith(
                 "_job-12345_pro_320w_16.00.txt"
             )
 
             listed = await list_uploaded_files(authenticated=True)
             assert len(listed) == 1
-            assert listed[0].stored_name == upload_data["stored_name"]
+            assert listed[0].stored_name == upload_data.stored_name
             assert listed[0].original_name == "Release Notes.txt"
             assert listed[0].tier == "pro"
 
             response = await download_file(
-                stored_name=upload_data["stored_name"],
+                stored_name=upload_data.stored_name,
                 authenticated=True,
             )
-            assert pathlib.Path(response.path) == storage_dir / upload_data["stored_name"]
+            assert pathlib.Path(response.path) == storage_dir / upload_data.stored_name
             assert response.filename == "Release Notes.txt"
 
 

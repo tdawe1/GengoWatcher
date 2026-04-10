@@ -191,6 +191,11 @@ class StoredFileEntry(BaseModel):
     value: Optional[float] = None
 
 
+class StoredFileUploadResponse(BaseModel):
+    status: str
+    file: StoredFileEntry
+
+
 class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
@@ -284,51 +289,19 @@ class WebAPI:
     @staticmethod
     def _sanitize_filename(filename: str) -> str:
         base_name = Path(str(filename or "upload.bin")).name.strip()
-        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", base_name).strip("._")
+        safe_name = re.sub(r"[\x00-\x1f\x7f]+", "", base_name)
+        safe_name = safe_name.replace("/", "_").replace("\\", "_")
+        safe_name = safe_name.replace(":", "-")
+        safe_name = re.sub(r"\s+", " ", safe_name).strip(" .")
         return safe_name or "upload.bin"
 
-    def _ensure_within_storage_dir(self, path: Path) -> Path:
-        storage_dir = self._get_file_storage_dir().resolve()
-        resolved_path = path.resolve()
-        try:
-            resolved_path.relative_to(storage_dir)
-        except ValueError as exc:
-            raise ValueError("File path escapes storage directory") from exc
-        return resolved_path
-
     @staticmethod
-    def _is_valid_stored_name(stored_name: str) -> bool:
-        name = str(stored_name or "").strip()
-        if not name or name in {".", ".."}:
-            return False
-        if "/" in name or "\\" in name:
-            return False
-        safe_path = self._ensure_within_storage_dir(path)
-        metadata = self._load_file_metadata(safe_path)
-        stats = safe_path.stat()
-        return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is not None
-            stored_name=safe_path.name,
-            original_name=original_name or metadata.get("original_name") or safe_path.name,
-        self,
-        path: Path,
-        *,
-            download_url=f"/api/files/{safe_path.name}",
-        content_type: str | None = None,
-    ) -> StoredFileEntry:
-        metadata = self._load_file_metadata(path)
-        stats = path.stat()
-        return StoredFileEntry(
-            stored_name=path.name,
-            original_name=original_name or metadata.get("original_name") or path.name,
-            size_bytes=stats.st_size,
-            content_type=content_type or metadata.get("content_type"),
-            modified_at=float(metadata.get("uploaded_at") or stats.st_mtime),
-            download_url=f"/api/files/{path.name}",
-            job_id=metadata.get("job_id"),
-            tier=metadata.get("tier"),
-            word_count=metadata.get("word_count"),
-            value=metadata.get("value"),
-        )
+    def _sanitize_file_component(value: str, fallback: str) -> str:
+        text = str(value or "").strip()
+        text = text.replace("/", "_").replace("\\", "_")
+        text = re.sub(r"[^A-Za-z0-9._-]+", "-", text)
+        text = text.strip("-._")
+        return text or fallback
 
     def _ensure_within_storage_dir(self, path: Path) -> Path:
         storage_dir = self._get_file_storage_dir().resolve()
@@ -339,8 +312,40 @@ class WebAPI:
             raise ValueError("Path escapes configured storage directory") from exc
         return resolved
 
+    def _is_valid_stored_name(self, stored_name: str) -> bool:
+        name = str(stored_name or "").strip()
+        if not name or name in {".", ".."}:
+            return False
+        if "/" in name or "\\" in name or "\x00" in name:
+            return False
+        return self._sanitize_filename(name) == name
+
+    def _build_file_entry(
+        self,
+        path: Path,
+        *,
+        original_name: str | None = None,
+        content_type: str | None = None,
+    ) -> StoredFileEntry:
+        safe_path = self._ensure_within_storage_dir(path)
+        metadata = self._load_file_metadata(safe_path)
+        stats = safe_path.stat()
+        return StoredFileEntry(
+            stored_name=safe_path.name,
+            original_name=original_name or metadata.get("original_name") or safe_path.name,
+            size_bytes=stats.st_size,
+            content_type=content_type or metadata.get("content_type"),
+            modified_at=float(metadata.get("uploaded_at") or stats.st_mtime),
+            download_url=f"/api/files/{safe_path.name}",
+            job_id=metadata.get("job_id"),
+            tier=metadata.get("tier"),
+            word_count=metadata.get("word_count"),
+            value=metadata.get("value"),
+        )
+
     def _metadata_path(self, path: Path) -> Path:
-        metadata_path = path.with_name(f".{path.name}.meta.json")
+        safe_path = self._ensure_within_storage_dir(path)
+        metadata_path = safe_path.with_name(f".{safe_path.name}.meta.json")
         return self._ensure_within_storage_dir(metadata_path)
 
     def _load_file_metadata(self, path: Path) -> dict[str, Any]:
@@ -385,15 +390,12 @@ class WebAPI:
         content_type: str | None = None,
         job_id: str | None = None,
         tier: str | None = None,
-        destination = self._ensure_within_storage_dir(storage_dir / safe_name)
+        word_count: int | None = None,
         value: float | None = None,
     ) -> StoredFileEntry:
         storage_dir = self._get_file_storage_dir()
-        storage_root = storage_dir.resolve()
         safe_name = self._build_stored_filename(
-            destination = self._ensure_within_storage_dir(
-                storage_dir / f"{stem}-{counter}{suffix}"
-            )
+            filename=filename,
             job_id=job_id,
             tier=tier,
             word_count=word_count,
@@ -408,14 +410,7 @@ class WebAPI:
                 storage_dir / f"{stem}-{counter}{suffix}"
             )
             counter += 1
-
-        resolved_destination = destination.resolve()
-        try:
-            resolved_destination.relative_to(storage_root)
-        except ValueError as exc:
-            raise ValueError("Invalid upload path outside storage directory") from exc
-
-        resolved_destination.write_bytes(content)
+        destination.write_bytes(content)
         metadata = {
             "original_name": filename or destination.name,
             "content_type": content_type,
@@ -493,12 +488,13 @@ class WebAPI:
             word_count=word_count,
             value=value,
         ) or "standard"
-        normalized_job_id = self._sanitize_filename(str(job_id or "job")).replace(
-            ".", "_"
+        normalized_job_id = self._sanitize_file_component(
+            str(job_id or "job"),
+            fallback="job",
         )
         normalized_word_count = max(int(word_count or 0), 0)
         normalized_value = max(float(value or 0.0), 0.0)
-        value_component = f"{normalized_value:.2f}".replace("/", "_")
+        value_component = f"{normalized_value:.2f}"
         generated = (
             f"{timestamp}_{normalized_job_id}_{normalized_tier}_"
             f"{normalized_word_count}w_{value_component}{suffix}"
@@ -1121,7 +1117,7 @@ async def list_uploaded_files(authenticated: bool = Depends(verify_auth)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/files/upload")
+@app.post("/api/files/upload", response_model=StoredFileUploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
     job_id: str | None = Form(None),
@@ -1144,7 +1140,7 @@ async def upload_file(
             word_count=word_count,
             value=value,
         )
-        return {"status": "success", "file": entry.model_dump()}
+        return StoredFileUploadResponse(status="success", file=entry)
     except Exception as e:
         api_instance.logger.exception(f"Error uploading file: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

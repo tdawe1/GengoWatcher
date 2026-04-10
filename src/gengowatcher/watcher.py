@@ -212,29 +212,13 @@ class GengoWatcher:
 
         return BrowserWorkerClient(socket_path=socket_path, logger=self.logger)
 
-    @staticmethod
-    def _coerce_config_bool(value, default: bool = False) -> bool:
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            value_lower = value.strip().lower()
-            if value_lower in {"1", "true", "yes", "on", "enabled"}:
-                return True
-            if value_lower in {"0", "false", "no", "off", "disabled"}:
-                return False
-        return default
-
     def _build_translation_app_client(self):
         if TranslationAppClient is None:
             return None
 
-        enabled = self._coerce_config_bool(
+        enabled = AppConfig.coerce_bool(
             self.config.get("TranslationApp", "enabled", fallback=False),
-            default=False,
+            fallback=False,
         )
         if not enabled:
             return None
@@ -246,9 +230,9 @@ class GengoWatcher:
             self.config.get("TranslationApp", "auth_token", fallback="") or ""
         ).strip()
         timeout_raw = self.config.get("TranslationApp", "timeout_sec", fallback=5.0)
-        verify_tls = self._coerce_config_bool(
+        verify_tls = AppConfig.coerce_bool(
             self.config.get("TranslationApp", "verify_tls", fallback=True),
-            default=True,
+            fallback=True,
         )
 
         try:

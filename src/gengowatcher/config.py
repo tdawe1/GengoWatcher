@@ -476,6 +476,27 @@ class AppConfig:
         """
         return value in PLACEHOLDER_CONFIG_VALUES
 
+    @staticmethod
+    def coerce_bool(value: Any, fallback: Optional[bool] = None) -> bool:
+        """Convert config-like values into booleans with tolerant parsing."""
+        if value is None:
+            if fallback is None:
+                raise ValueError("Invalid boolean value: None")
+            return fallback
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            value_lower = value.lower().strip()
+            if value_lower in ("true", "1", "yes", "on", "enabled"):
+                return True
+            if value_lower in ("false", "0", "no", "off", "disabled"):
+                return False
+        if fallback is not None:
+            return fallback
+        raise ValueError(f"Invalid boolean value: {value}")
+
     def getboolean(
         self, section: str, key: str, fallback: Optional[bool] = None
     ) -> bool:
@@ -486,18 +507,7 @@ class AppConfig:
                 if fallback is not None:
                     return fallback
                 raise KeyError(f"Missing config value [{section}]{key}")
-            value = section_values[key]
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, (int, float)):
-                return bool(value)
-            if isinstance(value, str):
-                value_lower = value.lower().strip()
-                if value_lower in ("true", "1", "yes", "on", "enabled"):
-                    return True
-                if value_lower in ("false", "0", "no", "off", "disabled"):
-                    return False
-            raise ValueError(f"Invalid boolean value: {value}")
+            return self.coerce_bool(section_values[key], fallback=fallback)
 
     def getint(self, section: str, key: str, fallback: Optional[int] = None) -> int:
         """Get an integer value from config."""
