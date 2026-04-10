@@ -330,8 +330,18 @@ class WebAPI:
             value=metadata.get("value"),
         )
 
+    def _ensure_within_storage_dir(self, path: Path) -> Path:
+        storage_dir = self._get_file_storage_dir().resolve()
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(storage_dir)
+        except ValueError as exc:
+            raise ValueError("Path escapes configured storage directory") from exc
+        return resolved
+
     def _metadata_path(self, path: Path) -> Path:
-        return path.with_name(f".{path.name}.meta.json")
+        metadata_path = path.with_name(f".{path.name}.meta.json")
+        return self._ensure_within_storage_dir(metadata_path)
 
     def _load_file_metadata(self, path: Path) -> dict[str, Any]:
         metadata_path = self._metadata_path(path)
@@ -388,12 +398,14 @@ class WebAPI:
             word_count=word_count,
             value=value,
         )
-        destination = storage_dir / safe_name
+        destination = self._ensure_within_storage_dir(storage_dir / safe_name)
         counter = 1
         while destination.exists():
             stem = Path(safe_name).stem
             suffix = Path(safe_name).suffix
-            destination = storage_dir / f"{stem}-{counter}{suffix}"
+            destination = self._ensure_within_storage_dir(
+                storage_dir / f"{stem}-{counter}{suffix}"
+            )
             counter += 1
 
         destination.write_bytes(content)
