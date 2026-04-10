@@ -287,6 +287,17 @@ class WebAPI:
         safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", base_name).strip("._")
         return safe_name or "upload.bin"
 
+    @staticmethod
+    def _is_valid_stored_name(stored_name: str) -> bool:
+        name = str(stored_name or "").strip()
+        if not name or name in {".", ".."}:
+            return False
+        if "/" in name or "\\" in name:
+            return False
+        if name.startswith("."):
+            return False
+        return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is not None
+
     def _build_file_entry(
         self,
         path: Path,
@@ -396,11 +407,10 @@ class WebAPI:
         return entry
 
     def get_file_path(self, stored_name: str) -> Path | None:
-        safe_name = self._sanitize_filename(stored_name)
-        if safe_name != stored_name:
+        if not self._is_valid_stored_name(stored_name):
             return None
         storage_dir = self._get_file_storage_dir().resolve()
-        candidate = (storage_dir / safe_name).resolve()
+        candidate = (storage_dir / stored_name).resolve()
         try:
             candidate.relative_to(storage_dir)
         except ValueError:
