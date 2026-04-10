@@ -1120,10 +1120,10 @@ async def download_file(
     entry = api_instance.get_file_entry(stored_name)
     if entry is None:
         raise HTTPException(status_code=404, detail="File not found")
-    path = api_instance.get_file_path(stored_name)
+    path = api_instance.get_file_path(entry.stored_name)
     if path is None:
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path, filename=entry.original_name)
+    return FileResponse(str(path), filename=entry.original_name)
 
 
 @app.websocket("/ws/status")
