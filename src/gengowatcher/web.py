@@ -4,14 +4,17 @@ for web UI integration while maintaining compatibility with existing TUI.
 """
 
 import asyncio
+import csv
 import json
 import logging
+import os
+import re
+import secrets
 import threading
 import time
-import secrets
-import csv
-from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     FastAPI,
@@ -21,6 +24,8 @@ from fastapi import (
     Request,
     Depends,
     Query,
+    UploadFile,
+    File,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -29,7 +34,6 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from prometheus_client import Gauge, make_asgi_app
 import uvicorn
-import os
 
 from .config import AppConfig
 from .prom_metrics import ensure_watcher_metrics_registered
@@ -172,6 +176,15 @@ class PaginationParams(BaseModel):
         return v
 
 
+class StoredFileEntry(BaseModel):
+    stored_name: str
+    original_name: str
+    size_bytes: int
+    content_type: Optional[str] = None
+    modified_at: float
+    download_url: str
+
+
 class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
@@ -253,6 +266,130 @@ class WebAPI:
     async def cancel_current_job(self) -> bool:
         """Cancel the currently tracked job via the watcher."""
         return await self.watcher.cancel_current_job_async()
+
+    def _get_file_storage_dir(self) -> Path:
+        raw_path = self.config.get(
+            "Paths", "file_storage_dir", fallback="data/files"
+        ) or "data/files"
+        storage_dir = Path(str(raw_path))
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        return storage_dir
+
+    @staticmethod
+    def _sanitize_filename(filename: str) -> str:
+        base_name = Path(str(filename or "upload.bin")).name.strip()
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", base_name).strip("._")
+        return safe_name or "upload.bin"
+
+    def _build_file_entry(
+        self,
+        path: Path,
+        *,
+        original_name: str | None = None,
+        content_type: str | None = None,
+    ) -> StoredFileEntry:
+        metadata = self._load_file_metadata(path)
+        stats = path.stat()
+        return StoredFileEntry(
+            stored_name=path.name,
+            original_name=original_name or metadata.get("original_name") or path.name,
+            size_bytes=stats.st_size,
+            content_type=content_type or metadata.get("content_type"),
+            modified_at=float(metadata.get("uploaded_at") or stats.st_mtime),
+            download_url=f"/api/files/{path.name}",
+        )
+
+    def _metadata_path(self, path: Path) -> Path:
+        return path.with_name(f".{path.name}.meta.json")
+
+    def _load_file_metadata(self, path: Path) -> dict[str, Any]:
+        metadata_path = self._metadata_path(path)
+        if not metadata_path.is_file():
+            return {}
+        try:
+            data = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            self.logger.warning(
+                "Failed to read file metadata for %s: %s",
+                path.name,
+                exc,
+            )
+            return {}
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    def list_files(self) -> list[StoredFileEntry]:
+        storage_dir = self._get_file_storage_dir()
+        entries: list[StoredFileEntry] = []
+        for path in sorted(
+            storage_dir.glob("*"),
+            key=lambda candidate: candidate.stat().st_mtime,
+            reverse=True,
+        ):
+            if (
+                not path.is_file()
+                or path.name.startswith(".")
+                or path.name.endswith(".meta.json")
+            ):
+                continue
+            entries.append(self._build_file_entry(path))
+        return entries
+
+    def save_uploaded_file(
+        self,
+        filename: str,
+        content: bytes,
+        *,
+        content_type: str | None = None,
+    ) -> StoredFileEntry:
+        storage_dir = self._get_file_storage_dir()
+        safe_name = self._sanitize_filename(filename)
+        destination = storage_dir / safe_name
+        counter = 1
+        while destination.exists():
+            stem = Path(safe_name).stem
+            suffix = Path(safe_name).suffix
+            destination = storage_dir / f"{stem}-{counter}{suffix}"
+            counter += 1
+
+        destination.write_bytes(content)
+        metadata = {
+            "original_name": filename or destination.name,
+            "content_type": content_type,
+            "uploaded_at": time.time(),
+        }
+        self._metadata_path(destination).write_text(
+            json.dumps(metadata, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        entry = self._build_file_entry(
+            destination,
+            original_name=filename or destination.name,
+            content_type=content_type,
+        )
+        self.logger.info("Stored uploaded file %s at %s", entry.stored_name, destination)
+        return entry
+
+    def get_file_path(self, stored_name: str) -> Path | None:
+        safe_name = self._sanitize_filename(stored_name)
+        if safe_name != stored_name:
+            return None
+        storage_dir = self._get_file_storage_dir().resolve()
+        candidate = (storage_dir / safe_name).resolve()
+        try:
+            candidate.relative_to(storage_dir)
+        except ValueError:
+            return None
+        if not candidate.is_file():
+            return None
+        return candidate
+
+    def get_file_entry(self, stored_name: str) -> StoredFileEntry | None:
+        path = self.get_file_path(stored_name)
+        if path is None:
+            return None
+        return self._build_file_entry(path)
 
     def get_recent_jobs(self, limit: int = 50, page: int = 1) -> Dict[str, Any]:
         """Get recent jobs from state with pagination."""
@@ -856,6 +993,56 @@ async def execute_command(
     except Exception as e:
         api_instance.logger.exception(f"Error executing command: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/files", response_model=List[StoredFileEntry])
+async def list_uploaded_files(authenticated: bool = Depends(verify_auth)):
+    """List files available through the built-in file transfer store."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        return api_instance.list_files()
+    except Exception as e:
+        api_instance.logger.exception(f"Error listing files: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/files/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    authenticated: bool = Depends(verify_auth),
+):
+    """Store an uploaded file in the local file transfer directory."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        content = await file.read()
+        entry = api_instance.save_uploaded_file(
+            file.filename or "upload.bin",
+            content,
+            content_type=file.content_type,
+        )
+        return {"status": "success", "file": entry.model_dump()}
+    except Exception as e:
+        api_instance.logger.exception(f"Error uploading file: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/files/{stored_name}")
+async def download_file(
+    stored_name: str,
+    authenticated: bool = Depends(verify_auth),
+):
+    """Download a file from the local file transfer directory."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    entry = api_instance.get_file_entry(stored_name)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    path = api_instance.get_file_path(stored_name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, filename=entry.original_name)
 
 
 @app.websocket("/ws/status")

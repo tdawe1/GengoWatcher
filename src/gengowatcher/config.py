@@ -24,6 +24,7 @@ PLACEHOLDER_CONFIG_VALUES = [
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
     "REPLACE_WITH_YOUR_WEB_API_TOKEN",
+    "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN",
     "YOUR_USER_ID",
     "REPLACE_WITH_BROWSER_USER_KEY",
 ]
@@ -63,6 +64,8 @@ class AppConfig:
         "Paths": {
             "sound_file": "assets/alert.wav",
             "websocket_stale_sound_file": "",
+            "browser_session_sync_failed_sound_file": "",
+            "file_storage_dir": "data/files",
             "log_file": "logs/gengowatcher.log",
             "notification_icon_path": "",
             "browser_path": "",
@@ -115,6 +118,13 @@ class AppConfig:
             "port": 8000,
             "cors_origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
             "auth_token": "REPLACE_WITH_YOUR_WEB_API_TOKEN",
+        },
+        "TranslationApp": {
+            "enabled": False,
+            "base_url": "",
+            "auth_token": "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN",
+            "timeout_sec": 5.0,
+            "verify_tls": True,
         },
         "AutoAccept": {
             "enabled": False,
@@ -188,6 +198,8 @@ class AppConfig:
         ("WebSocket", "user_session"): "GENGO_USER_SESSION",
         ("WebSocket", "user_key"): "GENGO_USER_KEY",
         ("WebServer", "auth_token"): "GENGOWATCHER_API_TOKEN",
+        ("TranslationApp", "base_url"): "TRANSLATION_APP_BASE_URL",
+        ("TranslationApp", "auth_token"): "TRANSLATION_APP_AUTH_TOKEN",
         ("EmailMonitor", "client_id"): "GMAIL_CLIENT_ID",
         ("EmailMonitor", "client_secret"): "GMAIL_CLIENT_SECRET",
         ("EmailMonitor", "refresh_token"): "GMAIL_REFRESH_TOKEN",

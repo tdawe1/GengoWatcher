@@ -16,7 +16,8 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e .
 ```
 
-That installs a `gengowatcher` command on your PATH, so you can launch it from any directory.
+That installs `gengowatcher` on your PATH, plus the release-friendly aliases
+`gengo-watcher` and `gengowatcher-browser-worker`.
 
 If you want a simpler repo-local launcher without relying on Python packaging, install the bundled script into `~/.local/bin`:
 
@@ -24,16 +25,30 @@ If you want a simpler repo-local launcher without relying on Python packaging, i
 make install-user
 ```
 
-That symlinks [bin/gengowatcher](/home/thomas/GengoWatcher/bin/gengowatcher) into `~/.local/bin/gengowatcher` and runs the app through this repo's `.venv` from any directory.
+That symlinks [bin/gengowatcher](/home/user/GengoWatcher/bin/gengowatcher),
+[bin/gengo-watcher](/home/user/GengoWatcher/bin/gengo-watcher), and
+[bin/gengowatcher-browser-worker](/home/user/GengoWatcher/bin/gengowatcher-browser-worker)
+into `~/.local/bin/` and runs them through this repo's `.venv` from any directory.
 ## Quick Start
 ```bash
 gengowatcher
+```
+Alias:
+```bash
+gengo-watcher
 ```
 Or directly:
 ```bash
 ./bin/gengowatcher
 ```
 On the first run, you'll be guided through configuration setup.
+
+Interactive setup entrypoints:
+```bash
+gengowatcher --configure
+gengowatcher --setup-email
+gengowatcher --setup-website
+```
 
 ## Configuration
 Settings are stored in `config.toml`. Key sections:
@@ -56,6 +71,14 @@ Get WebSocket credentials from your browser's DevTools:
 ### Browser Worker
 
 The browser worker is an optional local Playwright sidecar that keeps a long-lived headed browser with a dedicated persistent profile. Configure the `BrowserWorker` section in `config.toml`, then start it separately with:
+
+```bash
+gengowatcher-browser-worker \
+  --profile-path profiles/browser-worker \
+  --socket-path /tmp/gengowatcher-browser-worker.sock
+```
+
+The module form still works if you need it:
 
 ```bash
 PYTHONPATH=src python -m gengowatcher.browser_worker.main \
@@ -86,5 +109,18 @@ The operator procedure for black-box validation is documented in `docs/browser-w
 | `autoaccept` | Toggle auto-acceptance |
 | `help` | Show all commands |
 | `exit` | Save state and quit |
+
+## File Transfer API
+
+The built-in web API now includes a local file store for release artifacts, exports,
+or handoff documents. It is rooted at `[Paths].file_storage_dir` and exposed as:
+
+```text
+GET  /api/files
+POST /api/files/upload
+GET  /api/files/{stored_name}
+```
+
+All three endpoints require the normal web API bearer token.
 
 ![GengoWatcher TUI Screenshot](assets/tui-screenshot.png)

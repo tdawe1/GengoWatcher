@@ -40,6 +40,10 @@ all_entries_log = "logs/all_entries.csv"
 sound_file = "assets/alert.wav"
 # Optional override for websocket stale alerts; falls back to sound_file when blank
 websocket_stale_sound_file = ""
+# Optional override for browser session sync failure alerts; falls back to sound_file when blank
+browser_session_sync_failed_sound_file = ""
+# Local storage for uploaded/downloadable release files exposed by the web API
+file_storage_dir = "data/files"
 
 [Logging]
 log_max_bytes = 1000000
@@ -83,6 +87,14 @@ cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 # Set via GENGOWATCHER_API_TOKEN env var or here
 auth_token = "REPLACE_WITH_YOUR_WEB_API_TOKEN"
 
+[TranslationApp]
+enabled = false
+base_url = "http://127.0.0.1:8080"
+# Set via TRANSLATION_APP_AUTH_TOKEN env var or here
+auth_token = "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN"
+timeout_sec = 5.0
+verify_tls = true
+
 [AutoAccept]
 enabled = false
 min_reward = 0.0
@@ -101,6 +113,7 @@ selenium_attempt_timeout_sec = 8
 [BrowserWorker]
 enabled = false
 socket_path = ""
+# Start with: gengowatcher-browser-worker --profile-path profiles/browser-worker
 profile_path = "profiles/browser-worker"
 seed_profile_path = ""
 headless = false

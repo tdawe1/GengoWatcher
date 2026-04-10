@@ -649,3 +649,43 @@ class TestRegressionCases:
 
         result = web_api.execute_command("check")
         assert result["status"] == "error"
+
+    def test_file_storage_round_trip(
+        self, mock_config, mock_state, mock_logger, tmp_path
+    ):
+        """Uploaded files should be listed and resolved from local storage."""
+        watcher = MagicMock()
+        watcher.shutdown_event.is_set.return_value = False
+        watcher.get_cancellation_stats.return_value = None
+        watcher.start_time = 123.0
+        watcher.websocket_status = "Live"
+        watcher.rss_action = "Checking"
+        watcher.session_new_entries = 0
+        watcher.session_total_value = 0.0
+        watcher.failure_count = 0
+        watcher.next_check_time = 0.0
+        watcher.last_check_time = None
+
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Paths", "file_storage_dir"): str(tmp_path / "files"),
+            ("Paths", "all_entries_log"): str(tmp_path / "entries.csv"),
+            ("WebServer", "auth_token"): "test_token_12345",
+        }.get((s, k), kw.get("fallback", ""))
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+            entry = api.save_uploaded_file(
+                "release-notes.txt",
+                b"ready for release",
+                content_type="text/plain",
+            )
+
+            listed = api.list_files()
+            resolved = api.get_file_path(entry.stored_name)
+
+            assert listed
+            assert listed[0].stored_name == entry.stored_name
+            assert listed[0].original_name == "release-notes.txt"
+            assert resolved is not None
+            assert resolved.read_text(encoding="utf-8") == "ready for release"

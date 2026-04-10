@@ -25,6 +25,7 @@ def watcher_instance():
         "Paths": {"browser_path": "", "browser_args": "{url}"},
         "Network": {"user_agent_email": "test@example.com"},
         "Logging": {"log_all_entries_enabled": False},
+        "TranslationApp": {"enabled": False},
         "AutoAccept": {
             "enabled": False,
             "job_sources": "rss,websocket",
@@ -32,9 +33,35 @@ def watcher_instance():
             "max_reward": 999999.0,
         },
     }
-    mock_config.get.side_effect = lambda section, key, **kwargs: config_data.get(
+    mock_config.get.side_effect = lambda section, key, fallback=None, **kwargs: config_data.get(
         section, {}
-    ).get(key)
+    ).get(key, fallback)
+
+    def _coerce_bool(value, fallback=False):
+        if value is None:
+            return fallback
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on", "enabled"}
+        return bool(value)
+
+    mock_config.getboolean.side_effect = (
+        lambda section, key, fallback=None, **kwargs: _coerce_bool(
+            config_data.get(section, {}).get(key, fallback),
+            fallback if fallback is not None else False,
+        )
+    )
+    mock_config.getfloat.side_effect = (
+        lambda section, key, fallback=None, **kwargs: float(
+            config_data.get(section, {}).get(key, fallback if fallback is not None else 0.0)
+        )
+    )
+    mock_config.getint.side_effect = (
+        lambda section, key, fallback=None, **kwargs: int(
+            config_data.get(section, {}).get(key, fallback if fallback is not None else 0)
+        )
+    )
     mock_config.config = config_data
     w = watcher.GengoWatcher(mock_config, mock_state, logger)
     return w
@@ -203,6 +230,23 @@ def test_process_new_job_callback(watcher_instance):
     call_args = mock_callback.call_args[0][0]
     assert call_args["id"] == "456"
     assert call_args["source"] == "WebSocket"
+
+
+def test_process_new_job_submits_to_translation_app_when_configured(watcher_instance):
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w._submit_job_to_translation_app_async = MagicMock()
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    w._process_new_job(123, "New Job", 10.0, "http://example.com/123", "RSS")
+
+    w._submit_job_to_translation_app_async.assert_called_once()
+    payload = w._submit_job_to_translation_app_async.call_args[0][0]
+    assert payload["id"] == "123"
+    assert payload["title"] == "New Job"
+    assert payload["source"] == "RSS"
 
 
 def test_process_new_job_populates_lang_pair_and_word_count(watcher_instance):

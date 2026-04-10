@@ -44,6 +44,11 @@ except ImportError:  # pragma: no cover - optional integration at runtime
     BrowserWorkerClient = None
 
 try:
+    from .translation_app_client import TranslationAppClient
+except ImportError:  # pragma: no cover - optional integration at runtime
+    TranslationAppClient = None
+
+try:
     from .email_monitor import EmailMonitor
 except ImportError:
     EmailMonitor = None
@@ -58,6 +63,7 @@ PLACEHOLDER_CONFIG_VALUES = {
     "",
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
+    "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN",
 }
 
 SENSITIVE_KEYWORDS = {"password", "session", "key"}
@@ -181,6 +187,7 @@ class GengoWatcher:
             logger,
         )
         self.browser_worker_client = self._build_browser_worker_client()
+        self.translation_app_client = self._build_translation_app_client()
         self._warn_if_browser_session_mismatch()
 
         # Initialize job cancellation manager
@@ -204,6 +211,100 @@ class GengoWatcher:
             return None
 
         return BrowserWorkerClient(socket_path=socket_path, logger=self.logger)
+
+    @staticmethod
+    def _coerce_config_bool(value, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            value_lower = value.strip().lower()
+            if value_lower in {"1", "true", "yes", "on", "enabled"}:
+                return True
+            if value_lower in {"0", "false", "no", "off", "disabled"}:
+                return False
+        return default
+
+    def _build_translation_app_client(self):
+        if TranslationAppClient is None:
+            return None
+
+        enabled = self._coerce_config_bool(
+            self.config.get("TranslationApp", "enabled", fallback=False),
+            default=False,
+        )
+        if not enabled:
+            return None
+
+        base_url = str(
+            self.config.get("TranslationApp", "base_url", fallback="") or ""
+        ).strip()
+        auth_token = str(
+            self.config.get("TranslationApp", "auth_token", fallback="") or ""
+        ).strip()
+        timeout_raw = self.config.get("TranslationApp", "timeout_sec", fallback=5.0)
+        verify_tls = self._coerce_config_bool(
+            self.config.get("TranslationApp", "verify_tls", fallback=True),
+            default=True,
+        )
+
+        try:
+            timeout_sec = float(timeout_raw)
+        except (TypeError, ValueError):
+            timeout_sec = 5.0
+
+        if not base_url:
+            self.logger.warning(
+                "TranslationApp.enabled is true but TranslationApp.base_url is empty"
+            )
+            return None
+        if auth_token in PLACEHOLDER_CONFIG_VALUES:
+            self.logger.warning(
+                "TranslationApp.enabled is true but TranslationApp.auth_token is not configured"
+            )
+            return None
+
+        return TranslationAppClient(
+            base_url=base_url,
+            auth_token=auth_token,
+            timeout_sec=max(timeout_sec, 1.0),
+            verify_tls=verify_tls,
+            logger=self.logger,
+        )
+
+    def _submit_job_to_translation_app(self, job_data: dict) -> None:
+        if not self.translation_app_client:
+            return
+        self.translation_app_client.submit_job(dict(job_data))
+
+    def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
+        if not self.translation_app_client:
+            return
+        threading.Thread(
+            target=self._submit_job_to_translation_app,
+            args=(dict(job_data),),
+            daemon=True,
+            name=f"translation-app-sync-{job_data.get('id')}",
+        ).start()
+
+    def _notify_job_added(self, job_data: dict, job_added: bool, job_id) -> None:
+        if not job_added:
+            if self.on_job_added_callback:
+                self.logger.debug(
+                    f"Skipping job added callback for job {job_id} because it was not stored in state"
+                )
+            return
+
+        self._submit_job_to_translation_app_async(job_data)
+
+        if self.on_job_added_callback:
+            try:
+                self.on_job_added_callback(job_data)
+            except Exception as e:
+                self.logger.debug(f"Error in job added callback: {e}")
 
     @staticmethod
     def _mask_secret(value) -> str:
@@ -822,10 +923,19 @@ class GengoWatcher:
                 exc,
             )
             if alert_on_failure:
+                sync_failure_sound = (
+                    self.config.get(
+                        "Paths",
+                        "browser_session_sync_failed_sound_file",
+                        fallback="",
+                    )
+                    or None
+                )
                 self.show_notification(
                     message=f"Browser session sync failed: {exc}",
                     title="GengoWatcher Session Sync Failed",
                     play_sound=True,
+                    sound_file=sync_failure_sound,
                 )
             if fail_hard:
                 if self._has_cached_websocket_auth():
@@ -1194,15 +1304,7 @@ class GengoWatcher:
                         metadata=job_data,
                     )
                     self.state.save_state()
-                    if self.on_job_added_callback and job_added:
-                        try:
-                            self.on_job_added_callback(job_data)
-                        except Exception as e:
-                            self.logger.debug(f"Error in job added callback: {e}")
-                    elif self.on_job_added_callback and not job_added:
-                        self.logger.debug(
-                            f"Skipping job added callback for job {job_id} because it was not stored in state"
-                        )
+                    self._notify_job_added(job_data, job_added, job_id)
                     return
                 except Exception as e:
                     self.logger.error(
@@ -1249,17 +1351,8 @@ class GengoWatcher:
 
         self.state.save_state()
 
-        # Notify UI that a new job was added, but only if it was stored in state
-        if self.on_job_added_callback and job_added:
-            try:
-                self.on_job_added_callback(job_data)
-            except Exception as e:
-                self.logger.debug(f"Error in job added callback: {e}")
-        elif self.on_job_added_callback and not job_added:
-            # This can happen if storing the job in state failed earlier.
-            self.logger.debug(
-                f"Skipping job added callback for job {job_id} because it was not stored in state"
-            )
+        # Notify integrations/UI that a new job was added, but only if it was stored in state.
+        self._notify_job_added(job_data, job_added, job_id)
 
     def _normalize_meta(self, meta) -> dict:
         if meta is None or not hasattr(meta, "get"):

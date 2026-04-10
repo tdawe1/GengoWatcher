@@ -39,6 +39,8 @@ def test_config_loads_default_values(test_dir):
     assert app_config.get("Watcher", "enable_notifications") is True
     assert app_config.get("Network", "user_agent_email") == ""
     assert app_config.get("Paths", "websocket_stale_sound_file") == ""
+    assert app_config.get("Paths", "browser_session_sync_failed_sound_file") == ""
+    assert app_config.get("Paths", "file_storage_dir") == "data/files"
     assert app_config.get("UI", "theme_name") == "nord"
 
     assert app_config.get("WebSocket", "enable_websocket") is True

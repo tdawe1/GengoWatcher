@@ -1,6 +1,6 @@
 PYTHON := $(shell if [ -x .venv/bin/python ]; then printf '%s' .venv/bin/python; else printf '%s' python3; fi)
 
-.PHONY: build test coverage lint format run run-web run-web-only
+.PHONY: build test coverage lint format run run-web run-web-only install-user
 
 build:
 	@echo "Compiling Python files..."
@@ -29,3 +29,9 @@ run-web:
 
 run-web-only:
 	PYTHONPATH=src $(PYTHON) -m gengowatcher.main --web-only
+
+install-user:
+	mkdir -p "$(HOME)/.local/bin"
+	ln -sf "$(CURDIR)/bin/gengowatcher" "$(HOME)/.local/bin/gengowatcher"
+	ln -sf "$(CURDIR)/bin/gengo-watcher" "$(HOME)/.local/bin/gengo-watcher"
+	ln -sf "$(CURDIR)/bin/gengowatcher-browser-worker" "$(HOME)/.local/bin/gengowatcher-browser-worker"
