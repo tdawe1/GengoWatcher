@@ -316,6 +316,8 @@ class WebAPI:
             resolved.relative_to(storage_dir)
         except ValueError as exc:
             raise ValueError("Path escapes configured storage directory") from exc
+        if resolved.exists() and resolved.is_symlink():
+            raise ValueError("Symlinks are not allowed in storage directory paths")
         return resolved
 
     def _is_valid_stored_name(self, stored_name: str) -> bool:
@@ -334,6 +336,8 @@ class WebAPI:
         content_type: str | None = None,
     ) -> StoredFileEntry:
         safe_path = self._ensure_within_storage_dir(path)
+        if not safe_path.exists() or not safe_path.is_file() or safe_path.is_symlink():
+            raise ValueError("Invalid stored file path")
         metadata = self._load_file_metadata(safe_path)
         stats = safe_path.stat()
         return StoredFileEntry(
@@ -451,6 +455,16 @@ class WebAPI:
             return None
 
     def get_file_path(self, stored_name: str) -> Path | None:
+        if not self._is_valid_stored_name(stored_name):
+            return None
+        candidate = self._get_file_storage_dir() / stored_name
+        try:
+            safe_path = self._ensure_within_storage_dir(candidate)
+        except ValueError:
+            return None
+        if not safe_path.exists() or not safe_path.is_file() or safe_path.is_symlink():
+            return None
+        return safe_path
         if not self._is_valid_stored_name(stored_name):
             return None
         storage_dir = self._get_file_storage_dir().resolve()
