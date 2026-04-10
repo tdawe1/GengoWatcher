@@ -491,26 +491,12 @@ class WebAPI:
         value: float | None = None,
     ) -> str | None:
         normalized = str(tier or "").strip().lower()
-        if normalized in {"standard", "std", "basic"}:
-            return "standard"
-        if normalized in {"pro", "professional"}:
+        suffix = re.sub(r"[^A-Za-z0-9.]", "", suffix) or ".bin"
+        if not suffix.startswith("."):
+            suffix = f".{suffix}"
             return "pro"
-        if word_count and word_count > 0 and value is not None:
-            unit_rate = float(value) / float(word_count)
-            return "pro" if unit_rate >= 0.035 else "standard"
-        return None
-
-    def _build_stored_filename(
-        self,
-        *,
-        filename: str,
-        job_id: str | None = None,
-        tier: str | None = None,
-        word_count: int | None = None,
-        value: float | None = None,
-    ) -> str:
-        safe_original = self._sanitize_filename(filename)
-        suffix = Path(safe_original).suffix or ".bin"
+        random_token = secrets.token_hex(8)
+        generated = f"{timestamp}_{random_token}{suffix}"
         if job_id is None and tier is None and word_count is None and value is None:
             return safe_original
 
