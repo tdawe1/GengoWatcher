@@ -331,8 +331,11 @@ class WebAPI:
         original_name: str | None = None,
         content_type: str | None = None,
     ) -> StoredFileEntry:
-        safe_path = self._ensure_within_storage_dir(path)
-        if not safe_path.exists() or not safe_path.is_file() or safe_path.is_symlink():
+        stored_name = path.name
+        if not self._is_valid_stored_name(stored_name):
+            raise ValueError("Invalid stored file path")
+        safe_path = self.get_file_path(stored_name)
+        if safe_path is None:
             raise ValueError("Invalid stored file path")
         metadata = self._load_file_metadata(safe_path)
         stats = safe_path.stat()
