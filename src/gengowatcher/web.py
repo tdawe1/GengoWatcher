@@ -456,14 +456,20 @@ class WebAPI:
         stored_path = Path(stored_name)
         if stored_path.is_absolute() or stored_path.name != stored_name:
             return None
-        candidate = self._get_file_storage_dir() / stored_name
+        storage_dir = self._get_file_storage_dir().resolve()
         try:
-            safe_path = self._ensure_within_storage_dir(candidate)
-        except ValueError:
+            for candidate in storage_dir.iterdir():
+                if candidate.name != stored_name:
+                    continue
+                if not candidate.is_file() or candidate.is_symlink():
+                    return None
+                safe_path = self._ensure_within_storage_dir(candidate)
+                if not safe_path.exists() or not safe_path.is_file() or safe_path.is_symlink():
+                    return None
+                return safe_path
+        except (OSError, ValueError):
             return None
-        if not safe_path.exists() or not safe_path.is_file() or safe_path.is_symlink():
-            return None
-        return safe_path
+        return None
 
     def get_file_entry(self, stored_name: str) -> StoredFileEntry | None:
         path = self.get_file_path(stored_name)
