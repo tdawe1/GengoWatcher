@@ -311,6 +311,7 @@ class WebAPI:
             resolved.relative_to(storage_dir)
         except ValueError as exc:
             raise ValueError("Path escapes configured storage directory") from exc
+
         if resolved.exists() and resolved.is_symlink():
             raise ValueError("Symlinks are not allowed in storage directory paths")
         return resolved
