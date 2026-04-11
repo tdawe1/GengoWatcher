@@ -304,16 +304,16 @@ class WebAPI:
         return text or fallback
 
     def _ensure_within_storage_dir(self, path: Path) -> Path:
-        storage_dir = self._get_file_storage_dir().resolve()
-        resolved = path.resolve(strict=False)
+        storage_dir = self._get_file_storage_dir().resolve(strict=True)
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("Path does not exist in configured storage directory") from exc
 
         try:
             resolved.relative_to(storage_dir)
         except ValueError as exc:
             raise ValueError("Path escapes configured storage directory") from exc
-
-        if resolved.exists() and resolved.is_symlink():
-            raise ValueError("Symlinks are not allowed in storage directory paths")
         return resolved
 
     def _is_valid_stored_name(self, stored_name: str) -> bool:
