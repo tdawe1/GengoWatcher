@@ -307,11 +307,6 @@ class WebAPI:
         storage_dir = self._get_file_storage_dir().resolve()
         resolved = path.resolve(strict=False)
 
-        storage_root = os.path.join(str(storage_dir), "")
-        resolved_path = str(resolved)
-        if not resolved_path.startswith(storage_root):
-            raise ValueError("Path escapes configured storage directory")
-
         try:
             resolved.relative_to(storage_dir)
         except ValueError as exc:
@@ -457,6 +452,9 @@ class WebAPI:
     def get_file_path(self, stored_name: str) -> Path | None:
         if not self._is_valid_stored_name(stored_name):
             return None
+        stored_path = Path(stored_name)
+        if stored_path.is_absolute() or stored_path.name != stored_name:
+            return None
         candidate = self._get_file_storage_dir() / stored_name
         try:
             safe_path = self._ensure_within_storage_dir(candidate)
@@ -465,17 +463,6 @@ class WebAPI:
         if not safe_path.exists() or not safe_path.is_file() or safe_path.is_symlink():
             return None
         return safe_path
-        if not self._is_valid_stored_name(stored_name):
-            return None
-        storage_dir = self._get_file_storage_dir().resolve()
-        candidate = (storage_dir / stored_name).resolve()
-        try:
-            candidate.relative_to(storage_dir)
-        except ValueError:
-            return None
-        if not candidate.is_file():
-            return None
-        return candidate
 
     def get_file_entry(self, stored_name: str) -> StoredFileEntry | None:
         path = self.get_file_path(stored_name)
