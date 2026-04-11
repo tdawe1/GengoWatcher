@@ -322,7 +322,11 @@ class WebAPI:
             return False
         if "/" in name or "\\" in name or "\x00" in name:
             return False
-        return self._sanitize_filename(name) == name
+        if ".." in name:
+            return False
+        if self._sanitize_filename(name) != name:
+            return False
+        return re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?", name) is not None
 
     def _build_file_entry(
         self,
