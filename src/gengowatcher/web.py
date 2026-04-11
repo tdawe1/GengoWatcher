@@ -1178,8 +1178,11 @@ async def download_file(
     entry = api_instance.get_file_entry(stored_name)
     if entry is None:
         raise HTTPException(status_code=404, detail="File not found")
-    path = api_instance.get_file_path(entry.stored_name)
-    if path is None:
+    try:
+        path = api_instance._ensure_within_storage_dir(Path(entry.path))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not path.exists() or not path.is_file() or path.is_symlink():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(str(path), filename=entry.original_name)
 
