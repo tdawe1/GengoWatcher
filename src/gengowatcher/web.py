@@ -305,8 +305,14 @@ class WebAPI:
 
     def _ensure_within_storage_dir(self, path: Path) -> Path:
         storage_dir = self._get_file_storage_dir().resolve(strict=True)
+
+        # Accept only a single filename component (no user-influenced subpaths).
+        candidate_name = path.name
+        if str(path) != candidate_name or candidate_name in {".", ".."}:
+            raise ValueError("Invalid stored filename")
+
         try:
-            resolved = path.resolve(strict=False)
+            resolved = (storage_dir / candidate_name).resolve(strict=False)
         except OSError as exc:
             raise ValueError("Invalid path in configured storage directory") from exc
 
