@@ -19,7 +19,7 @@
 ## Agent Rule Sources
 - No repository-local Cursor rules were found in `.cursor/rules/`.
 - No `.cursorrules` file was found.
-- No Copilot instructions were found in `.github/copilot-instructions.md`.
+- No GitHub Copilot instructions were found in `.github/copilot-instructions.md`.
 - This `AGENTS.md` is the primary agent instruction file in this repo.
 
 ## Python Environment

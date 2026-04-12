@@ -492,12 +492,28 @@ class WebAPI:
         value: float | None = None,
     ) -> str | None:
         normalized = str(tier or "").strip().lower()
-        suffix = re.sub(r"[^A-Za-z0-9.]", "", suffix) or ".bin"
+        if normalized in ("pro", "standard"):
+            return normalized
+        if word_count is not None and value is not None:
+            rate = value / word_count if word_count > 0 else 0.0
+            if rate >= 0.05:
+                return "pro"
+        return "standard"
+
+    def _build_stored_filename(
+        self,
+        filename: str,
+        *,
+        job_id: str | None = None,
+        tier: str | None = None,
+        word_count: int | None = None,
+        value: float | None = None,
+    ) -> str:
+        safe_original = self._sanitize_filename(filename)
+        suffix = Path(safe_original).suffix or ".bin"
         if not suffix.startswith("."):
             suffix = f".{suffix}"
-            return "pro"
-        random_token = secrets.token_hex(8)
-        generated = f"{timestamp}_{random_token}{suffix}"
+
         if job_id is None and tier is None and word_count is None and value is None:
             return safe_original
 
@@ -1179,7 +1195,8 @@ async def download_file(
     if entry is None:
         raise HTTPException(status_code=404, detail="File not found")
     try:
-        path = api_instance._ensure_within_storage_dir(Path(entry.path))
+        storage_dir = api_instance._get_file_storage_dir()
+        path = api_instance._ensure_within_storage_dir(storage_dir / entry.stored_name)
     except ValueError:
         raise HTTPException(status_code=404, detail="File not found")
     if not path.exists() or not path.is_file() or path.is_symlink():

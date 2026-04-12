@@ -93,7 +93,7 @@ class UILoggingHandler(logging.Handler):
             f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - "
             f"{record.getMessage()}"
         )
-        self.log_queue.append(Text.from_markup(message, style=style))
+        self.log_queue.append(Text(message, style=style))
 
 
 def should_enable_stdio_logging(

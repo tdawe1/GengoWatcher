@@ -25,10 +25,10 @@ If you want a simpler repo-local launcher without relying on Python packaging, i
 make install-user
 ```
 
-That symlinks [bin/gengowatcher](/home/user/GengoWatcher/bin/gengowatcher),
-[bin/gengo-watcher](/home/user/GengoWatcher/bin/gengo-watcher), and
-[bin/gengowatcher-browser-worker](/home/user/GengoWatcher/bin/gengowatcher-browser-worker)
-into `~/.local/bin/` and runs them through this repo's `.venv` from any directory.
+That symlinks `bin/gengowatcher`,
+`bin/gengo-watcher`, and
+`bin/gengowatcher-browser-worker`
+into `~/.local/bin/` and runs them through this repo's `venv` from any directory.
 ## Quick Start
 ```bash
 gengowatcher

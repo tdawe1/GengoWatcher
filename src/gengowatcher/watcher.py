@@ -282,8 +282,6 @@ class GengoWatcher:
                 )
             return
 
-        self._submit_job_to_translation_app_async(job_data)
-
         if self.on_job_added_callback:
             try:
                 self.on_job_added_callback(job_data)
@@ -1229,44 +1227,45 @@ class GengoWatcher:
                     f"Job '{title}' (US$ {reward:.2f}) ignored due to [yellow]min_reward filter[/]."
                 )
                 return
-            self._seen_jobs_session.add(job_id)
-            self.state.seen_job_ids.append(job_id)
-            self.state.total_new_entries_found += 1
-            self.session_new_entries += 1
-            self.session_total_value += reward
 
-        self.logger.info(
-            f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
-        )
-        self.show_notification(
-            message=title,
-            title="New Gengo Job Available!",
-            play_sound=True,
-            open_link=True,
-            url=url,
-        )
+            self.logger.info(
+                f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
+            )
+            self.show_notification(
+                message=title,
+                title="New Gengo Job Available!",
+                play_sound=True,
+                open_link=True,
+                url=url,
+            )
 
-        lang_pair = self._derive_lang_pair(title, source_meta)
-        word_count = self._derive_word_count(title, source_meta, reward=reward)
+            lang_pair = self._derive_lang_pair(title, source_meta)
+            word_count = self._derive_word_count(title, source_meta, reward=reward)
 
-        # Prepare job data for storage, callbacks, and acceptance checks
-        job_data = {
-            "id": str(job_id),
-            "title": title,
-            "reward": float(reward),
-            "currency": "USD",
-            "url": url,
-            "timestamp": time.time(),
-            "source": source,
-            "lang_pair": lang_pair,
-            "word_count": word_count,
-        }
-        job_added = False
-        try:
-            self.state.add_job(job_data)
-            job_added = True
-        except Exception as e:
-            self.logger.warning(f"Failed to store job in state: {e}")
+            # Prepare job data for storage, callbacks, and acceptance checks
+            job_data = {
+                "id": str(job_id),
+                "title": title,
+                "reward": float(reward),
+                "currency": "USD",
+                "url": url,
+                "timestamp": time.time(),
+                "source": source,
+                "lang_pair": lang_pair,
+                "word_count": word_count,
+            }
+            job_added = False
+            try:
+                self.state.add_job(job_data)
+                job_added = True
+                # Only update bookkeeping after successful add_job
+                self._seen_jobs_session.add(job_id)
+                self.state.seen_job_ids.append(job_id)
+                self.state.total_new_entries_found += 1
+                self.session_new_entries += 1
+                self.session_total_value += reward
+            except Exception as e:
+                self.logger.warning(f"Failed to store job in state: {e}")
 
         eligible_for_auto_accept = self.job_acceptance_engine.is_job_eligible(job_data)
 
@@ -1547,6 +1546,8 @@ class GengoWatcher:
             self.logger.error(
                 f"Failed to record accepted job for cancellation tracking: {e}"
             )
+
+        self._submit_job_to_translation_app_async(job_data)
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.

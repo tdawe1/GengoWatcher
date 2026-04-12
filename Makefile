@@ -4,9 +4,7 @@ PYTHON := $(shell if [ -x .venv/bin/python ]; then printf '%s' .venv/bin/python;
 
 build:
 	@echo "Compiling Python files..."
-	$(PYTHON) -m py_compile src/gengowatcher/*.py
-	$(PYTHON) -m py_compile tests/*.py
-	$(PYTHON) -m py_compile scripts/*.py
+	$(PYTHON) -m compileall -q src/gengowatcher tests scripts
 	@echo "Build successful!"
 
 test:

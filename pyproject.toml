@@ -24,6 +24,7 @@ dependencies = [
     "playwright>=1.40.0",
     "playwright-stealth>=1.0.6",
     "prometheus-client>=0.20.0",
+    "textual-plotext>=1.0.0",
 ]
 
 [project.scripts]

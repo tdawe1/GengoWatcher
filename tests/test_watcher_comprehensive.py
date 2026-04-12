@@ -260,7 +260,6 @@ class TestWatcherInitialization:
                 user_agent="Helium Browser",
                 accept_language="en-GB,en-US;q=0.9",
             ),
-src/gengowatcher/runtime.py
         ):
             changed = watcher_instance._sync_session_from_browser(
                 fail_hard=False,
@@ -297,7 +296,6 @@ src/gengowatcher/runtime.py
             ),
         ):
             changed = watcher_instance._sync_session_from_browser()
-src/gengowatcher/runtime.py
 
         assert changed is True
         watcher_instance.config.set.assert_any_call("WebSocket", "user_key", "")
