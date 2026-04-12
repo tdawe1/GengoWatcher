@@ -1155,6 +1155,9 @@ async def list_uploaded_files(authenticated: bool = Depends(verify_auth)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
 @app.post("/api/files/upload", response_model=StoredFileUploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
@@ -1168,7 +1171,20 @@ async def upload_file(
     if not api_instance:
         raise HTTPException(status_code=503, detail="API not initialized")
     try:
-        content = await file.read()
+        # Read file in chunks to avoid loading entire file into memory
+        content = b""
+        chunk_size = 1024 * 1024  # 1 MB chunks
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            content += chunk
+            if len(content) > MAX_UPLOAD_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE} bytes"
+                )
+
         entry = api_instance.save_uploaded_file(
             file.filename or "upload.bin",
             content,
@@ -1179,9 +1195,11 @@ async def upload_file(
             value=value,
         )
         return StoredFileUploadResponse(status="success", file=entry)
+    except HTTPException:
+        raise
     except Exception as e:
         api_instance.logger.exception(f"Error uploading file: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @app.get("/api/files/{stored_name}")

@@ -2252,6 +2252,7 @@ class GengoWatcherApp(App):
                         yield HourlyActivity(stats=self.stats, state=self.state)
                         yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
+                        yield SourcesBreakdown(state=self.state)
                         yield TelemetryPanel(watcher=self.watcher)
 
                     yield ActivityPreview()

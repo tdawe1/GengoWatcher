@@ -6,6 +6,7 @@ import argparse
 import collections
 import datetime
 import logging
+import re
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -93,7 +94,16 @@ class UILoggingHandler(logging.Handler):
             f"{datetime.datetime.fromtimestamp(record.created).strftime('%H:%M:%S')} - "
             f"{record.getMessage()}"
         )
-        self.log_queue.append(Text(message, style=style))
+
+        # Try to parse markup safely, fall back to sanitized plain text
+        try:
+            text_obj = Text.from_markup(message)
+        except Exception:
+            # Strip Rich markup tags using a simple regex
+            sanitized = re.sub(r'\[/?[^\]]+\]', '', message)
+            text_obj = Text(sanitized, style=style)
+
+        self.log_queue.append(text_obj)
 
 
 def should_enable_stdio_logging(

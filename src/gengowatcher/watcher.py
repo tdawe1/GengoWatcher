@@ -213,14 +213,18 @@ class GengoWatcher:
         return BrowserWorkerClient(socket_path=socket_path, logger=self.logger)
 
     def _build_translation_app_client(self):
-        if TranslationAppClient is None:
-            return None
-
         enabled = AppConfig.coerce_bool(
             self.config.get("TranslationApp", "enabled", fallback=False),
             fallback=False,
         )
         if not enabled:
+            return None
+
+        if TranslationAppClient is None:
+            self.logger.warning(
+                "TranslationApp bridge is enabled in config but TranslationAppClient was not imported; "
+                "translation app integration will be unavailable"
+            )
             return None
 
         base_url = str(
@@ -1256,14 +1260,15 @@ class GengoWatcher:
             }
             job_added = False
             try:
-                self.state.add_job(job_data)
-                job_added = True
-                # Only update bookkeeping after successful add_job
-                self._seen_jobs_session.add(job_id)
-                self.state.seen_job_ids.append(job_id)
-                self.state.total_new_entries_found += 1
-                self.session_new_entries += 1
-                self.session_total_value += reward
+                inserted = self.state.add_job(job_data)
+                if inserted:
+                    job_added = True
+                    # Only update bookkeeping after successful add_job
+                    self._seen_jobs_session.add(job_id)
+                    self.state.seen_job_ids.append(job_id)
+                    self.state.total_new_entries_found += 1
+                    self.session_new_entries += 1
+                    self.session_total_value += reward
             except Exception as e:
                 self.logger.warning(f"Failed to store job in state: {e}")
 
