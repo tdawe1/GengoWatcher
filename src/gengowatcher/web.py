@@ -307,8 +307,12 @@ class WebAPI:
         storage_dir = self._get_file_storage_dir().resolve(strict=True)
 
         # Accept only a single filename component (no user-influenced subpaths).
-        candidate_name = path.name
-        if str(path) != candidate_name or candidate_name in {".", ".."}:
+        candidate_path = Path(path)
+        candidate_name = candidate_path.name
+        if (
+            candidate_name in {"", ".", ".."}
+            or candidate_path != Path(candidate_name)
+        ):
             raise ValueError("Invalid stored filename")
 
         try:
@@ -320,6 +324,8 @@ class WebAPI:
             resolved.relative_to(storage_dir)
         except ValueError as exc:
             raise ValueError("Path escapes configured storage directory") from exc
+        if resolved == storage_dir:
+            raise ValueError("Invalid stored filename")
         return resolved
 
     def _is_valid_stored_name(self, stored_name: str) -> bool:
