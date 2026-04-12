@@ -271,12 +271,7 @@ class GengoWatcher:
     def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
         if not self.translation_app_client:
             return
-        threading.Thread(
-            target=self._submit_job_to_translation_app,
-            args=(dict(job_data),),
-            daemon=True,
-            name=f"translation-app-sync-{job_data.get('id')}",
-        ).start()
+        self._submit_job_to_translation_app(dict(job_data))
 
     def _notify_job_added(self, job_data: dict, job_added: bool, job_id) -> None:
         if not job_added:
@@ -1232,17 +1227,6 @@ class GengoWatcher:
                 )
                 return
 
-            self.logger.info(
-                f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
-            )
-            self.show_notification(
-                message=title,
-                title="New Gengo Job Available!",
-                play_sound=True,
-                open_link=True,
-                url=url,
-            )
-
             lang_pair = self._derive_lang_pair(title, source_meta)
             word_count = self._derive_word_count(title, source_meta, reward=reward)
 
@@ -1258,19 +1242,34 @@ class GengoWatcher:
                 "lang_pair": lang_pair,
                 "word_count": word_count,
             }
-            job_added = False
+
             try:
                 inserted = self.state.add_job(job_data)
-                if inserted:
-                    job_added = True
-                    # Only update bookkeeping after successful add_job
-                    self._seen_jobs_session.add(job_id)
-                    self.state.seen_job_ids.append(job_id)
-                    self.state.total_new_entries_found += 1
-                    self.session_new_entries += 1
-                    self.session_total_value += reward
+                if not inserted:
+                    # Job is a duplicate, bail out immediately
+                    return
+
+                # Job was successfully inserted, proceed with all side effects
+                self.logger.info(
+                    f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
+                )
+                self.show_notification(
+                    message=title,
+                    title="New Gengo Job Available!",
+                    play_sound=True,
+                    open_link=True,
+                    url=url,
+                )
+
+                # Update bookkeeping after successful add_job
+                self._seen_jobs_session.add(job_id)
+                self.state.seen_job_ids.append(job_id)
+                self.state.total_new_entries_found += 1
+                self.session_new_entries += 1
+                self.session_total_value += reward
             except Exception as e:
                 self.logger.warning(f"Failed to store job in state: {e}")
+                return
 
         eligible_for_auto_accept = self.job_acceptance_engine.is_job_eligible(job_data)
 
@@ -1292,7 +1291,7 @@ class GengoWatcher:
                         metadata=job_data,
                     )
                     self.state.save_state()
-                    self._notify_job_added(job_data, job_added, job_id)
+                    self._notify_job_added(job_data, True, job_id)
                     return
                 except Exception as e:
                     self.logger.error(
@@ -1339,8 +1338,8 @@ class GengoWatcher:
 
         self.state.save_state()
 
-        # Notify integrations/UI that a new job was added, but only if it was stored in state.
-        self._notify_job_added(job_data, job_added, job_id)
+        # Notify integrations/UI that a new job was added
+        self._notify_job_added(job_data, True, job_id)
 
     def _normalize_meta(self, meta) -> dict:
         if meta is None or not hasattr(meta, "get"):

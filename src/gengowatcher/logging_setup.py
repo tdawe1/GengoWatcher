@@ -11,6 +11,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from rich import errors as rich_errors
 from rich.text import Text
 from rich.theme import Theme
 
@@ -97,8 +98,8 @@ class UILoggingHandler(logging.Handler):
 
         # Try to parse markup safely, fall back to sanitized plain text
         try:
-            text_obj = Text.from_markup(message)
-        except Exception:
+            text_obj = Text.from_markup(message, style=style)
+        except rich_errors.MarkupError:
             # Strip Rich markup tags using a simple regex
             sanitized = re.sub(r'\[/?[^\]]+\]', '', message)
             text_obj = Text(sanitized, style=style)
