@@ -306,9 +306,9 @@ class WebAPI:
     def _ensure_within_storage_dir(self, path: Path) -> Path:
         storage_dir = self._get_file_storage_dir().resolve(strict=True)
         try:
-            resolved = path.resolve(strict=True)
+            resolved = path.resolve(strict=False)
         except OSError as exc:
-            raise ValueError("Path does not exist in configured storage directory") from exc
+            raise ValueError("Invalid path in configured storage directory") from exc
 
         try:
             resolved.relative_to(storage_dir)
@@ -416,14 +416,17 @@ class WebAPI:
             word_count=word_count,
             value=value,
         )
+        if not self._is_valid_stored_name(safe_name):
+            raise ValueError("Invalid stored filename")
         destination = self._ensure_within_storage_dir(storage_dir / safe_name)
         counter = 1
         while destination.exists():
             stem = Path(safe_name).stem
             suffix = Path(safe_name).suffix
-            destination = self._ensure_within_storage_dir(
-                storage_dir / f"{stem}-{counter}{suffix}"
-            )
+            candidate_name = f"{stem}-{counter}{suffix}"
+            if not self._is_valid_stored_name(candidate_name):
+                raise ValueError("Invalid stored filename")
+            destination = self._ensure_within_storage_dir(storage_dir / candidate_name)
             counter += 1
         destination.write_bytes(content)
         metadata = {
