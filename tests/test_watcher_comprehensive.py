@@ -251,11 +251,16 @@ class TestWatcherInitialization:
         }.get(
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
         )
-        watcher_instance.show_notification = MagicMock()
 
         with patch(
             "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
-            side_effect=RuntimeError("browser gone"),
+            return_value=MagicMock(
+                session_token="fresh-token",
+                user_key="",
+                user_agent="Helium Browser",
+                accept_language="en-GB,en-US;q=0.9",
+            ),
+src/gengowatcher/runtime.py
         ):
             changed = watcher_instance._sync_session_from_browser(
                 fail_hard=False,
@@ -292,6 +297,7 @@ class TestWatcherInitialization:
             ),
         ):
             changed = watcher_instance._sync_session_from_browser()
+src/gengowatcher/runtime.py
 
         assert changed is True
         watcher_instance.config.set.assert_any_call("WebSocket", "user_key", "")

@@ -7,7 +7,6 @@ Strict implementation of the v2.0 Design Doc.
 import asyncio
 import datetime
 import logging
-import os
 import re
 import shlex
 import sys
