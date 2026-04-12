@@ -414,6 +414,10 @@ class WebAPI:
         word_count: int | None = None,
         value: float | None = None,
     ) -> StoredFileEntry:
+        if job_id is not None:
+            job_id = str(job_id).strip()
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
+                raise ValueError("Invalid job id")
         storage_dir = self._get_file_storage_dir()
         safe_name = self._build_stored_filename(
             filename=filename,
