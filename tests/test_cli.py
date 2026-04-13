@@ -22,3 +22,15 @@ def test_setup_aliases_map_to_email_and_website_flags():
     assert email_args.setup_email is True
     assert website_args.setup_website is True
     assert website_site_args.setup_website is True
+
+
+def test_browser_session_flags_map_to_lightweight_commands():
+    parser = build_argument_parser()
+
+    sync_args = parser.parse_args(["--sync-session-from-browser"])
+    check_args = parser.parse_args(["--check-session-from-browser"])
+
+    assert sync_args.sync_session_from_browser is True
+    assert check_args.check_session_from_browser is True
+    assert should_handle_lightweight_command(sync_args) is True
+    assert should_handle_lightweight_command(check_args) is True

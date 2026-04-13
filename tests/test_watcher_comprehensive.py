@@ -148,14 +148,13 @@ class TestWatcherInitialization:
             "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-browser-token",
-                user_key="fresh-browser-user-key",
             ),
         ):
             GengoWatcher(mock_config, mock_state, logger)
 
         warning_messages = [str(call.args[0]) for call in logger.warning.call_args_list]
         assert any(
-            "credentials differ from the live browser session" in message
+            "user_session differs from the live browser session" in message
             for message in warning_messages
         )
 
@@ -197,7 +196,6 @@ class TestWatcherInitialization:
             "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-token",
-                user_key="fresh-user-key",
                 user_agent="Helium Browser",
                 accept_language="en-GB,en-US;q=0.9",
             ),
@@ -207,9 +205,6 @@ class TestWatcherInitialization:
         assert changed is True
         watcher_instance.config.set.assert_any_call(
             "WebSocket", "user_session", "fresh-token"
-        )
-        watcher_instance.config.set.assert_any_call(
-            "WebSocket", "user_key", "fresh-user-key"
         )
         watcher_instance.config.set.assert_any_call(
             "Network", "browser_user_agent", "Helium Browser"
@@ -245,12 +240,42 @@ class TestWatcherInitialization:
         assert watcher_instance._websocket_sync_failed is True
         watcher_instance.show_notification.assert_called_once()
 
+    def test_sync_session_from_browser_fail_hard_falls_back_to_cached_credentials(
+        self, watcher_instance
+    ):
+        """Cached websocket auth should keep realtime alive when browser sync is flaky."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+            ("WebSocket", "user_session"): "cached-session-token",
+            ("WebSocket", "user_id"): 12345,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+        watcher_instance.show_notification = MagicMock()
+
+        with patch(
+            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            side_effect=RuntimeError("browser gone"),
+        ):
+            changed = watcher_instance._sync_session_from_browser(
+                fail_hard=True,
+                alert_on_failure=True,
+            )
+
+        assert changed is False
+        assert watcher_instance._websocket_sync_failed is False
+        assert watcher_instance._websocket_sync_failure_reason is None
+        assert watcher_instance.websocket_status != "Session Sync Failed"
+        watcher_instance.show_notification.assert_not_called()
+
     def test_sync_session_from_browser_uses_dedicated_failure_sound_override(
         self, watcher_instance
     ):
         """Browser sync failures should use the dedicated sound override when set."""
+        watcher_instance.show_notification = MagicMock()
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+            ("WebSocket", "user_session"): "REPLACE_WITH_YOUR_SESSION_TOKEN",
             ("Paths", "browser_session_sync_failed_sound_file"): "assets/sync-failed.wav",
         }.get(
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
@@ -258,12 +283,7 @@ class TestWatcherInitialization:
 
         with patch(
             "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
-            return_value=MagicMock(
-                session_token="fresh-token",
-                user_key="",
-                user_agent="Helium Browser",
-                accept_language="en-GB,en-US;q=0.9",
-            ),
+            side_effect=RuntimeError("browser gone"),
         ):
             changed = watcher_instance._sync_session_from_browser(
                 fail_hard=False,
@@ -278,10 +298,10 @@ class TestWatcherInitialization:
             sound_file="assets/sync-failed.wav",
         )
 
-    def test_sync_session_from_browser_clears_placeholder_user_key_when_missing(
+    def test_sync_session_from_browser_does_not_touch_user_key(
         self, watcher_instance
     ):
-        """Browser sync should remove placeholder keys when the live browser has none."""
+        """Browser sync should remain session-only and leave user_key untouched."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
             ("WebSocket", "user_session"): "fresh-token",
@@ -294,7 +314,6 @@ class TestWatcherInitialization:
             "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-token",
-                user_key="",
                 user_agent="Helium Browser",
                 accept_language="en-GB,en-US;q=0.9",
             ),
@@ -302,7 +321,10 @@ class TestWatcherInitialization:
             changed = watcher_instance._sync_session_from_browser()
 
         assert changed is True
-        watcher_instance.config.set.assert_any_call("WebSocket", "user_key", "")
+        assert (
+            ("WebSocket", "user_key", "")
+            not in [call.args for call in watcher_instance.config.set.call_args_list]
+        )
 
     def test_get_effective_rss_wait_range_uses_randomized_gengo_window(
         self, watcher_instance
@@ -537,10 +559,10 @@ class TestWatcherInitialization:
         assert watcher_instance._next_quiet_socket_sync_ts == 1350.0
         mock_sync.assert_called_once_with(fail_hard=False, alert_on_failure=False)
 
-    def test_get_health_snapshot_marks_quiet_live_websocket_stale(
+    def test_get_health_snapshot_keeps_quiet_live_websocket_healthy(
         self, watcher_instance
     ):
-        """A live socket with fresh pongs but no messages for too long should look stale."""
+        """A live socket with fresh pongs should stay healthy even if the feed is quiet."""
         watcher_instance.websocket_status = "Live"
         watcher_instance.websocket_connected_at_ts = 999_600.0
         watcher_instance.websocket_last_message_ts = None
@@ -582,8 +604,8 @@ class TestWatcherInitialization:
 
         health = watcher_instance.get_health_snapshot(now=1_000_000.0)
 
-        assert health["websocket"]["state"] == "stale"
-        assert health["websocket"]["detail"] == "quiet 400s"
+        assert health["websocket"]["state"] == "healthy"
+        assert health["websocket"]["detail"] == "ok"
         assert health["websocket"]["quiet_age_sec"] == 400.0
 
     def test_initialization_validates_check_interval(
