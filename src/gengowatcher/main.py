@@ -41,7 +41,7 @@ def _start_metrics_server_if_enabled(config: AppConfig, watcher, logger):
 def main() -> None:
     """Parse CLI args and dispatch to lightweight or full runtime paths."""
     parser = build_argument_parser()
-    args, _unknown = parser.parse_known_args()
+    args = parser.parse_args()
     console = Console(theme=APP_THEME)
 
     if should_handle_lightweight_command(args):

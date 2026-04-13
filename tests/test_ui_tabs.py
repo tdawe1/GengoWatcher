@@ -491,8 +491,6 @@ async def test_sources_breakdown_exists():
     async with app.run_test() as pilot:
         from gengowatcher.ui_textual import SourcesBreakdown
 
-        # SourcesBreakdown might not be in dashboard, but should be queryable
-        # Check if it exists in the app structure
+        # SourcesBreakdown should exist in the app structure
         breakdowns = list(pilot.app.query(SourcesBreakdown))
-        # May be 0 or 1 depending on layout
-        assert len(breakdowns) in (0, 1)
+        assert len(breakdowns) == 1, f"Expected 1 SourcesBreakdown widget, found {len(breakdowns)} via pilot.app.query(SourcesBreakdown)"

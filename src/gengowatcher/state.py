@@ -175,18 +175,23 @@ class AppState:
         with self._jobs_lock:
             return self._jobs[:limit]
 
-    def add_job(self, job_data: Dict[str, Any]):
-        """Add a new job to storage."""
+    def add_job(self, job_data: Dict[str, Any]) -> bool:
+        """Add a new job to storage.
+
+        Returns:
+            bool: True if the job was inserted, False if it already existed.
+        """
         with self._jobs_lock:
             # Check if job already exists
             existing_job_ids = {job.get("id") for job in self._jobs}
             if job_data.get("id") in existing_job_ids:
-                return  # Job already exists
+                return False  # Job already exists
 
             # Add new job
             self._jobs.insert(0, job_data)  # Add to beginning for newest first
 
             self.logger.debug(f"Added job {job_data.get('id')} to storage")
+            return True
 
     def get_job_count(self) -> int:
         """Get total number of stored jobs."""

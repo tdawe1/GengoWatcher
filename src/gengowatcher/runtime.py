@@ -173,7 +173,8 @@ def _run_tui(
             stats_manager.end_session()
         except Exception:
             log.exception("Failed to persist session stats on shutdown")
-        watcher.handle_exit()
+        if not watcher.shutdown_event.is_set():
+            watcher.handle_exit()
 
     print("\n" + "=" * 60)
     print("👋 GengoWatcher has shut down.")

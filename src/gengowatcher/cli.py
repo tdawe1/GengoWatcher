@@ -30,6 +30,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Interactively configure missing/required values",
     )
     parser.add_argument(
+        "--config",
+        dest="configure",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--web",
         action="store_true",
         help="Start web UI server alongside TUI",
@@ -51,9 +57,27 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Configure Gmail OAuth for email monitoring (interactive)",
     )
     parser.add_argument(
+        "--setup-mail",
+        dest="setup_email",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--setup-website",
         action="store_true",
         help="Configure WebsiteMonitor for browser-based job scraping (interactive)",
+    )
+    parser.add_argument(
+        "--setup-web",
+        dest="setup_website",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--setup-site",
+        dest="setup_website",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--stdio-logs",

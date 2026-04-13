@@ -39,6 +39,8 @@ def test_config_loads_default_values(test_dir):
     assert app_config.get("Watcher", "enable_notifications") is True
     assert app_config.get("Network", "user_agent_email") == ""
     assert app_config.get("Paths", "websocket_stale_sound_file") == ""
+    assert app_config.get("Paths", "browser_session_sync_failed_sound_file") == ""
+    assert app_config.get("Paths", "file_storage_dir") == "data/files"
     assert app_config.get("UI", "theme_name") == "nord"
 
     assert app_config.get("WebSocket", "enable_websocket") is True
@@ -152,3 +154,12 @@ def test_get_returns_fallback_for_missing_keys(test_dir):
     assert (
         app_config.get("Watcher", "does_not_exist", fallback="fallback") == "fallback"
     )
+
+
+def test_coerce_bool_accepts_common_truthy_and_falsey_values():
+    """Boolean coercion should be shared and tolerant of config-like values."""
+    assert AppConfig.coerce_bool("enabled") is True
+    assert AppConfig.coerce_bool("off") is False
+    assert AppConfig.coerce_bool(1) is True
+    assert AppConfig.coerce_bool(0) is False
+    assert AppConfig.coerce_bool(None, fallback=True) is True

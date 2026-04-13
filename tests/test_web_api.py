@@ -14,11 +14,15 @@ from gengowatcher.web import (
     APIAuthenticator,
     WebAPI,
     JobEntry,
+    StoredFileUploadResponse,
     WatcherStatus,
     ConfigSection,
     CommandRequest,
     PaginationParams,
     app,
+    download_file,
+    list_uploaded_files,
+    upload_file,
 )
 
 
@@ -599,6 +603,71 @@ class TestFastAPIEndpoints:
             assert "gengowatcher_api_initialized" in response.text
             assert "gengowatcher_watcher_running" in response.text
             assert "gengowatcher_failure_count" in response.text
+
+    @pytest.mark.asyncio
+    async def test_file_upload_list_and_download_round_trip(
+        self,
+        mock_config,
+        mock_state,
+        mock_logger,
+        mock_watcher,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Uploaded files should remain listable and downloadable with metadata."""
+        storage_dir = tmp_path / "files"
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("Paths", "file_storage_dir"): str(storage_dir),
+        }.get((s, k), kw.get("fallback", ""))
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+            monkeypatch.setattr("gengowatcher.web.api_instance", api)
+
+            class StubUploadFile:
+                filename = "Release Notes.txt"
+                content_type = "text/plain"
+
+                async def read(self):
+                    return b"hello release"
+
+            upload = StubUploadFile()
+            uploaded = await upload_file(
+                file=upload,
+                job_id="job-12345",
+                tier="pro",
+                word_count=320,
+                value=16.0,
+                authenticated=True,
+            )
+            assert isinstance(uploaded, StoredFileUploadResponse)
+            assert uploaded.status == "success"
+            upload_data = uploaded.file
+            assert upload_data.original_name == "Release Notes.txt"
+            assert upload_data.content_type == "text/plain"
+            assert upload_data.job_id == "job-12345"
+            assert upload_data.tier == "pro"
+            assert upload_data.word_count == 320
+            assert upload_data.value == 16.0
+            assert upload_data.stored_name.endswith(
+                "_job-12345_pro_320w_16.00.txt"
+            )
+
+            listed = await list_uploaded_files(authenticated=True)
+            assert len(listed) == 1
+            assert listed[0].stored_name == upload_data.stored_name
+            assert listed[0].original_name == "Release Notes.txt"
+            assert listed[0].tier == "pro"
+
+            response = await download_file(
+                stored_name=upload_data.stored_name,
+                authenticated=True,
+            )
+            assert pathlib.Path(response.path) == storage_dir / upload_data.stored_name
+            assert response.filename == "Release Notes.txt"
 
 
 class TestEdgeCases:

@@ -8,6 +8,7 @@ import asyncio
 import datetime
 import logging
 import re
+import shlex
 import sys
 import threading
 import time
@@ -145,6 +146,22 @@ SOURCE_BUCKET_CONFIG = {
 ACTIVITY_PREVIEW_MAX_LINES = 250
 ACTIVITY_LOG_MAX_LINES = 1000
 OUTPUT_LOG_MAX_LINES = 500
+TELEMETRY_SECTION_ORDER = (
+    "websocket",
+    "rss",
+    "session",
+    "workflow",
+    "email",
+    "browser",
+)
+TELEMETRY_LABELS = {
+    "websocket": ("WS", "WEBSOCKET"),
+    "rss": ("RSS", "RSS"),
+    "session": ("Session", "SESSION"),
+    "workflow": ("Workflow", "WORKFLOW"),
+    "email": ("Email", "EMAIL"),
+    "browser": ("Browser", "BROWSER"),
+}
 
 
 def _get_active_theme(owner: Any) -> Theme:
@@ -218,6 +235,47 @@ def _to_rich_color(color_value: str) -> str:
         return Color.parse(color_value).hex6
     except Exception:
         return color_value
+
+
+def _telemetry_state_style(owner: Any, state: str) -> str:
+    colors = _build_semantic_color_palette(_get_active_theme(owner))
+    state_lower = str(state or "").lower()
+    if state_lower == "healthy":
+        return colors["success"]
+    if state_lower in {"working", "stale"}:
+        return colors["warning_word"]
+    if state_lower in {"error", "disabled"}:
+        return colors["error_word" if state_lower == "error" else "timestamp"]
+    return colors["default"]
+
+
+def _format_telemetry_metric(name: str, value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if name.endswith("_sec"):
+            return f"{int(round(value))}s"
+        if name.endswith("_ms"):
+            return f"{int(round(value))}ms"
+        if float(value).is_integer():
+            return str(int(value))
+        return f"{value:.2f}"
+    return str(value)
+
+
+def _iter_telemetry_entries(snapshot: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    ordered: list[tuple[str, dict[str, Any]]] = []
+    for key in TELEMETRY_SECTION_ORDER:
+        value = snapshot.get(key)
+        if isinstance(value, dict):
+            ordered.append((key, value))
+    for key, value in snapshot.items():
+        if key in TELEMETRY_SECTION_ORDER or not isinstance(value, dict):
+            continue
+        ordered.append((str(key), value))
+    return ordered
 
 
 def _normalize_source(source: Any) -> str:
@@ -1444,6 +1502,157 @@ class SourcesBreakdown(DashboardQuadrant):
             pass  # Widget not mounted yet
 
 
+class TelemetryPanel(DashboardQuadrant):
+    """Compact telemetry summary for the dashboard."""
+
+    def __init__(self, watcher: "GengoWatcher", **kwargs):
+        super().__init__(" Telemetry", **kwargs)
+        self.watcher = watcher
+
+    def compose(self) -> ComposeResult:
+        yield Static("Telemetry unavailable", id="telemetry-content")
+
+    def on_mount(self) -> None:
+        self.set_interval(2.0, self.refresh_telemetry)
+        self.refresh_telemetry()
+
+    def refresh_telemetry(self) -> None:
+        if not self.watcher:
+            return
+        getter = getattr(self.watcher, "get_health_snapshot", None)
+        if not callable(getter):
+            return
+        try:
+            snapshot = getter()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "TelemetryPanel.refresh_telemetry: failed to read health snapshot",
+                exc_info=True,
+            )
+            return
+        if not isinstance(snapshot, dict):
+            return
+
+        text = Text()
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+        enabled = []
+        disabled = []
+        for key, entry in _iter_telemetry_entries(snapshot):
+            state = str(entry.get("state") or "unknown")
+            collection = disabled if state == "disabled" else enabled
+            collection.append((key, entry))
+
+        text.append("Enabled\n", style=f"bold {colors['success']}")
+        if enabled:
+            for key, entry in enabled:
+                short_label = TELEMETRY_LABELS.get(key, (key.title(), key.upper()))[0]
+                state = str(entry.get("state") or "unknown")
+                detail = str(entry.get("detail") or "n/a")
+                text.append(f"  {short_label:<8}", style=colors["default"])
+                text.append(f"{state:<9}", style=_telemetry_state_style(self, state))
+                text.append(detail, style=colors["default"])
+                metrics = []
+                for metric_name, metric_value in entry.items():
+                    if metric_name in {"state", "detail", "status"}:
+                        continue
+                    rendered = _format_telemetry_metric(metric_name, metric_value)
+                    if rendered:
+                        metrics.append(rendered)
+                    if len(metrics) == 2:
+                        break
+                if metrics:
+                    text.append(f" [{', '.join(metrics)}]", style=colors["timestamp"])
+                text.append("\n")
+        else:
+            text.append("  none\n", style=colors["timestamp"])
+
+        text.append("\nDisabled\n", style=f"bold {colors['timestamp']}")
+        if disabled:
+            for key, entry in disabled:
+                short_label = TELEMETRY_LABELS.get(key, (key.title(), key.upper()))[0]
+                detail = str(entry.get("detail") or "off")
+                text.append(f"  {short_label:<8}", style=colors["default"])
+                text.append(detail, style=colors["timestamp"])
+                text.append("\n")
+        else:
+            text.append("  none\n", style=colors["timestamp"])
+
+        try:
+            self.query_one("#telemetry-content", Static).update(text)
+        except NoMatches:
+            pass
+
+
+class TelemetryTab(Static):
+    """Detailed telemetry view for release triage."""
+
+    def __init__(self, watcher: "GengoWatcher", **kwargs):
+        super().__init__(**kwargs)
+        self.watcher = watcher
+
+    def compose(self) -> ComposeResult:
+        yield Static("Telemetry unavailable", id="telemetry-tab-content")
+
+    def on_mount(self) -> None:
+        self.set_interval(2.0, self.refresh_telemetry)
+        self.refresh_telemetry()
+
+    def refresh_telemetry(self) -> None:
+        getter = getattr(self.watcher, "get_health_snapshot", None)
+        if not callable(getter):
+            return
+        try:
+            snapshot = getter()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "TelemetryTab.refresh_telemetry: failed to read health snapshot",
+                exc_info=True,
+            )
+            return
+        if not isinstance(snapshot, dict):
+            return
+
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+        text = Text()
+        enabled = []
+        disabled = []
+        for key, entry in _iter_telemetry_entries(snapshot):
+            state = str(entry.get("state") or "unknown")
+            (disabled if state == "disabled" else enabled).append((key, entry))
+
+        def render_section(title: str, items: list[tuple[str, dict[str, Any]]]) -> None:
+            text.append(f"{title}\n", style=f"bold {colors['level_job']}")
+            if not items:
+                text.append("  none\n\n", style=colors["timestamp"])
+                return
+            for key, entry in items:
+                label = TELEMETRY_LABELS.get(key, (key.title(), key.upper()))[1]
+                state = str(entry.get("state") or "unknown")
+                detail = str(entry.get("detail") or "n/a")
+                text.append(f"{label}\n", style=f"bold {_telemetry_state_style(self, state)}")
+                text.append("  state: ", style=colors["key"] if "key" in colors else colors["timestamp"])
+                text.append(f"{state}\n", style=_telemetry_state_style(self, state))
+                text.append("  detail: ", style=colors["timestamp"])
+                text.append(f"{detail}\n", style=colors["default"])
+                for metric_name, metric_value in entry.items():
+                    if metric_name in {"state", "detail"}:
+                        continue
+                    rendered = _format_telemetry_metric(metric_name, metric_value)
+                    if not rendered:
+                        continue
+                    text.append(f"  {metric_name}: ", style=colors["timestamp"])
+                    text.append(f"{rendered}\n", style=colors["default"])
+                text.append("\n")
+
+        render_section("ENABLED MODULES", enabled)
+        render_section("DISABLED MODULES", disabled)
+
+        try:
+            self.query_one("#telemetry-tab-content", Static).update(text)
+        except NoMatches:
+            pass
+
+
 class StatsPanel(Static):
     """Full statistics panel for the Stats tab."""
 
@@ -1621,6 +1830,15 @@ class ChartsPanel(Static):
             text.append("No data available")
             return text
 
+        colors = _build_semantic_color_palette(_get_active_theme(self))
+        source_styles = {
+            "secondary": colors["source_ws"],
+            "accent": colors["source_email"],
+            "primary": colors["source_web"],
+            "success": colors["source_rss"],
+            "text-muted": colors["timestamp"],
+        }
+
         jobs = self.state.get_recent_jobs(limit=1000)
         sources = {key: 0 for key in SOURCE_BUCKET_CONFIG}
         for job in jobs:
@@ -1639,7 +1857,9 @@ class ChartsPanel(Static):
             bar = "█" * bar_width
             bar_padded = bar.ljust(15, "░")
             label = bucket["label"]
-            color = bucket["color"] if count > 0 else "#393836"
+            color = source_styles.get(bucket["color"], colors["default"])
+            if count <= 0:
+                color = "#393836"
             text.append(f"{label:10s} ", style="#737c73")
             text.append(bar_padded, style=color)
             text.append(f" {count:4d} ({pct:5.1f}%)\n", style="#737c73")
@@ -1688,6 +1908,23 @@ class ChartsPanel(Static):
 class GengoWatcherApp(App):
     CSS_PATH = "gengo_watcher.tcss"
     DEFAULT_THEME_NAME = "nord"
+    COMMAND_ALIASES: ClassVar[dict[str, str]] = {
+        "?": "help",
+        "h": "help",
+        "c": "check",
+        "p": "pause",
+        "r": "resume",
+        "n": "notify",
+        "notifytest": "notify",
+        "q": "quit",
+        "exit": "quit",
+        "cfg": "configure",
+        "config": "configure",
+        "mail": "setup-email",
+        "email": "setup-email",
+        "site": "setup-website",
+        "web": "setup-website",
+    }
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("c", "check", "Check"),
@@ -1754,7 +1991,7 @@ class GengoWatcherApp(App):
         elif active_tab_id == "charts":
             widgets_to_refresh.append((ChartsPanel, "refresh_charts"))
         elif active_tab_id == "stats":
-            widgets_to_refresh.append((StatsPanel, "refresh_stats"))
+            widgets_to_refresh.append((TelemetryTab, "refresh_telemetry"))
 
         for widget_class, method_name in widgets_to_refresh:
             self._refresh_widget(widget_class, method_name)
@@ -1770,12 +2007,15 @@ class GengoWatcherApp(App):
         The ``missing_level`` parameter is accepted for backward compatibility
         with older callers, but is currently unused.
         """
+        widget_name = (
+            widget_class if isinstance(widget_class, str) else widget_class.__name__
+        )
         try:
             widget = self.query_one(widget_class)
         except NoMatches:
             logging.getLogger(__name__).debug(
                 "Widget %s missing while refreshing %s",
-                widget_class.__name__,
+                widget_name,
                 method_name,
             )
             return
@@ -1787,13 +2027,13 @@ class GengoWatcherApp(App):
             except Exception:
                 logging.getLogger(__name__).warning(
                     "Failed refreshing %s via %s",
-                    widget_class.__name__,
+                    widget_name,
                     method_name,
                     exc_info=True,
                 )
         else:
             logging.getLogger(__name__).warning(
-                "Widget %s has no method %s", widget_class.__name__, method_name
+                "Widget %s has no method %s", widget_name, method_name
             )
 
     def _setup_logging(self):
@@ -1817,12 +2057,120 @@ class GengoWatcherApp(App):
         self._log_source.removeHandler(self._textual_log_handler)
         self._logging_attached = False
 
+    def _log_command_feedback(self, message: str, level: int = logging.INFO) -> None:
+        self._log_source.log(level, message)
+
+    def _show_setup_hint(self, command_flag: str, description: str) -> None:
+        self._log_command_feedback(
+            f"{description} is configured outside the live TUI. "
+            f"Run `gengowatcher {command_flag}` in a terminal, then restart the app."
+        )
+
+    def _set_pause_state(self, paused: bool) -> None:
+        pause_file = str(getattr(self.watcher, "PAUSE_FILE", "gengowatcher.pause"))
+        if paused:
+            with open(pause_file, "w", encoding="utf-8") as handle:
+                handle.write("")
+            self._log_command_feedback("Watcher paused.")
+            return
+        try:
+            os.remove(pause_file)
+        except FileNotFoundError:
+            pass
+        self._log_command_feedback("Watcher resumed.")
+
+    def _normalize_command(
+        self, raw_command: str, args: list[str]
+    ) -> tuple[str, list[str]]:
+        command = self.COMMAND_ALIASES.get(raw_command, raw_command)
+        if command == "setup" and args:
+            target = self.COMMAND_ALIASES.get(args[0], args[0])
+            if target in {"setup-email", "setup-website"}:
+                return target, args[1:]
+        if command == "configure" and args:
+            target = self.COMMAND_ALIASES.get(args[0], args[0])
+            if target in {"setup-email", "setup-website"}:
+                return target, args[1:]
+        return command, args
+
+    def _execute_command(self, raw_value: str) -> None:
+        try:
+            parts = shlex.split(raw_value)
+        except ValueError as exc:
+            self._log_command_feedback(f"Command parse error: {exc}", logging.WARNING)
+            return
+        if not parts:
+            return
+
+        command, _args = self._normalize_command(parts[0].lower(), parts[1:])
+        if command == "help":
+            self._log_command_feedback(
+                "Commands: check/c, pause/p, resume/r, notify/n, "
+                "setup-email, setup-website, configure/cfg, quit/q"
+            )
+            return
+        if command == "check":
+            self.watcher.check_now_event.set()
+            self._log_command_feedback("Immediate RSS check requested.")
+            return
+        if command == "pause":
+            self._set_pause_state(True)
+            return
+        if command == "resume":
+            self._set_pause_state(False)
+            return
+        if command == "notify":
+            simulator = getattr(self.watcher, "_simulate_new_job_notification", None)
+            if callable(simulator):
+                simulator()
+                self._log_command_feedback("Test notification requested.")
+            else:
+                self._log_command_feedback(
+                    "Watcher does not expose a notification test command.",
+                    logging.WARNING,
+                )
+            return
+        if command == "setup-email":
+            self._show_setup_hint("--setup-email", "Email monitor")
+            return
+        if command == "setup-website":
+            self._show_setup_hint("--setup-website", "Website monitor")
+            return
+        if command == "configure":
+            self._show_setup_hint("--configure", "Interactive configuration")
+            return
+        if command == "quit":
+            self.exit()
+            return
+
+        self._log_command_feedback(
+            f"Unknown command: {command}. Type `help` for available commands.",
+            logging.WARNING,
+        )
+
+    def action_check(self) -> None:
+        self._execute_command("check")
+
+    def action_pause(self) -> None:
+        pause_file = str(getattr(self.watcher, "PAUSE_FILE", "gengowatcher.pause"))
+        self._execute_command("resume" if os.path.exists(pause_file) else "pause")
+
+    def action_help(self) -> None:
+        self._execute_command("help")
+
+    @on(Input.Submitted)
+    def _on_input_submitted(self, event: Input.Submitted) -> None:
+        command_text = event.value.strip()
+        event.input.value = ""
+        self._execute_command(command_text)
+
     def _refresh_dashboard_panels(self) -> None:
         """Refresh dashboard widgets that depend on live/persisted state."""
         self._refresh_widget(MetricsRow, "refresh_metrics")
         self._refresh_widget(SessionStats, "refresh_stats")
         self._refresh_widget(HourlyActivity, "refresh_hourly")
         self._refresh_widget(JobsPreview, "refresh_jobs")
+        self._refresh_widget(TelemetryPanel, "refresh_telemetry")
 
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""
@@ -1875,14 +2223,16 @@ class GengoWatcherApp(App):
         elif pane_id == "output":
             self._refresh_widget("#output-log", "refresh")
         elif pane_id == "charts":
-            self._refresh_widget("#charts-content", "refresh")
+            self._refresh_widget(ChartsPanel, "refresh_charts")
         elif pane_id == "stats":
-            self._refresh_widget("#stats-content", "refresh")
+            self._refresh_widget(TelemetryTab, "refresh_telemetry")
 
     def compose(self) -> ComposeResult:
         # 1. Title Bar
         """
-        Builds and yields the application's main UI layout: title bar, tabbed content (Dashboard, Jobs, Activity, Output, Charts, Stats), and the bottom input and footer.
+        Builds and yields the application's main UI layout: title bar, tabbed
+        content (Dashboard, Jobs, Activity, Output, Charts, Telemetry), and the
+        bottom input and footer.
 
         Returns:
             ComposeResult: A result that yields the top TitleBar, the TabbedContent with dashboard panels and other tab panes, and the bottom Input and Footer widgets.
@@ -1902,6 +2252,8 @@ class GengoWatcherApp(App):
                         yield HourlyActivity(stats=self.stats, state=self.state)
                         yield ConfigPreview(config=self.config)
                         yield SessionStats(watcher=self.watcher, state=self.state)
+                        yield SourcesBreakdown(state=self.state)
+                        yield TelemetryPanel(watcher=self.watcher)
 
                     yield ActivityPreview()
 
@@ -1920,9 +2272,9 @@ class GengoWatcherApp(App):
                     max_lines=OUTPUT_LOG_MAX_LINES,
                 )
             with TabPane("Charts", id="charts"):
-                yield Static("Charts Content", id="charts-content")
-            with TabPane("Stats", id="stats"):
-                yield Static("Stats Content", id="stats-content")
+                yield ChartsPanel(stats=self.stats, state=self.state)
+            with TabPane("Telemetry", id="stats"):
+                yield TelemetryTab(watcher=self.watcher)
 
         # 3. Input & Footer
         yield Input(placeholder="> help_")

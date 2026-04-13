@@ -44,6 +44,11 @@ except ImportError:  # pragma: no cover - optional integration at runtime
     BrowserWorkerClient = None
 
 try:
+    from .translation_app_client import TranslationAppClient
+except ImportError:  # pragma: no cover - optional integration at runtime
+    TranslationAppClient = None
+
+try:
     from .email_monitor import EmailMonitor
 except ImportError:
     EmailMonitor = None
@@ -58,6 +63,7 @@ PLACEHOLDER_CONFIG_VALUES = {
     "",
     "REPLACE_WITH_YOUR_SESSION_TOKEN",
     "REPLACE_WITH_YOUR_USER_KEY",
+    "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN",
 }
 
 SENSITIVE_KEYWORDS = {"password", "session", "key"}
@@ -181,6 +187,7 @@ class GengoWatcher:
             logger,
         )
         self.browser_worker_client = self._build_browser_worker_client()
+        self.translation_app_client = self._build_translation_app_client()
         self._warn_if_browser_session_mismatch()
 
         # Initialize job cancellation manager
@@ -204,6 +211,81 @@ class GengoWatcher:
             return None
 
         return BrowserWorkerClient(socket_path=socket_path, logger=self.logger)
+
+    def _build_translation_app_client(self):
+        enabled = AppConfig.coerce_bool(
+            self.config.get("TranslationApp", "enabled", fallback=False),
+            fallback=False,
+        )
+        if not enabled:
+            return None
+
+        if TranslationAppClient is None:
+            self.logger.warning(
+                "TranslationApp bridge is enabled in config but TranslationAppClient was not imported; "
+                "translation app integration will be unavailable"
+            )
+            return None
+
+        base_url = str(
+            self.config.get("TranslationApp", "base_url", fallback="") or ""
+        ).strip()
+        auth_token = str(
+            self.config.get("TranslationApp", "auth_token", fallback="") or ""
+        ).strip()
+        timeout_raw = self.config.get("TranslationApp", "timeout_sec", fallback=5.0)
+        verify_tls = AppConfig.coerce_bool(
+            self.config.get("TranslationApp", "verify_tls", fallback=True),
+            fallback=True,
+        )
+
+        try:
+            timeout_sec = float(timeout_raw)
+        except (TypeError, ValueError):
+            timeout_sec = 5.0
+
+        if not base_url:
+            self.logger.warning(
+                "TranslationApp.enabled is true but TranslationApp.base_url is empty"
+            )
+            return None
+        if auth_token in PLACEHOLDER_CONFIG_VALUES:
+            self.logger.warning(
+                "TranslationApp.enabled is true but TranslationApp.auth_token is not configured"
+            )
+            return None
+
+        return TranslationAppClient(
+            base_url=base_url,
+            auth_token=auth_token,
+            timeout_sec=max(timeout_sec, 1.0),
+            verify_tls=verify_tls,
+            logger=self.logger,
+        )
+
+    def _submit_job_to_translation_app(self, job_data: dict) -> None:
+        if not self.translation_app_client:
+            return
+        self.translation_app_client.submit_job(dict(job_data))
+
+    def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
+        if not self.translation_app_client:
+            return
+        self._submit_job_to_translation_app(dict(job_data))
+
+    def _notify_job_added(self, job_data: dict, job_added: bool, job_id) -> None:
+        if not job_added:
+            if self.on_job_added_callback:
+                self.logger.debug(
+                    f"Skipping job added callback for job {job_id} because it was not stored in state"
+                )
+            return
+
+        if self.on_job_added_callback:
+            try:
+                self.on_job_added_callback(job_data)
+            except Exception as e:
+                self.logger.debug(f"Error in job added callback: {e}")
 
     @staticmethod
     def _mask_secret(value) -> str:
@@ -822,10 +904,19 @@ class GengoWatcher:
                 exc,
             )
             if alert_on_failure:
+                sync_failure_sound = (
+                    self.config.get(
+                        "Paths",
+                        "browser_session_sync_failed_sound_file",
+                        fallback="",
+                    )
+                    or None
+                )
                 self.show_notification(
                     message=f"Browser session sync failed: {exc}",
                     title="GengoWatcher Session Sync Failed",
                     play_sound=True,
+                    sound_file=sync_failure_sound,
                 )
             if fail_hard:
                 if self._has_cached_websocket_auth():
@@ -1135,44 +1226,50 @@ class GengoWatcher:
                     f"Job '{title}' (US$ {reward:.2f}) ignored due to [yellow]min_reward filter[/]."
                 )
                 return
-            self._seen_jobs_session.add(job_id)
-            self.state.seen_job_ids.append(job_id)
-            self.state.total_new_entries_found += 1
-            self.session_new_entries += 1
-            self.session_total_value += reward
 
-        self.logger.info(
-            f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
-        )
-        self.show_notification(
-            message=title,
-            title="New Gengo Job Available!",
-            play_sound=True,
-            open_link=True,
-            url=url,
-        )
+            lang_pair = self._derive_lang_pair(title, source_meta)
+            word_count = self._derive_word_count(title, source_meta, reward=reward)
 
-        lang_pair = self._derive_lang_pair(title, source_meta)
-        word_count = self._derive_word_count(title, source_meta, reward=reward)
+            # Prepare job data for storage, callbacks, and acceptance checks
+            job_data = {
+                "id": str(job_id),
+                "title": title,
+                "reward": float(reward),
+                "currency": "USD",
+                "url": url,
+                "timestamp": time.time(),
+                "source": source,
+                "lang_pair": lang_pair,
+                "word_count": word_count,
+            }
 
-        # Prepare job data for storage, callbacks, and acceptance checks
-        job_data = {
-            "id": str(job_id),
-            "title": title,
-            "reward": float(reward),
-            "currency": "USD",
-            "url": url,
-            "timestamp": time.time(),
-            "source": source,
-            "lang_pair": lang_pair,
-            "word_count": word_count,
-        }
-        job_added = False
-        try:
-            self.state.add_job(job_data)
-            job_added = True
-        except Exception as e:
-            self.logger.warning(f"Failed to store job in state: {e}")
+            try:
+                inserted = self.state.add_job(job_data)
+                if not inserted:
+                    # Job is a duplicate, bail out immediately
+                    return
+
+                # Job was successfully inserted, proceed with all side effects
+                self.logger.info(
+                    f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
+                )
+                self.show_notification(
+                    message=title,
+                    title="New Gengo Job Available!",
+                    play_sound=True,
+                    open_link=True,
+                    url=url,
+                )
+
+                # Update bookkeeping after successful add_job
+                self._seen_jobs_session.add(job_id)
+                self.state.seen_job_ids.append(job_id)
+                self.state.total_new_entries_found += 1
+                self.session_new_entries += 1
+                self.session_total_value += reward
+            except Exception as e:
+                self.logger.warning(f"Failed to store job in state: {e}")
+                return
 
         eligible_for_auto_accept = self.job_acceptance_engine.is_job_eligible(job_data)
 
@@ -1194,15 +1291,7 @@ class GengoWatcher:
                         metadata=job_data,
                     )
                     self.state.save_state()
-                    if self.on_job_added_callback and job_added:
-                        try:
-                            self.on_job_added_callback(job_data)
-                        except Exception as e:
-                            self.logger.debug(f"Error in job added callback: {e}")
-                    elif self.on_job_added_callback and not job_added:
-                        self.logger.debug(
-                            f"Skipping job added callback for job {job_id} because it was not stored in state"
-                        )
+                    self._notify_job_added(job_data, True, job_id)
                     return
                 except Exception as e:
                     self.logger.error(
@@ -1249,17 +1338,8 @@ class GengoWatcher:
 
         self.state.save_state()
 
-        # Notify UI that a new job was added, but only if it was stored in state
-        if self.on_job_added_callback and job_added:
-            try:
-                self.on_job_added_callback(job_data)
-            except Exception as e:
-                self.logger.debug(f"Error in job added callback: {e}")
-        elif self.on_job_added_callback and not job_added:
-            # This can happen if storing the job in state failed earlier.
-            self.logger.debug(
-                f"Skipping job added callback for job {job_id} because it was not stored in state"
-            )
+        # Notify integrations/UI that a new job was added
+        self._notify_job_added(job_data, True, job_id)
 
     def _normalize_meta(self, meta) -> dict:
         if meta is None or not hasattr(meta, "get"):
@@ -1470,6 +1550,8 @@ class GengoWatcher:
             self.logger.error(
                 f"Failed to record accepted job for cancellation tracking: {e}"
             )
+
+        self._submit_job_to_translation_app_async(job_data)
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.

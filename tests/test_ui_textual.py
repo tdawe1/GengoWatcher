@@ -16,6 +16,7 @@ from gengowatcher.ui_textual import (
     JobsPreview,
     MetricsRow,
     SessionStats,
+    TelemetryPanel,
     TextualLogHandler,
     _format_timestamp,
     _normalize_source,
@@ -91,6 +92,7 @@ def test_charts_panel_renders_normalized_source_breakdown():
     assert "1 ( 20.0%)" in rendered["Website"]
     assert "1 ( 20.0%)" in rendered["RSS"]
     assert "1 ( 20.0%)" in rendered["Unknown"]
+    assert all(isinstance(span.style, str) and span.style.startswith("#") for span in text.spans)
 
 
 def test_textual_log_handler_write_to_log_handles_missing_widget():
@@ -197,4 +199,5 @@ def test_refresh_dashboard_panels_only_targets_mounted_dashboard_widgets():
         ((SessionStats, "refresh_stats"),),
         ((HourlyActivity, "refresh_hourly"),),
         ((JobsPreview, "refresh_jobs"),),
+        ((TelemetryPanel, "refresh_telemetry"),),
     ]

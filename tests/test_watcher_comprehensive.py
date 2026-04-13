@@ -241,6 +241,39 @@ class TestWatcherInitialization:
         assert watcher_instance._websocket_sync_failed is True
         watcher_instance.show_notification.assert_called_once()
 
+    def test_sync_session_from_browser_uses_dedicated_failure_sound_override(
+        self, watcher_instance
+    ):
+        """Browser sync failures should use the dedicated sound override when set."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+            ("Paths", "browser_session_sync_failed_sound_file"): "assets/sync-failed.wav",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        with patch(
+            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            return_value=MagicMock(
+                session_token="fresh-token",
+                user_key="",
+                user_agent="Helium Browser",
+                accept_language="en-GB,en-US;q=0.9",
+            ),
+        ):
+            changed = watcher_instance._sync_session_from_browser(
+                fail_hard=False,
+                alert_on_failure=True,
+            )
+
+        assert changed is False
+        watcher_instance.show_notification.assert_called_once_with(
+            message="Browser session sync failed: browser gone",
+            title="GengoWatcher Session Sync Failed",
+            play_sound=True,
+            sound_file="assets/sync-failed.wav",
+        )
+
     def test_sync_session_from_browser_clears_placeholder_user_key_when_missing(
         self, watcher_instance
     ):
