@@ -586,12 +586,18 @@ class AppConfig:
             return '""'
         return AppConfig._serialize_toml_value(str(value))
 
-        try:
-            return json.dumps(value)
-        except (TypeError, ValueError):
-            pass
-
-        return str(value)
+    @classmethod
+    def _dump_toml(cls, data: Dict[str, Dict[str, Any]]) -> str:
+        """Serialize the nested config dictionary to a TOML document."""
+        lines: list[str] = []
+        for section, settings in data.items():
+            if not isinstance(settings, dict):
+                continue
+            lines.append(f"[{section}]")
+            for key, value in settings.items():
+                lines.append(f"{key} = {cls._serialize_toml_value(value)}")
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
 
     def _validate_auto_accept_config(self):
         """

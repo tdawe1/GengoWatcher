@@ -199,38 +199,50 @@ class StoredFileUploadResponse(BaseModel):
 class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
-    def __init__(self, config: AppConfig, state: AppState, logger: logging.Logger):
+    def __init__(
+        self,
+        config: AppConfig,
+        state: AppState,
+        logger: logging.Logger,
+        *,
+        watcher: GengoWatcher | None = None,
+        start_watcher_thread: bool = True,
+    ):
         """Initialize the WebAPI instance.
 
-        Creates a separate GengoWatcher instance for the web API to avoid conflicts
-        with the TUI. Sets up thread safety mechanisms and starts the watcher thread.
+        Uses a shared watcher when provided, otherwise creates its own watcher.
+        This allows the web API to run alongside the TUI without starting a
+        duplicate RSS/WebSocket monitor loop.
 
         Args:
             config: Application configuration object.
             state: Application state object for data persistence.
             logger: Logger instance for recording events.
+            watcher: Optional shared watcher instance owned by the runtime.
+            start_watcher_thread: Whether this WebAPI instance should start and
+                manage the watcher thread lifecycle.
         """
         self.config = config
         self.state = state
         self.logger = logger
-
-        # Create a separate watcher instance for web API
-        # This allows web UI to run alongside TUI without conflicts
-        self.watcher = GengoWatcher(config, state, logger)
+        self._manage_watcher_lifecycle = start_watcher_thread
+        self.watcher = watcher if watcher is not None else GengoWatcher(config, state, logger)
 
         # Thread safety for shared state access
         self._status_lock = threading.RLock()  # Reentrant lock for better safety
         self._active_connections: List[WebSocket] = []
         self._connections_lock = threading.RLock()
         self._jobs_lock = threading.RLock()
+        self.watcher_thread: threading.Thread | None = None
 
-        # Start the watcher in a separate thread
-        self.watcher_thread = threading.Thread(
-            target=self.watcher.run, daemon=True, name="WebWatcherThread"
-        )
-        self.watcher_thread.start()
-
-        self.logger.info("WebAPI initialized and watcher thread started")
+        if start_watcher_thread:
+            self.watcher_thread = threading.Thread(
+                target=self.watcher.run, daemon=True, name="WebWatcherThread"
+            )
+            self.watcher_thread.start()
+            self.logger.info("WebAPI initialized and watcher thread started")
+        else:
+            self.logger.info("WebAPI initialized using shared watcher instance")
 
     def get_status(self) -> WatcherStatus:
         """Get current watcher status."""
@@ -247,9 +259,16 @@ class WebAPI:
             health_snapshot = {}
             health_getter = getattr(self.watcher, "get_health_snapshot", None)
             if callable(health_getter):
-                candidate = health_getter()
-                if isinstance(candidate, dict):
-                    health_snapshot = candidate
+                try:
+                    candidate = health_getter()
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed to collect watcher health snapshot for web status: %s",
+                        exc,
+                    )
+                else:
+                    if isinstance(candidate, dict):
+                        health_snapshot = candidate
 
             return WatcherStatus(
                 is_running=not self.watcher.shutdown_event.is_set(),
@@ -302,11 +321,13 @@ class WebAPI:
         # Accept only a single filename component (no user-influenced subpaths).
         candidate_path = Path(path)
         candidate_name = candidate_path.name
-        if (
-            candidate_name in {"", ".", ".."}
-            or candidate_path != Path(candidate_name)
-        ):
+        if candidate_name in {"", ".", ".."}:
             raise ValueError("Invalid stored filename")
+        if candidate_path != Path(candidate_name):
+            try:
+                candidate_path.resolve(strict=False).parent.relative_to(storage_dir)
+            except ValueError as exc:
+                raise ValueError("Invalid stored filename") from exc
 
         try:
             resolved = (storage_dir / candidate_name).resolve(strict=False)
@@ -331,7 +352,7 @@ class WebAPI:
             return False
         if self._sanitize_filename(name) != name:
             return False
-        return re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?", name) is not None
+        return re.fullmatch(r"[A-Za-z0-9_() .-]+", name) is not None
 
     def _build_file_entry(
         self,
@@ -413,10 +434,6 @@ class WebAPI:
         word_count: int | None = None,
         value: float | None = None,
     ) -> StoredFileEntry:
-        if job_id is not None:
-            job_id = str(job_id).strip()
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
-                raise ValueError("Invalid job id")
         if job_id is not None:
             job_id = str(job_id).strip()
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
@@ -884,11 +901,13 @@ class WebAPI:
     def shutdown(self):
         """Shutdown the web API and watcher."""
         self.logger.info("Shutting down WebAPI")
-        self.watcher.handle_exit()
+        if self._manage_watcher_lifecycle:
+            self.watcher.handle_exit()
 
 
 # Global API instance
 api_instance: Optional[WebAPI] = None
+shared_runtime_context: Optional[Dict[str, Any]] = None
 
 
 PROM_API_INITIALIZED = Gauge(
@@ -906,27 +925,40 @@ ensure_watcher_metrics_registered(
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager."""
     global api_instance
+    global shared_runtime_context
 
     # Startup
     logger = logging.getLogger("gengowatcher.web")
     try:
-        # Check if config exists, create it if needed
-        from pathlib import Path
-
-        config_path = Path(AppConfig.CONFIG_FILE)
-        if not config_path.exists():
-            logger.info("Creating default %s for web API", AppConfig.CONFIG_FILE)
-            config_path.write_text(
-                AppConfig._dump_toml(AppConfig.DEFAULT_CONFIG),
-                encoding="utf-8",
+        runtime_context = shared_runtime_context
+        shared_watcher = None
+        start_watcher_thread = True
+        if runtime_context:
+            config = runtime_context["config"]
+            state = runtime_context["state"]
+            logger = runtime_context.get("logger") or logger
+            shared_watcher = runtime_context.get("watcher")
+            start_watcher_thread = bool(
+                runtime_context.get("start_watcher_thread", True)
             )
-            logger.info(
-                "Default config created. Please review %s before using the web API.",
-                AppConfig.CONFIG_FILE,
-            )
+        else:
+            # Check if config exists, create it if needed
+            from pathlib import Path
 
-        config = AppConfig()
-        state = AppState(logger=logger)
+            config_path = Path(AppConfig.CONFIG_FILE)
+            if not config_path.exists():
+                logger.info("Creating default %s for web API", AppConfig.CONFIG_FILE)
+                config_path.write_text(
+                    AppConfig._dump_toml(AppConfig.DEFAULT_CONFIG),
+                    encoding="utf-8",
+                )
+                logger.info(
+                    "Default config created. Please review %s before using the web API.",
+                    AppConfig.CONFIG_FILE,
+                )
+
+            config = AppConfig()
+            state = AppState(logger=logger)
 
         # Initialize authenticator with config token
         api_token = config.get("WebServer", "auth_token")
@@ -946,7 +978,13 @@ async def lifespan(app: FastAPI):
         global authenticator
         authenticator = APIAuthenticator(api_token)
 
-        api_instance = WebAPI(config, state, logger)
+        api_instance = WebAPI(
+            config,
+            state,
+            logger,
+            watcher=shared_watcher,
+            start_watcher_thread=start_watcher_thread,
+        )
         logger.info("WebAPI started successfully")
     except Exception as e:
         logger.exception(f"Failed to start WebAPI: {e}")
@@ -957,6 +995,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if api_instance:
         api_instance.shutdown()
+    shared_runtime_context = None
 
 
 # Create FastAPI app
@@ -1401,11 +1440,30 @@ async def serve_react_app(path: str):
         raise HTTPException(status_code=404, detail="React app not built yet")
 
 
-def run_web_server(host: str = "127.0.0.1", port: int = 8000):
+def run_web_server(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    *,
+    config: AppConfig | None = None,
+    state: AppState | None = None,
+    logger: logging.Logger | None = None,
+    watcher: GengoWatcher | None = None,
+    start_watcher_thread: bool = True,
+):
     """Run the web server."""
-    uvicorn.run(
-        "gengowatcher.web:app", host=host, port=port, reload=False, log_level="info"
-    )
+    global shared_runtime_context
+    if config is not None and state is not None:
+        shared_runtime_context = {
+            "config": config,
+            "state": state,
+            "logger": logger,
+            "watcher": watcher,
+            "start_watcher_thread": start_watcher_thread,
+        }
+    else:
+        shared_runtime_context = None
+
+    uvicorn.run(app, host=host, port=port, reload=False, log_level="info")
 
 
 if __name__ == "__main__":

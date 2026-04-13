@@ -31,6 +31,7 @@ from textual.widgets import (
 )
 
 from .config import AppConfig
+from .logging_setup import UILoggingHandler
 from .state import AppState
 from .stats import StatsManager
 from .watcher import TIER_UNIT_RATES, GengoWatcher
@@ -715,6 +716,7 @@ class StatusIndicator(Static):
         "stale": ["!", "‼", "!", "·"],
         "error": ["✗", "✖", "✗", "✖"],
     }
+    PULSE_FRAMES: ClassVar[dict[str, list[str]]] = STATE_FRAMES
 
     PULSE_STEPS: ClassVar[dict[str, int]] = {
         "live": 4,
@@ -1612,6 +1614,7 @@ class TelemetryPanel(DashboardQuadrant):
         yield Static("Loading telemetry...", id="telemetry-content")
 
     def on_mount(self) -> None:
+        self.refresh_telemetry()
         self.set_interval(1.0, self.refresh_telemetry)
         self.set_interval(0.2, self._pulse_tick)
 
@@ -2086,19 +2089,25 @@ class GengoWatcherApp(App):
         state: AppState,
         watcher: GengoWatcher,
         stats: StatsManager,
+        ui_log_handler: UILoggingHandler | None = None,
     ):
         super().__init__()
-        self.theme = self.DEFAULT_THEME_NAME
         self.config = config
         self.state = state
         self.watcher = watcher
         self.stats = stats
+        self._ui_log_handler = ui_log_handler
+        self._persist_theme_changes = False
+        configured_theme = self.config.get("UI", "theme_name")
+        self.theme = self._resolve_theme_name(configured_theme)
+        self._persist_theme_changes = True
         self._log_source = cast(
             logging.Logger,
             getattr(self.watcher, "logger", logging.getLogger("gengowatcher")),
         )
         self._textual_log_handler = TextualLogHandler(self)
         self._logging_attached = False
+        self._buffered_logs_replayed = False
 
         # Register callback for when new jobs are detected
         self.watcher.on_job_added_callback = self._on_job_added_from_thread
@@ -2150,6 +2159,11 @@ class GengoWatcherApp(App):
         missing_level: int = logging.DEBUG,
     ) -> None:
         """Attempt to refresh a specific widget and log when it's missing."""
+        widget_name = (
+            widget_class
+            if isinstance(widget_class, str)
+            else getattr(widget_class, "__name__", str(widget_class))
+        )
         try:
             widget = self.query_one(widget_class)
         except NoMatches:
@@ -2180,15 +2194,37 @@ class GengoWatcherApp(App):
             )
 
     def _setup_logging(self):
-        handler = TextualLogHandler(self)
-        logging.getLogger().addHandler(handler)
+        if self._logging_attached:
+            return
+        self._log_source.addHandler(self._textual_log_handler)
+        self._logging_attached = True
+
+    def _replay_buffered_logs(self) -> None:
+        if self._buffered_logs_replayed or self._ui_log_handler is None:
+            return
+
+        queued_logs = list(getattr(self._ui_log_handler, "log_queue", ()))
+        for entry in queued_logs:
+            if not isinstance(entry, Text):
+                continue
+            self._textual_log_handler._write_to_log("#activity-log", entry)
+            self._textual_log_handler._write_to_log("#activity-log-full", entry)
+
+        self._buffered_logs_replayed = True
 
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
         self._setup_logging()
+        self._replay_buffered_logs()
         self._setup_jobs_table()
         self._refresh_dashboard_panels()
         self.set_interval(1.0, self._refresh_dashboard_panels)
+
+    def on_unmount(self) -> None:
+        if self._logging_attached:
+            self._log_source.removeHandler(self._textual_log_handler)
+            self._logging_attached = False
+        self.watcher.on_job_added_callback = None
 
     def _dashboard_refresh_targets(self) -> list[tuple[type, str]]:
         """Return the required refresh targets for mounted dashboard widgets."""
@@ -2207,6 +2243,22 @@ class GengoWatcherApp(App):
                 method_name,
                 missing_level=logging.WARNING,
             )
+
+    def watch_theme(self, theme: str) -> None:
+        if not theme or not getattr(self, "_persist_theme_changes", False):
+            return
+        self.config.set("UI", "theme_name", theme)
+        self.config.save_config()
+
+    def _resolve_theme_name(self, configured_theme: object) -> str:
+        theme_name = str(configured_theme or "").strip()
+        if theme_name in self.available_themes:
+            return theme_name
+        if self.DEFAULT_THEME_NAME in self.available_themes:
+            return self.DEFAULT_THEME_NAME
+        if self.available_themes:
+            return next(iter(self.available_themes))
+        return self.DEFAULT_THEME_NAME
 
     def _setup_jobs_table(self) -> None:
         """Set up the jobs DataTable with columns."""

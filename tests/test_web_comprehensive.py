@@ -233,6 +233,26 @@ class TestWebAPIInitialization:
                 mock_watcher_class.assert_called_once()
                 mock_thread.assert_called_once()
 
+    def test_web_api_reuses_shared_watcher_without_starting_thread(
+        self, mock_config, mock_state, mock_logger
+    ):
+        """Shared watcher mode must not create a duplicate monitor thread."""
+        shared_watcher = MagicMock()
+
+        with patch("gengowatcher.web.GengoWatcher") as mock_watcher_class:
+            with patch("threading.Thread") as mock_thread:
+                api = WebAPI(
+                    mock_config,
+                    mock_state,
+                    mock_logger,
+                    watcher=shared_watcher,
+                    start_watcher_thread=False,
+                )
+
+        assert api.watcher is shared_watcher
+        mock_watcher_class.assert_not_called()
+        mock_thread.assert_not_called()
+
     def test_web_api_thread_safety_locks(self, mock_config, mock_state, mock_logger):
         """Test that thread safety locks are created."""
         with patch("gengowatcher.web.GengoWatcher"):
@@ -240,6 +260,23 @@ class TestWebAPIInitialization:
             assert hasattr(api, "_status_lock")
             assert hasattr(api, "_connections_lock")
             assert hasattr(api, "_jobs_lock")
+
+    def test_shutdown_does_not_stop_shared_watcher(
+        self, mock_config, mock_state, mock_logger
+    ):
+        """Runtime-owned watchers should not be shut down by the web wrapper."""
+        shared_watcher = MagicMock()
+        api = WebAPI(
+            mock_config,
+            mock_state,
+            mock_logger,
+            watcher=shared_watcher,
+            start_watcher_thread=False,
+        )
+
+        api.shutdown()
+
+        shared_watcher.handle_exit.assert_not_called()
 
 
 class TestWebAPIStatus:

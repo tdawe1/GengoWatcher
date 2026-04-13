@@ -9,6 +9,7 @@ import datetime
 import logging
 import re
 
+from gengowatcher.logging_setup import UILoggingHandler
 from gengowatcher.ui_textual import (
     TitleBar,
     MetricCard,
@@ -21,6 +22,7 @@ from gengowatcher.ui_textual import (
     ConfigPreview,
     SessionStats as SessionStatsWidget,
     StatsPanel,
+    TelemetryPanel,
     GengoWatcherApp,
     TextualLogHandler,
     Icons,
@@ -808,6 +810,73 @@ class TestGengoWatcherApp:
         assert hasattr(app, "BINDINGS")
         assert len(app.BINDINGS) > 0
 
+    def test_setup_logging_attaches_handler_to_watcher_logger(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        watcher_logger = logging.getLogger("test_ui_textual_comprehensive_app")
+        watcher_logger.handlers = []
+        watcher_logger.propagate = False
+        mock_watcher.logger = watcher_logger
+
+        app = GengoWatcherApp(
+            config=mock_config, state=mock_state, watcher=mock_watcher, stats=mock_stats
+        )
+
+        try:
+            app._setup_logging()
+            assert app._textual_log_handler in watcher_logger.handlers
+            assert app._logging_attached is True
+        finally:
+            app.on_unmount()
+
+        assert app._textual_log_handler not in watcher_logger.handlers
+        assert mock_watcher.on_job_added_callback is None
+
+    def test_on_mount_replays_buffered_startup_logs(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        watcher_logger = logging.getLogger("test_ui_textual_comprehensive_replay")
+        watcher_logger.handlers = []
+        watcher_logger.propagate = False
+        mock_watcher.logger = watcher_logger
+
+        buffered_handler = UILoggingHandler()
+        record = logging.LogRecord(
+            "gengowatcher",
+            logging.INFO,
+            __file__,
+            1,
+            "WebSocket: Connection established and authenticated.",
+            (),
+            None,
+        )
+        buffered_handler.emit(record)
+
+        app = GengoWatcherApp(
+            config=mock_config,
+            state=mock_state,
+            watcher=mock_watcher,
+            stats=mock_stats,
+            ui_log_handler=buffered_handler,
+        )
+        app._setup_jobs_table = MagicMock()
+        app._refresh_dashboard_panels = MagicMock()
+        app.set_interval = MagicMock()
+        app._textual_log_handler._write_to_log = MagicMock()
+
+        try:
+            app.on_mount()
+
+            replay_calls = app._textual_log_handler._write_to_log.call_args_list
+            assert replay_calls
+            assert replay_calls[0].args[0] == "#activity-log"
+            assert replay_calls[1].args[0] == "#activity-log-full"
+            assert "WebSocket: Connection established and authenticated." in str(
+                replay_calls[0].args[1]
+            )
+        finally:
+            app.on_unmount()
+
     def test_refresh_dashboard_panels_dispatches_widget_refreshes(
         self, mock_config, mock_state, mock_watcher, mock_stats
     ):
@@ -821,7 +890,7 @@ class TestGengoWatcherApp:
             (MetricsRow, "refresh_metrics"),
             (JobsPreview, "refresh_jobs"),
             (HourlyActivity, "refresh_hourly"),
-            (SessionStatsWidget, "refresh_stats"),
+            (TelemetryPanel, "refresh_telemetry"),
         ]
 
         assert app._dashboard_refresh_targets() == expected_targets

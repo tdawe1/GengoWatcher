@@ -449,6 +449,44 @@ class TestStatusRow:
             assert "ping_latency_ms" in rendered
             assert "RSS" in rendered
 
+    @pytest.mark.asyncio
+    async def test_telemetry_panel_pulse_tick_animates_status_icons(self, mock_watcher):
+        """Telemetry panel should re-render animated icons as the pulse timer advances."""
+        from textual.app import App
+        from textual.widgets import Static
+
+        mock_watcher.get_health_snapshot.return_value = {
+            "websocket": {
+                "state": "stale",
+                "detail": "pong 52s",
+                "last_pong_age_sec": 52,
+            },
+            "rss": {
+                "state": "working",
+                "detail": "processing",
+                "last_success_age_sec": 4,
+            },
+        }
+
+        class TestApp(App):
+            def compose(self):
+                yield TelemetryPanel(watcher=mock_watcher)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(TelemetryPanel)
+            panel.refresh_telemetry()
+            await pilot.pause(0.1)
+            content = panel.query_one("#telemetry-content", Static)
+            first_render = str(content.render())
+
+            panel._pulse_tick()
+            panel._pulse_tick()
+            await pilot.pause(0.1)
+            second_render = str(content.render())
+
+            assert first_render != second_render
+
     def test_status_indicator_uses_distinct_pulse_cadence_by_state(self):
         """Critical states should pulse faster than non-critical ones."""
         indicator = StatusIndicator("x", "Test")
