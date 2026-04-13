@@ -87,8 +87,8 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
     """
     Test that a valid job received from the WebSocket is correctly processed.
 
-    The websocket auth payload should mirror the browser-aligned credentials
-    available in config, including user_key when present.
+    The websocket handshake should send the browser-aligned session headers and
+    the auth payload should use the session token.
     """
     w = watcher_instance
     job_payload = {
@@ -115,7 +115,13 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
         else "extra_headers"
     )
     assert kwargs[header_key] is not None
-    assert "Cookie" not in kwargs[header_key]
+    assert kwargs[header_key]["Cookie"] == (
+        "myG_myGSession_=fake_session_token; myG_rdsessID=fake_session_token"
+    )
+    assert kwargs[header_key]["User-Agent"] == (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+    )
     assert kwargs[header_key]["Accept-Language"] == "en-GB,en-US;q=0.9,en;q=0.8"
     assert kwargs["ping_interval"] == 20
     assert kwargs["ping_timeout"] == 10
@@ -123,7 +129,7 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
     auth_call = mock_ws_client.send.await_args[0][0]
     assert '"user_id": 12345' in auth_call
     assert '"user_session": "fake_session_token"' in auth_call
-    assert '"user_key": "fake_browser_user_key"' in auth_call
+    assert '"user_key"' not in auth_call
     w._process_new_job.assert_called_once_with(
         9876,
         "English > Japanese",
@@ -152,7 +158,9 @@ async def test_websocket_retries_with_ua_only_after_handshake_timeout(
     assert len(connect_factory.calls) == 2
     first_kwargs = connect_factory.calls[0][1]
     second_kwargs = connect_factory.calls[1][1]
-    assert "Cookie" not in first_kwargs["additional_headers"]
+    assert first_kwargs["additional_headers"]["Cookie"] == (
+        "myG_myGSession_=fake_session_token; myG_rdsessID=fake_session_token"
+    )
     assert second_kwargs["additional_headers"] == {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
     }

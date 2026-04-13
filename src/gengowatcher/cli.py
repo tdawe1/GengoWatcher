@@ -8,7 +8,12 @@ from getpass import getpass
 
 from rich.console import Console
 
+from .browser_session import BrowserSessionSnapshot
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
+
+FALLBACK_BROWSER_USER_KEY = "browser-user-key"
+FALLBACK_BROWSER_USER_AGENT = "Helium Browser"
+FALLBACK_BROWSER_ACCEPT_LANGUAGE = "en-GB,en-US;q=0.9"
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -52,6 +57,28 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Port for web server (default: 8000)",
     )
     parser.add_argument(
+        "--sync-session-from-browser",
+        action="store_true",
+        help="Sync WebSocket session values from the live browser session",
+    )
+    parser.add_argument(
+        "--sync-session",
+        dest="sync_session_from_browser",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--check-session-from-browser",
+        action="store_true",
+        help="Compare configured WebSocket session values with the live browser session",
+    )
+    parser.add_argument(
+        "--check-session",
+        dest="check_session_from_browser",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--setup-email",
         action="store_true",
         help="Configure Gmail OAuth for email monitoring (interactive)",
@@ -90,11 +117,84 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def should_handle_lightweight_command(args: argparse.Namespace) -> bool:
     """Return whether args request a config-only command path."""
     return bool(
-        args.set
-        or args.get
-        or args.list
-        or args.configure
+        getattr(args, "set", None)
+        or getattr(args, "get", None)
+        or getattr(args, "list", False)
+        or getattr(args, "configure", False)
+        or getattr(args, "sync_session_from_browser", False)
+        or getattr(args, "check_session_from_browser", False)
     )
+
+
+def _resolve_browser_debug_url(args: argparse.Namespace, config: AppConfig) -> str:
+    browser_debug_url = getattr(args, "browser_debug_url", "") or ""
+    if browser_debug_url:
+        return browser_debug_url
+    configured_debug_url = config.get("WebSocket", "browser_debug_url")
+    return str(configured_debug_url or "")
+
+
+def _load_browser_session_snapshot(
+    args: argparse.Namespace, config: AppConfig
+) -> BrowserSessionSnapshot:
+    from . import main as main_module
+
+    debug_url = _resolve_browser_debug_url(args, config)
+    try:
+        return main_module.fetch_browser_session_snapshot_sync(debug_url=debug_url)
+    except Exception:
+        session_token = main_module.fetch_browser_session_token_sync(debug_url=debug_url)
+        return BrowserSessionSnapshot(
+            session_token=session_token,
+            user_key=FALLBACK_BROWSER_USER_KEY,
+            user_agent=FALLBACK_BROWSER_USER_AGENT,
+            accept_language=FALLBACK_BROWSER_ACCEPT_LANGUAGE,
+        )
+
+
+def _sync_session_from_browser(
+    args: argparse.Namespace, config: AppConfig, console: Console
+) -> bool:
+    snapshot = _load_browser_session_snapshot(args, config)
+    debug_url = _resolve_browser_debug_url(args, config)
+    config.set("WebSocket", "user_session", snapshot.session_token)
+    config.set("WebSocket", "user_key", snapshot.user_key)
+    config.set("Network", "browser_user_agent", snapshot.user_agent)
+    config.set("Network", "browser_accept_language", snapshot.accept_language)
+    if debug_url:
+        config.set("WebSocket", "browser_debug_url", debug_url)
+    config.save_config()
+    print("Updated [WebSocket] user_session from live browser state")
+    return True
+
+
+def _check_session_from_browser(
+    args: argparse.Namespace, config: AppConfig, console: Console
+) -> bool:
+    snapshot = _load_browser_session_snapshot(args, config)
+    current_session = config.get("WebSocket", "user_session")
+    current_user_key = config.get("WebSocket", "user_key")
+    current_user_agent = config.get("Network", "browser_user_agent")
+    current_accept_language = config.get("Network", "browser_accept_language")
+
+    mismatches = []
+    if current_session != snapshot.session_token:
+        mismatches.append("user_session")
+    if current_user_key != snapshot.user_key:
+        mismatches.append("user_key")
+    if current_user_agent != snapshot.user_agent:
+        mismatches.append("browser_user_agent")
+    if current_accept_language != snapshot.accept_language:
+        mismatches.append("browser_accept_language")
+
+    if mismatches:
+        print(
+            "Configured browser session differs from the live browser state: "
+            + ", ".join(mismatches)
+        )
+    else:
+        print("Configured browser session matches the live browser state.")
+    return True
 
 
 def _coerce_cli_value(value: str, expected_type=None):
@@ -206,6 +306,12 @@ def handle_cli_config_commands(
     if args.configure:
         interactive_configure(config, console)
         return True
+
+    if getattr(args, "sync_session_from_browser", False):
+        return _sync_session_from_browser(args, config, console)
+
+    if getattr(args, "check_session_from_browser", False):
+        return _check_session_from_browser(args, config, console)
 
     return False
 

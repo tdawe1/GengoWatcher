@@ -23,13 +23,13 @@ The CDP helper lives in
 
 The current handshake profile is:
 
+- `Cookie: myG_myGSession_=<session>; myG_rdsessID=<session>`
 - `Origin: https://gengo.com`
+- `Pragma: no-cache`
+- `Cache-Control: no-cache`
 - `User-Agent: <browser-derived or configured browser UA>`
 - `Accept-Language: <browser-derived or configured browser languages>`
-- `Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits`
-
-The browser authenticates after the handshake via the first websocket frame rather
-than via a cookie header in the upgrade request.
+- `Accept-Encoding: gzip, deflate, br, zstd`
 
 ## Auth Payload
 
@@ -38,12 +38,9 @@ The current websocket auth payload is:
 ```json
 {
   "user_id": "<configured user id>",
-  "user_session": "<browser-aligned session token>",
-  "user_key": "<browser-aligned userKey, when available>"
+  "user_session": "<browser-aligned session token>"
 }
 ```
-
-`user_key` is omitted only when it is empty.
 
 ## Evidence
 

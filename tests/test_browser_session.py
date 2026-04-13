@@ -144,22 +144,6 @@ async def test_fetch_browser_session_token_reads_cookie_from_cdp():
             ]
         },
     }
-    runtime_response = {
-        "id": 2,
-        "result": {
-            "result": {
-                "type": "object",
-                "value": {
-                    "userKey": "browser-user-key",
-                    "userAgent": "Helium Browser",
-                    "acceptLanguage": "en-GB,en-US;q=0.9",
-                    "origin": "https://gengo.com",
-                    "url": "https://gengo.com/t/jobs/status/available/realtime",
-                    "title": "Gengo",
-                },
-            }
-        },
-    }
 
     with (
         patch(
@@ -168,7 +152,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_cdp():
         ),
         patch(
             "gengowatcher.browser_session.websockets.connect",
-            return_value=_MockCDPWebSocket(cdp_response),
+            return_value=_MockCDPWebSocket([cdp_response]),
         ),
     ):
         token = await fetch_browser_session_token("http://127.0.0.1:9222")
@@ -227,6 +211,47 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage():
     assert snapshot.user_agent == "Helium Browser"
     assert snapshot.accept_language == "en-GB,en-US;q=0.9"
     assert snapshot.target_title == "Realtime Jobs"
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_snapshot_keeps_cookie_when_runtime_eval_fails():
+    targets = [
+        {
+            "type": "page",
+            "url": "https://gengo.com/t/jobs/status/available/realtime",
+            "webSocketDebuggerUrl": "ws://gengo-target",
+        }
+    ]
+    cookie_response = {
+        "id": 1,
+        "result": {
+            "cookies": [
+                {"name": "myG_myGSession_", "value": "fresh-token"},
+            ]
+        },
+    }
+
+    with (
+        patch(
+            "gengowatcher.browser_session.urllib.request.urlopen",
+            return_value=_MockUrlResponse(targets),
+        ),
+        patch(
+            "gengowatcher.browser_session.websockets.connect",
+            return_value=_MockCDPWebSocket([cookie_response]),
+        ),
+        patch(
+            "gengowatcher.browser_session._evaluate_expression",
+            side_effect=BrowserSessionError("runtime timed out"),
+        ),
+    ):
+        snapshot = await fetch_browser_session_snapshot("http://127.0.0.1:9222")
+
+    assert snapshot.session_token == "fresh-token"
+    assert snapshot.user_key == ""
+    assert snapshot.user_agent == ""
+    assert snapshot.accept_language == ""
+    assert snapshot.target_url == "https://gengo.com/t/jobs/status/available/realtime"
 
 
 @pytest.mark.asyncio
@@ -351,14 +376,17 @@ def test_build_browser_aligned_websocket_headers_uses_browser_profile():
     )
 
     assert headers == {
-        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
         "Origin": "https://gengo.com",
+        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
+        "Pragma": "no-cache",
+        "Cache-Control": "no-cache",
         "User-Agent": "Helium Browser",
         "Accept-Language": "en-GB,en-US;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
     }
 
 
-def test_build_websocket_auth_payload_includes_user_key_when_present():
+def test_build_websocket_auth_payload_uses_session_only():
     payload = build_websocket_auth_payload(
         user_id=12345,
         session_token="fresh-token",
@@ -368,7 +396,6 @@ def test_build_websocket_auth_payload_includes_user_key_when_present():
     assert payload == {
         "user_id": 12345,
         "user_session": "fresh-token",
-        "user_key": "browser-user-key",
     }
 
 
