@@ -119,7 +119,10 @@ async def _cdp_call(
             raise BrowserSessionError(
                 f"CDP call timed out waiting for response: method={method} call_id={call_id}"
             ) from exc
-        message = json.loads(raw_message)
+        try:
+            message = json.loads(raw_message)
+        except json.JSONDecodeError as exc:
+            raise BrowserSessionError(f"Failed to parse CDP response as JSON: {exc}") from exc
         if message.get("id") != call_id:
             continue
         if "error" in message:
