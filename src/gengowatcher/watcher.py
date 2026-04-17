@@ -18,6 +18,7 @@ import webbrowser
 from typing import Callable, Optional
 from collections import deque
 from pathlib import Path
+from urllib.parse import urlparse
 
 import feedparser
 import websockets
@@ -771,7 +772,10 @@ class GengoWatcher:
 
     def _is_gengo_rss_feed(self) -> bool:
         feed_url = str(self.config.get("Watcher", "feed_url") or "")
-        return "gengo.com" in feed_url.lower()
+        host = urlparse(feed_url).hostname
+        if not host:
+            return False
+        return host == "gengo.com" or host.endswith(".gengo.com")
 
     def _get_effective_rss_wait_range_seconds(self) -> tuple[float, float]:
         if self._is_gengo_rss_feed():
