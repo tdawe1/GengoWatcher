@@ -584,7 +584,11 @@ class AppConfig:
             return "{ " + items + " }"
         if value is None:
             return '""'
-        return AppConfig._serialize_toml_value(str(value))
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return json.dumps(value)
 
     @classmethod
     def _dump_toml(cls, data: Dict[str, Dict[str, Any]]) -> str:
