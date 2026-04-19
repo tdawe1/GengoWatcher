@@ -255,6 +255,7 @@ def build_firefox_debug_command(spec: FirefoxDebugLaunchSpec) -> list[str]:
         str(spec.profile_path),
         "--start-debugger-server",
         f"ws:{spec.port}",
+        "--new-window",
         spec.start_url,
     ]
 

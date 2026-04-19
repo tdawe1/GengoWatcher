@@ -72,6 +72,7 @@ def test_build_firefox_debug_command_includes_debug_server_and_profile(tmp_path)
         str(tmp_path / "profile"),
         "--start-debugger-server",
         "ws:6100",
+        "--new-window",
         "https://gengo.com/t/jobs/status/available/realtime",
     ]
 
