@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import argparse
 import re
+import time
 from getpass import getpass
 
 from rich.console import Console
 
+from .browser_debug_launcher import (
+    DEFAULT_FIREFOX_DEBUG_URL,
+    get_firefox_debug_launch_spec,
+    get_firefox_debug_retry_window,
+    launch_managed_firefox_debug,
+    maybe_launch_managed_firefox_debug,
+)
 from .browser_session import BrowserSessionSnapshot
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
 
@@ -79,6 +87,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--start-firefox-debug",
+        action="store_true",
+        help="Start a managed Firefox DevTools session for browser sync",
+    )
+    parser.add_argument(
         "--setup-email",
         action="store_true",
         help="Configure Gmail OAuth for email monitoring (interactive)",
@@ -123,6 +136,7 @@ def should_handle_lightweight_command(args: argparse.Namespace) -> bool:
         or getattr(args, "configure", False)
         or getattr(args, "sync_session_from_browser", False)
         or getattr(args, "check_session_from_browser", False)
+        or getattr(args, "start_firefox_debug", False)
     )
 
 
@@ -143,13 +157,57 @@ def _load_browser_session_snapshot(
     try:
         return main_module.fetch_browser_session_snapshot_sync(debug_url=debug_url)
     except Exception:
-        session_token = main_module.fetch_browser_session_token_sync(debug_url=debug_url)
+        if maybe_launch_managed_firefox_debug(config, debug_url):
+            timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(config)
+            deadline = time.monotonic() + timeout_sec
+            last_exc: Exception | None = None
+            while time.monotonic() < deadline:
+                time.sleep(retry_interval_sec)
+                try:
+                    return main_module.fetch_browser_session_snapshot_sync(
+                        debug_url=debug_url
+                    )
+                except Exception as exc:  # pragma: no cover - exercised via caller
+                    last_exc = exc
+            if last_exc is not None:
+                raise last_exc
+        session_token = main_module.fetch_browser_session_token_sync(
+            debug_url=debug_url
+        )
         return BrowserSessionSnapshot(
             session_token=session_token,
             user_key=FALLBACK_BROWSER_USER_KEY,
             user_agent=FALLBACK_BROWSER_USER_AGENT,
             accept_language=FALLBACK_BROWSER_ACCEPT_LANGUAGE,
         )
+
+
+def _start_firefox_debug_session(
+    args: argparse.Namespace, config: AppConfig, console: Console
+) -> bool:
+    configured_debug_url = _resolve_browser_debug_url(args, config)
+    spec = get_firefox_debug_launch_spec(
+        config,
+        configured_debug_url,
+        require_enabled=False,
+        allow_default_debug_url=True,
+    )
+    if spec is None:
+        raise RuntimeError(
+            "Managed Firefox launch requires a local ws:// browser_debug_url, "
+            f"for example {DEFAULT_FIREFOX_DEBUG_URL}"
+        )
+
+    if not configured_debug_url:
+        config.set("WebSocket", "browser_debug_url", spec.debug_url)
+        config.save_config()
+
+    launch_managed_firefox_debug(spec)
+    print(
+        "Started managed Firefox debug session at "
+        f"{spec.debug_url} using profile {spec.profile_path}"
+    )
+    return True
 
 
 def _sync_session_from_browser(
@@ -212,9 +270,11 @@ def _coerce_cli_value(value: str, expected_type=None):
     # If we know the expected type, use it
     if expected_type is not None:
         # Handle list/sequence types
-        if expected_type is list or (hasattr(expected_type, '__origin__') and expected_type.__origin__ is list):
+        if expected_type is list or (
+            hasattr(expected_type, "__origin__") and expected_type.__origin__ is list
+        ):
             # Try parsing as JSON first
-            if value.startswith('[') and value.endswith(']'):
+            if value.startswith("[") and value.endswith("]"):
                 try:
                     parsed = json.loads(value)
                     if isinstance(parsed, list):
@@ -222,10 +282,12 @@ def _coerce_cli_value(value: str, expected_type=None):
                 except (json.JSONDecodeError, ValueError):
                     pass
             # Fall back to comma-separated
-            return [item.strip() for item in value.split(',') if item.strip()]
+            return [item.strip() for item in value.split(",") if item.strip()]
 
         # Handle dict/object types
-        if expected_type is dict or (hasattr(expected_type, '__origin__') and expected_type.__origin__ is dict):
+        if expected_type is dict or (
+            hasattr(expected_type, "__origin__") and expected_type.__origin__ is dict
+        ):
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, dict):
@@ -294,7 +356,14 @@ def handle_cli_config_commands(
                 option_lower = option.lower()
                 is_sensitive = any(
                     keyword in option_lower
-                    for keyword in ["token", "secret", "key", "password", "oauth", "api"]
+                    for keyword in [
+                        "token",
+                        "secret",
+                        "key",
+                        "password",
+                        "oauth",
+                        "api",
+                    ]
                 )
                 if is_sensitive:
                     display_value = "******"
@@ -312,6 +381,9 @@ def handle_cli_config_commands(
 
     if getattr(args, "check_session_from_browser", False):
         return _check_session_from_browser(args, config, console)
+
+    if getattr(args, "start_firefox_debug", False):
+        return _start_firefox_debug_session(args, config, console)
 
     return False
 

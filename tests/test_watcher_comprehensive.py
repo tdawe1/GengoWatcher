@@ -276,7 +276,10 @@ class TestWatcherInitialization:
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
             ("WebSocket", "user_session"): "REPLACE_WITH_YOUR_SESSION_TOKEN",
-            ("Paths", "browser_session_sync_failed_sound_file"): "assets/sync-failed.wav",
+            (
+                "Paths",
+                "browser_session_sync_failed_sound_file",
+            ): "assets/sync-failed.wav",
         }.get(
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
         )
@@ -298,9 +301,7 @@ class TestWatcherInitialization:
             sound_file="assets/sync-failed.wav",
         )
 
-    def test_sync_session_from_browser_does_not_touch_user_key(
-        self, watcher_instance
-    ):
+    def test_sync_session_from_browser_does_not_touch_user_key(self, watcher_instance):
         """Browser sync should remain session-only and leave user_key untouched."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
@@ -321,9 +322,49 @@ class TestWatcherInitialization:
             changed = watcher_instance._sync_session_from_browser()
 
         assert changed is True
-        assert (
-            ("WebSocket", "user_key", "")
-            not in [call.args for call in watcher_instance.config.set.call_args_list]
+        assert ("WebSocket", "user_key", "") not in [
+            call.args for call in watcher_instance.config.set.call_args_list
+        ]
+
+    def test_sync_session_from_browser_launches_managed_firefox_when_attach_fails(
+        self, watcher_instance
+    ):
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "ws://127.0.0.1:6000",
+            ("WebSocket", "user_session"): "stale-token",
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+
+        with (
+            patch(
+                "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+                side_effect=[
+                    RuntimeError("attach failed"),
+                    MagicMock(
+                        session_token="fresh-token",
+                        user_agent="Firefox",
+                        accept_language="en-GB",
+                    ),
+                ],
+            ) as mock_fetch,
+            patch(
+                "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
+                return_value=True,
+            ) as mock_launch,
+            patch(
+                "gengowatcher.watcher.get_firefox_debug_retry_window",
+                return_value=(2.0, 0.01),
+            ),
+            patch("gengowatcher.watcher.time.sleep"),
+        ):
+            changed = watcher_instance._sync_session_from_browser()
+
+        assert changed is True
+        assert mock_fetch.call_count == 2
+        mock_launch.assert_called_once()
+        watcher_instance.config.set.assert_any_call(
+            "WebSocket", "user_session", "fresh-token"
         )
 
     def test_get_effective_rss_wait_range_uses_randomized_gengo_window(
@@ -353,7 +394,9 @@ class TestWatcherInitialization:
             (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
         )
 
-        with patch("gengowatcher.watcher.random.uniform", return_value=44.5) as mock_uniform:
+        with patch(
+            "gengowatcher.watcher.random.uniform", return_value=44.5
+        ) as mock_uniform:
             wait_time = watcher_instance._pick_next_rss_wait_seconds()
 
         assert wait_time == 44.5
@@ -497,15 +540,18 @@ class TestWatcherInitialization:
             )
         )
 
-        with patch.object(
-            watcher_instance,
-            "_pick_quiet_socket_sync_delay_seconds",
-            return_value=900.0,
-        ), patch.object(
-            watcher_instance,
-            "_sync_session_from_browser",
-            return_value=True,
-        ) as mock_sync:
+        with (
+            patch.object(
+                watcher_instance,
+                "_pick_quiet_socket_sync_delay_seconds",
+                return_value=900.0,
+            ),
+            patch.object(
+                watcher_instance,
+                "_sync_session_from_browser",
+                return_value=True,
+            ) as mock_sync,
+        ):
             changed = watcher_instance._sync_browser_session_for_quiet_socket(
                 current_time=450.0
             )
@@ -538,15 +584,18 @@ class TestWatcherInitialization:
             )
         )
 
-        with patch.object(
-            watcher_instance,
-            "_pick_quiet_socket_sync_delay_seconds",
-            return_value=900.0,
-        ), patch.object(
-            watcher_instance,
-            "_sync_session_from_browser",
-            return_value=False,
-        ) as mock_sync:
+        with (
+            patch.object(
+                watcher_instance,
+                "_pick_quiet_socket_sync_delay_seconds",
+                return_value=900.0,
+            ),
+            patch.object(
+                watcher_instance,
+                "_sync_session_from_browser",
+                return_value=False,
+            ) as mock_sync,
+        ):
             first = watcher_instance._sync_browser_session_for_quiet_socket(
                 current_time=450.0
             )
@@ -682,7 +731,9 @@ class TestNotifications:
                 mock_notify.assert_called_once()
                 mock_sound.assert_called_once()
 
-    def test_show_notification_uses_override_sound_when_provided(self, watcher_instance):
+    def test_show_notification_uses_override_sound_when_provided(
+        self, watcher_instance
+    ):
         """Explicit sound overrides should bypass the default alert sound."""
         with patch("gengowatcher.notifier.send_notification"):
             with patch("gengowatcher.notifier.play_sound") as mock_sound:

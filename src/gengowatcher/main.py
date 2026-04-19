@@ -10,6 +10,10 @@ from rich.console import Console
 from rich.text import Text
 from rich.theme import Theme
 
+from .browser_session import (
+    fetch_browser_session_snapshot_sync,
+    fetch_browser_session_token_sync,
+)
 from .cli import (
     build_argument_parser,
     handle_cli_config_commands,

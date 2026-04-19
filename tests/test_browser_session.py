@@ -1,7 +1,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -39,6 +39,7 @@ class _MockCDPWebSocket:
     def __init__(self, responses):
         self._responses = iter(responses)
         self._sent = []
+        self.closed = False
 
     async def __aenter__(self):
         return self
@@ -51,6 +52,9 @@ class _MockCDPWebSocket:
 
     async def recv(self):
         return json.dumps(next(self._responses))
+
+    async def close(self):
+        self.closed = True
 
 
 class _NeverRespondingWebSocket:
@@ -258,6 +262,496 @@ async def test_fetch_browser_session_snapshot_keeps_cookie_when_runtime_eval_fai
 async def test_fetch_browser_session_snapshot_rejects_non_http_debug_url():
     with pytest.raises(ValueError, match="unsupported browser debug URL scheme"):
         await fetch_browser_session_snapshot("ftp://127.0.0.1:9222")
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_token_reads_cookie_from_firefox_rdp():
+    responses = [
+        {"from": "root", "applicationType": "browser"},
+        {
+            "from": "root",
+            "tabs": [
+                {
+                    "actor": "tab-1",
+                    "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    "title": "Realtime Jobs",
+                    "consoleActor": "tab-console-1",
+                }
+            ],
+            "consoleActor": "root-console",
+            "selected": 0,
+        },
+        {
+            "from": "root-console",
+            "result": {
+                "type": "string",
+                "value": json.dumps({"sessionToken": "fresh-token"}),
+            },
+        },
+    ]
+    mock_ws = _MockCDPWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        new=AsyncMock(return_value=mock_ws),
+    ) as mock_connect:
+        token = await fetch_browser_session_token("ws://127.0.0.1:9222")
+
+    assert token == "fresh-token"
+    mock_connect.assert_awaited_once_with(
+        "ws://127.0.0.1:9222",
+        max_size=5_000_000,
+    )
+    assert mock_ws.closed is True
+    assert [message["type"] for message in mock_ws._sent] == [
+        "listTabs",
+        "evaluateJS",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_from_firefox_rdp():
+    page_state = json.dumps(
+        {
+            "userKey": "browser-user-key",
+            "userAgent": "Mozilla/5.0 Firefox/147.0",
+            "acceptLanguage": "en-GB,en-US;q=0.9",
+            "origin": "https://gengo.com",
+            "url": "https://gengo.com/t/jobs/status/available/realtime",
+            "title": "Realtime Jobs",
+            "readyState": "complete",
+            "jobHref": "",
+        }
+    )
+    responses = [
+        {"from": "root", "applicationType": "browser"},
+        {
+            "from": "root",
+            "tabs": [
+                {
+                    "actor": "tab-1",
+                    "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    "title": "Realtime Jobs",
+                    "consoleActor": "tab-console-1",
+                }
+            ],
+            "consoleActor": "root-console",
+            "selected": 0,
+        },
+        {
+            "from": "tab-console-1",
+            "result": {
+                "type": "longString",
+                "initial": page_state,
+                "length": len(page_state),
+            },
+        },
+        {
+            "from": "root-console",
+            "result": {
+                "type": "string",
+                "value": json.dumps({"sessionToken": "fresh-token"}),
+            },
+        },
+    ]
+    mock_ws = _MockCDPWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        new=AsyncMock(return_value=mock_ws),
+    ):
+        snapshot = await fetch_browser_session_snapshot("ws://127.0.0.1:9222")
+
+    assert snapshot.session_token == "fresh-token"
+    assert snapshot.user_key == "browser-user-key"
+    assert snapshot.user_agent == "Mozilla/5.0 Firefox/147.0"
+    assert snapshot.accept_language == "en-GB,en-US;q=0.9"
+    assert snapshot.target_title == "Realtime Jobs"
+    assert mock_ws.closed is True
+    assert [message["type"] for message in mock_ws._sent] == [
+        "listTabs",
+        "evaluateJS",
+        "evaluateJS",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_navigation():
+    responses = [
+        {"from": "root", "applicationType": "browser"},
+        {
+            "from": "root",
+            "tabs": [
+                {
+                    "actor": "tab-1",
+                    "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    "title": "Realtime Jobs",
+                    "consoleActor": "tab-console-1",
+                }
+            ],
+            "consoleActor": "root-console",
+            "selected": 0,
+        },
+        {
+            "from": "tab-console-1",
+            "result": {
+                "type": "string",
+                "value": json.dumps(
+                    {
+                        "href": "https://gengo.com/t/jobs/status/available/realtime",
+                        "readyState": "complete",
+                        "activityMarker": "",
+                        "jobHref": "",
+                    }
+                ),
+            },
+        },
+        {
+            "from": "tab-console-1",
+            "result": {
+                "type": "string",
+                "value": json.dumps(
+                    {
+                        "queued": True,
+                        "marker": "marker-1",
+                        "url": "https://gengo.com/t/dashboard",
+                    }
+                ),
+            },
+        },
+        {"from": "root", "type": "tabListChanged"},
+        {
+            "from": "root",
+            "tabs": [
+                {
+                    "actor": "tab-1",
+                    "url": "https://gengo.com/t/dashboard",
+                    "title": "Summary",
+                    "consoleActor": "tab-console-2",
+                }
+            ],
+            "consoleActor": "root-console",
+            "selected": 0,
+        },
+        {
+            "from": "tab-console-2",
+            "result": {
+                "type": "string",
+                "value": json.dumps(
+                    {
+                        "href": "https://gengo.com/t/dashboard",
+                        "readyState": "complete",
+                        "activityMarker": "marker-1",
+                        "jobHref": "",
+                    }
+                ),
+            },
+        },
+        {
+            "from": "tab-console-2",
+            "result": {
+                "type": "string",
+                "value": json.dumps(
+                    {
+                        "queued": True,
+                        "marker": "marker-2",
+                        "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    }
+                ),
+            },
+        },
+        {
+            "from": "root",
+            "tabs": [
+                {
+                    "actor": "tab-1",
+                    "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    "title": "Realtime Jobs",
+                    "consoleActor": "tab-console-3",
+                }
+            ],
+            "consoleActor": "root-console",
+            "selected": 0,
+        },
+        {
+            "from": "tab-console-3",
+            "result": {
+                "type": "string",
+                "value": json.dumps(
+                    {
+                        "href": "https://gengo.com/t/jobs/status/available/realtime",
+                        "readyState": "complete",
+                        "activityMarker": "marker-2",
+                        "jobHref": "",
+                    }
+                ),
+            },
+        },
+    ]
+    mock_ws = _MockCDPWebSocket(responses)
+
+    with (
+        patch(
+            "gengowatcher.browser_session.websockets.connect",
+            new=AsyncMock(return_value=mock_ws),
+        ),
+        patch(
+            "gengowatcher.browser_session._make_firefox_activity_marker",
+            side_effect=["marker-1", "marker-2"],
+        ),
+        patch("gengowatcher.browser_session.asyncio.sleep", new=AsyncMock()),
+    ):
+        action = await refresh_browser_page_activity(
+            "ws://127.0.0.1:9222",
+            action="summary_roundtrip",
+        )
+
+    assert action == "summary_roundtrip"
+    assert mock_ws.closed is True
+    assert [message["type"] for message in mock_ws._sent] == [
+        "listTabs",
+        "evaluateJS",
+        "evaluateJS",
+        "listTabs",
+        "evaluateJS",
+        "evaluateJS",
+        "listTabs",
+        "evaluateJS",
+    ]
+    assert "location.href = targetUrl" in mock_ws._sent[2]["text"]
+    assert "https://gengo.com/t/dashboard" in mock_ws._sent[2]["text"]
+    assert (
+        "https://gengo.com/t/jobs/status/available/realtime" in mock_ws._sent[5]["text"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_token_reads_cookie_from_firefox_bidi():
+    responses = [
+        {
+            "id": 1,
+            "type": "success",
+            "result": {
+                "sessionId": "firefox-session",
+                "capabilities": {
+                    "browserName": "firefox",
+                },
+            },
+        },
+        {
+            "id": 2,
+            "type": "success",
+            "result": {
+                "contexts": [
+                    {
+                        "context": "ctx-1",
+                        "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    }
+                ]
+            },
+        },
+        {
+            "id": 3,
+            "type": "success",
+            "result": {
+                "cookies": [
+                    {
+                        "name": "myG_myGSession_",
+                        "value": {"type": "string", "value": "fresh-token"},
+                    }
+                ],
+                "partitionKey": {"sourceOrigin": "https://gengo.com"},
+            },
+        },
+        {"id": 4, "type": "success", "result": {}},
+    ]
+    mock_ws = _MockCDPWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        return_value=mock_ws,
+    ) as mock_connect:
+        token = await fetch_browser_session_token("ws://127.0.0.1:9222/session")
+
+    assert token == "fresh-token"
+    mock_connect.assert_called_once_with(
+        "ws://127.0.0.1:9222/session",
+        max_size=5_000_000,
+    )
+    assert [message["method"] for message in mock_ws._sent] == [
+        "session.new",
+        "browsingContext.getTree",
+        "storage.getCookies",
+        "session.end",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_from_firefox_bidi():
+    responses = [
+        {
+            "id": 1,
+            "type": "success",
+            "result": {
+                "sessionId": "firefox-session",
+                "capabilities": {
+                    "browserName": "firefox",
+                },
+            },
+        },
+        {
+            "id": 2,
+            "type": "success",
+            "result": {
+                "contexts": [
+                    {
+                        "context": "ctx-1",
+                        "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    }
+                ]
+            },
+        },
+        {
+            "id": 3,
+            "type": "success",
+            "result": {
+                "cookies": [
+                    {
+                        "name": "myG_myGSession_",
+                        "value": {"type": "string", "value": "fresh-token"},
+                    }
+                ],
+                "partitionKey": {"sourceOrigin": "https://gengo.com"},
+            },
+        },
+        {
+            "id": 4,
+            "type": "success",
+            "result": {
+                "type": "success",
+                "result": {
+                    "type": "string",
+                    "value": json.dumps(
+                        {
+                            "userKey": "browser-user-key",
+                            "userAgent": "Mozilla/5.0 Firefox/147.0",
+                            "acceptLanguage": "en-GB,en-US;q=0.9",
+                            "origin": "https://gengo.com",
+                            "url": "https://gengo.com/t/jobs/status/available/realtime",
+                            "title": "Realtime Jobs",
+                        }
+                    ),
+                },
+                "realm": "realm-1",
+            },
+        },
+        {"id": 5, "type": "success", "result": {}},
+    ]
+    mock_ws = _MockCDPWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        return_value=mock_ws,
+    ):
+        snapshot = await fetch_browser_session_snapshot("ws://127.0.0.1:9222/session")
+
+    assert snapshot.session_token == "fresh-token"
+    assert snapshot.user_key == "browser-user-key"
+    assert snapshot.user_agent == "Mozilla/5.0 Firefox/147.0"
+    assert snapshot.accept_language == "en-GB,en-US;q=0.9"
+    assert snapshot.target_title == "Realtime Jobs"
+    assert mock_ws._sent[2]["params"] == {
+        "partition": {
+            "type": "context",
+            "context": "ctx-1",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_bidi_navigation():
+    responses = [
+        {
+            "id": 1,
+            "type": "success",
+            "result": {
+                "sessionId": "firefox-session",
+                "capabilities": {
+                    "browserName": "firefox",
+                },
+            },
+        },
+        {
+            "id": 2,
+            "type": "success",
+            "result": {
+                "contexts": [
+                    {
+                        "context": "ctx-1",
+                        "url": "https://gengo.com/t/jobs/status/available/realtime",
+                    }
+                ]
+            },
+        },
+        {
+            "id": 3,
+            "type": "success",
+            "result": {
+                "type": "success",
+                "result": {
+                    "type": "string",
+                    "value": json.dumps(
+                        {
+                            "href": "https://gengo.com/t/jobs/status/available/realtime",
+                            "jobHref": "",
+                        }
+                    ),
+                },
+                "realm": "realm-1",
+            },
+        },
+        {
+            "id": 4,
+            "type": "success",
+            "result": {
+                "navigation": "nav-1",
+                "url": "https://gengo.com/t/dashboard",
+            },
+        },
+        {
+            "id": 5,
+            "type": "success",
+            "result": {
+                "navigation": "nav-2",
+                "url": "https://gengo.com/t/jobs/status/available/realtime",
+            },
+        },
+        {"id": 6, "type": "success", "result": {}},
+    ]
+    mock_ws = _MockCDPWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        return_value=mock_ws,
+    ):
+        action = await refresh_browser_page_activity(
+            "ws://127.0.0.1:9222/session",
+            action="summary_roundtrip",
+        )
+
+    assert action == "summary_roundtrip"
+    assert [message["method"] for message in mock_ws._sent] == [
+        "session.new",
+        "browsingContext.getTree",
+        "script.evaluate",
+        "browsingContext.navigate",
+        "browsingContext.navigate",
+        "session.end",
+    ]
+    assert mock_ws._sent[3]["params"]["url"].endswith("/t/dashboard")
+    assert mock_ws._sent[4]["params"]["url"].endswith(
+        "/t/jobs/status/available/realtime"
+    )
 
 
 @pytest.mark.asyncio
