@@ -72,27 +72,22 @@ MetricCard {
 
 /* Card accents from current theme roles */
 MetricCard.found { 
-    border-left: tall $accent-green; 
     border-title-color: $accent-green;
     color: $accent-green;
 }
 MetricCard.accepted { 
-    border-left: tall $accent-aqua; 
     border-title-color: $accent-aqua;
     color: $accent-aqua;
 }
 MetricCard.value { 
-    border-left: tall $accent-yellow; 
     border-title-color: $accent-yellow;
     color: $accent-yellow;
 }
 MetricCard.rate { 
-    border-left: tall $accent-orange; 
     border-title-color: $accent-orange;
     color: $accent-orange;
 }
 MetricCard.today { 
-    border-left: tall $accent-violet; 
     border-title-color: $accent-violet;
     color: $accent-violet;
 }
@@ -102,27 +97,22 @@ MetricCard:focus {
 }
 
 MetricCard.found:focus { 
-    border-left: tall $accent-green; 
     border-title-color: $accent-green;
     color: $accent-green;
 }
 MetricCard.accepted:focus { 
-    border-left: tall $accent-aqua; 
     border-title-color: $accent-aqua;
     color: $accent-aqua;
 }
 MetricCard.value:focus { 
-    border-left: tall $accent-yellow; 
     border-title-color: $accent-yellow;
     color: $accent-yellow;
 }
 MetricCard.rate:focus { 
-    border-left: tall $accent-orange; 
     border-title-color: $accent-orange;
     color: $accent-orange;
 }
 MetricCard.today:focus { 
-    border-left: tall $accent-violet; 
     border-title-color: $accent-violet;
     color: $accent-violet;
 }
@@ -157,7 +147,7 @@ MetricCard.today:focus {
 
 /* Status Row - seamless, matches surface */
 StatusRow {
-    height: 2;
+    height: 3;
     width: 100%;
     layout: horizontal;
     align: center middle;
@@ -239,16 +229,15 @@ StatusIndicator {
 }
 
 /* Specific panel accents */
-.dashboard-panel.jobs { border-left: tall $accent-blue; border-title-color: $accent-blue; }
-.dashboard-panel.chart { border-left: tall $accent-green; border-title-color: $accent-green; }
-.dashboard-panel.session { border-left: tall $accent-orange; border-title-color: $accent-orange; }
-.dashboard-panel.sources { border-left: tall $accent-red; border-title-color: $accent-red; }
+.dashboard-panel.jobs { border-title-color: $accent-blue; }
+.dashboard-panel.chart { border-title-color: $accent-green; }
+.dashboard-panel.session { border-title-color: $accent-orange; }
+.dashboard-panel.sources { border-title-color: $accent-red; }
 
 /* Activity log at bottom */
 .activity-panel {
     background: $panel;
     border: round $surface-muted;
-    border-left: tall $accent-aqua;
     padding: 0 1;
     height: 1fr;
     min-height: 6;

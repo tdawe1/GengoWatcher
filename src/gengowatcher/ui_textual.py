@@ -1196,17 +1196,10 @@ class HourlyActivity(DashboardQuadrant):
                     peak_period = f"{peak_period_start:02d}-{peak_period_end:02d}"
                     values = [hourly_counts.get(hour, 0.0) for hour in range(24)]
                     chart_values = _aggregate_series(values, bin_size=2)
-                    chart = _render_plotext_bar_chart(
+                    chart = _render_chart_with_axes(
                         chart_values,
-                        width=30,
-                        height=8,
-                        x_left="00:00",
-                        x_mid="12:00",
-                        x_right="23:59",
-                    ) or _render_chart_with_axes(
-                        chart_values,
-                        width=len(chart_values),
-                        height=4,
+                        width=min(30, max(12, len(chart_values))),
+                        height=6,
                         x_left="00:00",
                         x_right="23:59",
                     )
