@@ -30,6 +30,7 @@ def test_get_firefox_debug_launch_spec_requires_local_ws_url():
     assert spec.debug_url == "ws://127.0.0.1:6000"
     assert spec.browser_path == "firefox-bin"
     assert spec.profile_path == Path("profiles/firefox-debug")
+    assert spec.seed_profile_path is None
     assert spec.port == 6000
 
 
@@ -46,6 +47,22 @@ def test_get_firefox_debug_launch_spec_uses_default_url_for_explicit_start():
 
     assert spec is not None
     assert spec.debug_url == DEFAULT_FIREFOX_DEBUG_URL
+
+
+def test_get_firefox_debug_launch_spec_reads_seed_profile_path():
+    config = MagicMock()
+    config.getboolean.return_value = True
+    config.get.side_effect = lambda section, option, fallback=None: {
+        ("Paths", "browser_debug_browser_path"): "firefox-bin",
+        ("WebSocket", "browser_debug_profile_path"): "profiles/firefox-debug",
+        ("WebSocket", "browser_debug_seed_profile_path"): "profiles/zen-main",
+        ("WebSocket", "browser_debug_start_url"): "https://gengo.com/t/jobs/",
+    }.get((section, option), fallback)
+
+    spec = get_firefox_debug_launch_spec(config, "ws://127.0.0.1:6000")
+
+    assert spec is not None
+    assert spec.seed_profile_path == Path("profiles/zen-main")
 
 
 def test_build_firefox_debug_command_includes_debug_server_and_profile(tmp_path):
@@ -99,6 +116,30 @@ def test_ensure_managed_firefox_profile_writes_required_prefs(tmp_path):
     assert 'user_pref("devtools.chrome.enabled", true);' in prefs_js
     assert 'user_pref("devtools.debugger.remote-enabled", true);' in prefs_js
     assert 'user_pref("devtools.debugger.remote-port", 6123);' in prefs_js
+
+
+def test_ensure_managed_firefox_profile_clones_seed_profile(tmp_path):
+    seed_profile = tmp_path / "seed"
+    seed_profile.mkdir()
+    (seed_profile / "cookies.sqlite").write_text("seed-cookie-db", encoding="utf-8")
+    (seed_profile / "SingletonLock").write_text("locked", encoding="utf-8")
+    spec = FirefoxDebugLaunchSpec(
+        debug_url="ws://127.0.0.1:6123",
+        browser_path="firefox",
+        profile_path=tmp_path / "profile",
+        seed_profile_path=seed_profile,
+        start_url="https://gengo.com/t/jobs/",
+        port=6123,
+    )
+
+    profile_path = ensure_managed_firefox_profile(spec)
+
+    assert (profile_path / "cookies.sqlite").read_text(encoding="utf-8") == (
+        "seed-cookie-db"
+    )
+    assert not (profile_path / "SingletonLock").exists()
+    assert (profile_path / "user.js").exists()
+    assert (profile_path / "prefs.js").exists()
 
 
 def test_maybe_launch_managed_firefox_debug_starts_when_endpoint_is_down():
@@ -243,6 +284,7 @@ def test_launch_managed_firefox_debug_rejects_locked_firefox_build(tmp_path):
         debug_url="ws://127.0.0.1:6000",
         browser_path=str(browser_bin),
         profile_path=tmp_path / "profile",
+        seed_profile_path=None,
         start_url="https://gengo.com/t/jobs/status/available/realtime",
         port=6000,
     )

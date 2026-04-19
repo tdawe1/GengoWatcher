@@ -49,6 +49,7 @@ def test_config_loads_default_values(test_dir):
         app_config.get("WebSocket", "user_session") == "REPLACE_WITH_YOUR_SESSION_TOKEN"
     )
     assert app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"
+    assert app_config.get("WebSocket", "browser_debug_seed_profile_path") == ""
     assert app_config.get("Metrics", "enabled") is False
     assert app_config.get("Metrics", "host") == "127.0.0.1"
     assert app_config.get("Metrics", "port") == 9091

@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import websockets
 
 from .browser_session import GENGO_REALTIME_URL
+from .browser_worker.profile import BrowserProfileManager
 
 DEFAULT_FIREFOX_DEBUG_URL = "ws://127.0.0.1:6000"
 DEFAULT_FIREFOX_DEBUG_BROWSER_PATH = "firefox"
@@ -34,6 +35,7 @@ class FirefoxDebugLaunchSpec:
     debug_url: str
     browser_path: str
     profile_path: Path
+    seed_profile_path: Path | None
     start_url: str
     port: int
 
@@ -123,10 +125,22 @@ def get_firefox_debug_launch_spec(
         )
         or GENGO_REALTIME_URL
     ).strip()
+    seed_profile_raw = str(
+        _config_get(
+            config,
+            "WebSocket",
+            "browser_debug_seed_profile_path",
+            "",
+        )
+        or ""
+    ).strip()
     return FirefoxDebugLaunchSpec(
         debug_url=resolved_debug_url,
         browser_path=browser_path,
         profile_path=profile_path,
+        seed_profile_path=Path(seed_profile_raw).expanduser()
+        if seed_profile_raw
+        else None,
         start_url=start_url or GENGO_REALTIME_URL,
         port=_firefox_debug_port(resolved_debug_url),
     )
@@ -240,11 +254,14 @@ def _upsert_firefox_pref_file(path: Path, prefs_text: str) -> None:
 
 
 def ensure_managed_firefox_profile(spec: FirefoxDebugLaunchSpec) -> Path:
-    spec.profile_path.mkdir(parents=True, exist_ok=True)
+    profile_path = BrowserProfileManager(
+        spec.profile_path,
+        seed_profile=spec.seed_profile_path,
+    ).ensure_ready()
     prefs_text = _managed_firefox_profile_prefs(spec.port)
-    _upsert_firefox_pref_file(spec.profile_path / "user.js", prefs_text)
-    _upsert_firefox_pref_file(spec.profile_path / "prefs.js", prefs_text)
-    return spec.profile_path
+    _upsert_firefox_pref_file(profile_path / "user.js", prefs_text)
+    _upsert_firefox_pref_file(profile_path / "prefs.js", prefs_text)
+    return profile_path
 
 
 def build_firefox_debug_command(spec: FirefoxDebugLaunchSpec) -> list[str]:

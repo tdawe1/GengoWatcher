@@ -54,6 +54,7 @@ class AppConfig:
             "browser_debug_url": "",
             "browser_debug_auto_launch": False,
             "browser_debug_profile_path": "profiles/firefox-debug",
+            "browser_debug_seed_profile_path": "",
             "browser_debug_start_url": "https://gengo.com/t/jobs/status/available/realtime",
             "browser_debug_launch_timeout_sec": 15.0,
             "browser_debug_retry_interval_sec": 1.0,
