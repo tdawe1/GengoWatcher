@@ -87,10 +87,14 @@ def test_ensure_managed_firefox_profile_writes_required_prefs(tmp_path):
 
     profile_path = ensure_managed_firefox_profile(spec)
     user_js = (profile_path / "user.js").read_text(encoding="utf-8")
+    prefs_js = (profile_path / "prefs.js").read_text(encoding="utf-8")
 
     assert 'user_pref("devtools.chrome.enabled", true);' in user_js
     assert 'user_pref("devtools.debugger.remote-enabled", true);' in user_js
     assert 'user_pref("devtools.debugger.remote-port", 6123);' in user_js
+    assert 'user_pref("devtools.chrome.enabled", true);' in prefs_js
+    assert 'user_pref("devtools.debugger.remote-enabled", true);' in prefs_js
+    assert 'user_pref("devtools.debugger.remote-port", 6123);' in prefs_js
 
 
 def test_maybe_launch_managed_firefox_debug_starts_when_endpoint_is_down():
@@ -115,6 +119,10 @@ def test_maybe_launch_managed_firefox_debug_starts_when_endpoint_is_down():
             return_value=False,
         ),
         patch(
+            "gengowatcher.browser_debug_launcher.wait_for_firefox_debug_server",
+            return_value=True,
+        ),
+        patch(
             "gengowatcher.browser_debug_launcher.launch_managed_firefox_debug"
         ) as mock_launch,
     ):
@@ -125,6 +133,48 @@ def test_maybe_launch_managed_firefox_debug_starts_when_endpoint_is_down():
 
     assert launched is True
     mock_launch.assert_called_once()
+
+
+def test_maybe_launch_managed_firefox_debug_returns_false_if_server_stays_down():
+    config = MagicMock()
+    config.getboolean.side_effect = lambda section, option, fallback=None: (
+        True
+        if (section, option) == ("WebSocket", "browser_debug_auto_launch")
+        else fallback
+    )
+    config.get.side_effect = lambda section, option, fallback=None: {
+        ("Paths", "browser_debug_browser_path"): "firefox",
+        ("WebSocket", "browser_debug_profile_path"): "profiles/firefox-debug",
+        (
+            "WebSocket",
+            "browser_debug_start_url",
+        ): "https://gengo.com/t/jobs/status/available/realtime",
+    }.get((section, option), fallback)
+    config.getfloat.side_effect = lambda _section, _option, fallback=None: fallback
+    logger = MagicMock()
+
+    with (
+        patch(
+            "gengowatcher.browser_debug_launcher.can_connect_to_firefox_debug_server",
+            return_value=False,
+        ),
+        patch(
+            "gengowatcher.browser_debug_launcher.wait_for_firefox_debug_server",
+            return_value=False,
+        ),
+        patch(
+            "gengowatcher.browser_debug_launcher.launch_managed_firefox_debug"
+        ) as mock_launch,
+    ):
+        launched = maybe_launch_managed_firefox_debug(
+            config,
+            "ws://127.0.0.1:6000",
+            logger=logger,
+        )
+
+    assert launched is False
+    mock_launch.assert_called_once()
+    logger.warning.assert_called()
 
 
 def test_get_firefox_debug_retry_window_applies_reasonable_minimums():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -156,13 +157,57 @@ def _managed_firefox_profile_prefs(port: int) -> str:
     return "\n".join(lines)
 
 
+def _upsert_firefox_pref_file(path: Path, prefs_text: str) -> None:
+    managed_lines = [
+        line
+        for line in prefs_text.splitlines()
+        if line.startswith('user_pref("')
+    ]
+    managed_keys = []
+    managed_map: dict[str, str] = {}
+    for line in managed_lines:
+        match = re.match(r'user_pref\("([^"]+)",\s*(.+)\);$', line)
+        if not match:
+            continue
+        key = match.group(1)
+        managed_keys.append(key)
+        managed_map[key] = line
+
+    existing_lines: list[str] = []
+    if path.exists():
+        existing_lines = path.read_text(encoding="utf-8").splitlines()
+
+    updated_lines: list[str] = []
+    seen_keys: set[str] = set()
+    for line in existing_lines:
+        match = re.match(r'user_pref\("([^"]+)",\s*(.+)\);$', line)
+        key = match.group(1) if match else None
+        if key and key in managed_map:
+            updated_lines.append(managed_map[key])
+            seen_keys.add(key)
+        else:
+            updated_lines.append(line)
+
+    missing_lines = [
+        managed_map[key] for key in managed_keys if key not in seen_keys
+    ]
+    if missing_lines:
+        if updated_lines and updated_lines[-1] != "":
+            updated_lines.append("")
+        updated_lines.extend(missing_lines)
+
+    if not updated_lines:
+        updated_lines = prefs_text.splitlines()
+
+    rendered = "\n".join(updated_lines).rstrip() + "\n"
+    path.write_text(rendered, encoding="utf-8")
+
+
 def ensure_managed_firefox_profile(spec: FirefoxDebugLaunchSpec) -> Path:
     spec.profile_path.mkdir(parents=True, exist_ok=True)
-    user_js_path = spec.profile_path / "user.js"
-    user_js_path.write_text(
-        _managed_firefox_profile_prefs(spec.port),
-        encoding="utf-8",
-    )
+    prefs_text = _managed_firefox_profile_prefs(spec.port)
+    _upsert_firefox_pref_file(spec.profile_path / "user.js", prefs_text)
+    _upsert_firefox_pref_file(spec.profile_path / "prefs.js", prefs_text)
     return spec.profile_path
 
 
@@ -254,6 +299,22 @@ def maybe_launch_managed_firefox_debug(
                 exc,
             )
         return False
+
+    timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(config)
+    if not wait_for_firefox_debug_server(
+        spec.debug_url,
+        timeout_sec=timeout_sec,
+        retry_interval_sec=retry_interval_sec,
+    ):
+        if logger is not None:
+            logger.warning(
+                "Managed Firefox launch did not expose a debug server at %s"
+                " within %.1fs",
+                spec.debug_url,
+                timeout_sec,
+            )
+        return False
+
     if logger is not None:
         logger.info(
             "Started managed Firefox debug session at %s using profile %s",
