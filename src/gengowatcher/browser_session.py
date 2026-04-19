@@ -551,7 +551,7 @@ async def _open_firefox_rdp_client(debug_url: str | None) -> _FirefoxRdpClient:
         _normalize_debug_url(debug_url), max_size=5_000_000
     )
     try:
-        raw_message = await websocket.recv()
+        raw_message = await asyncio.wait_for(websocket.recv(), timeout=5)
         hello_packet = json.loads(raw_message)
     except Exception:
         await websocket.close()
