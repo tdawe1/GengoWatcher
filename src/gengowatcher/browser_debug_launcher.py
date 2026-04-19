@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -157,6 +158,41 @@ def _managed_firefox_profile_prefs(port: int) -> str:
     return "\n".join(lines)
 
 
+def _resolve_browser_binary_path(browser_path: str) -> Path | None:
+    resolved = shutil.which(browser_path) or browser_path
+    path = Path(resolved).expanduser()
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _detect_locked_remote_debug_pref(browser_path: str) -> Path | None:
+    binary_path = _resolve_browser_binary_path(browser_path)
+    if binary_path is None:
+        return None
+
+    candidate_dirs = [
+        binary_path.parent / "browser" / "defaults" / "preferences",
+        binary_path.parent.parent / "browser" / "defaults" / "preferences",
+    ]
+    pattern = re.compile(
+        r'pref\("devtools\.debugger\.remote-enabled",\s*false,\s*locked\);'
+    )
+
+    for candidate_dir in candidate_dirs:
+        if not candidate_dir.is_dir():
+            continue
+        for pref_file in sorted(candidate_dir.glob("*.js")):
+            try:
+                content = pref_file.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if pattern.search(content):
+                return pref_file
+    return None
+
+
 def _upsert_firefox_pref_file(path: Path, prefs_text: str) -> None:
     managed_lines = [
         line
@@ -224,6 +260,14 @@ def build_firefox_debug_command(spec: FirefoxDebugLaunchSpec) -> list[str]:
 
 
 def launch_managed_firefox_debug(spec: FirefoxDebugLaunchSpec) -> subprocess.Popen:
+    locked_pref_file = _detect_locked_remote_debug_pref(spec.browser_path)
+    if locked_pref_file is not None:
+        raise RuntimeError(
+            "This Firefox build disables DevTools remote debugging via a locked "
+            f"preference in {locked_pref_file}. Use a Firefox build without that "
+            "lock and point Paths.browser_debug_browser_path at it."
+        )
+
     ensure_managed_firefox_profile(spec)
     try:
         return subprocess.Popen(

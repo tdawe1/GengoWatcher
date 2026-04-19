@@ -3,10 +3,13 @@ from unittest.mock import MagicMock, patch
 
 from gengowatcher.browser_debug_launcher import (
     DEFAULT_FIREFOX_DEBUG_URL,
+    FirefoxDebugLaunchSpec,
+    _detect_locked_remote_debug_pref,
     build_firefox_debug_command,
     ensure_managed_firefox_profile,
     get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
+    launch_managed_firefox_debug,
     maybe_launch_managed_firefox_debug,
     wait_for_firefox_debug_server,
 )
@@ -207,3 +210,47 @@ def test_wait_for_firefox_debug_server_retries_until_online():
     assert ready is True
     assert mock_connect.call_count == 3
     assert mock_sleep.call_count == 2
+
+
+def test_detect_locked_remote_debug_pref_finds_distribution_lock(tmp_path):
+    browser_root = tmp_path / "firefox"
+    prefs_dir = browser_root / "browser" / "defaults" / "preferences"
+    prefs_dir.mkdir(parents=True)
+    browser_bin = browser_root / "firefox"
+    browser_bin.write_text("", encoding="utf-8")
+    (prefs_dir / "vendor.js").write_text(
+        'pref("devtools.debugger.remote-enabled", false, locked);\n',
+        encoding="utf-8",
+    )
+
+    locked_file = _detect_locked_remote_debug_pref(str(browser_bin))
+
+    assert locked_file == prefs_dir / "vendor.js"
+
+
+def test_launch_managed_firefox_debug_rejects_locked_firefox_build(tmp_path):
+    browser_root = tmp_path / "firefox"
+    prefs_dir = browser_root / "browser" / "defaults" / "preferences"
+    prefs_dir.mkdir(parents=True)
+    browser_bin = browser_root / "firefox"
+    browser_bin.write_text("", encoding="utf-8")
+    (prefs_dir / "vendor.js").write_text(
+        'pref("devtools.debugger.remote-enabled", false, locked);\n',
+        encoding="utf-8",
+    )
+    spec = FirefoxDebugLaunchSpec(
+        debug_url="ws://127.0.0.1:6000",
+        browser_path=str(browser_bin),
+        profile_path=tmp_path / "profile",
+        start_url="https://gengo.com/t/jobs/status/available/realtime",
+        port=6000,
+    )
+
+    with patch("gengowatcher.browser_debug_launcher.subprocess.Popen") as mock_popen:
+        try:
+            launch_managed_firefox_debug(spec)
+            assert False, "Expected locked Firefox build to be rejected"
+        except RuntimeError as exc:
+            assert "disables DevTools remote debugging" in str(exc)
+
+    mock_popen.assert_not_called()
