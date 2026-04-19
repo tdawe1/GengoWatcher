@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -210,6 +211,25 @@ def can_connect_to_firefox_debug_server(debug_url: str) -> bool:
     if not _looks_like_local_firefox_rdp_url(debug_url):
         return False
     return bool(asyncio.run(_probe_firefox_debug_server(debug_url)))
+
+
+def wait_for_firefox_debug_server(
+    debug_url: str,
+    *,
+    timeout_sec: float,
+    retry_interval_sec: float,
+) -> bool:
+    if not _looks_like_local_firefox_rdp_url(debug_url):
+        return False
+
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    retry_interval = max(0.1, retry_interval_sec)
+    while True:
+        if can_connect_to_firefox_debug_server(debug_url):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(retry_interval)
 
 
 def maybe_launch_managed_firefox_debug(

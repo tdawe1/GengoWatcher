@@ -8,6 +8,7 @@ from gengowatcher.browser_debug_launcher import (
     get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
+    wait_for_firefox_debug_server,
 )
 
 
@@ -137,3 +138,22 @@ def test_get_firefox_debug_retry_window_applies_reasonable_minimums():
 
     assert timeout_sec == 1.0
     assert retry_interval_sec == 0.1
+
+
+def test_wait_for_firefox_debug_server_retries_until_online():
+    with (
+        patch(
+            "gengowatcher.browser_debug_launcher.can_connect_to_firefox_debug_server",
+            side_effect=[False, False, True],
+        ) as mock_connect,
+        patch("gengowatcher.browser_debug_launcher.time.sleep") as mock_sleep,
+    ):
+        ready = wait_for_firefox_debug_server(
+            "ws://127.0.0.1:6000",
+            timeout_sec=3.0,
+            retry_interval_sec=0.5,
+        )
+
+    assert ready is True
+    assert mock_connect.call_count == 3
+    assert mock_sleep.call_count == 2

@@ -15,6 +15,7 @@ from .browser_debug_launcher import (
     get_firefox_debug_retry_window,
     launch_managed_firefox_debug,
     maybe_launch_managed_firefox_debug,
+    wait_for_firefox_debug_server,
 )
 from .browser_session import BrowserSessionSnapshot
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
@@ -203,6 +204,16 @@ def _start_firefox_debug_session(
         config.save_config()
 
     launch_managed_firefox_debug(spec)
+    timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(config)
+    if not wait_for_firefox_debug_server(
+        spec.debug_url,
+        timeout_sec=timeout_sec,
+        retry_interval_sec=retry_interval_sec,
+    ):
+        raise RuntimeError(
+            "Managed Firefox debug session did not come online at "
+            f"{spec.debug_url} within {timeout_sec:.1f}s"
+        )
     print(
         "Started managed Firefox debug session at "
         f"{spec.debug_url} using profile {spec.profile_path}"
