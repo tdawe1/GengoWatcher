@@ -64,6 +64,7 @@ stats.json
 token.json
 credentials.json
 .env
+profiles/
 
 # Environment variables (secrets)
 .env

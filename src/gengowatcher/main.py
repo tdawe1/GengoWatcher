@@ -40,14 +40,7 @@ def main() -> None:
     # Handle config commands BEFORE initializing the heavy GengoWatcher instance.
     # This allows CLI config operations to work even if another watcher is running.
 
-    if (
-        args.set
-        or args.get
-        or args.list
-        or args.configure
-        or args.sync_session_from_browser
-        or args.check_session_from_browser
-    ):
+    if should_handle_lightweight_command(args):
         try:
             config = AppConfig()
             if handle_cli_config_commands(args, config, console):
