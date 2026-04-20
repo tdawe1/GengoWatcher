@@ -272,21 +272,51 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_rdp():
             "from": "root",
             "tabs": [
                 {
-                    "actor": "tab-1",
+                    "actor": "tab-descriptor-1",
                     "url": "https://gengo.com/t/jobs/status/available/realtime",
                     "title": "Realtime Jobs",
-                    "consoleActor": "tab-console-1",
                 }
             ],
-            "consoleActor": "root-console",
             "selected": 0,
         },
         {
-            "from": "root-console",
-            "result": {
-                "type": "string",
-                "value": json.dumps({"sessionToken": "fresh-token"}),
+            "from": "tab-descriptor-1",
+            "frame": {
+                "actor": "tab-target-1",
+                "consoleActor": "tab-console-1",
+                "innerWindowId": 101,
+                "url": "https://gengo.com/t/jobs/status/available/realtime",
+                "title": "Realtime Jobs",
             },
+        },
+        {
+            "from": "root",
+            "processDescriptor": {
+                "actor": "process-descriptor-1",
+                "id": 0,
+                "isParent": True,
+            },
+        },
+        {
+            "from": "process-descriptor-1",
+            "process": {
+                "actor": "parent-process-target-1",
+                "consoleActor": "browser-console-1",
+            },
+        },
+        {
+            "from": "browser-console-1",
+            "resultID": "cookie-eval-1",
+        },
+        {
+            "from": "browser-console-1",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "cookie-eval-1",
+            "result": json.dumps({"sessionToken": "fresh-token"}),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
         },
     ]
     mock_ws = _MockCDPWebSocket(responses)
@@ -305,7 +335,10 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_rdp():
     assert mock_ws.closed is True
     assert [message["type"] for message in mock_ws._sent] == [
         "listTabs",
-        "evaluateJS",
+        "getTarget",
+        "getProcess",
+        "getTarget",
+        "evaluateJSAsync",
     ]
 
 
@@ -329,29 +362,65 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
             "from": "root",
             "tabs": [
                 {
-                    "actor": "tab-1",
+                    "actor": "tab-descriptor-1",
                     "url": "https://gengo.com/t/jobs/status/available/realtime",
                     "title": "Realtime Jobs",
-                    "consoleActor": "tab-console-1",
                 }
             ],
-            "consoleActor": "root-console",
             "selected": 0,
         },
         {
-            "from": "tab-console-1",
-            "result": {
-                "type": "longString",
-                "initial": page_state,
-                "length": len(page_state),
+            "from": "tab-descriptor-1",
+            "frame": {
+                "actor": "tab-target-1",
+                "consoleActor": "tab-console-1",
+                "innerWindowId": 101,
+                "url": "https://gengo.com/t/jobs/status/available/realtime",
+                "title": "Realtime Jobs",
             },
         },
         {
-            "from": "root-console",
-            "result": {
-                "type": "string",
-                "value": json.dumps({"sessionToken": "fresh-token"}),
+            "from": "tab-console-1",
+            "resultID": "page-state-1",
+        },
+        {
+            "from": "tab-console-1",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "page-state-1",
+            "result": page_state,
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
+        },
+        {
+            "from": "root",
+            "processDescriptor": {
+                "actor": "process-descriptor-1",
+                "id": 0,
+                "isParent": True,
             },
+        },
+        {
+            "from": "process-descriptor-1",
+            "process": {
+                "actor": "parent-process-target-1",
+                "consoleActor": "browser-console-1",
+            },
+        },
+        {
+            "from": "browser-console-1",
+            "resultID": "cookie-eval-1",
+        },
+        {
+            "from": "browser-console-1",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "cookie-eval-1",
+            "result": json.dumps({"sessionToken": "fresh-token"}),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
         },
     ]
     mock_ws = _MockCDPWebSocket(responses)
@@ -370,9 +439,13 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
     assert mock_ws.closed is True
     assert [message["type"] for message in mock_ws._sent] == [
         "listTabs",
-        "evaluateJS",
-        "evaluateJS",
+        "getTarget",
+        "evaluateJSAsync",
+        "getProcess",
+        "getTarget",
+        "evaluateJSAsync",
     ]
+    assert mock_ws._sent[2]["innerWindowID"] == 101
 
 
 @pytest.mark.asyncio
@@ -383,109 +456,167 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_
             "from": "root",
             "tabs": [
                 {
-                    "actor": "tab-1",
+                    "actor": "tab-descriptor-1",
                     "url": "https://gengo.com/t/jobs/status/available/realtime",
                     "title": "Realtime Jobs",
-                    "consoleActor": "tab-console-1",
                 }
             ],
-            "consoleActor": "root-console",
             "selected": 0,
         },
         {
-            "from": "tab-console-1",
-            "result": {
-                "type": "string",
-                "value": json.dumps(
-                    {
-                        "href": "https://gengo.com/t/jobs/status/available/realtime",
-                        "readyState": "complete",
-                        "activityMarker": "",
-                        "jobHref": "",
-                    }
-                ),
+            "from": "tab-descriptor-1",
+            "frame": {
+                "actor": "tab-target-1",
+                "consoleActor": "tab-console-1",
+                "innerWindowId": 101,
+                "url": "https://gengo.com/t/jobs/status/available/realtime",
+                "title": "Realtime Jobs",
             },
         },
         {
             "from": "tab-console-1",
-            "result": {
-                "type": "string",
-                "value": json.dumps(
-                    {
-                        "queued": True,
-                        "marker": "marker-1",
-                        "url": "https://gengo.com/t/dashboard",
-                    }
-                ),
-            },
+            "resultID": "state-1",
         },
-        {"from": "root", "type": "tabListChanged"},
+        {
+            "from": "tab-console-1",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "state-1",
+            "result": json.dumps(
+                {
+                    "href": "https://gengo.com/t/jobs/status/available/realtime",
+                    "readyState": "complete",
+                    "activityMarker": "",
+                    "jobHref": "",
+                }
+            ),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
+        },
+        {
+            "from": "tab-console-1",
+            "resultID": "nav-1",
+        },
+        {
+            "from": "tab-console-1",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "nav-1",
+            "result": json.dumps(
+                {
+                    "queued": True,
+                    "marker": "marker-1",
+                    "url": "https://gengo.com/t/dashboard",
+                }
+            ),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
+        },
         {
             "from": "root",
             "tabs": [
                 {
-                    "actor": "tab-1",
+                    "actor": "tab-descriptor-1",
                     "url": "https://gengo.com/t/dashboard",
                     "title": "Summary",
-                    "consoleActor": "tab-console-2",
                 }
             ],
-            "consoleActor": "root-console",
             "selected": 0,
         },
         {
-            "from": "tab-console-2",
-            "result": {
-                "type": "string",
-                "value": json.dumps(
-                    {
-                        "href": "https://gengo.com/t/dashboard",
-                        "readyState": "complete",
-                        "activityMarker": "marker-1",
-                        "jobHref": "",
-                    }
-                ),
+            "from": "tab-descriptor-1",
+            "frame": {
+                "actor": "tab-target-1",
+                "consoleActor": "tab-console-2",
+                "innerWindowId": 102,
+                "url": "https://gengo.com/t/dashboard",
+                "title": "Summary",
             },
         },
         {
             "from": "tab-console-2",
-            "result": {
-                "type": "string",
-                "value": json.dumps(
-                    {
-                        "queued": True,
-                        "marker": "marker-2",
-                        "url": "https://gengo.com/t/jobs/status/available/realtime",
-                    }
-                ),
-            },
+            "resultID": "state-2",
+        },
+        {
+            "from": "tab-console-2",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "state-2",
+            "result": json.dumps(
+                {
+                    "href": "https://gengo.com/t/dashboard",
+                    "readyState": "complete",
+                    "activityMarker": "marker-1",
+                    "jobHref": "",
+                }
+            ),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
+        },
+        {
+            "from": "tab-console-2",
+            "resultID": "nav-2",
+        },
+        {
+            "from": "tab-console-2",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "nav-2",
+            "result": json.dumps(
+                {
+                    "queued": True,
+                    "marker": "marker-2",
+                    "url": "https://gengo.com/t/jobs/status/available/realtime",
+                }
+            ),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
         },
         {
             "from": "root",
             "tabs": [
                 {
-                    "actor": "tab-1",
+                    "actor": "tab-descriptor-1",
                     "url": "https://gengo.com/t/jobs/status/available/realtime",
                     "title": "Realtime Jobs",
-                    "consoleActor": "tab-console-3",
                 }
             ],
-            "consoleActor": "root-console",
             "selected": 0,
+        },
+        {
+            "from": "tab-descriptor-1",
+            "frame": {
+                "actor": "tab-target-1",
+                "consoleActor": "tab-console-3",
+                "innerWindowId": 103,
+                "url": "https://gengo.com/t/jobs/status/available/realtime",
+                "title": "Realtime Jobs",
+            },
         },
         {
             "from": "tab-console-3",
-            "result": {
-                "type": "string",
-                "value": json.dumps(
-                    {
-                        "href": "https://gengo.com/t/jobs/status/available/realtime",
-                        "readyState": "complete",
-                        "activityMarker": "marker-2",
-                        "jobHref": "",
-                    }
-                ),
-            },
+            "resultID": "state-3",
+        },
+        {
+            "from": "tab-console-3",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "state-3",
+            "result": json.dumps(
+                {
+                    "href": "https://gengo.com/t/jobs/status/available/realtime",
+                    "readyState": "complete",
+                    "activityMarker": "marker-2",
+                    "jobHref": "",
+                }
+            ),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
         },
     ]
     mock_ws = _MockCDPWebSocket(responses)
@@ -510,18 +641,24 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_
     assert mock_ws.closed is True
     assert [message["type"] for message in mock_ws._sent] == [
         "listTabs",
-        "evaluateJS",
-        "evaluateJS",
+        "getTarget",
+        "evaluateJSAsync",
+        "evaluateJSAsync",
         "listTabs",
-        "evaluateJS",
-        "evaluateJS",
+        "getTarget",
+        "evaluateJSAsync",
+        "evaluateJSAsync",
         "listTabs",
-        "evaluateJS",
+        "getTarget",
+        "evaluateJSAsync",
     ]
-    assert "location.href = targetUrl" in mock_ws._sent[2]["text"]
-    assert "https://gengo.com/t/dashboard" in mock_ws._sent[2]["text"]
+    assert mock_ws._sent[2]["innerWindowID"] == 101
+    assert mock_ws._sent[6]["innerWindowID"] == 102
+    assert mock_ws._sent[10]["innerWindowID"] == 103
+    assert "location.href = targetUrl" in mock_ws._sent[3]["text"]
+    assert "https://gengo.com/t/dashboard" in mock_ws._sent[3]["text"]
     assert (
-        "https://gengo.com/t/jobs/status/available/realtime" in mock_ws._sent[5]["text"]
+        "https://gengo.com/t/jobs/status/available/realtime" in mock_ws._sent[7]["text"]
     )
 
 

@@ -50,6 +50,17 @@ class BrowserDebugEndpoint:
     url: str
 
 
+@dataclass(frozen=True)
+class BrowserDebugTarget:
+    backend: str
+    target_id: str
+    url: str
+    title: str = ""
+    target_type: str = ""
+    actor: str = ""
+    console_actor: str = ""
+
+
 class _FirefoxBiDiSession:
     def __init__(self, websocket):
         self.websocket = websocket
@@ -198,6 +209,55 @@ def _load_cdp_targets(debug_url: str) -> list[dict[str, Any]]:
         )
     with urllib.request.urlopen(f"{debug_url}/json/list", timeout=5) as response:
         return json.load(response)
+
+
+def _summarize_cdp_targets(targets: list[dict[str, Any]]) -> list[BrowserDebugTarget]:
+    summarized: list[BrowserDebugTarget] = []
+    for target in targets:
+        summarized.append(
+            BrowserDebugTarget(
+                backend="chromium-cdp",
+                target_id=str(target.get("id", "") or ""),
+                url=str(target.get("url", "") or ""),
+                title=str(target.get("title", "") or ""),
+                target_type=str(target.get("type", "") or ""),
+            )
+        )
+    return summarized
+
+
+def _summarize_firefox_contexts(
+    contexts: list[dict[str, Any]],
+) -> list[BrowserDebugTarget]:
+    summarized: list[BrowserDebugTarget] = []
+    for context in contexts:
+        summarized.append(
+            BrowserDebugTarget(
+                backend="firefox-bidi",
+                target_id=str(context.get("context", "") or ""),
+                url=str(context.get("url", "") or ""),
+                title=str(context.get("title", "") or ""),
+                target_type=str(context.get("userContext", "") or "context"),
+            )
+        )
+    return summarized
+
+
+def _summarize_firefox_tabs(tabs: list[dict[str, Any]]) -> list[BrowserDebugTarget]:
+    summarized: list[BrowserDebugTarget] = []
+    for tab in tabs:
+        summarized.append(
+            BrowserDebugTarget(
+                backend="firefox-rdp",
+                target_id=str(tab.get("outerWindowID", "") or ""),
+                url=str(tab.get("url", "") or ""),
+                title=str(tab.get("title", "") or ""),
+                target_type=str(tab.get("type", "") or "tab"),
+                actor=str(tab.get("actor", "") or ""),
+                console_actor=str(tab.get("consoleActor", "") or ""),
+            )
+        )
+    return summarized
 
 
 def select_gengo_target(
@@ -553,6 +613,13 @@ async def _open_firefox_rdp_client(debug_url: str | None) -> _FirefoxRdpClient:
     try:
         raw_message = await asyncio.wait_for(websocket.recv(), timeout=5)
         hello_packet = json.loads(raw_message)
+    except asyncio.TimeoutError as exc:
+        await websocket.close()
+        raise BrowserSessionError(
+            "Firefox DevTools socket opened but did not send an RDP hello packet. "
+            "Check devtools.debugger.prompt-connection=false and "
+            "devtools.debugger.remote-websocket=true, then restart Firefox."
+        ) from exc
     except Exception:
         await websocket.close()
         raise
@@ -578,8 +645,6 @@ def select_gengo_tab(
         hostname = parsed.hostname or ""
         if not (hostname == "gengo.com" or hostname.endswith(".gengo.com")):
             continue
-        if not tab.get("consoleActor"):
-            continue
         candidates.append(tab)
 
     for fragment in preferred_url_fragments:
@@ -600,11 +665,63 @@ def _firefox_tab_console_actor(tab: dict[str, Any]) -> str:
     return console_actor
 
 
-def _firefox_root_console_actor(tabs_response: dict[str, Any]) -> str:
-    console_actor = str(tabs_response.get("consoleActor") or "").strip()
+async def _firefox_rdp_resolve_tab(
+    client: _FirefoxRdpClient,
+    tab: dict[str, Any],
+) -> dict[str, Any]:
+    console_actor = str(tab.get("consoleActor") or "").strip()
+    if console_actor:
+        return tab
+
+    descriptor_actor = str(tab.get("actor") or "").strip()
+    if not descriptor_actor:
+        return tab
+
+    target_response = await client.request(descriptor_actor, "getTarget")
+    frame = target_response.get("frame")
+    if not isinstance(frame, dict):
+        return tab
+
+    resolved_tab = dict(tab)
+    resolved_tab["targetActor"] = str(frame.get("actor") or "").strip()
+    resolved_tab["consoleActor"] = str(frame.get("consoleActor") or "").strip()
+    resolved_tab["innerWindowId"] = frame.get("innerWindowId")
+    resolved_tab["browsingContextID"] = frame.get(
+        "browsingContextID",
+        resolved_tab.get("browsingContextID"),
+    )
+    if frame.get("title"):
+        resolved_tab["title"] = frame["title"]
+    if frame.get("url"):
+        resolved_tab["url"] = frame["url"]
+    return resolved_tab
+
+
+async def _firefox_rdp_get_browser_console_actor(client: _FirefoxRdpClient) -> str:
+    process_response = await client.request("root", "getProcess", id=0)
+    process_descriptor = process_response.get("processDescriptor")
+    if not isinstance(process_descriptor, dict):
+        raise BrowserSessionError(
+            "Firefox DevTools did not return the parent process descriptor"
+        )
+
+    descriptor_actor = str(process_descriptor.get("actor") or "").strip()
+    if not descriptor_actor:
+        raise BrowserSessionError(
+            "Firefox DevTools parent process descriptor did not include an actor"
+        )
+
+    target_response = await client.request(descriptor_actor, "getTarget")
+    process_target = target_response.get("process")
+    if not isinstance(process_target, dict):
+        raise BrowserSessionError(
+            "Firefox DevTools did not return the parent process target"
+        )
+
+    console_actor = str(process_target.get("consoleActor") or "").strip()
     if not console_actor:
         raise BrowserSessionError(
-            "Firefox DevTools did not expose the global console actor"
+            "Firefox DevTools did not expose the browser console actor"
         )
     return console_actor
 
@@ -627,37 +744,103 @@ async def _firefox_rdp_get_gengo_tab(
             raw_url = str(tab.get("url", ""))
             hostname = urlparse(raw_url).hostname or ""
             if hostname == "gengo.com" or hostname.endswith(".gengo.com"):
-                return tab, tabs_response
+                return await _firefox_rdp_resolve_tab(client, tab), tabs_response
 
-    return (
-        select_gengo_tab(
-            tabs,
-            preferred_url_fragments=preferred_url_fragments,
-        ),
-        tabs_response,
+    tab = select_gengo_tab(
+        tabs,
+        preferred_url_fragments=preferred_url_fragments,
     )
+    return await _firefox_rdp_resolve_tab(client, tab), tabs_response
+
+
+async def _firefox_rdp_wait_for_evaluation_result(
+    client: _FirefoxRdpClient,
+    actor: str,
+) -> dict[str, Any]:
+    while True:
+        try:
+            raw_message = await asyncio.wait_for(
+                client.websocket.recv(),
+                timeout=DEFAULT_CDP_RECEIVE_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError as exc:
+            raise BrowserSessionError(
+                "Firefox DevTools evaluation timed out waiting for result"
+            ) from exc
+
+        try:
+            response = json.loads(raw_message)
+        except json.JSONDecodeError as exc:
+            raise BrowserSessionError(
+                f"Failed to parse Firefox DevTools evaluation result as JSON: {exc}"
+            ) from exc
+
+        if response.get("from") != actor:
+            continue
+        if response.get("type") in _FirefoxRdpClient._NOTIFICATION_TYPES:
+            continue
+        if response.get("type") != "evaluationResult":
+            continue
+        if response.get("error"):
+            detail = response.get("message") or response.get("error")
+            raise BrowserSessionError(
+                str(detail or "unknown Firefox DevTools evaluation error")
+            )
+        return response
+
+
+def _extract_rdp_async_evaluation_value(packet: dict[str, Any]) -> Any:
+    if packet.get("hasException"):
+        raise BrowserSessionError(
+            str(packet.get("exceptionMessage") or packet.get("exception") or "")
+        )
+
+    result = packet.get("result")
+    if isinstance(result, dict):
+        result_type = str(result.get("type") or "")
+        if result_type == "longString":
+            initial = str(result.get("initial") or "")
+            total_length = int(result.get("length") or len(initial))
+            if len(initial) < total_length:
+                raise BrowserSessionError(
+                    "Firefox DevTools returned a truncated long string result"
+                )
+            return initial
+        if result_type in {"string", "number", "boolean", "bigint"}:
+            return result.get("value")
+        if result_type in {"null", "undefined"}:
+            return None
+    return result
 
 
 async def _firefox_rdp_evaluate_json(
     client: _FirefoxRdpClient,
     actor: str,
     expression: str,
+    *,
+    inner_window_id: int | None = None,
 ) -> dict[str, Any]:
-    packet = await client.request(
+    await client.request(
         actor,
-        "evaluateJS",
+        "evaluateJSAsync",
         text=expression,
-        bindObjectActor=None,
         frameActor=None,
         url=None,
         selectedNodeActor=None,
+        selectedObjectActor=None,
+        innerWindowID=inner_window_id,
+        mapped=None,
+        eager=False,
+        disableBreaks=True,
+        preferConsoleCommandsOverLocalSymbols=False,
+        evalInTracer=False,
     )
-    return _parse_json_object(_extract_rdp_evaluation_value(packet))
+    packet = await _firefox_rdp_wait_for_evaluation_result(client, actor)
+    return _parse_json_object(_extract_rdp_async_evaluation_value(packet))
 
 
 def _firefox_cookie_lookup_expression() -> str:
     return """(() => {
-const { Services } = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs");
 const names = ["myG_myGSession_", "my_gengo_session", "myG_rdsessID"];
 for (const expectedName of names) {
   for (const cookie of Services.cookies.cookies) {
@@ -736,7 +919,7 @@ async def _fetch_browser_session_snapshot_firefox_rdp(
 ) -> BrowserSessionSnapshot:
     client = await _open_firefox_rdp_client(debug_url)
     try:
-        tab, tabs_response = await _firefox_rdp_get_gengo_tab(
+        tab, _tabs_response = await _firefox_rdp_get_gengo_tab(
             client,
             preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
         )
@@ -744,10 +927,11 @@ async def _fetch_browser_session_snapshot_firefox_rdp(
             client,
             _firefox_tab_console_actor(tab),
             _firefox_page_state_expression(),
+            inner_window_id=tab.get("innerWindowId"),
         )
         cookie_state = await _firefox_rdp_evaluate_json(
             client,
-            _firefox_root_console_actor(tabs_response),
+            await _firefox_rdp_get_browser_console_actor(client),
             _firefox_cookie_lookup_expression(),
         )
     finally:
@@ -774,10 +958,10 @@ async def _fetch_browser_session_token_firefox_rdp(
 ) -> str:
     client = await _open_firefox_rdp_client(debug_url)
     try:
-        _tab, tabs_response = await _firefox_rdp_get_gengo_tab(client)
+        _tab, _tabs_response = await _firefox_rdp_get_gengo_tab(client)
         cookie_state = await _firefox_rdp_evaluate_json(
             client,
-            _firefox_root_console_actor(tabs_response),
+            await _firefox_rdp_get_browser_console_actor(client),
             _firefox_cookie_lookup_expression(),
         )
     finally:
@@ -1009,6 +1193,7 @@ async def _firefox_rdp_read_activity_state(
         client,
         _firefox_tab_console_actor(tab),
         _firefox_activity_state_expression(),
+        inner_window_id=tab.get("innerWindowId"),
     )
     return tab, state
 
@@ -1133,6 +1318,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
             client,
             _firefox_tab_console_actor(tab),
             _firefox_activity_state_expression(),
+            inner_window_id=tab.get("innerWindowId"),
         )
 
         current_href = str(state.get("href", "") or tab.get("url", "") or "").strip()
@@ -1149,6 +1335,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
                 client,
                 _firefox_tab_console_actor(tab),
                 _firefox_queue_reload_expression(activity_marker),
+                inner_window_id=tab.get("innerWindowId"),
             )
             wait_fragment = urlparse(current_href).path or "gengo.com"
             await _wait_for_firefox_rdp_page_state(
@@ -1165,6 +1352,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
                 client,
                 _firefox_tab_console_actor(tab),
                 _firefox_queue_navigation_expression(job_href, outbound_marker),
+                inner_window_id=tab.get("innerWindowId"),
             )
             tab, _state = await _wait_for_firefox_rdp_page_state(
                 client,
@@ -1182,6 +1370,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
                     GENGO_REALTIME_URL,
                     return_marker,
                 ),
+                inner_window_id=tab.get("innerWindowId"),
             )
             await _wait_for_firefox_rdp_page_state(
                 client,
@@ -1199,6 +1388,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
                 GENGO_SUMMARY_URL,
                 outbound_marker,
             ),
+            inner_window_id=tab.get("innerWindowId"),
         )
         tab, _state = await _wait_for_firefox_rdp_page_state(
             client,
@@ -1216,6 +1406,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
                 GENGO_REALTIME_URL,
                 return_marker,
             ),
+            inner_window_id=tab.get("innerWindowId"),
         )
         await _wait_for_firefox_rdp_page_state(
             client,
