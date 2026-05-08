@@ -1,5 +1,5 @@
 PYTHON := $(shell if [ -x .venv/bin/python ]; then printf '%s' .venv/bin/python; else printf '%s' python3; fi)
-FIREFOX_DEBUG_URL ?= ws://127.0.0.1:6000
+FIREFOX_DEBUG_URL ?= ws://127.0.0.1:9222
 FIREFOX_DEBUG_BROWSER ?= firefox
 FIREFOX_DEBUG_PROFILE ?= profiles/firefox-debug
 FIREFOX_DEBUG_SEED_PROFILE ?=

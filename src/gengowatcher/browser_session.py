@@ -141,7 +141,16 @@ class _FirefoxRdpClient:
 
 
 def _normalize_debug_url(debug_url: str | None) -> str:
-    return (debug_url or DEFAULT_BROWSER_DEBUG_URL).rstrip("/")
+    raw_url = str(debug_url or "").strip()
+    if not raw_url:
+        return DEFAULT_BROWSER_DEBUG_URL
+    if "://" not in raw_url:
+        if raw_url.startswith(":"):
+            raw_url = f"127.0.0.1{raw_url}"
+        if "/" not in raw_url and ":" not in raw_url:
+            raw_url = f"{raw_url}:9222"
+        raw_url = f"http://{raw_url}"
+    return raw_url.rstrip("/")
 
 
 def _looks_like_firefox_bidi_url(debug_url: str) -> bool:

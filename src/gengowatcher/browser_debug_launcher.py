@@ -16,7 +16,7 @@ import websockets
 from .browser_session import GENGO_REALTIME_URL
 from .browser_worker.profile import BrowserProfileManager
 
-DEFAULT_FIREFOX_DEBUG_URL = "ws://127.0.0.1:6000"
+DEFAULT_FIREFOX_DEBUG_URL = "ws://127.0.0.1:9222"
 DEFAULT_FIREFOX_DEBUG_BROWSER_PATH = "firefox"
 DEFAULT_FIREFOX_DEBUG_PROFILE_PATH = "profiles/firefox-debug"
 DEFAULT_FIREFOX_DEBUG_LAUNCH_TIMEOUT_SEC = 15.0

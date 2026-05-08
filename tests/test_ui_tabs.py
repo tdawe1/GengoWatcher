@@ -482,6 +482,18 @@ async def test_app_bindings_defined():
 
 
 @pytest.mark.asyncio
+async def test_plain_q_exits_when_command_prompt_is_empty():
+    """Bare q should quit instead of being typed into the bottom prompt."""
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        await pilot.press("q")
+        await pilot.pause(0.1)
+
+        assert pilot.app.is_running is False
+
+
+@pytest.mark.asyncio
 async def test_tab_switching_performance():
     """Test rapid tab switching doesn't cause issues."""
     app = create_mock_app()

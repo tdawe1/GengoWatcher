@@ -9,6 +9,7 @@ from gengowatcher.browser_session import (
     BrowserSessionError,
     _choose_browser_activity_action,
     _cdp_call,
+    _normalize_debug_url,
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     describe_browser_activity_action,
@@ -262,6 +263,12 @@ async def test_fetch_browser_session_snapshot_keeps_cookie_when_runtime_eval_fai
 async def test_fetch_browser_session_snapshot_rejects_non_http_debug_url():
     with pytest.raises(ValueError, match="unsupported browser debug URL scheme"):
         await fetch_browser_session_snapshot("ftp://127.0.0.1:9222")
+
+
+def test_normalize_debug_url_accepts_host_only_values():
+    assert _normalize_debug_url("127.0.0.1") == "http://127.0.0.1:9222"
+    assert _normalize_debug_url("127.0.0.1:6000") == "http://127.0.0.1:6000"
+    assert _normalize_debug_url(":9222") == "http://127.0.0.1:9222"
 
 
 @pytest.mark.asyncio
