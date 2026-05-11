@@ -5,11 +5,9 @@ for web UI integration while maintaining compatibility with existing TUI.
 
 import asyncio
 import csv
-from datetime import datetime
 import json
 import logging
 import os
-import re
 import secrets
 import threading
 import time
@@ -41,6 +39,11 @@ from .config import AppConfig
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
+from .web_file_storage import (
+    StoredFileEntry,
+    StoredFileUploadResponse,
+    WebFileStorage,
+)
 
 # Authentication
 security = HTTPBearer(auto_error=False)
@@ -180,24 +183,6 @@ class PaginationParams(BaseModel):
         return v
 
 
-class StoredFileEntry(BaseModel):
-    stored_name: str
-    original_name: str
-    size_bytes: int
-    content_type: Optional[str] = None
-    modified_at: float
-    download_url: str
-    job_id: Optional[str] = None
-    tier: Optional[str] = None
-    word_count: Optional[int] = None
-    value: Optional[float] = None
-
-
-class StoredFileUploadResponse(BaseModel):
-    status: str
-    file: StoredFileEntry
-
-
 class WebAPI:
     """Web API wrapper for GengoWatcher that maintains thread safety."""
 
@@ -215,6 +200,7 @@ class WebAPI:
         self.config = config
         self.state = state
         self.logger = logger
+        self.file_storage = WebFileStorage(config, logger)
 
         # Create a separate watcher instance for web API
         # This allows web UI to run alongside TUI without conflicts
@@ -277,66 +263,21 @@ class WebAPI:
         return await self.watcher.cancel_current_job_async()
 
     def _get_file_storage_dir(self) -> Path:
-        raw_path = (
-            self.config.get("Paths", "file_storage_dir", fallback="data/files")
-            or "data/files"
-        )
-        storage_dir = Path(str(raw_path))
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        return storage_dir
+        return self.file_storage.get_storage_dir()
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:
-        base_name = Path(str(filename or "upload.bin")).name.strip()
-        safe_name = re.sub(r"[\x00-\x1f\x7f]+", "", base_name)
-        safe_name = safe_name.replace("/", "_").replace("\\", "_")
-        safe_name = safe_name.replace(":", "-")
-        safe_name = re.sub(r"\s+", " ", safe_name).strip(" .")
-        return safe_name or "upload.bin"
+        return WebFileStorage.sanitize_filename(filename)
 
     @staticmethod
     def _sanitize_file_component(value: str, fallback: str) -> str:
-        text = str(value or "").strip()
-        text = text.replace("/", "_").replace("\\", "_")
-        text = re.sub(r"[^A-Za-z0-9._-]+", "-", text)
-        text = text.strip("-._")
-        return text or fallback
+        return WebFileStorage.sanitize_file_component(value, fallback)
 
     def _ensure_within_storage_dir(self, path: Path) -> Path:
-        storage_dir = self._get_file_storage_dir().resolve(strict=True)
-
-        # Accept only a single filename component (no user-influenced subpaths).
-        candidate_path = Path(path)
-        candidate_name = candidate_path.name
-        if candidate_name in {"", ".", ".."}:
-            raise ValueError("Invalid stored filename")
-        if candidate_path != Path(candidate_name):
-            raise ValueError("Invalid stored filename")
-
-        try:
-            resolved = (storage_dir / candidate_name).resolve(strict=False)
-        except OSError as exc:
-            raise ValueError("Invalid path in configured storage directory") from exc
-
-        try:
-            resolved.relative_to(storage_dir)
-        except ValueError as exc:
-            raise ValueError("Path escapes configured storage directory") from exc
-        if resolved == storage_dir:
-            raise ValueError("Invalid stored filename")
-        return resolved
+        return self.file_storage.ensure_within_storage_dir(path)
 
     def _is_valid_stored_name(self, stored_name: str) -> bool:
-        name = str(stored_name or "").strip()
-        if not name or name in {".", ".."}:
-            return False
-        if "/" in name or "\\" in name or "\x00" in name:
-            return False
-        if ".." in name:
-            return False
-        if self._sanitize_filename(name) != name:
-            return False
-        return re.fullmatch(r"[A-Za-z0-9_ .()_-]+", name) is not None
+        return self.file_storage.is_valid_stored_name(stored_name)
 
     def _build_file_entry(
         self,
@@ -345,69 +286,20 @@ class WebAPI:
         original_name: str | None = None,
         content_type: str | None = None,
     ) -> StoredFileEntry:
-        stored_name = path.name
-        if not self._is_valid_stored_name(stored_name):
-            raise ValueError("Invalid stored file path")
-        safe_path = self.get_file_path(stored_name)
-        if safe_path is None:
-            raise ValueError("Invalid stored file path")
-        metadata = self._load_file_metadata(safe_path)
-        stats = safe_path.stat()
-        return StoredFileEntry(
-            stored_name=safe_path.name,
-            original_name=original_name
-            or metadata.get("original_name")
-            or safe_path.name,
-            size_bytes=stats.st_size,
-            content_type=content_type or metadata.get("content_type"),
-            modified_at=float(metadata.get("uploaded_at") or stats.st_mtime),
-            download_url=f"/api/files/{safe_path.name}",
-            job_id=metadata.get("job_id"),
-            tier=metadata.get("tier"),
-            word_count=metadata.get("word_count"),
-            value=metadata.get("value"),
+        return self.file_storage.build_file_entry(
+            path,
+            original_name=original_name,
+            content_type=content_type,
         )
 
     def _metadata_path(self, path: Path) -> Path:
-        safe_path = self._ensure_within_storage_dir(path)
-        storage_dir = self._get_file_storage_dir().resolve()
-        metadata_name = f".{safe_path.name}.meta.json"
-        metadata_path = storage_dir / metadata_name
-        return self._ensure_within_storage_dir(metadata_path)
+        return self.file_storage.metadata_path(path)
 
     def _load_file_metadata(self, path: Path) -> dict[str, Any]:
-        metadata_path = self._metadata_path(path)
-        if not metadata_path.is_file():
-            return {}
-        try:
-            data = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            self.logger.warning(
-                "Failed to read file metadata for %s: %s",
-                path.name,
-                exc,
-            )
-            return {}
-        if isinstance(data, dict):
-            return data
-        return {}
+        return self.file_storage.load_file_metadata(path)
 
     def list_files(self) -> list[StoredFileEntry]:
-        storage_dir = self._get_file_storage_dir()
-        entries: list[StoredFileEntry] = []
-        for path in sorted(
-            storage_dir.glob("*"),
-            key=lambda candidate: candidate.stat().st_mtime,
-            reverse=True,
-        ):
-            if (
-                not path.is_file()
-                or path.name.startswith(".")
-                or path.name.endswith(".meta.json")
-            ):
-                continue
-            entries.append(self._build_file_entry(path))
-        return entries
+        return self.file_storage.list_files()
 
     def save_uploaded_file(
         self,
@@ -420,98 +312,24 @@ class WebAPI:
         word_count: int | None = None,
         value: float | None = None,
     ) -> StoredFileEntry:
-        if job_id is not None:
-            job_id = str(job_id).strip()
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
-                raise ValueError("Invalid job id")
-        if job_id is not None:
-            job_id = str(job_id).strip()
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
-                raise ValueError("Invalid job id")
-        storage_dir = self._get_file_storage_dir()
-        safe_name = self._build_stored_filename(
+        return self.file_storage.save_uploaded_file(
             filename=filename,
+            content=content,
+            content_type=content_type,
             job_id=job_id,
             tier=tier,
             word_count=word_count,
             value=value,
         )
-        if not self._is_valid_stored_name(safe_name):
-            raise ValueError("Invalid stored filename")
-        destination = self._ensure_within_storage_dir(storage_dir / safe_name)
-        counter = 1
-        while destination.exists():
-            stem = Path(safe_name).stem
-            suffix = Path(safe_name).suffix
-            candidate_name = f"{stem}-{counter}{suffix}"
-            if not self._is_valid_stored_name(candidate_name):
-                raise ValueError("Invalid stored filename")
-            destination = self._ensure_within_storage_dir(storage_dir / candidate_name)
-            counter += 1
-        destination.write_bytes(content)
-        metadata = {
-            "original_name": filename or destination.name,
-            "content_type": content_type,
-            "uploaded_at": time.time(),
-            "job_id": str(job_id).strip() if job_id else None,
-            "tier": self._normalize_tier(tier, word_count=word_count, value=value),
-            "word_count": int(word_count) if word_count is not None else None,
-            "value": float(value) if value is not None else None,
-        }
-        self._metadata_path(destination).write_text(
-            json.dumps(metadata, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        entry = self._build_file_entry(
-            destination,
-            original_name=filename or destination.name,
-            content_type=content_type,
-        )
-        self.logger.info(
-            "Stored uploaded file %s at %s", entry.stored_name, destination
-        )
-        return entry
 
     def _resolve_stored_file_path(self, stored_name: str) -> Path | None:
-        if not self._is_valid_stored_name(stored_name):
-            return None
-        storage_dir = self._get_file_storage_dir().resolve()
-        candidate = storage_dir / stored_name
-        try:
-            return self._ensure_within_storage_dir(candidate)
-        except ValueError:
-            return None
+        return self.file_storage.resolve_stored_file_path(stored_name)
 
     def get_file_path(self, stored_name: str) -> Path | None:
-        if not self._is_valid_stored_name(stored_name):
-            return None
-        stored_path = Path(stored_name)
-        if stored_path.is_absolute() or stored_path.name != stored_name:
-            return None
-        storage_dir = self._get_file_storage_dir().resolve()
-        try:
-            for candidate in storage_dir.iterdir():
-                if candidate.name != stored_name:
-                    continue
-                if not candidate.is_file() or candidate.is_symlink():
-                    return None
-                safe_path = self._ensure_within_storage_dir(candidate)
-                if (
-                    not safe_path.exists()
-                    or not safe_path.is_file()
-                    or safe_path.is_symlink()
-                ):
-                    return None
-                return safe_path
-        except (OSError, ValueError):
-            return None
-        return None
+        return self.file_storage.get_file_path(stored_name)
 
     def get_file_entry(self, stored_name: str) -> StoredFileEntry | None:
-        path = self.get_file_path(stored_name)
-        if path is None:
-            return None
-        return self._build_file_entry(path)
+        return self.file_storage.get_file_entry(stored_name)
 
     @staticmethod
     def _normalize_tier(
@@ -520,14 +338,11 @@ class WebAPI:
         word_count: int | None = None,
         value: float | None = None,
     ) -> str | None:
-        normalized = str(tier or "").strip().lower()
-        if normalized in ("pro", "standard"):
-            return normalized
-        if word_count is not None and value is not None:
-            rate = value / word_count if word_count > 0 else 0.0
-            if rate >= 0.05:
-                return "pro"
-        return "standard"
+        return WebFileStorage.normalize_tier(
+            tier,
+            word_count=word_count,
+            value=value,
+        )
 
     def _build_stored_filename(
         self,
@@ -538,35 +353,13 @@ class WebAPI:
         word_count: int | None = None,
         value: float | None = None,
     ) -> str:
-        safe_original = self._sanitize_filename(filename)
-        suffix = Path(safe_original).suffix or ".bin"
-        if not suffix.startswith("."):
-            suffix = f".{suffix}"
-
-        if job_id is None and tier is None and word_count is None and value is None:
-            return safe_original
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        normalized_tier = (
-            self._normalize_tier(
-                tier,
-                word_count=word_count,
-                value=value,
-            )
-            or "standard"
+        return self.file_storage.build_stored_filename(
+            filename,
+            job_id=job_id,
+            tier=tier,
+            word_count=word_count,
+            value=value,
         )
-        normalized_job_id = self._sanitize_file_component(
-            str(job_id or "job"),
-            fallback="job",
-        )
-        normalized_word_count = max(int(word_count or 0), 0)
-        normalized_value = max(float(value or 0.0), 0.0)
-        value_component = f"{normalized_value:.2f}"
-        generated = (
-            f"{timestamp}_{normalized_job_id}_{normalized_tier}_"
-            f"{normalized_word_count}w_{value_component}{suffix}"
-        )
-        return self._sanitize_filename(generated)
 
     def get_recent_jobs(self, limit: int = 50, page: int = 1) -> Dict[str, Any]:
         """Get recent jobs from state with pagination."""

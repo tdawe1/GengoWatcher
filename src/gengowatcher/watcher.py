@@ -42,6 +42,27 @@ from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
+from .translation_app_queue import (
+    submit_translation_app_task as _submit_translation_app_task,
+)
+from .watcher_debug import (
+    redact_raw_ws_text as _redact_raw_ws_text,
+    redact_raw_ws_value as _redact_raw_ws_value,
+)
+from .watcher_job_metadata import (
+    TIER_UNIT_RATES,
+    coerce_positive_float,
+    coerce_positive_int,
+    derive_lang_pair,
+    derive_word_count,
+    estimate_word_count_from_reward,
+    format_lang_token,
+    normalize_lang_pair_string,
+    normalize_meta,
+    parse_lang_pair_from_title,
+    pick_meta_value,
+    resolve_tier_rate,
+)
 
 from . import notifier
 
@@ -74,100 +95,6 @@ PLACEHOLDER_CONFIG_VALUES = {
 }
 
 SENSITIVE_KEYWORDS = {"password", "session", "key"}
-RAW_WS_REDACTED = "[REDACTED]"
-RAW_WS_SENSITIVE_KEYWORDS = (
-    "authorization",
-    "cookie",
-    "session",
-    "token",
-    "secret",
-    "key",
-)
-RAW_WS_SENSITIVE_PATTERNS = (
-    (
-        re.compile(r"(my_gengo_session=)[^;\s\"']+", re.IGNORECASE),
-        rf"\1{RAW_WS_REDACTED}",
-    ),
-    (
-        re.compile(r"(authorization\s*:\s*bearer\s+)[^\s,;}}]+", re.IGNORECASE),
-        rf"\1{RAW_WS_REDACTED}",
-    ),
-)
-LANG_PAIR_REGEX = re.compile(
-    r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", re.IGNORECASE
-)
-LANG_PAIR_SPLIT_REGEX = re.compile(r"\s*(?:→|->|-|>|↔|/)\s*")
-WORD_COUNT_REGEX = re.compile(r"\b(\d{1,6})\s*words?\b", re.IGNORECASE)
-UNIT_COUNT_REGEX = re.compile(
-    r"\b(\d{1,6})\s*(?:words?|chars?|units?)\b", re.IGNORECASE
-)
-TITLE_TIER_REGEX = re.compile(r"\(([^)]+)\)")
-TRANSLATION_APP_SUBMISSION_MAX_WORKERS = 1
-TRANSLATION_APP_SUBMISSION_MAX_PENDING = 16
-_translation_app_executor = None
-_translation_app_executor_lock = threading.Lock()
-_translation_app_submission_slots = threading.BoundedSemaphore(
-    TRANSLATION_APP_SUBMISSION_MAX_WORKERS + TRANSLATION_APP_SUBMISSION_MAX_PENDING
-)
-TIER_UNIT_RATES = {
-    "standard": 0.02,
-    "pro": 0.05,
-    "edit": 0.01,
-}
-
-
-def _get_translation_app_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _translation_app_executor
-    with _translation_app_executor_lock:
-        if _translation_app_executor is None:
-            _translation_app_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=TRANSLATION_APP_SUBMISSION_MAX_WORKERS,
-                thread_name_prefix="TranslationAppSubmit",
-            )
-        return _translation_app_executor
-
-
-def _submit_translation_app_task(task: Callable[[], None]) -> concurrent.futures.Future:
-    if not _translation_app_submission_slots.acquire(blocking=False):
-        raise queue.Full("translation-app submission queue is full")
-
-    try:
-        future = _get_translation_app_executor().submit(task)
-    except Exception:
-        _translation_app_submission_slots.release()
-        raise
-
-    future.add_done_callback(
-        lambda _future: _translation_app_submission_slots.release()
-    )
-    return future
-
-
-def _raw_ws_key_is_sensitive(key: object) -> bool:
-    normalized = str(key).lower()
-    return any(keyword in normalized for keyword in RAW_WS_SENSITIVE_KEYWORDS)
-
-
-def _redact_raw_ws_value(value):
-    if isinstance(value, dict):
-        return {
-            key: (
-                RAW_WS_REDACTED
-                if _raw_ws_key_is_sensitive(key)
-                else _redact_raw_ws_value(item)
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_raw_ws_value(item) for item in value]
-    return value
-
-
-def _redact_raw_ws_text(message: str) -> str:
-    redacted = message
-    for pattern, replacement in RAW_WS_SENSITIVE_PATTERNS:
-        redacted = pattern.sub(replacement, redacted)
-    return redacted
 
 
 class GengoWatcher:
@@ -1391,162 +1318,37 @@ class GengoWatcher:
                 self.logger.debug(f"Error in job added callback: {e}")
 
     def _normalize_meta(self, meta) -> dict:
-        if meta is None or not hasattr(meta, "get"):
-            return {}
-        return meta
+        return normalize_meta(meta)
 
     def _pick_meta_value(self, meta: dict, keys: list[str]):
-        for key in keys:
-            value = meta.get(key)
-            if value:
-                return value
-        return None
+        return pick_meta_value(meta, keys)
 
     def _format_lang_token(self, token: str) -> str:
-        if not token:
-            return ""
-        cleaned = "".join(ch for ch in str(token) if ch.isalpha())
-        if not cleaned:
-            return ""
-        if len(cleaned) == 2:
-            return cleaned.upper()
-        return cleaned[:2].upper()
+        return format_lang_token(token)
 
     def _normalize_lang_pair_string(self, value) -> str:
-        if not value:
-            return ""
-        candidate = str(value)
-        parts = LANG_PAIR_SPLIT_REGEX.split(candidate)
-        if len(parts) < 2:
-            return ""
-        left = self._format_lang_token(parts[0])
-        right = self._format_lang_token(parts[1])
-        if left and right:
-            return f"{left}→{right}"
-        return ""
+        return normalize_lang_pair_string(value)
 
     def _parse_lang_pair_from_title(self, title) -> str:
-        if not title:
-            return ""
-        text = str(title)
-        primary = text.split("|")[0]
-        match = LANG_PAIR_REGEX.search(primary)
-        if match:
-            return f"{match.group(1).upper()}→{match.group(2).upper()}"
-        return self._normalize_lang_pair_string(primary)
+        return parse_lang_pair_from_title(title)
 
     def _derive_lang_pair(self, title, source_meta) -> str:
-        meta = self._normalize_meta(source_meta)
-        for key in ("lang_pair", "language_pair"):
-            normalized = self._normalize_lang_pair_string(meta.get(key))
-            if normalized:
-                return normalized
-
-        src = self._pick_meta_value(
-            meta, ["lc_src", "source_lang", "source_language", "source"]
-        )
-        tgt = self._pick_meta_value(
-            meta, ["lc_tgt", "target_lang", "target_language", "target"]
-        )
-        if src and tgt:
-            left = self._format_lang_token(src)
-            right = self._format_lang_token(tgt)
-            if left and right:
-                return f"{left}→{right}"
-
-        fallback = self._parse_lang_pair_from_title(title)
-        return fallback or "??→??"
+        return derive_lang_pair(title, source_meta)
 
     def _coerce_positive_int(self, value) -> int:
-        try:
-            parsed = int(float(value))
-        except (TypeError, ValueError):
-            if isinstance(value, str):
-                match = re.search(r"(\d+)", value)
-                if not match:
-                    return 0
-                try:
-                    parsed = int(match.group(1))
-                except ValueError:
-                    return 0
-            else:
-                return 0
-        return parsed if parsed > 0 else 0
+        return coerce_positive_int(value)
 
     def _coerce_positive_float(self, value) -> float:
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return 0.0
-        return parsed if parsed > 0 else 0.0
+        return coerce_positive_float(value)
 
     def _resolve_tier_rate(self, tier_value) -> float:
-        if not tier_value:
-            return 0.0
-        normalized = str(tier_value).strip().lower().replace("-", "").replace("_", "")
-        if normalized in ("standard", "std", "basic"):
-            return TIER_UNIT_RATES["standard"]
-        if normalized in ("pro", "professional"):
-            return TIER_UNIT_RATES["pro"]
-        if normalized in ("edit", "proofread", "proofreading"):
-            return TIER_UNIT_RATES["edit"]
-        return 0.0
+        return resolve_tier_rate(tier_value)
 
     def _estimate_word_count_from_reward(self, reward, title, source_meta) -> int:
-        meta = self._normalize_meta(source_meta)
-        reward_value = self._coerce_positive_float(reward)
-        if reward_value <= 0:
-            reward_value = self._coerce_positive_float(
-                self._pick_meta_value(meta, ["rewards", "reward"])
-            )
-        if reward_value <= 0:
-            return 0
-
-        for key in (
-            "reward_per_unit",
-            "unit_reward",
-            "unit_price",
-            "price_per_unit",
-            "rate_per_unit",
-        ):
-            rate = self._coerce_positive_float(meta.get(key))
-            if rate > 0:
-                return max(1, int(round(reward_value / rate)))
-
-        tier = self._pick_meta_value(meta, ["tier", "job_tier", "service_level"])
-        if not tier and title:
-            match = TITLE_TIER_REGEX.search(str(title))
-            if match:
-                tier = match.group(1)
-
-        rate = self._resolve_tier_rate(tier)
-        if rate > 0:
-            return max(1, int(round(reward_value / rate)))
-        return 0
+        return estimate_word_count_from_reward(reward, title, source_meta)
 
     def _derive_word_count(self, title, source_meta, reward=0.0) -> int:
-        meta = self._normalize_meta(source_meta)
-        for key in (
-            "word_count",
-            "words",
-            "unit",
-            "units",
-            "unit_count",
-            "wordCount",
-            "unitCount",
-        ):
-            count = self._coerce_positive_int(meta.get(key))
-            if count > 0:
-                return count
-
-        text = str(title) if title else ""
-        match = WORD_COUNT_REGEX.search(text) or UNIT_COUNT_REGEX.search(text)
-        if match:
-            count = self._coerce_positive_int(match.group(1))
-            if count > 0:
-                return count
-
-        return self._estimate_word_count_from_reward(reward, title, source_meta)
+        return derive_word_count(title, source_meta, reward)
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
