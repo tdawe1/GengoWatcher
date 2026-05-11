@@ -32,6 +32,18 @@ def test_stats_manager_record_job():
         assert manager.by_language["JA→EN"] == 1
 
 
+def test_stats_manager_tracks_rss_source():
+    """RSS jobs should increment rss, not website."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = pathlib.Path(tmpdir) / "stats.json"
+        manager = StatsManager(stats_path=path)
+
+        manager.record_job(10.0, "RSS", "JA→EN", accepted=False)
+
+        assert manager.by_source.rss == 1
+        assert manager.by_source.website == 0
+
+
 def test_stats_manager_persistence():
     """StatsManager should persist and reload stats."""
     with tempfile.TemporaryDirectory() as tmpdir:

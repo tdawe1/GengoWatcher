@@ -21,6 +21,7 @@ from gengowatcher.ui_textual import (
     ConfigPreview,
     SessionStats as SessionStatsWidget,
     StatsPanel,
+    TelemetryPanel,
     GengoWatcherApp,
     TextualLogHandler,
     Icons,
@@ -256,7 +257,7 @@ class TestMetricCard:
     def test_metric_card_border_title(self):
         """Test that border_title is set."""
         card = MetricCard("Found", "▲", "10")
-        assert card.border_title == "Found"
+        assert card.border_title == "▲ Found"
 
     @pytest.mark.asyncio
     async def test_update_value_not_mounted(self):
@@ -821,7 +822,7 @@ class TestGengoWatcherApp:
             (MetricsRow, "refresh_metrics"),
             (JobsPreview, "refresh_jobs"),
             (HourlyActivity, "refresh_hourly"),
-            (SessionStatsWidget, "refresh_stats"),
+            (TelemetryPanel, "refresh_telemetry"),
         ]
 
         assert app._dashboard_refresh_targets() == expected_targets

@@ -625,7 +625,7 @@ class MetricCard(Static):
         self.label = label
         self.icon = icon
         self.value = value
-        self.border_title = label
+        self.border_title = f"{icon} {label}"
 
     def compose(self) -> ComposeResult:
         # Border title already provides the card label, so the card body only
@@ -718,6 +718,7 @@ class StatusIndicator(Static):
         "stale": ["!", "‼", "!", "·"],
         "error": ["✗", "✖", "✗", "✖"],
     }
+    PULSE_FRAMES: ClassVar[dict[str, list[str]]] = STATE_FRAMES
 
     PULSE_STEPS: ClassVar[dict[str, int]] = {
         "live": 4,
@@ -1419,7 +1420,8 @@ class ConfigPreview(DashboardQuadrant):
         self.config = config
 
     def compose(self) -> ComposeResult:
-        yield Static(id="config-content", classes="config-display")
+        with Vertical(id="config-scroll"):
+            yield Static(id="config-content", classes="config-display")
 
     def on_mount(self):
         """Populate config display on mount."""
@@ -1469,6 +1471,10 @@ class ConfigPreview(DashboardQuadrant):
 
         return formatted
 
+    def _value_width_limit(self) -> int:
+        """Return the value width currently used by config rendering."""
+        return self.MAX_VALUE_LENGTH
+
     def _render_config(self) -> Text:
         """Render all config sections and options."""
         text = Text()
@@ -1506,7 +1512,8 @@ class ConfigPreview(DashboardQuadrant):
             for key, value in options.items():
                 formatted_value = self._format_value(key, value)
                 # Truncate long values
-                if len(formatted_value) > self.MAX_VALUE_LENGTH:
+                value_width_limit = self._value_width_limit()
+                if len(formatted_value) > value_width_limit:
                     formatted_value = (
                         formatted_value[: self.MAX_VALUE_LENGTH_SHORT] + "..."
                     )
@@ -2113,11 +2120,14 @@ class GengoWatcherApp(App):
             logging.Logger,
             getattr(self.watcher, "logger", logging.getLogger("gengowatcher")),
         )
-        self._textual_log_handler = TextualLogHandler(self)
+        self._textual_log_handler = TextualLogHandler(
+            self, ui_thread_id=threading.get_ident()
+        )
         self._logging_attached = False
+        self._job_added_callback = self._on_job_added_from_thread
 
         # Register callback for when new jobs are detected
-        self.watcher.on_job_added_callback = self._on_job_added_from_thread
+        self.watcher.on_job_added_callback = self._job_added_callback
 
     def _on_job_added_from_thread(self, _job_data: dict):
         """Called from watcher thread when a new job is added."""
@@ -2211,7 +2221,7 @@ class GengoWatcherApp(App):
     def on_unmount(self) -> None:
         """Detach callbacks and log handlers owned by this app instance."""
         current_callback = getattr(self.watcher, "on_job_added_callback", None)
-        if current_callback is self._on_job_added_from_thread:
+        if current_callback is self._job_added_callback:
             self.watcher.on_job_added_callback = None
         if self._logging_attached:
             self._log_source.removeHandler(self._textual_log_handler)
@@ -2280,6 +2290,8 @@ class GengoWatcherApp(App):
             dashboard_content = self.query_one("#dashboard-content")
         except NoMatches:
             pass
+        except Exception:
+            pass
         else:
             width = dashboard_content.size.width or width
             height = dashboard_content.size.height or height
@@ -2302,6 +2314,31 @@ class GengoWatcherApp(App):
             (HourlyActivity, "refresh_hourly"),
             (TelemetryPanel, "refresh_telemetry"),
         ]
+
+    def _run_command(self, command: str) -> None:
+        normalized = self.COMMAND_ALIASES.get(command.strip().lower(), command.strip())
+        if normalized == "check":
+            event = getattr(self.watcher, "check_now_event", None)
+            setter = getattr(event, "set", None)
+            if callable(setter):
+                setter()
+        elif normalized == "quit":
+            self.action_quit()
+
+    def action_check(self) -> None:
+        """Trigger an immediate watcher check."""
+        self._run_command("check")
+
+    def action_quit(self) -> None:
+        """Quit the Textual app."""
+        self.exit()
+
+    @on(Input.Submitted)
+    def _on_command_submitted(self, event: Input.Submitted) -> None:
+        command = str(event.value or "").strip()
+        event.input.value = ""
+        if command:
+            self._run_command(command)
 
     def _refresh_dashboard_panels(self) -> None:
         """Refresh dashboard widgets that depend on live/persisted state."""
@@ -2491,9 +2528,7 @@ class TextualLogHandler(logging.Handler):
     def __init__(self, app, ui_thread_id: int | None = None):
         super().__init__()
         self.app = app
-        self.ui_thread_id = (
-            threading.get_ident() if ui_thread_id is None else ui_thread_id
-        )
+        self.ui_thread_id = ui_thread_id
         # Compile patterns
         self._compiled_patterns = [
             (re.compile(pattern, re.IGNORECASE), color_key)
@@ -2504,7 +2539,10 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self._format_ui_message(record)
             level = record.levelno
-            if self.ui_thread_id == threading.get_ident():
+            if (
+                self.ui_thread_id is not None
+                and self.ui_thread_id == threading.get_ident()
+            ):
                 self.write_log(msg, level)
             else:
                 self.app.call_from_thread(self.write_log, msg, level)

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gengowatcher.browser_worker.main import _run_forever, main
+from gengowatcher.browser_worker.main import _run_forever, build_runtime_config, main
 
 
 @pytest.mark.asyncio
@@ -16,6 +16,7 @@ async def test_run_forever_serves_until_stopped():
         profile_path="profiles/browser-worker",
         seed_profile_path="",
         socket_path="/tmp/gengowatcher.sock",
+        auth_token="token-123",
         headless=False,
     )
 
@@ -27,6 +28,20 @@ async def test_run_forever_serves_until_stopped():
 
     runtime.serve_forever.assert_awaited_once()
     runtime.stop.assert_awaited_once()
+
+
+def test_build_runtime_config_includes_auth_token():
+    args = Namespace(
+        profile_path="profiles/browser-worker",
+        seed_profile_path="",
+        socket_path="/tmp/gengowatcher.sock",
+        auth_token="token-123",
+        headless=False,
+    )
+
+    config = build_runtime_config(args)
+
+    assert config.auth_token == "token-123"
 
 
 def test_main_handles_keyboard_interrupt():

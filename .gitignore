@@ -79,6 +79,13 @@ archives/logs-*/
 .tmp/
 .worktrees/
 
+# Merge / conflict artifacts
+*.orig
+*_BASE_*
+*_LOCAL_*
+*_REMOTE_*
+*_BACKUP_*
+
 # Legacy files
 gengo_rss_log.txt
 rss_check_log.txt

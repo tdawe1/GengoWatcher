@@ -8,6 +8,7 @@ import datetime
 import json
 import logging
 import os
+import queue
 import re
 import random
 import subprocess
@@ -73,6 +74,25 @@ PLACEHOLDER_CONFIG_VALUES = {
 }
 
 SENSITIVE_KEYWORDS = {"password", "session", "key"}
+RAW_WS_REDACTED = "[REDACTED]"
+RAW_WS_SENSITIVE_KEYWORDS = (
+    "authorization",
+    "cookie",
+    "session",
+    "token",
+    "secret",
+    "key",
+)
+RAW_WS_SENSITIVE_PATTERNS = (
+    (
+        re.compile(r"(my_gengo_session=)[^;\s\"']+", re.IGNORECASE),
+        rf"\1{RAW_WS_REDACTED}",
+    ),
+    (
+        re.compile(r"(authorization\s*:\s*bearer\s+)[^\s,;}}]+", re.IGNORECASE),
+        rf"\1{RAW_WS_REDACTED}",
+    ),
+)
 LANG_PAIR_REGEX = re.compile(
     r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", re.IGNORECASE
 )
@@ -82,11 +102,72 @@ UNIT_COUNT_REGEX = re.compile(
     r"\b(\d{1,6})\s*(?:words?|chars?|units?)\b", re.IGNORECASE
 )
 TITLE_TIER_REGEX = re.compile(r"\(([^)]+)\)")
+TRANSLATION_APP_SUBMISSION_MAX_WORKERS = 1
+TRANSLATION_APP_SUBMISSION_MAX_PENDING = 16
+_translation_app_executor = None
+_translation_app_executor_lock = threading.Lock()
+_translation_app_submission_slots = threading.BoundedSemaphore(
+    TRANSLATION_APP_SUBMISSION_MAX_WORKERS + TRANSLATION_APP_SUBMISSION_MAX_PENDING
+)
 TIER_UNIT_RATES = {
     "standard": 0.02,
     "pro": 0.05,
     "edit": 0.01,
 }
+
+
+def _get_translation_app_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _translation_app_executor
+    with _translation_app_executor_lock:
+        if _translation_app_executor is None:
+            _translation_app_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=TRANSLATION_APP_SUBMISSION_MAX_WORKERS,
+                thread_name_prefix="TranslationAppSubmit",
+            )
+        return _translation_app_executor
+
+
+def _submit_translation_app_task(task: Callable[[], None]) -> concurrent.futures.Future:
+    if not _translation_app_submission_slots.acquire(blocking=False):
+        raise queue.Full("translation-app submission queue is full")
+
+    try:
+        future = _get_translation_app_executor().submit(task)
+    except Exception:
+        _translation_app_submission_slots.release()
+        raise
+
+    future.add_done_callback(
+        lambda _future: _translation_app_submission_slots.release()
+    )
+    return future
+
+
+def _raw_ws_key_is_sensitive(key: object) -> bool:
+    normalized = str(key).lower()
+    return any(keyword in normalized for keyword in RAW_WS_SENSITIVE_KEYWORDS)
+
+
+def _redact_raw_ws_value(value):
+    if isinstance(value, dict):
+        return {
+            key: (
+                RAW_WS_REDACTED
+                if _raw_ws_key_is_sensitive(key)
+                else _redact_raw_ws_value(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_raw_ws_value(item) for item in value]
+    return value
+
+
+def _redact_raw_ws_text(message: str) -> str:
+    redacted = message
+    for pattern, replacement in RAW_WS_SENSITIVE_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
 
 
 class GengoWatcher:
@@ -212,7 +293,14 @@ class GengoWatcher:
             )
             return None
 
-        return BrowserWorkerClient(socket_path=socket_path, logger=self.logger)
+        auth_token = str(
+            self.config.get("BrowserWorker", "auth_token", fallback="") or ""
+        )
+        return BrowserWorkerClient(
+            socket_path=socket_path,
+            logger=self.logger,
+            auth_token=auth_token,
+        )
 
     @staticmethod
     def _mask_secret(value) -> str:
@@ -934,9 +1022,10 @@ class GengoWatcher:
         # Try to pretty-format JSON
         try:
             parsed = json.loads(message)
+            parsed = _redact_raw_ws_value(parsed)
             formatted = json.dumps(parsed, indent=2)
         except (json.JSONDecodeError, TypeError):
-            formatted = message
+            formatted = _redact_raw_ws_text(str(message))
 
         entry = f"[{timestamp}] {prefix} {formatted}"
 
@@ -1539,20 +1628,33 @@ class GengoWatcher:
         )
 
         def submit() -> None:
-            client = TranslationAppClient(
-                base_url=base_url,
-                auth_token=auth_token,
-                timeout_sec=timeout_sec,
-                verify_tls=verify_tls,
-                logger=self.logger,
-            )
-            client.submit_job(dict(job_data))
+            try:
+                client = TranslationAppClient(
+                    base_url=base_url,
+                    auth_token=auth_token,
+                    timeout_sec=timeout_sec,
+                    verify_tls=verify_tls,
+                    logger=self.logger,
+                )
+                client.submit_job(dict(job_data))
+            except Exception:
+                self.logger.exception(
+                    "Failed to submit job %s to translation-app",
+                    job_data.get("id", "unknown"),
+                )
 
-        threading.Thread(
-            target=submit,
-            daemon=True,
-            name=f"TranslationAppSubmit-{job_data.get('id', 'unknown')}",
-        ).start()
+        try:
+            _submit_translation_app_task(submit)
+        except queue.Full:
+            self.logger.warning(
+                "Translation-app submission queue is full; dropping job %s",
+                job_data.get("id", "unknown"),
+            )
+        except Exception:
+            self.logger.exception(
+                "Failed to queue job %s for translation-app submission",
+                job_data.get("id", "unknown"),
+            )
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.
@@ -2466,13 +2568,13 @@ class GengoWatcher:
         """Apply configuration settings to the cancellation manager."""
         try:
             settings = {
-                "cancellation_enabled": self.config.getboolean(
+                "cancellation_enabled": self.cancellation_manager._config_getboolean(
                     "Cancellation", "enabled", fallback=False
                 ),
-                "min_improvement_ratio": self.config.getfloat(
+                "min_improvement_ratio": self.cancellation_manager._config_getfloat(
                     "Cancellation", "min_improvement_ratio", fallback=2.0
                 ),
-                "extreme_threshold": self.config.getfloat(
+                "extreme_threshold": self.cancellation_manager._config_getfloat(
                     "Cancellation", "extreme_threshold", fallback=1000.0
                 ),
             }

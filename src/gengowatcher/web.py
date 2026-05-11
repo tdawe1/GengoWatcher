@@ -63,7 +63,9 @@ class APIAuthenticator:
         """Authenticate API request using Bearer token."""
         if not credentials:
             return False
-        return credentials.credentials == self.api_key
+        supplied = str(credentials.credentials or "")
+        expected = str(self.api_key or "")
+        return secrets.compare_digest(supplied, expected)
 
     def get_api_key(self) -> str:
         """Get the current API key."""
@@ -247,9 +249,12 @@ class WebAPI:
             health_snapshot = {}
             health_getter = getattr(self.watcher, "get_health_snapshot", None)
             if callable(health_getter):
-                candidate = health_getter()
-                if isinstance(candidate, dict):
-                    health_snapshot = candidate
+                try:
+                    candidate = health_getter()
+                    if isinstance(candidate, dict):
+                        health_snapshot = candidate
+                except Exception as exc:
+                    self.logger.warning("Failed to get health snapshot: %s", exc)
 
             return WatcherStatus(
                 is_running=not self.watcher.shutdown_event.is_set(),
@@ -272,9 +277,10 @@ class WebAPI:
         return await self.watcher.cancel_current_job_async()
 
     def _get_file_storage_dir(self) -> Path:
-        raw_path = self.config.get(
-            "Paths", "file_storage_dir", fallback="data/files"
-        ) or "data/files"
+        raw_path = (
+            self.config.get("Paths", "file_storage_dir", fallback="data/files")
+            or "data/files"
+        )
         storage_dir = Path(str(raw_path))
         storage_dir.mkdir(parents=True, exist_ok=True)
         return storage_dir
@@ -302,14 +308,16 @@ class WebAPI:
         # Accept only a single filename component (no user-influenced subpaths).
         candidate_path = Path(path)
         candidate_name = candidate_path.name
-        if (
-            candidate_name in {"", ".", ".."}
-            or candidate_path != Path(candidate_name)
-        ):
+        if candidate_name in {"", ".", ".."}:
             raise ValueError("Invalid stored filename")
 
         try:
-            resolved = (storage_dir / candidate_name).resolve(strict=False)
+            if candidate_path.is_absolute():
+                resolved = candidate_path.resolve(strict=False)
+            else:
+                if candidate_path != Path(candidate_name):
+                    raise ValueError("Invalid stored filename")
+                resolved = (storage_dir / candidate_name).resolve(strict=False)
         except OSError as exc:
             raise ValueError("Invalid path in configured storage directory") from exc
 
@@ -331,7 +339,7 @@ class WebAPI:
             return False
         if self._sanitize_filename(name) != name:
             return False
-        return re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?", name) is not None
+        return re.fullmatch(r"[A-Za-z0-9_ .()_-]+", name) is not None
 
     def _build_file_entry(
         self,
@@ -350,7 +358,9 @@ class WebAPI:
         stats = safe_path.stat()
         return StoredFileEntry(
             stored_name=safe_path.name,
-            original_name=original_name or metadata.get("original_name") or safe_path.name,
+            original_name=original_name
+            or metadata.get("original_name")
+            or safe_path.name,
             size_bytes=stats.st_size,
             content_type=content_type or metadata.get("content_type"),
             modified_at=float(metadata.get("uploaded_at") or stats.st_mtime),
@@ -460,7 +470,9 @@ class WebAPI:
             original_name=filename or destination.name,
             content_type=content_type,
         )
-        self.logger.info("Stored uploaded file %s at %s", entry.stored_name, destination)
+        self.logger.info(
+            "Stored uploaded file %s at %s", entry.stored_name, destination
+        )
         return entry
 
     def _resolve_stored_file_path(self, stored_name: str) -> Path | None:
@@ -487,7 +499,11 @@ class WebAPI:
                 if not candidate.is_file() or candidate.is_symlink():
                     return None
                 safe_path = self._ensure_within_storage_dir(candidate)
-                if not safe_path.exists() or not safe_path.is_file() or safe_path.is_symlink():
+                if (
+                    not safe_path.exists()
+                    or not safe_path.is_file()
+                    or safe_path.is_symlink()
+                ):
                     return None
                 return safe_path
         except (OSError, ValueError):
@@ -534,11 +550,14 @@ class WebAPI:
             return safe_original
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        normalized_tier = self._normalize_tier(
-            tier,
-            word_count=word_count,
-            value=value,
-        ) or "standard"
+        normalized_tier = (
+            self._normalize_tier(
+                tier,
+                word_count=word_count,
+                value=value,
+            )
+            or "standard"
+        )
         normalized_job_id = self._sanitize_file_component(
             str(job_id or "job"),
             fallback="job",
@@ -1188,15 +1207,22 @@ async def upload_file(
         content = b""
         chunk_size = 1024 * 1024  # 1 MB chunks
         while True:
-            chunk = await file.read(chunk_size)
+            read_all_at_once = False
+            try:
+                chunk = await file.read(chunk_size)
+            except TypeError:
+                chunk = await file.read()
+                read_all_at_once = True
             if not chunk:
                 break
             content += chunk
             if len(content) > MAX_UPLOAD_SIZE:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE} bytes"
+                    detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE} bytes",
                 )
+            if read_all_at_once:
+                break
 
         entry = api_instance.save_uploaded_file(
             file.filename or "upload.bin",

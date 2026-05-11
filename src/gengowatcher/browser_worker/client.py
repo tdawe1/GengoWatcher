@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +15,12 @@ class BrowserWorkerClient:
         *,
         logger: logging.Logger | None = None,
         response_timeout: float = 5.0,
+        auth_token: str = "",
     ):
         self.socket_path = Path(socket_path)
         self.logger = logger or logging.getLogger(__name__)
         self.response_timeout = response_timeout
+        self.auth_token = str(auth_token or "")
 
     def build_job_url_command(
         self,
@@ -28,14 +29,27 @@ class BrowserWorkerClient:
         *,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return build_job_url_command(url, source, metadata=metadata)
+        return build_job_url_command(
+            url,
+            source,
+            metadata=metadata,
+            auth_token=self.auth_token,
+        )
 
     async def send_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         reader, writer = await asyncio.open_unix_connection(str(self.socket_path))
         try:
             writer.write(encode_message(payload))
             await writer.drain()
-            response = await reader.readline()
+            try:
+                response = await asyncio.wait_for(
+                    reader.readline(),
+                    timeout=self.response_timeout,
+                )
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError(
+                    f"browser worker timed out after {self.response_timeout:.1f}s"
+                ) from exc
         finally:
             writer.close()
             await writer.wait_closed()
@@ -63,4 +77,11 @@ class BrowserWorkerClient:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
-        return asyncio.run(self.send_command(payload))
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.send_command(payload))
+        raise RuntimeError(
+            "BrowserWorkerClient.submit_job() cannot run inside an active event loop; "
+            "use submit_job_async() instead"
+        )

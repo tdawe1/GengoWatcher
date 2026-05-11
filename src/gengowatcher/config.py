@@ -146,6 +146,7 @@ class AppConfig:
         "BrowserWorker": {
             "enabled": False,
             "socket_path": "",
+            "auth_token": "",
             "profile_path": "profiles/browser-worker",
             "seed_profile_path": "",
             "headless": False,
@@ -606,47 +607,6 @@ class AppConfig:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
-
-    @staticmethod
-    def _serialize_toml_value(value: Any) -> str:
-        """Serialize Python values to TOML literals."""
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, int):
-            return str(value)
-        if isinstance(value, float):
-            return repr(value)
-        if isinstance(value, str):
-            escaped = (
-                value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-            )
-            return f'"{escaped}"'
-        if isinstance(value, list):
-            return (
-                "["
-                + ", ".join(AppConfig._serialize_toml_value(item) for item in value)
-                + "]"
-            )
-        if isinstance(value, dict):
-            items = ", ".join(
-                f"{key} = {AppConfig._serialize_toml_value(item)}"
-                for key, item in value.items()
-            )
-            return "{ " + items + " }"
-        if value is None:
-            return '""'
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, (int, float)):
-            return str(value)
-        return json.dumps(value)
-
-        try:
-            return json.dumps(value)
-        except (TypeError, ValueError):
-            pass
-
-        return str(value)
 
     def _validate_auto_accept_config(self):
         """
