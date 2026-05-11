@@ -238,9 +238,6 @@ StatusIndicator {
 
 .dashboard-stacked .dashboard-grid {
     layout: vertical;
-    grid-size: 1 4;
-    grid-columns: 1fr;
-    grid-rows: auto auto auto auto;
     height: auto;
 }
 

@@ -109,8 +109,7 @@ def test_textual_log_handler_write_to_log_writes_to_widget():
 
 def test_textual_log_handler_emit_on_app_thread_writes_directly():
     app = MagicMock()
-    app._thread_id = threading.get_ident()
-    handler = TextualLogHandler(app)
+    handler = TextualLogHandler(app, ui_thread_id=threading.get_ident())
     handler.write_log = MagicMock()
 
     record = logging.LogRecord(
@@ -124,8 +123,7 @@ def test_textual_log_handler_emit_on_app_thread_writes_directly():
 
 def test_textual_log_handler_emit_from_background_thread_uses_call_from_thread():
     app = MagicMock()
-    app._thread_id = threading.get_ident() + 1
-    handler = TextualLogHandler(app)
+    handler = TextualLogHandler(app, ui_thread_id=threading.get_ident() + 1)
     handler.write_log = MagicMock()
 
     record = logging.LogRecord(

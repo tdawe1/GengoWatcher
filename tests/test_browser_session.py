@@ -7,6 +7,7 @@ import pytest
 
 from gengowatcher.browser_session import (
     BrowserSessionError,
+    BrowserSessionSnapshot,
     _choose_browser_activity_action,
     _cdp_call,
     _normalize_debug_url,
@@ -16,6 +17,7 @@ from gengowatcher.browser_session import (
     extract_cookie_value,
     fetch_browser_session_snapshot,
     fetch_browser_session_token,
+    open_url_in_browser_debug,
     refresh_browser_page_activity,
     select_gengo_target,
 )
@@ -36,7 +38,7 @@ class _MockUrlResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
-class _MockCDPWebSocket:
+class _MockJSONWebSocket:
     def __init__(self, responses):
         self._responses = iter(responses)
         self._sent = []
@@ -157,7 +159,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_cdp():
         ),
         patch(
             "gengowatcher.browser_session.websockets.connect",
-            return_value=_MockCDPWebSocket([cdp_response]),
+            return_value=_MockJSONWebSocket([cdp_response]),
         ),
     ):
         token = await fetch_browser_session_token("http://127.0.0.1:9222")
@@ -206,7 +208,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage():
         ),
         patch(
             "gengowatcher.browser_session.websockets.connect",
-            return_value=_MockCDPWebSocket([cookie_response, runtime_response]),
+            return_value=_MockJSONWebSocket([cookie_response, runtime_response]),
         ),
     ):
         snapshot = await fetch_browser_session_snapshot("http://127.0.0.1:9222")
@@ -243,7 +245,7 @@ async def test_fetch_browser_session_snapshot_keeps_cookie_when_runtime_eval_fai
         ),
         patch(
             "gengowatcher.browser_session.websockets.connect",
-            return_value=_MockCDPWebSocket([cookie_response]),
+            return_value=_MockJSONWebSocket([cookie_response]),
         ),
         patch(
             "gengowatcher.browser_session._evaluate_expression",
@@ -326,7 +328,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_rdp():
             "startTime": 1,
         },
     ]
-    mock_ws = _MockCDPWebSocket(responses)
+    mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
         "gengowatcher.browser_session.websockets.connect",
@@ -347,6 +349,71 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_rdp():
         "getTarget",
         "evaluateJSAsync",
     ]
+
+
+@pytest.mark.asyncio
+async def test_open_url_in_browser_debug_uses_firefox_rdp_browser_window():
+    responses = [
+        {"from": "root", "applicationType": "browser"},
+        {
+            "from": "root",
+            "processDescriptor": {
+                "actor": "process-descriptor-1",
+                "id": 0,
+                "isParent": True,
+            },
+        },
+        {
+            "from": "process-descriptor-1",
+            "process": {
+                "actor": "parent-process-target-1",
+                "consoleActor": "browser-console-1",
+            },
+        },
+        {
+            "from": "browser-console-1",
+            "resultID": "open-tab-eval-1",
+        },
+        {
+            "from": "browser-console-1",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "open-tab-eval-1",
+            "result": json.dumps(
+                {
+                    "opened": True,
+                    "url": "https://gengo.com/t/jobs/details/123",
+                }
+            ),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
+        },
+    ]
+    mock_ws = _MockJSONWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        new=AsyncMock(return_value=mock_ws),
+    ) as mock_connect:
+        opened_url = await open_url_in_browser_debug(
+            "ws://127.0.0.1:9222",
+            "https://gengo.com/t/jobs/details/123",
+        )
+
+    assert opened_url == "https://gengo.com/t/jobs/details/123"
+    mock_connect.assert_awaited_once_with(
+        "ws://127.0.0.1:9222",
+        max_size=5_000_000,
+    )
+    assert mock_ws.closed is True
+    assert [message["type"] for message in mock_ws._sent] == [
+        "getProcess",
+        "getTarget",
+        "evaluateJSAsync",
+    ]
+    assert "openTrustedLinkIn" in mock_ws._sent[2]["text"]
+    assert "https://gengo.com/t/jobs/details/123" in mock_ws._sent[2]["text"]
 
 
 @pytest.mark.asyncio
@@ -430,7 +497,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
             "startTime": 1,
         },
     ]
-    mock_ws = _MockCDPWebSocket(responses)
+    mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
         "gengowatcher.browser_session.websockets.connect",
@@ -626,7 +693,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_
             "startTime": 1,
         },
     ]
-    mock_ws = _MockCDPWebSocket(responses)
+    mock_ws = _MockJSONWebSocket(responses)
 
     with (
         patch(
@@ -709,7 +776,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_bidi():
         },
         {"id": 4, "type": "success", "result": {}},
     ]
-    mock_ws = _MockCDPWebSocket(responses)
+    mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
         "gengowatcher.browser_session.websockets.connect",
@@ -791,7 +858,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
         },
         {"id": 5, "type": "success", "result": {}},
     ]
-    mock_ws = _MockCDPWebSocket(responses)
+    mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
         "gengowatcher.browser_session.websockets.connect",
@@ -872,7 +939,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_bidi
         },
         {"id": 6, "type": "success", "result": {}},
     ]
-    mock_ws = _MockCDPWebSocket(responses)
+    mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
         "gengowatcher.browser_session.websockets.connect",
@@ -955,7 +1022,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_cdp_navigati
             },
         },
     ]
-    mock_ws = _MockCDPWebSocket(responses)
+    mock_ws = _MockJSONWebSocket(responses)
 
     with (
         patch(
@@ -1028,7 +1095,6 @@ def test_build_websocket_auth_payload_uses_session_only():
     payload = build_websocket_auth_payload(
         user_id=12345,
         session_token="fresh-token",
-        user_key="browser-user-key",
     )
 
     assert payload == {
@@ -1037,11 +1103,10 @@ def test_build_websocket_auth_payload_uses_session_only():
     }
 
 
-def test_build_websocket_auth_payload_omits_placeholder_user_key():
+def test_build_websocket_auth_payload_omits_user_key():
     payload = build_websocket_auth_payload(
         user_id=12345,
         session_token="fresh-token",
-        user_key="REPLACE_WITH_YOUR_USER_KEY",
     )
 
     assert payload == {
@@ -1066,8 +1131,13 @@ def test_handle_cli_sync_session_updates_config_and_debug_url(capsys):
     }.get((section, key), None)
 
     with patch(
-        "gengowatcher.main.fetch_browser_session_token_sync",
-        return_value="fresh-token",
+        "gengowatcher.main.fetch_browser_session_snapshot_sync",
+        return_value=BrowserSessionSnapshot(
+            session_token="fresh-token",
+            user_key="browser-user-key",
+            user_agent="Helium Browser",
+            accept_language="en-GB,en-US;q=0.9",
+        ),
     ):
         handled = handle_cli_config_commands(args, config, console=MagicMock())
 
@@ -1081,6 +1151,87 @@ def test_handle_cli_sync_session_updates_config_and_debug_url(capsys):
     ]
     config.save_config.assert_called_once()
     assert "Updated [WebSocket] user_session" in capsys.readouterr().out
+
+
+def test_handle_cli_sync_session_token_fallback_preserves_browser_metadata(capsys):
+    args = SimpleNamespace(
+        set=None,
+        get=None,
+        list=False,
+        configure=False,
+        sync_session_from_browser=True,
+        check_session_from_browser=False,
+        browser_debug_url="http://127.0.0.1:9222",
+    )
+    config = MagicMock()
+    config.get.side_effect = lambda section, key: {
+        ("WebSocket", "browser_debug_url"): "",
+        ("WebSocket", "user_key"): "real-browser-user-key",
+        ("Network", "browser_user_agent"): "Real Browser",
+        ("Network", "browser_accept_language"): "ja,en-US;q=0.9",
+    }.get((section, key), None)
+
+    with (
+        patch(
+            "gengowatcher.main.fetch_browser_session_snapshot_sync",
+            side_effect=RuntimeError("snapshot unavailable"),
+        ),
+        patch(
+            "gengowatcher.cli.maybe_launch_managed_firefox_debug",
+            return_value=False,
+        ),
+        patch(
+            "gengowatcher.main.fetch_browser_session_token_sync",
+            return_value="fresh-token",
+        ),
+    ):
+        handled = handle_cli_config_commands(args, config, console=MagicMock())
+
+    assert handled is True
+    assert config.set.call_args_list == [
+        (("WebSocket", "user_session", "fresh-token"),),
+        (("WebSocket", "browser_debug_url", "http://127.0.0.1:9222"),),
+    ]
+    config.save_config.assert_called_once()
+    assert "Updated [WebSocket] user_session" in capsys.readouterr().out
+
+
+def test_handle_cli_start_firefox_debug_reuses_running_server(capsys):
+    args = SimpleNamespace(
+        set=None,
+        get=None,
+        list=False,
+        configure=False,
+        sync_session_from_browser=False,
+        check_session_from_browser=False,
+        start_firefox_debug=True,
+        browser_debug_url="ws://127.0.0.1:9222",
+    )
+    config = MagicMock()
+    config.get.side_effect = lambda section, key, fallback=None: {
+        ("Paths", "browser_debug_browser_path"): "firefox",
+        ("WebSocket", "browser_debug_profile_path"): "profiles/firefox-debug",
+        (
+            "WebSocket",
+            "browser_debug_start_url",
+        ): "https://gengo.com/t/jobs/status/available/realtime",
+    }.get((section, key), fallback)
+
+    with (
+        patch(
+            "gengowatcher.cli.can_connect_to_firefox_debug_server",
+            return_value=True,
+        ),
+        patch("gengowatcher.cli.launch_managed_firefox_debug") as mock_launch,
+        patch("gengowatcher.cli.wait_for_firefox_debug_server") as mock_wait,
+    ):
+        handled = handle_cli_config_commands(args, config, console=MagicMock())
+
+    assert handled is True
+    mock_launch.assert_not_called()
+    mock_wait.assert_not_called()
+    config.save_config.assert_not_called()
+    assert "already available" in capsys.readouterr().out
 
 
 def test_handle_cli_check_session_reports_mismatch(capsys):

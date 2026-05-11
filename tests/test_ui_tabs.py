@@ -494,6 +494,24 @@ async def test_plain_q_exits_when_command_prompt_is_empty():
 
 
 @pytest.mark.asyncio
+async def test_q_is_typed_into_command_prompt_when_not_empty():
+    """q should be input text once the command prompt already has content."""
+    from textual.widgets import Input
+
+    app = create_mock_app()
+
+    async with app.run_test() as pilot:
+        prompt = pilot.app.query_one(Input)
+        prompt.focus()
+        await pilot.press("h")
+        await pilot.press("q")
+        await pilot.pause(0.1)
+
+        assert pilot.app.is_running is True
+        assert prompt.value.endswith("q")
+
+
+@pytest.mark.asyncio
 async def test_tab_switching_performance():
     """Test rapid tab switching doesn't cause issues."""
     app = create_mock_app()

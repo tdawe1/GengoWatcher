@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,9 +140,9 @@ def get_firefox_debug_launch_spec(
         debug_url=resolved_debug_url,
         browser_path=browser_path,
         profile_path=profile_path,
-        seed_profile_path=Path(seed_profile_raw).expanduser()
-        if seed_profile_raw
-        else None,
+        seed_profile_path=(
+            Path(seed_profile_raw).expanduser() if seed_profile_raw else None
+        ),
         start_url=start_url or GENGO_REALTIME_URL,
         port=_firefox_debug_port(resolved_debug_url),
     )
@@ -209,9 +211,7 @@ def _detect_locked_remote_debug_pref(browser_path: str) -> Path | None:
 
 def _upsert_firefox_pref_file(path: Path, prefs_text: str) -> None:
     managed_lines = [
-        line
-        for line in prefs_text.splitlines()
-        if line.startswith('user_pref("')
+        line for line in prefs_text.splitlines() if line.startswith('user_pref("')
     ]
     managed_keys = []
     managed_map: dict[str, str] = {}
@@ -238,9 +238,7 @@ def _upsert_firefox_pref_file(path: Path, prefs_text: str) -> None:
         else:
             updated_lines.append(line)
 
-    missing_lines = [
-        managed_map[key] for key in managed_keys if key not in seen_keys
-    ]
+    missing_lines = [managed_map[key] for key in managed_keys if key not in seen_keys]
     if missing_lines:
         if updated_lines and updated_lines[-1] != "":
             updated_lines.append("")
@@ -250,7 +248,26 @@ def _upsert_firefox_pref_file(path: Path, prefs_text: str) -> None:
         updated_lines = prefs_text.splitlines()
 
     rendered = "\n".join(updated_lines).rstrip() + "\n"
-    path.write_text(rendered, encoding="utf-8")
+    temp_path: Path | None = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        temp_path = Path(temp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+            temp_file.write(rendered)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
 
 
 def ensure_managed_firefox_profile(spec: FirefoxDebugLaunchSpec) -> Path:
@@ -278,7 +295,16 @@ def build_firefox_debug_command(spec: FirefoxDebugLaunchSpec) -> list[str]:
 
 
 def launch_managed_firefox_debug(spec: FirefoxDebugLaunchSpec) -> subprocess.Popen:
-    locked_pref_file = _detect_locked_remote_debug_pref(spec.browser_path)
+    try:
+        browser_binary_path = _resolve_browser_binary_path(spec.browser_path)
+        if browser_binary_path is None or not browser_binary_path.is_file():
+            raise FileNotFoundError(spec.browser_path)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Firefox executable not found: {spec.browser_path}"
+        ) from exc
+
+    locked_pref_file = _detect_locked_remote_debug_pref(str(browser_binary_path))
     if locked_pref_file is not None:
         raise RuntimeError(
             "This Firefox build disables DevTools remote debugging via a locked "

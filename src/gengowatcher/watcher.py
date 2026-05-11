@@ -18,6 +18,7 @@ import webbrowser
 from typing import Callable, Optional
 from collections import deque
 from pathlib import Path
+from urllib.parse import urlparse
 
 import feedparser
 import websockets
@@ -27,9 +28,11 @@ from .browser_session import (
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     fetch_browser_session_snapshot_sync,
+    open_url_in_browser_debug_sync,
     refresh_browser_page_activity_sync,
 )
 from .browser_debug_launcher import (
+    get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
 )
@@ -55,6 +58,11 @@ try:
     from .website_monitor import WebsiteMonitor
 except ImportError:
     WebsiteMonitor = None
+
+try:
+    from .translation_app_client import TranslationAppClient
+except ImportError:  # pragma: no cover - optional integration at runtime
+    TranslationAppClient = None
 
 PLACEHOLDER_CONFIG_VALUES = {
     None,
@@ -1008,6 +1016,73 @@ class GengoWatcher:
         if open_link and url:
             self.open_in_browser(url)
 
+    @staticmethod
+    def _is_gengo_url(url: str) -> bool:
+        parsed = urlparse(str(url or "").strip())
+        hostname = parsed.hostname or ""
+        return hostname == "gengo.com" or hostname.endswith(".gengo.com")
+
+    def _open_in_managed_firefox_debug_session(self, url: str) -> bool:
+        if not self._is_gengo_url(url):
+            return False
+
+        debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
+        try:
+            spec = get_firefox_debug_launch_spec(self.config, str(debug_url))
+        except Exception as exc:
+            self.logger.debug(
+                "Skipping managed Firefox debug browser for %s: %s",
+                url,
+                exc,
+            )
+            return False
+        if spec is None:
+            return False
+
+        last_exc: Exception | None = None
+        try:
+            open_url_in_browser_debug_sync(spec.debug_url, url)
+            self.logger.debug(
+                "Opened URL in managed Firefox debug session at %s: %s",
+                spec.debug_url,
+                url,
+            )
+            return True
+        except Exception as exc:
+            last_exc = exc
+
+        if maybe_launch_managed_firefox_debug(
+            self.config,
+            spec.debug_url,
+            logger=self.logger,
+        ):
+            timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(
+                self.config
+            )
+            deadline = time.monotonic() + timeout_sec
+            while time.monotonic() < deadline:
+                time.sleep(retry_interval_sec)
+                try:
+                    open_url_in_browser_debug_sync(spec.debug_url, url)
+                    self.logger.debug(
+                        "Opened URL in newly launched managed Firefox debug "
+                        "session at %s: %s",
+                        spec.debug_url,
+                        url,
+                    )
+                    return True
+                except Exception as exc:
+                    last_exc = exc
+
+        self.logger.warning(
+            "Managed Firefox debug session at %s could not open %s (%s); "
+            "falling back to configured browser",
+            spec.debug_url,
+            url,
+            last_exc,
+        )
+        return False
+
     def open_in_browser(self, url):
         """
         Open the given URL using the configured browser if available, otherwise use the system default browser.
@@ -1017,6 +1092,9 @@ class GengoWatcher:
         """
         self.logger.debug(f"Opening URL in browser: {url}")
         try:
+            if self._open_in_managed_firefox_debug_session(str(url)):
+                return
+
             browser_path_str = self.config.get("Paths", "browser_path")
             if not browser_path_str or not Path(browser_path_str).is_file():
                 webbrowser.open(url)
@@ -1119,7 +1197,7 @@ class GengoWatcher:
 
             try:
                 inserted = self.state.add_job(job_data)
-                if not inserted:
+                if inserted is False:
                     # Job is a duplicate, bail out immediately
                     return
 
@@ -1214,6 +1292,7 @@ class GengoWatcher:
         else:
             self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
 
+        self._submit_job_to_translation_app_async(job_data)
         self.state.save_state()
 
         if self.on_job_added_callback:
@@ -1432,7 +1511,48 @@ class GengoWatcher:
                 f"Failed to record accepted job for cancellation tracking: {e}"
             )
 
-        self._submit_job_to_translation_app_async(job_data)
+    def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
+        """Submit a discovered job to translation-app without blocking monitors."""
+        if TranslationAppClient is None:
+            self.logger.debug("translation-app client is unavailable")
+            return
+        if not self.config.getboolean("TranslationApp", "enabled", fallback=False):
+            return
+
+        base_url = str(
+            self.config.get("TranslationApp", "base_url", fallback="") or ""
+        ).strip()
+        auth_token = str(
+            self.config.get("TranslationApp", "auth_token", fallback="") or ""
+        ).strip()
+        if not base_url or auth_token in PLACEHOLDER_CONFIG_VALUES:
+            self.logger.warning(
+                "TranslationApp is enabled but base_url or auth_token is not configured"
+            )
+            return
+
+        timeout_sec = float(
+            self.config.getfloat("TranslationApp", "timeout_sec", fallback=5.0) or 5.0
+        )
+        verify_tls = self.config.getboolean(
+            "TranslationApp", "verify_tls", fallback=True
+        )
+
+        def submit() -> None:
+            client = TranslationAppClient(
+                base_url=base_url,
+                auth_token=auth_token,
+                timeout_sec=timeout_sec,
+                verify_tls=verify_tls,
+                logger=self.logger,
+            )
+            client.submit_job(dict(job_data))
+
+        threading.Thread(
+            target=submit,
+            daemon=True,
+            name=f"TranslationAppSubmit-{job_data.get('id', 'unknown')}",
+        ).start()
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.

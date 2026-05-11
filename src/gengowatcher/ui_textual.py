@@ -267,7 +267,9 @@ def _format_telemetry_metric(name: str, value: Any) -> str:
     return str(value)
 
 
-def _iter_telemetry_entries(snapshot: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+def _iter_telemetry_entries(
+    snapshot: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
     ordered: list[tuple[str, dict[str, Any]]] = []
     for key in TELEMETRY_SECTION_ORDER:
         value = snapshot.get(key)
@@ -1003,13 +1005,11 @@ class ActivityPreview(DashboardQuadrant):
         (r"\b[A-Z]{2}[→\->][A-Z]{2}\b", "lang_pair"),
         (r"https?://[^\s]+", "url"),
         (
-            r"\b(?:found|accepted|success|connected|started|completed|ok|"
-            r"passed)\b",
+            r"\b(?:found|accepted|success|connected|started|completed|ok|" r"passed)\b",
             "success",
         ),
         (
-            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|"
-            r"denied)\b",
+            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|" r"denied)\b",
             "error_word",
         ),
         (
@@ -1081,14 +1081,6 @@ class ActivityPreview(DashboardQuadrant):
 
 class CommandInput(Input):
     """Bottom command prompt that leaves bare app shortcuts available."""
-
-    async def _on_key(self, event: events.Key) -> None:
-        if event.key == "q" and not str(self.value or ""):
-            event.stop()
-            event.prevent_default()
-            await self.app.action_quit()
-            return
-        await super()._on_key(event)
 
     def check_consume_key(self, key: str, character: str | None) -> bool:
         if key == "q" and not str(self.value or ""):
@@ -2095,7 +2087,7 @@ class GengoWatcherApp(App):
         "web": "setup-website",
     }
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
+        Binding("q", "quit", "Quit", priority=True),
         Binding("c", "check", "Check"),
         Binding("p", "pause", "Pause"),
         Binding("?", "help", "Help"),
@@ -2474,14 +2466,12 @@ class TextualLogHandler(logging.Handler):
         (r"https?://[^\s]+", "url"),
         # Success words
         (
-            r"\b(?:found|accepted|success|connected|started|completed|ok|"
-            r"passed)\b",
+            r"\b(?:found|accepted|success|connected|started|completed|ok|" r"passed)\b",
             "success",
         ),
         # Error words
         (
-            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|"
-            r"denied)\b",
+            r"\b(?:error|failed|failure|exception|crash|rejected|timeout|" r"denied)\b",
             "error_word",
         ),
         # Warning words
@@ -2498,9 +2488,12 @@ class TextualLogHandler(logging.Handler):
         (r"\b\d+(?:\.\d+)?\b", "number"),
     ]
 
-    def __init__(self, app):
+    def __init__(self, app, ui_thread_id: int | None = None):
         super().__init__()
         self.app = app
+        self.ui_thread_id = (
+            threading.get_ident() if ui_thread_id is None else ui_thread_id
+        )
         # Compile patterns
         self._compiled_patterns = [
             (re.compile(pattern, re.IGNORECASE), color_key)
@@ -2511,7 +2504,7 @@ class TextualLogHandler(logging.Handler):
         try:
             msg = self._format_ui_message(record)
             level = record.levelno
-            if getattr(self.app, "_thread_id", None) == threading.get_ident():
+            if self.ui_thread_id == threading.get_ident():
                 self.write_log(msg, level)
             else:
                 self.app.call_from_thread(self.write_log, msg, level)

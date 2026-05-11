@@ -1,6 +1,7 @@
 import base64
 import asyncio
 import json
+import logging
 import random
 import urllib.error
 import urllib.request
@@ -10,6 +11,8 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import websockets
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BROWSER_DEBUG_URL = "http://127.0.0.1:9222"
 DEFAULT_FIREFOX_BIDI_PATH = "/session"
@@ -580,8 +583,12 @@ async def _firefox_bidi_session(debug_url: str | None):
         finally:
             try:
                 await session.call("session.end", {})
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "Failed to end Firefox BiDi session: %s",
+                    exc,
+                    exc_info=True,
+                )
 
 
 async def _firefox_get_gengo_context(
@@ -848,6 +855,23 @@ async def _firefox_rdp_evaluate_json(
     return _parse_json_object(_extract_rdp_async_evaluation_value(packet))
 
 
+async def _open_url_in_firefox_rdp(debug_url: str | None, url: str) -> str:
+    client = await _open_firefox_rdp_client(debug_url)
+    try:
+        result = await _firefox_rdp_evaluate_json(
+            client,
+            await _firefox_rdp_get_browser_console_actor(client),
+            _firefox_open_tab_expression(url),
+        )
+    finally:
+        await client.websocket.close()
+
+    if not result.get("opened"):
+        reason = str(result.get("reason") or "unknown error")
+        raise BrowserSessionError(f"Firefox did not open {url}: {reason}")
+    return str(result.get("url") or url)
+
+
 def _firefox_cookie_lookup_expression() -> str:
     return """(() => {
 const names = ["myG_myGSession_", "my_gengo_session", "myG_rdsessID"];
@@ -918,6 +942,31 @@ def _firefox_queue_navigation_expression(url: str, marker: str) -> str:
         f'sessionStorage.setItem("{GENGO_ACTIVITY_MARKER_STORAGE_KEY}", marker);'
         "setTimeout(() => { location.href = targetUrl; }, 0);"
         "return JSON.stringify({ queued: true, marker, url: targetUrl });"
+        "})()"
+    )
+
+
+def _firefox_open_tab_expression(url: str) -> str:
+    url_literal = _javascript_string_literal(url)
+    return (
+        "(() => {"
+        f"const targetUrl = {url_literal};"
+        'const browserWindow = Services.wm.getMostRecentWindow("navigator:browser");'
+        "if (!browserWindow || !browserWindow.gBrowser) {"
+        'return JSON.stringify({opened: false, reason: "no_browser_window"});'
+        "}"
+        "if (typeof browserWindow.openTrustedLinkIn === 'function') {"
+        "browserWindow.openTrustedLinkIn(targetUrl, 'tab', {"
+        "inBackground: false, relatedToCurrent: false"
+        "});"
+        "} else {"
+        "const tab = browserWindow.gBrowser.addTab(targetUrl, {"
+        "triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()"
+        "});"
+        "browserWindow.gBrowser.selectedTab = tab;"
+        "}"
+        "browserWindow.focus();"
+        "return JSON.stringify({opened: true, url: targetUrl});"
         "})()"
     )
 
@@ -1190,6 +1239,53 @@ def fetch_browser_session_token_sync(
     return asyncio.run(
         fetch_browser_session_token(debug_url=debug_url, cookie_name=cookie_name)
     )
+
+
+async def _open_url_in_firefox_bidi(debug_url: str | None, url: str) -> str:
+    async with _firefox_bidi_session(debug_url) as session:
+        context_result = await session.call(
+            "browsingContext.create",
+            {"type": "tab", "background": False},
+        )
+        context_id = str(context_result.get("context") or "").strip()
+        if not context_id:
+            raise BrowserSessionError("Firefox BiDi did not return a new tab context")
+
+        navigate_result = await session.call(
+            "browsingContext.navigate",
+            {
+                "context": context_id,
+                "url": url,
+                "wait": "none",
+            },
+        )
+        return str(navigate_result.get("url") or url)
+
+
+async def open_url_in_browser_debug(
+    debug_url: str | None,
+    url: str,
+) -> str:
+    """Open a URL in an already managed browser debug session."""
+    target_url = str(url or "").strip()
+    if not target_url:
+        raise BrowserSessionError("Cannot open an empty browser URL")
+
+    endpoint = _resolve_browser_endpoint(debug_url)
+    if endpoint.backend == "firefox-rdp":
+        return await _open_url_in_firefox_rdp(endpoint.url, target_url)
+    if endpoint.backend == "firefox-bidi":
+        return await _open_url_in_firefox_bidi(endpoint.url, target_url)
+    raise BrowserSessionError(
+        f"Opening URLs through {endpoint.backend} debug endpoints is not supported"
+    )
+
+
+def open_url_in_browser_debug_sync(
+    debug_url: str | None,
+    url: str,
+) -> str:
+    return asyncio.run(open_url_in_browser_debug(debug_url, url))
 
 
 async def _firefox_rdp_read_activity_state(
@@ -1678,7 +1774,6 @@ def build_websocket_auth_payload(
     *,
     user_id: Any,
     session_token: str,
-    user_key: str = "",
 ) -> dict[str, Any]:
     return {
         "user_id": user_id,

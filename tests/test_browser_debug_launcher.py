@@ -297,3 +297,30 @@ def test_launch_managed_firefox_debug_rejects_locked_firefox_build(tmp_path):
             assert "disables DevTools remote debugging" in str(exc)
 
     mock_popen.assert_not_called()
+
+
+def test_launch_managed_firefox_debug_checks_binary_before_profile_write(tmp_path):
+    spec = FirefoxDebugLaunchSpec(
+        debug_url="ws://127.0.0.1:6000",
+        browser_path=str(tmp_path / "missing-firefox"),
+        profile_path=tmp_path / "profile",
+        seed_profile_path=None,
+        start_url="https://gengo.com/t/jobs/status/available/realtime",
+        port=6000,
+    )
+
+    with (
+        patch(
+            "gengowatcher.browser_debug_launcher.ensure_managed_firefox_profile"
+        ) as mock_ensure,
+        patch("gengowatcher.browser_debug_launcher.subprocess.Popen") as mock_popen,
+    ):
+        try:
+            launch_managed_firefox_debug(spec)
+            assert False, "Expected missing Firefox executable to be rejected"
+        except RuntimeError as exc:
+            assert "Firefox executable not found" in str(exc)
+            assert isinstance(exc.__cause__, FileNotFoundError)
+
+    mock_ensure.assert_not_called()
+    mock_popen.assert_not_called()
