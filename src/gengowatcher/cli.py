@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import argparse
 import re
+import time
 from getpass import getpass
 
 from rich.console import Console
 
+from .browser_debug_launcher import (
+    DEFAULT_FIREFOX_DEBUG_URL,
+    can_connect_to_firefox_debug_server,
+    get_firefox_debug_launch_spec,
+    get_firefox_debug_retry_window,
+    launch_managed_firefox_debug,
+    maybe_launch_managed_firefox_debug,
+    wait_for_firefox_debug_server,
+)
+from .browser_session import BrowserSessionSnapshot
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
 
 
@@ -52,6 +63,33 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Port for web server (default: 8000)",
     )
     parser.add_argument(
+        "--sync-session-from-browser",
+        action="store_true",
+        help="Sync WebSocket session values from the live browser session",
+    )
+    parser.add_argument(
+        "--sync-session",
+        dest="sync_session_from_browser",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--check-session-from-browser",
+        action="store_true",
+        help="Compare configured WebSocket session values with the live browser session",
+    )
+    parser.add_argument(
+        "--check-session",
+        dest="check_session_from_browser",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--start-firefox-debug",
+        action="store_true",
+        help="Start a managed Firefox DevTools session for browser sync",
+    )
+    parser.add_argument(
         "--setup-email",
         action="store_true",
         help="Configure Gmail OAuth for email monitoring (interactive)",
@@ -90,11 +128,144 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def should_handle_lightweight_command(args: argparse.Namespace) -> bool:
     """Return whether args request a config-only command path."""
     return bool(
-        args.set
-        or args.get
-        or args.list
-        or args.configure
+        getattr(args, "set", None)
+        or getattr(args, "get", None)
+        or getattr(args, "list", False)
+        or getattr(args, "configure", False)
+        or getattr(args, "sync_session_from_browser", False)
+        or getattr(args, "check_session_from_browser", False)
+        or getattr(args, "start_firefox_debug", False)
     )
+
+
+def _resolve_browser_debug_url(args: argparse.Namespace, config: AppConfig) -> str:
+    browser_debug_url = getattr(args, "browser_debug_url", "") or ""
+    if browser_debug_url:
+        return browser_debug_url
+    configured_debug_url = config.get("WebSocket", "browser_debug_url")
+    return str(configured_debug_url or "")
+
+
+def _load_browser_session_snapshot(
+    args: argparse.Namespace, config: AppConfig
+) -> BrowserSessionSnapshot:
+    from . import main as main_module
+
+    debug_url = _resolve_browser_debug_url(args, config)
+    try:
+        return main_module.fetch_browser_session_snapshot_sync(debug_url=debug_url)
+    except Exception:
+        if maybe_launch_managed_firefox_debug(config, debug_url):
+            timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(config)
+            deadline = time.monotonic() + timeout_sec
+            last_exc: Exception | None = None
+            while time.monotonic() < deadline:
+                time.sleep(retry_interval_sec)
+                try:
+                    return main_module.fetch_browser_session_snapshot_sync(
+                        debug_url=debug_url
+                    )
+                except Exception as exc:  # pragma: no cover - exercised via caller
+                    last_exc = exc
+            if last_exc is not None:
+                raise last_exc
+        session_token = main_module.fetch_browser_session_token_sync(
+            debug_url=debug_url
+        )
+        return BrowserSessionSnapshot(session_token=session_token)
+
+
+def _start_firefox_debug_session(
+    args: argparse.Namespace, config: AppConfig, console: Console
+) -> bool:
+    configured_debug_url = _resolve_browser_debug_url(args, config)
+    spec = get_firefox_debug_launch_spec(
+        config,
+        configured_debug_url,
+        require_enabled=False,
+        allow_default_debug_url=True,
+    )
+    if spec is None:
+        raise RuntimeError(
+            "Managed Firefox launch requires a local ws:// browser_debug_url, "
+            f"for example {DEFAULT_FIREFOX_DEBUG_URL}"
+        )
+
+    if not configured_debug_url:
+        config.set("WebSocket", "browser_debug_url", spec.debug_url)
+        config.save_config()
+
+    if can_connect_to_firefox_debug_server(spec.debug_url):
+        print(
+            "Managed Firefox debug session already available at "
+            f"{spec.debug_url} using profile {spec.profile_path}"
+        )
+        return True
+
+    launch_managed_firefox_debug(spec)
+    timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(config)
+    if not wait_for_firefox_debug_server(
+        spec.debug_url,
+        timeout_sec=timeout_sec,
+        retry_interval_sec=retry_interval_sec,
+    ):
+        raise RuntimeError(
+            "Managed Firefox debug session did not come online at "
+            f"{spec.debug_url} within {timeout_sec:.1f}s"
+        )
+    print(
+        "Started managed Firefox debug session at "
+        f"{spec.debug_url} using profile {spec.profile_path}"
+    )
+    return True
+
+
+def _sync_session_from_browser(
+    args: argparse.Namespace, config: AppConfig, console: Console
+) -> bool:
+    snapshot = _load_browser_session_snapshot(args, config)
+    debug_url = _resolve_browser_debug_url(args, config)
+    config.set("WebSocket", "user_session", snapshot.session_token)
+    if snapshot.user_key:
+        config.set("WebSocket", "user_key", snapshot.user_key)
+    if snapshot.user_agent:
+        config.set("Network", "browser_user_agent", snapshot.user_agent)
+    if snapshot.accept_language:
+        config.set("Network", "browser_accept_language", snapshot.accept_language)
+    if debug_url:
+        config.set("WebSocket", "browser_debug_url", debug_url)
+    config.save_config()
+    print("Updated [WebSocket] user_session from live browser state")
+    return True
+
+
+def _check_session_from_browser(
+    args: argparse.Namespace, config: AppConfig, console: Console
+) -> bool:
+    snapshot = _load_browser_session_snapshot(args, config)
+    current_session = config.get("WebSocket", "user_session")
+    current_user_key = config.get("WebSocket", "user_key")
+    current_user_agent = config.get("Network", "browser_user_agent")
+    current_accept_language = config.get("Network", "browser_accept_language")
+
+    mismatches = []
+    if current_session != snapshot.session_token:
+        mismatches.append("user_session")
+    if snapshot.user_key and current_user_key != snapshot.user_key:
+        mismatches.append("user_key")
+    if snapshot.user_agent and current_user_agent != snapshot.user_agent:
+        mismatches.append("browser_user_agent")
+    if snapshot.accept_language and current_accept_language != snapshot.accept_language:
+        mismatches.append("browser_accept_language")
+
+    if mismatches:
+        print(
+            "Configured browser session differs from the live browser state: "
+            + ", ".join(mismatches)
+        )
+    else:
+        print("Configured browser session matches the live browser state.")
+    return True
 
 
 def _coerce_cli_value(value: str, expected_type=None):
@@ -112,9 +283,11 @@ def _coerce_cli_value(value: str, expected_type=None):
     # If we know the expected type, use it
     if expected_type is not None:
         # Handle list/sequence types
-        if expected_type is list or (hasattr(expected_type, '__origin__') and expected_type.__origin__ is list):
+        if expected_type is list or (
+            hasattr(expected_type, "__origin__") and expected_type.__origin__ is list
+        ):
             # Try parsing as JSON first
-            if value.startswith('[') and value.endswith(']'):
+            if value.startswith("[") and value.endswith("]"):
                 try:
                     parsed = json.loads(value)
                     if isinstance(parsed, list):
@@ -122,10 +295,12 @@ def _coerce_cli_value(value: str, expected_type=None):
                 except (json.JSONDecodeError, ValueError):
                     pass
             # Fall back to comma-separated
-            return [item.strip() for item in value.split(',') if item.strip()]
+            return [item.strip() for item in value.split(",") if item.strip()]
 
         # Handle dict/object types
-        if expected_type is dict or (hasattr(expected_type, '__origin__') and expected_type.__origin__ is dict):
+        if expected_type is dict or (
+            hasattr(expected_type, "__origin__") and expected_type.__origin__ is dict
+        ):
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, dict):
@@ -194,7 +369,14 @@ def handle_cli_config_commands(
                 option_lower = option.lower()
                 is_sensitive = any(
                     keyword in option_lower
-                    for keyword in ["token", "secret", "key", "password", "oauth", "api"]
+                    for keyword in [
+                        "token",
+                        "secret",
+                        "key",
+                        "password",
+                        "oauth",
+                        "api",
+                    ]
                 )
                 if is_sensitive:
                     display_value = "******"
@@ -206,6 +388,15 @@ def handle_cli_config_commands(
     if args.configure:
         interactive_configure(config, console)
         return True
+
+    if getattr(args, "sync_session_from_browser", False):
+        return _sync_session_from_browser(args, config, console)
+
+    if getattr(args, "check_session_from_browser", False):
+        return _check_session_from_browser(args, config, console)
+
+    if getattr(args, "start_firefox_debug", False):
+        return _start_firefox_debug_session(args, config, console)
 
     return False
 

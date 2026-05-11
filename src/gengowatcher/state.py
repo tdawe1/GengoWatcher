@@ -52,9 +52,12 @@ class AppState:
                     with self._lock:
                         self.last_seen_rss_link = state_data.get("last_seen_rss_link")
                         self.last_seen_link = state_data.get("last_seen_link")
-                        # Session data cleared on startup - start fresh each session
-                        self.total_new_entries_found = 0
-                        self.seen_job_ids.clear()
+                        self.total_new_entries_found = state_data.get(
+                            "total_new_entries_found", 0
+                        )
+                        self.seen_job_ids = collections.deque(
+                            state_data.get("seen_job_ids", [])
+                        )
                         # Persist sparkline data across sessions
                         self._sparkline_data = state_data.get("sparkline_data", [])
 

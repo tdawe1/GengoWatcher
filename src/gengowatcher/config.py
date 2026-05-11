@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import shutil
 import sys
@@ -51,6 +52,12 @@ class AppConfig:
             "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
             "user_key": "REPLACE_WITH_YOUR_USER_KEY",
             "browser_debug_url": "",
+            "browser_debug_auto_launch": False,
+            "browser_debug_profile_path": "profiles/firefox-debug",
+            "browser_debug_seed_profile_path": "",
+            "browser_debug_start_url": "https://gengo.com/t/jobs/status/available/realtime",
+            "browser_debug_launch_timeout_sec": 15.0,
+            "browser_debug_retry_interval_sec": 1.0,
             "session_sync_interval_sec": 14400,
             "session_sync_fail_hard": True,
             "session_sync_alert_on_failure": True,
@@ -63,6 +70,7 @@ class AppConfig:
             "log_file": "logs/gengowatcher.log",
             "notification_icon_path": "",
             "browser_path": "",
+            "browser_debug_browser_path": "firefox",
             "browser_args": "--new-window {url}",
             "all_entries_log": "logs/all_entries.csv",
         },
@@ -138,6 +146,7 @@ class AppConfig:
         "BrowserWorker": {
             "enabled": False,
             "socket_path": "",
+            "auth_token": "",
             "profile_path": "profiles/browser-worker",
             "seed_profile_path": "",
             "headless": False,
@@ -449,6 +458,49 @@ class AppConfig:
             f.flush()
             os.fsync(f.fileno())
 
+    @staticmethod
+    def _serialize_toml_value(value: Any) -> str:
+        """Serialize Python values to TOML literals."""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, float):
+            return repr(value)
+        if isinstance(value, str):
+            escaped = (
+                value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+            )
+            return f'"{escaped}"'
+        if isinstance(value, list):
+            return (
+                "["
+                + ", ".join(AppConfig._serialize_toml_value(item) for item in value)
+                + "]"
+            )
+        if isinstance(value, dict):
+            items = ", ".join(
+                f"{key} = {AppConfig._serialize_toml_value(item)}"
+                for key, item in value.items()
+            )
+            return "{ " + items + " }"
+        if value is None:
+            return '""'
+        return json.dumps(value)
+
+    @classmethod
+    def _dump_toml(cls, data: Dict[str, Dict[str, Any]]) -> str:
+        """Serialize the nested config dictionary to a TOML document."""
+        lines: list[str] = []
+        for section, settings in data.items():
+            if not isinstance(settings, dict):
+                continue
+            lines.append(f"[{section}]")
+            for key, value in settings.items():
+                lines.append(f"{key} = {cls._serialize_toml_value(value)}")
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+
     def list_all(self) -> Dict[str, Dict[str, Any]]:
         """Return all config values as a nested dictionary.
 
@@ -555,43 +607,6 @@ class AppConfig:
             if section not in self.config:
                 self.config[section] = {}
             self.config[section][key] = value
-
-    @staticmethod
-    def _serialize_toml_value(value: Any) -> str:
-        """Serialize Python values to TOML literals."""
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, int):
-            return str(value)
-        if isinstance(value, float):
-            return repr(value)
-        if isinstance(value, str):
-            escaped = (
-                value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-            )
-            return f'"{escaped}"'
-        if isinstance(value, list):
-            return (
-                "["
-                + ", ".join(AppConfig._serialize_toml_value(item) for item in value)
-                + "]"
-            )
-        if isinstance(value, dict):
-            items = ", ".join(
-                f"{key} = {AppConfig._serialize_toml_value(item)}"
-                for key, item in value.items()
-            )
-            return "{ " + items + " }"
-        if value is None:
-            return '""'
-        return AppConfig._serialize_toml_value(str(value))
-
-        try:
-            return json.dumps(value)
-        except (TypeError, ValueError):
-            pass
-
-        return str(value)
 
     def _validate_auto_accept_config(self):
         """

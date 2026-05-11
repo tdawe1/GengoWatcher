@@ -53,7 +53,8 @@ TitleBar {
 
 /* Metrics Row */
 MetricsRow {
-    height: 4;
+    height: auto;
+    min-height: 3;
     margin: 0 1;
     align: center middle;
     layout: horizontal;
@@ -157,7 +158,8 @@ MetricCard.today:focus {
 
 /* Status Row - seamless, matches surface */
 StatusRow {
-    height: 2;
+    height: auto;
+    min-height: 2;
     width: 100%;
     layout: horizontal;
     align: center middle;
@@ -216,6 +218,13 @@ StatusIndicator {
     margin-right: 1;
 }
 
+#dashboard-content {
+    width: 100%;
+    height: 1fr;
+    overflow-y: auto;
+    scrollbar-color: $surface-muted;
+}
+
 /* Dashboard Grid */
 .dashboard-grid {
     layout: grid;
@@ -223,8 +232,17 @@ StatusIndicator {
     grid-columns: 1fr 1fr;
     grid-rows: 1fr 1fr;
     margin: 0 1;
-    height: 1fr;
-    min-height: 20;
+    height: 2fr;
+    min-height: 0;
+}
+
+.dashboard-stacked .dashboard-grid {
+    layout: vertical;
+    height: auto;
+}
+
+.dashboard-stacked .dashboard-grid .dashboard-panel {
+    height: auto;
 }
 
 /* Panel styling - unified with surface */
@@ -232,10 +250,14 @@ StatusIndicator {
     background: $panel;
     border: round $surface-muted;
     padding: 0 1;
-    height: 100%;
+    height: auto;
     margin: 0 1 1 1;
     border-title-color: $accent-blue;
     border-title-background: $panel;
+}
+
+.dashboard-grid .dashboard-panel {
+    height: 100%;
 }
 
 /* Specific panel accents */
@@ -269,6 +291,7 @@ DashboardQuadrant {
     margin: 0 1 1 1;
     padding: 0 1;
     height: 100%;
+    min-height: 5;
     border-title-color: $accent-blue;
 }
 
@@ -286,8 +309,13 @@ JobsPreview {
 }
 
 ActivityPreview {
-    height: 8;
+    height: 1fr;
+    min-height: 5;
     border-title-color: $accent-aqua;
+}
+
+ActivityPreview.dashboard-panel {
+    height: 1fr;
 }
 
 ChartPlaceholder {
@@ -344,6 +372,29 @@ DataTable {
 
 JobsPreview {
     height: 1fr;
+}
+
+.dashboard-stacked DashboardQuadrant {
+    height: auto;
+}
+
+.dashboard-stacked JobsPreview,
+.dashboard-stacked HourlyActivity,
+.dashboard-stacked ConfigPreview,
+.dashboard-stacked TelemetryPanel {
+    min-height: 7;
+}
+
+.dashboard-compact MetricCard {
+    margin: 0;
+}
+
+.dashboard-compact StatusIndicator {
+    margin: 0 1;
+}
+
+.dashboard-compact .status-label {
+    text-overflow: ellipsis;
 }
 
 DataTable > .datatable--header {

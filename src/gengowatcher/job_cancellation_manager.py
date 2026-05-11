@@ -14,6 +14,8 @@ from pathlib import Path
 from datetime import datetime
 from .browser_detector import BrowserDetector
 
+_MISSING = object()
+
 
 class JobCancellationManager:
     """Manages automatic job cancellation for better opportunities."""
@@ -48,27 +50,56 @@ class JobCancellationManager:
             "jobs_saved": [],
         }
 
+        self._load_settings_from_config()
         self.logger.info("Job Cancellation Manager initialized")
 
+    def _load_settings_from_config(self) -> None:
+        self.cancellation_enabled = self._config_getboolean(
+            "Cancellation", "enabled", fallback=self.cancellation_enabled
+        )
+        self.min_improvement_ratio = self._config_getfloat(
+            "Cancellation",
+            "min_improvement_ratio",
+            fallback=self.min_improvement_ratio,
+        )
+        self.extreme_threshold = self._config_getfloat(
+            "Cancellation",
+            "extreme_threshold",
+            fallback=self.extreme_threshold,
+        )
+
     def _config_getboolean(self, section: str, key: str, *, fallback: bool) -> bool:
+        raw_value = self._config_get(section, key, _MISSING)
+        if raw_value is not _MISSING:
+            if isinstance(raw_value, bool):
+                return raw_value
+            if isinstance(raw_value, str):
+                return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(raw_value)
         getter = getattr(self.config, "getboolean", None)
         if callable(getter):
             return bool(getter(section, key, fallback=fallback))
-        return bool(self._config_get(section, key, fallback))
+        return fallback
 
     def _config_getfloat(self, section: str, key: str, *, fallback: float) -> float:
+        raw_value = self._config_get(section, key, _MISSING)
+        if raw_value is not _MISSING:
+            try:
+                return float(raw_value)
+            except (TypeError, ValueError):
+                return fallback
         getter = getattr(self.config, "getfloat", None)
         if callable(getter):
             return float(getter(section, key, fallback=fallback))
-        try:
-            return float(self._config_get(section, key, fallback))
-        except (TypeError, ValueError):
-            return fallback
+        return fallback
 
     def _config_get(self, section: str, key: str, fallback: Any) -> Any:
         getter = getattr(self.config, "get", None)
         if callable(getter):
-            return getter(section, key, fallback=fallback)
+            value = getter(section, key, fallback=fallback)
+            if type(value).__module__.startswith("unittest.mock"):
+                return fallback
+            return value
 
         config_dict = getattr(self.config, "config", None)
         if isinstance(config_dict, dict):

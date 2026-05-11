@@ -11,6 +11,11 @@ from textual.css.query import NoMatches
 
 from gengowatcher.ui_textual import (
     ChartsPanel,
+    GengoWatcherApp,
+    HourlyActivity,
+    JobsPreview,
+    MetricsRow,
+    TelemetryPanel,
     TextualLogHandler,
     _format_timestamp,
     _normalize_source,
@@ -109,8 +114,7 @@ def test_textual_log_handler_write_to_log_writes_to_widget():
 
 def test_textual_log_handler_emit_on_app_thread_writes_directly():
     app = MagicMock()
-    app._thread_id = threading.get_ident()
-    handler = TextualLogHandler(app)
+    handler = TextualLogHandler(app, ui_thread_id=threading.get_ident())
     handler.write_log = MagicMock()
 
     record = logging.LogRecord(
@@ -124,8 +128,7 @@ def test_textual_log_handler_emit_on_app_thread_writes_directly():
 
 def test_textual_log_handler_emit_from_background_thread_uses_call_from_thread():
     app = MagicMock()
-    app._thread_id = threading.get_ident() + 1
-    handler = TextualLogHandler(app)
+    handler = TextualLogHandler(app, ui_thread_id=threading.get_ident() + 1)
     handler.write_log = MagicMock()
 
     record = logging.LogRecord(
@@ -187,9 +190,8 @@ def test_refresh_dashboard_panels_only_targets_mounted_dashboard_widgets():
     app._refresh_dashboard_panels()
 
     assert app._refresh_widget.call_args_list == [
-        ((MetricsRow, "refresh_metrics"),),
-        ((SessionStats, "refresh_stats"),),
-        ((HourlyActivity, "refresh_hourly"),),
-        ((JobsPreview, "refresh_jobs"),),
-        ((TelemetryPanel, "refresh_telemetry"),),
+        ((MetricsRow, "refresh_metrics"), {"missing_level": logging.WARNING}),
+        ((JobsPreview, "refresh_jobs"), {"missing_level": logging.WARNING}),
+        ((HourlyActivity, "refresh_hourly"), {"missing_level": logging.WARNING}),
+        ((TelemetryPanel, "refresh_telemetry"), {"missing_level": logging.WARNING}),
     ]

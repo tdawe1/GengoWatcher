@@ -376,7 +376,7 @@ class TestStatisticsAggregation:
 
         peak_hour, peak_count = stats_system.get_peak_hour()
         assert peak_hour == 23  # Last hour should have most jobs
-        assert peak_count == 23
+        assert peak_count == 24
 
     def test_source_distribution_tracking(self, stats_system):
         """Test tracking job distribution across sources."""

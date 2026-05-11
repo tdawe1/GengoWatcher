@@ -101,6 +101,21 @@ class TestAPIAuthenticator:
         result = auth.authenticate(mock_creds)
         assert result is True
 
+    def test_authenticate_uses_constant_time_compare(self):
+        """Bearer token checks should use constant-time comparison."""
+        auth = APIAuthenticator(api_key="valid_key")
+
+        mock_creds = MagicMock()
+        mock_creds.credentials = "valid_key"
+
+        with patch(
+            "gengowatcher.web.secrets.compare_digest", return_value=True
+        ) as compare:
+            result = auth.authenticate(mock_creds)
+
+        assert result is True
+        compare.assert_called_once_with("valid_key", "valid_key")
+
     def test_authenticate_invalid_credentials(self):
         """Test authentication with invalid credentials."""
         auth = APIAuthenticator(api_key="valid_key")
@@ -652,9 +667,7 @@ class TestFastAPIEndpoints:
             assert upload_data.tier == "pro"
             assert upload_data.word_count == 320
             assert upload_data.value == 16.0
-            assert upload_data.stored_name.endswith(
-                "_job-12345_pro_320w_16.00.txt"
-            )
+            assert upload_data.stored_name.endswith("_job-12345_pro_320w_16.00.txt")
 
             listed = await list_uploaded_files(authenticated=True)
             assert len(listed) == 1

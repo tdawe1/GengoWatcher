@@ -1,5 +1,6 @@
 import pytest
 import logging
+import queue
 from unittest.mock import MagicMock, patch
 import collections
 
@@ -33,9 +34,11 @@ def watcher_instance():
             "max_reward": 999999.0,
         },
     }
-    mock_config.get.side_effect = lambda section, key, fallback=None, **kwargs: config_data.get(
-        section, {}
-    ).get(key, fallback)
+    mock_config.get.side_effect = (
+        lambda section, key, fallback=None, **kwargs: config_data.get(section, {}).get(
+            key, fallback
+        )
+    )
 
     def _coerce_bool(value, fallback=False):
         if value is None:
@@ -54,13 +57,13 @@ def watcher_instance():
     )
     mock_config.getfloat.side_effect = (
         lambda section, key, fallback=None, **kwargs: float(
-            config_data.get(section, {}).get(key, fallback if fallback is not None else 0.0)
+            config_data.get(section, {}).get(
+                key, fallback if fallback is not None else 0.0
+            )
         )
     )
-    mock_config.getint.side_effect = (
-        lambda section, key, fallback=None, **kwargs: int(
-            config_data.get(section, {}).get(key, fallback if fallback is not None else 0)
-        )
+    mock_config.getint.side_effect = lambda section, key, fallback=None, **kwargs: int(
+        config_data.get(section, {}).get(key, fallback if fallback is not None else 0)
     )
     mock_config.config = config_data
     w = watcher.GengoWatcher(mock_config, mock_state, logger)
@@ -117,7 +120,9 @@ def test_fetch_rss(mock_parse, watcher_instance):
 
 
 @patch("gengowatcher.watcher.feedparser.parse")
-def test_fetch_rss_custom_user_agent_uses_browser_identity(mock_parse, watcher_instance):
+def test_fetch_rss_custom_user_agent_uses_browser_identity(
+    mock_parse, watcher_instance
+):
     """Custom RSS requests should use a browser-like User-Agent, not the app name."""
 
     class DummyFeed:
@@ -247,6 +252,93 @@ def test_process_new_job_submits_to_translation_app_when_configured(watcher_inst
     assert payload["id"] == "123"
     assert payload["title"] == "New Job"
     assert payload["source"] == "RSS"
+
+
+def test_translation_app_submission_uses_bounded_worker(watcher_instance):
+    w = watcher_instance
+    w.config.config["TranslationApp"].update(
+        {
+            "enabled": True,
+            "base_url": "https://translation.example",
+            "auth_token": "token-123",
+            "timeout_sec": 3.0,
+            "verify_tls": True,
+        }
+    )
+    queued_tasks = []
+
+    def queue_task(task):
+        queued_tasks.append(task)
+        return MagicMock()
+
+    with patch(
+        "gengowatcher.watcher._submit_translation_app_task", side_effect=queue_task
+    ):
+        w._submit_job_to_translation_app_async({"id": "123", "title": "New Job"})
+
+    assert len(queued_tasks) == 1
+
+    with patch("gengowatcher.watcher.TranslationAppClient") as client_cls:
+        queued_tasks[0]()
+
+    client_cls.assert_called_once_with(
+        base_url="https://translation.example",
+        auth_token="token-123",
+        timeout_sec=3.0,
+        verify_tls=True,
+        logger=w.logger,
+    )
+    client_cls.return_value.submit_job.assert_called_once_with(
+        {"id": "123", "title": "New Job"}
+    )
+
+
+def test_translation_app_submission_logs_when_queue_full(watcher_instance, caplog):
+    w = watcher_instance
+    w.config.config["TranslationApp"].update(
+        {
+            "enabled": True,
+            "base_url": "https://translation.example",
+            "auth_token": "token-123",
+        }
+    )
+    caplog.set_level(logging.WARNING)
+
+    with patch(
+        "gengowatcher.watcher._submit_translation_app_task",
+        side_effect=queue.Full,
+    ):
+        w._submit_job_to_translation_app_async({"id": "123"})
+
+    assert "Translation-app submission queue is full" in caplog.text
+
+
+def test_translation_app_submission_task_logs_failures(watcher_instance, caplog):
+    w = watcher_instance
+    w.config.config["TranslationApp"].update(
+        {
+            "enabled": True,
+            "base_url": "https://translation.example",
+            "auth_token": "token-123",
+        }
+    )
+    queued_tasks = []
+
+    with patch(
+        "gengowatcher.watcher._submit_translation_app_task",
+        side_effect=lambda task: queued_tasks.append(task) or MagicMock(),
+    ):
+        w._submit_job_to_translation_app_async({"id": "123"})
+
+    caplog.set_level(logging.ERROR)
+    with patch(
+        "gengowatcher.watcher.TranslationAppClient",
+        side_effect=RuntimeError("client failed"),
+    ):
+        queued_tasks[0]()
+
+    assert "Failed to submit job 123 to translation-app" in caplog.text
+    assert "RuntimeError: client failed" in caplog.text
 
 
 def test_process_new_job_populates_lang_pair_and_word_count(watcher_instance):

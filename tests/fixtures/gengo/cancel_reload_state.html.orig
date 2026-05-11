@@ -1,9 +1,0 @@
-<<<<<<< HEAD
-<!DOCTYPE html>
-=======
->>>>>>> da0e254 (feat: add browser worker handoff flow)
-<html>
-  <body>
-    <main id="cancel-reload">Reloading after cancel</main>
-  </body>
-</html>

@@ -8,6 +8,7 @@ import datetime
 import json
 import logging
 import os
+import queue
 import re
 import random
 import subprocess
@@ -18,12 +19,25 @@ import webbrowser
 from typing import Callable, Optional
 from collections import deque
 from pathlib import Path
+from urllib.parse import urlparse
 
 import feedparser
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatusCode
 
-from .browser_session import fetch_browser_session_token_sync
+from .browser_session import (
+    build_browser_aligned_websocket_headers,
+    build_websocket_auth_payload,
+    fetch_browser_session_snapshot_sync,
+    open_url_in_browser_debug_sync,
+    refresh_browser_page_activity_sync,
+)
+from .browser_debug_launcher import (
+    get_firefox_debug_launch_spec,
+    get_firefox_debug_retry_window,
+    maybe_launch_managed_firefox_debug,
+)
+from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
@@ -46,6 +60,11 @@ try:
 except ImportError:
     WebsiteMonitor = None
 
+try:
+    from .translation_app_client import TranslationAppClient
+except ImportError:  # pragma: no cover - optional integration at runtime
+    TranslationAppClient = None
+
 PLACEHOLDER_CONFIG_VALUES = {
     None,
     "",
@@ -55,6 +74,25 @@ PLACEHOLDER_CONFIG_VALUES = {
 }
 
 SENSITIVE_KEYWORDS = {"password", "session", "key"}
+RAW_WS_REDACTED = "[REDACTED]"
+RAW_WS_SENSITIVE_KEYWORDS = (
+    "authorization",
+    "cookie",
+    "session",
+    "token",
+    "secret",
+    "key",
+)
+RAW_WS_SENSITIVE_PATTERNS = (
+    (
+        re.compile(r"(my_gengo_session=)[^;\s\"']+", re.IGNORECASE),
+        rf"\1{RAW_WS_REDACTED}",
+    ),
+    (
+        re.compile(r"(authorization\s*:\s*bearer\s+)[^\s,;}}]+", re.IGNORECASE),
+        rf"\1{RAW_WS_REDACTED}",
+    ),
+)
 LANG_PAIR_REGEX = re.compile(
     r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", re.IGNORECASE
 )
@@ -64,11 +102,72 @@ UNIT_COUNT_REGEX = re.compile(
     r"\b(\d{1,6})\s*(?:words?|chars?|units?)\b", re.IGNORECASE
 )
 TITLE_TIER_REGEX = re.compile(r"\(([^)]+)\)")
+TRANSLATION_APP_SUBMISSION_MAX_WORKERS = 1
+TRANSLATION_APP_SUBMISSION_MAX_PENDING = 16
+_translation_app_executor = None
+_translation_app_executor_lock = threading.Lock()
+_translation_app_submission_slots = threading.BoundedSemaphore(
+    TRANSLATION_APP_SUBMISSION_MAX_WORKERS + TRANSLATION_APP_SUBMISSION_MAX_PENDING
+)
 TIER_UNIT_RATES = {
     "standard": 0.02,
     "pro": 0.05,
     "edit": 0.01,
 }
+
+
+def _get_translation_app_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _translation_app_executor
+    with _translation_app_executor_lock:
+        if _translation_app_executor is None:
+            _translation_app_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=TRANSLATION_APP_SUBMISSION_MAX_WORKERS,
+                thread_name_prefix="TranslationAppSubmit",
+            )
+        return _translation_app_executor
+
+
+def _submit_translation_app_task(task: Callable[[], None]) -> concurrent.futures.Future:
+    if not _translation_app_submission_slots.acquire(blocking=False):
+        raise queue.Full("translation-app submission queue is full")
+
+    try:
+        future = _get_translation_app_executor().submit(task)
+    except Exception:
+        _translation_app_submission_slots.release()
+        raise
+
+    future.add_done_callback(
+        lambda _future: _translation_app_submission_slots.release()
+    )
+    return future
+
+
+def _raw_ws_key_is_sensitive(key: object) -> bool:
+    normalized = str(key).lower()
+    return any(keyword in normalized for keyword in RAW_WS_SENSITIVE_KEYWORDS)
+
+
+def _redact_raw_ws_value(value):
+    if isinstance(value, dict):
+        return {
+            key: (
+                RAW_WS_REDACTED
+                if _raw_ws_key_is_sensitive(key)
+                else _redact_raw_ws_value(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_raw_ws_value(item) for item in value]
+    return value
+
+
+def _redact_raw_ws_text(message: str) -> str:
+    redacted = message
+    for pattern, replacement in RAW_WS_SENSITIVE_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
 
 
 class GengoWatcher:
@@ -123,6 +222,7 @@ class GengoWatcher:
         self.websocket_ping_latency_ms = None  # float milliseconds
         self.websocket_next_ping_ts = None  # float epoch seconds
         self.websocket_last_message_ts = None  # float epoch seconds
+        self.websocket_connected_at_ts = None  # float epoch seconds
         self.websocket_last_close_code = None
         self.websocket_last_close_reason = None
         self.websocket_reconnect_count = 0
@@ -149,6 +249,7 @@ class GengoWatcher:
         self._browser_session_last_sync_ts = None
         self._browser_session_last_sync_state = "idle"
         self._browser_session_last_sync_detail = "never synced"
+        self._next_quiet_socket_sync_ts = None
         self._health_alert_states = {}
         # Thread references for health monitoring
         self._monitor_threads = {}  # name -> threading.Thread
@@ -192,13 +293,24 @@ class GengoWatcher:
             )
             return None
 
-        return BrowserWorkerClient(socket_path=socket_path, logger=self.logger)
+        auth_token = str(
+            self.config.get("BrowserWorker", "auth_token", fallback="") or ""
+        )
+        return BrowserWorkerClient(
+            socket_path=socket_path,
+            logger=self.logger,
+            auth_token=auth_token,
+        )
 
     @staticmethod
     def _mask_secret(value) -> str:
         text = str(value or "").strip()
+        if not text:
+            return ""
+        if len(text) <= 4:
+            return "*" * len(text)
         if len(text) <= 8:
-            return text
+            return f"{text[0]}{'*' * (len(text) - 2)}{text[-1]}"
         return f"{text[:4]}...{text[-4:]}"
 
     def _warn_if_browser_session_mismatch(self) -> None:
@@ -209,7 +321,7 @@ class GengoWatcher:
             return
 
         try:
-            browser_token = fetch_browser_session_token_sync(str(debug_url))
+            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
         except Exception as exc:
             self.logger.debug(
                 "Browser session check skipped for %s: %s",
@@ -218,12 +330,14 @@ class GengoWatcher:
             )
             return
 
+        browser_token = snapshot.session_token
         if browser_token == configured_token:
             return
 
         self.logger.warning(
             "WebSocket.user_session differs from the live browser session at %s "
-            "(config=%s browser=%s). Realtime detections may fall back to RSS until you sync the token.",
+            "(config=%s browser=%s). Realtime detections may fall back to RSS until"
+            " you sync the token.",
             debug_url,
             self._mask_secret(configured_token),
             self._mask_secret(browser_token),
@@ -264,6 +378,29 @@ class GengoWatcher:
             "WebSocket", "session_sync_interval_sec", fallback=14400
         )
 
+    def _has_cached_websocket_credentials(self) -> bool:
+        session_token = str(self.config.get("WebSocket", "user_session") or "").strip()
+        return bool(session_token and session_token not in PLACEHOLDER_CONFIG_VALUES)
+
+    def _get_session_quiet_probe_seconds(self) -> int:
+        return self.config.getint("WebSocket", "session_quiet_probe_sec", fallback=90)
+
+    def _get_session_quiet_stale_seconds(self) -> int:
+        configured = self.config.getint(
+            "WebSocket", "session_quiet_stale_after_sec", fallback=0
+        )
+        if configured and configured > 0:
+            return configured
+        return max(self._get_session_quiet_probe_seconds() * 2, 300)
+
+    def _get_websocket_quiet_age(self, current_time: float) -> float | None:
+        if self.websocket_connected_at_ts is None:
+            return None
+        last_activity_ts = (
+            self.websocket_last_message_ts or self.websocket_connected_at_ts
+        )
+        return max(0.0, current_time - last_activity_ts)
+
     @staticmethod
     def _timestamp_or_none(value):
         if value is None:
@@ -283,6 +420,7 @@ class GengoWatcher:
         """Return actionable subsystem health instead of coarse absolute state."""
         current_time = now if now is not None else time.time()
         check_interval = float(self.config.get("Watcher", "check_interval") or 45)
+        browser_debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
         ws_enabled = self.config.getboolean(
             "WebSocket", "enable_websocket", fallback=True
         )
@@ -305,6 +443,7 @@ class GengoWatcher:
         ws_detail = "off"
         last_pong_age = None
         last_message_age = None
+        quiet_age = self._get_websocket_quiet_age(current_time)
         if self.websocket_last_pong_ts is not None:
             last_pong_age = max(0.0, current_time - self.websocket_last_pong_ts)
         if self.websocket_last_message_ts is not None:
@@ -458,7 +597,6 @@ class GengoWatcher:
         session_state = "disabled"
         session_detail = "off"
         session_age = None
-        browser_debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
         if browser_debug_url:
             if self._browser_session_last_sync_ts is not None:
                 session_age = max(
@@ -489,6 +627,7 @@ class GengoWatcher:
                 "status": self.websocket_status,
                 "last_pong_age_sec": last_pong_age,
                 "last_message_age_sec": last_message_age,
+                "quiet_age_sec": quiet_age,
                 "ping_latency_ms": self.websocket_ping_latency_ms,
                 "reconnect_count": self.websocket_reconnect_count,
                 "last_close_code": self.websocket_last_close_code,
@@ -552,10 +691,24 @@ class GengoWatcher:
             self._health_alert_states[key] = state
             if state not in {"stale", "error"} or previous == state:
                 continue
+            sound_file = None
+            play_sound = True
+            if key == "websocket" and state == "stale":
+                sound_file = (
+                    self.config.get(
+                        "Paths",
+                        "websocket_stale_sound_file",
+                        fallback="",
+                    )
+                    or None
+                )
+                if detail.startswith("quiet "):
+                    play_sound = False
             self.show_notification(
                 message=f"{key.title()} is {state}: {detail}",
                 title="GengoWatcher Telemetry Alert",
-                play_sound=True,
+                play_sound=play_sound,
+                sound_file=sound_file,
             )
 
     def _sync_session_from_browser(
@@ -569,48 +722,245 @@ class GengoWatcher:
         if not debug_url:
             return False
 
+        snapshot = None
+        sync_error: Exception | None = None
         try:
-            browser_token = fetch_browser_session_token_sync(str(debug_url))
+            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
         except Exception as exc:
+            sync_error = exc
+            if maybe_launch_managed_firefox_debug(
+                self.config,
+                str(debug_url),
+                logger=self.logger,
+            ):
+                timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(
+                    self.config
+                )
+                deadline = time.monotonic() + timeout_sec
+                last_exc: Exception = exc
+                while time.monotonic() < deadline:
+                    time.sleep(retry_interval_sec)
+                    try:
+                        snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
+                        break
+                    except Exception as retry_exc:
+                        last_exc = retry_exc
+                sync_error = last_exc
+
+        if snapshot is None:
             self._browser_session_last_sync_ts = time.time()
             self._browser_session_last_sync_state = "error"
-            self._browser_session_last_sync_detail = str(exc)
+            error_detail = str(sync_error or "browser session sync failed")
+            self._browser_session_last_sync_detail = error_detail
             self.logger.warning(
                 "Browser session sync failed for %s: %s",
                 debug_url,
-                exc,
+                error_detail,
             )
+            if self._has_cached_websocket_credentials():
+                self.logger.warning(
+                    "Browser session sync failed for %s, but cached WebSocket"
+                    " credentials are present. Continuing with the last known"
+                    " session instead of stopping realtime monitoring.",
+                    debug_url,
+                )
+                self._websocket_sync_failed = False
+                self._websocket_sync_failure_reason = None
+                return False
             if alert_on_failure:
+                sound_file = self.config.get(
+                    "Paths", "browser_session_sync_failed_sound_file"
+                )
                 self.show_notification(
-                    message=f"Browser session sync failed: {exc}",
+                    message=f"Browser session sync failed: {error_detail}",
                     title="GengoWatcher Session Sync Failed",
                     play_sound=True,
+                    sound_file=sound_file or None,
                 )
             if fail_hard:
                 self._websocket_sync_failed = True
-                self._websocket_sync_failure_reason = str(exc)
+                self._websocket_sync_failure_reason = error_detail
                 self.websocket_status = "Session Sync Failed"
             return False
 
         current_token = self.config.get("WebSocket", "user_session")
+        current_browser_user_agent = self.config.get("Network", "browser_user_agent")
+        current_accept_language = self.config.get("Network", "browser_accept_language")
+        browser_token = snapshot.session_token
+        browser_user_agent = str(snapshot.user_agent or "").strip()
+        browser_accept_language = str(snapshot.accept_language or "").strip()
         self._browser_session_last_sync_ts = time.time()
         self._browser_session_last_sync_state = "healthy"
-        if browser_token == current_token:
-            self._browser_session_last_sync_detail = "unchanged"
-            return False
+        changed_fields = []
+        if browser_token != current_token:
+            self.config.set("WebSocket", "user_session", browser_token)
+            changed_fields.append("user_session")
+        if (
+            browser_user_agent
+            and browser_user_agent != str(current_browser_user_agent or "").strip()
+        ):
+            self.config.set("Network", "browser_user_agent", browser_user_agent)
+            changed_fields.append("browser_user_agent")
+        if (
+            browser_accept_language
+            and browser_accept_language != str(current_accept_language or "").strip()
+        ):
+            self.config.set(
+                "Network", "browser_accept_language", browser_accept_language
+            )
+            changed_fields.append("browser_accept_language")
+        if str(debug_url) != str(
+            self.config.get("WebSocket", "browser_debug_url") or ""
+        ):
+            self.config.set("WebSocket", "browser_debug_url", str(debug_url))
+            changed_fields.append("browser_debug_url")
 
-        self.config.set("WebSocket", "user_session", browser_token)
-        self.config.set("WebSocket", "browser_debug_url", str(debug_url))
-        self.config.save_config()
-        self._browser_session_last_sync_detail = "updated"
+        if changed_fields:
+            self.config.save_config()
+            self._browser_session_last_sync_detail = (
+                f"updated {', '.join(changed_fields)}"
+            )
+        else:
+            self._browser_session_last_sync_detail = "unchanged"
         self.logger.info(
-            "Updated WebSocket.user_session from live browser session at %s "
-            "(old=%s new=%s)",
+            "Updated WebSocket session settings from live browser session at %s "
+            "(session=%s)",
             debug_url,
-            self._mask_secret(current_token),
             self._mask_secret(browser_token),
         )
-        return True
+        return bool(changed_fields)
+
+    def _pick_quiet_socket_sync_delay_seconds(self) -> float:
+        min_delay = float(
+            self.config.get("WebSocket", "browser_activity_min_sec", fallback=300)
+            or 300
+        )
+        max_delay = float(
+            self.config.get("WebSocket", "browser_activity_max_sec", fallback=3600)
+            or 3600
+        )
+        if max_delay < min_delay:
+            min_delay, max_delay = max_delay, min_delay
+        return random.uniform(min_delay, max_delay)
+
+    def _sync_browser_session_for_quiet_socket(
+        self,
+        *,
+        current_time: float | None = None,
+        fail_hard: bool = False,
+        alert_on_failure: bool = False,
+    ) -> bool:
+        """Refresh the browser session when a quiet websocket needs a recheck."""
+        debug_url = self.config.get("WebSocket", "browser_debug_url")
+        if not debug_url or self.websocket_status != "Live":
+            return False
+
+        now = current_time if current_time is not None else time.time()
+        quiet_age = self._get_websocket_quiet_age(now)
+        quiet_probe_after = self._get_session_quiet_probe_seconds()
+        if quiet_age is None or quiet_age < quiet_probe_after:
+            return False
+
+        next_sync_ts = self._next_quiet_socket_sync_ts
+        if next_sync_ts is not None and now < next_sync_ts:
+            return False
+        if self._browser_session_last_sync_ts is not None:
+            sync_age = max(0.0, now - self._browser_session_last_sync_ts)
+            if sync_age < quiet_probe_after:
+                return False
+
+        self.logger.warning(
+            "WebSocket: No application messages for %.1fs while live; syncing browser"
+            " session from %s before continuing.",
+            quiet_age,
+            debug_url,
+        )
+
+        changed = self._sync_session_from_browser(
+            fail_hard=fail_hard,
+            alert_on_failure=alert_on_failure,
+        )
+        if changed:
+            self._next_quiet_socket_sync_ts = None
+            return True
+
+        self._next_quiet_socket_sync_ts = (
+            now + self._pick_quiet_socket_sync_delay_seconds()
+        )
+        return False
+
+    def _is_gengo_rss_feed(self) -> bool:
+        feed_url = str(self.config.get("Watcher", "feed_url") or "")
+        return "gengo.com" in feed_url.lower()
+
+    def _get_effective_rss_wait_range_seconds(self) -> tuple[float, float]:
+        if self._is_gengo_rss_feed():
+            min_delay = float(
+                self.config.get("Watcher", "gengo_rss_interval_min_sec", fallback=31)
+                or 31
+            )
+            max_delay = float(
+                self.config.get("Watcher", "gengo_rss_interval_max_sec", fallback=60)
+                or 60
+            )
+            if max_delay < min_delay:
+                min_delay, max_delay = max_delay, min_delay
+            return min_delay, max_delay
+
+        check_interval = float(self.config.get("Watcher", "check_interval") or 45)
+        return check_interval, check_interval
+
+    def _get_effective_rss_check_interval(self) -> float:
+        if self._is_gengo_rss_feed():
+            _min_delay, max_delay = self._get_effective_rss_wait_range_seconds()
+            check_interval = float(self.config.get("Watcher", "check_interval") or 45)
+            return max(check_interval, max_delay)
+        return float(self.config.get("Watcher", "check_interval") or 45)
+
+    def _pick_next_rss_wait_seconds(self) -> float:
+        min_delay, max_delay = self._get_effective_rss_wait_range_seconds()
+        if min_delay == max_delay:
+            return min_delay
+        return random.uniform(min_delay, max_delay)
+
+    def _pick_planned_websocket_reconnect_delay_seconds(self) -> float:
+        min_delay = float(
+            self.config.get("WebSocket", "planned_reconnect_min_sec", fallback=300)
+            or 300
+        )
+        max_delay = float(
+            self.config.get("WebSocket", "planned_reconnect_max_sec", fallback=3600)
+            or 3600
+        )
+        if max_delay < min_delay:
+            min_delay, max_delay = max_delay, min_delay
+        return random.uniform(min_delay, max_delay)
+
+    def _pick_browser_activity_delay_seconds(self) -> float:
+        min_delay = float(
+            self.config.get("WebSocket", "browser_activity_min_sec", fallback=300)
+            or 300
+        )
+        max_delay = float(
+            self.config.get("WebSocket", "browser_activity_max_sec", fallback=3600)
+            or 3600
+        )
+        if max_delay < min_delay:
+            min_delay, max_delay = max_delay, min_delay
+        return random.uniform(min_delay, max_delay)
+
+    def _perform_browser_activity(self) -> str | None:
+        debug_url = self.config.get("WebSocket", "browser_debug_url")
+        if not debug_url:
+            return None
+
+        previous_action = getattr(self, "_last_browser_activity_action", None)
+        action = refresh_browser_page_activity_sync(
+            str(debug_url),
+            previous_action=previous_action,
+        )
+        self._last_browser_activity_action = action
+        return action
 
     def get_monitor_status(self) -> dict:
         """
@@ -672,9 +1022,10 @@ class GengoWatcher:
         # Try to pretty-format JSON
         try:
             parsed = json.loads(message)
+            parsed = _redact_raw_ws_value(parsed)
             formatted = json.dumps(parsed, indent=2)
         except (json.JSONDecodeError, TypeError):
-            formatted = message
+            formatted = _redact_raw_ws_text(str(message))
 
         entry = f"[{timestamp}] {prefix} {formatted}"
 
@@ -754,6 +1105,73 @@ class GengoWatcher:
         if open_link and url:
             self.open_in_browser(url)
 
+    @staticmethod
+    def _is_gengo_url(url: str) -> bool:
+        parsed = urlparse(str(url or "").strip())
+        hostname = parsed.hostname or ""
+        return hostname == "gengo.com" or hostname.endswith(".gengo.com")
+
+    def _open_in_managed_firefox_debug_session(self, url: str) -> bool:
+        if not self._is_gengo_url(url):
+            return False
+
+        debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
+        try:
+            spec = get_firefox_debug_launch_spec(self.config, str(debug_url))
+        except Exception as exc:
+            self.logger.debug(
+                "Skipping managed Firefox debug browser for %s: %s",
+                url,
+                exc,
+            )
+            return False
+        if spec is None:
+            return False
+
+        last_exc: Exception | None = None
+        try:
+            open_url_in_browser_debug_sync(spec.debug_url, url)
+            self.logger.debug(
+                "Opened URL in managed Firefox debug session at %s: %s",
+                spec.debug_url,
+                url,
+            )
+            return True
+        except Exception as exc:
+            last_exc = exc
+
+        if maybe_launch_managed_firefox_debug(
+            self.config,
+            spec.debug_url,
+            logger=self.logger,
+        ):
+            timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(
+                self.config
+            )
+            deadline = time.monotonic() + timeout_sec
+            while time.monotonic() < deadline:
+                time.sleep(retry_interval_sec)
+                try:
+                    open_url_in_browser_debug_sync(spec.debug_url, url)
+                    self.logger.debug(
+                        "Opened URL in newly launched managed Firefox debug "
+                        "session at %s: %s",
+                        spec.debug_url,
+                        url,
+                    )
+                    return True
+                except Exception as exc:
+                    last_exc = exc
+
+        self.logger.warning(
+            "Managed Firefox debug session at %s could not open %s (%s); "
+            "falling back to configured browser",
+            spec.debug_url,
+            url,
+            last_exc,
+        )
+        return False
+
     def open_in_browser(self, url):
         """
         Open the given URL using the configured browser if available, otherwise use the system default browser.
@@ -763,6 +1181,9 @@ class GengoWatcher:
         """
         self.logger.debug(f"Opening URL in browser: {url}")
         try:
+            if self._open_in_managed_firefox_debug_session(str(url)):
+                return
+
             browser_path_str = self.config.get("Paths", "browser_path")
             if not browser_path_str or not Path(browser_path_str).is_file():
                 webbrowser.open(url)
@@ -865,7 +1286,7 @@ class GengoWatcher:
 
             try:
                 inserted = self.state.add_job(job_data)
-                if not inserted:
+                if inserted is False:
                     # Job is a duplicate, bail out immediately
                     return
 
@@ -911,50 +1332,11 @@ class GengoWatcher:
                         metadata=job_data,
                     )
                     self.state.save_state()
-                    self._notify_job_added(job_data, True, job_id)
-                    return
-                except Exception as e:
-                    self.logger.error(
-                        "Failed to submit job %s to browser worker: %s; falling back to"
-                        " standard acceptance path",
-                        job_id,
-                        e,
-                    )
-            self.logger.info(
-                "Continuing with standard acceptance flow for job %s after browser worker"
-                " handoff failed",
-                job_id,
-            )
-
-        eligible_for_auto_accept = self.job_acceptance_engine.is_job_eligible(job_data)
-
-        if self.browser_worker_enabled and eligible_for_auto_accept:
-            self.logger.info(
-                "Routing job %s to browser worker via local client", job_id
-            )
-            if not self.browser_worker_client:
-                self.logger.error(
-                    "Browser worker is enabled for job %s but the local client is unavailable;"
-                    " falling back to standard acceptance path",
-                    job_id,
-                )
-            else:
-                try:
-                    self.browser_worker_client.submit_job(
-                        url,
-                        source,
-                        metadata=job_data,
-                    )
-                    self.state.save_state()
-                    if self.on_job_added_callback and job_added:
+                    if self.on_job_added_callback:
                         try:
                             self.on_job_added_callback(job_data)
                         except Exception as e:
                             self.logger.debug(f"Error in job added callback: {e}")
-                    elif self.on_job_added_callback and not job_added:
-                        self.logger.debug(
-                            f"Skipping job added callback for job {job_id} because it was not stored in state"
-                        )
                     return
                 except Exception as e:
                     self.logger.error(
@@ -999,10 +1381,14 @@ class GengoWatcher:
         else:
             self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
 
+        self._submit_job_to_translation_app_async(job_data)
         self.state.save_state()
 
-        # Notify integrations/UI that a new job was added
-        self._notify_job_added(job_data, True, job_id)
+        if self.on_job_added_callback:
+            try:
+                self.on_job_added_callback(job_data)
+            except Exception as e:
+                self.logger.debug(f"Error in job added callback: {e}")
 
     def _normalize_meta(self, meta) -> dict:
         if meta is None or not hasattr(meta, "get"):
@@ -1214,7 +1600,61 @@ class GengoWatcher:
                 f"Failed to record accepted job for cancellation tracking: {e}"
             )
 
-        self._submit_job_to_translation_app_async(job_data)
+    def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
+        """Submit a discovered job to translation-app without blocking monitors."""
+        if TranslationAppClient is None:
+            self.logger.debug("translation-app client is unavailable")
+            return
+        if not self.config.getboolean("TranslationApp", "enabled", fallback=False):
+            return
+
+        base_url = str(
+            self.config.get("TranslationApp", "base_url", fallback="") or ""
+        ).strip()
+        auth_token = str(
+            self.config.get("TranslationApp", "auth_token", fallback="") or ""
+        ).strip()
+        if not base_url or auth_token in PLACEHOLDER_CONFIG_VALUES:
+            self.logger.warning(
+                "TranslationApp is enabled but base_url or auth_token is not configured"
+            )
+            return
+
+        timeout_sec = float(
+            self.config.getfloat("TranslationApp", "timeout_sec", fallback=5.0) or 5.0
+        )
+        verify_tls = self.config.getboolean(
+            "TranslationApp", "verify_tls", fallback=True
+        )
+
+        def submit() -> None:
+            try:
+                client = TranslationAppClient(
+                    base_url=base_url,
+                    auth_token=auth_token,
+                    timeout_sec=timeout_sec,
+                    verify_tls=verify_tls,
+                    logger=self.logger,
+                )
+                client.submit_job(dict(job_data))
+            except Exception:
+                self.logger.exception(
+                    "Failed to submit job %s to translation-app",
+                    job_data.get("id", "unknown"),
+                )
+
+        try:
+            _submit_translation_app_task(submit)
+        except queue.Full:
+            self.logger.warning(
+                "Translation-app submission queue is full; dropping job %s",
+                job_data.get("id", "unknown"),
+            )
+        except Exception:
+            self.logger.exception(
+                "Failed to queue job %s for translation-app submission",
+                job_data.get("id", "unknown"),
+            )
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.
@@ -1395,12 +1835,6 @@ class GengoWatcher:
                 if session_token and len(session_token) > 8
                 else "NOT_SET"
             )
-            masked_user_key = (
-                f"{user_key[:4]}...{user_key[-4:]}"
-                if user_key and len(user_key) > 8
-                else "NOT_SET"
-            )
-
             additional_headers = build_browser_aligned_websocket_headers(
                 session_token=session_token,
                 user_agent=user_agent,
@@ -1426,7 +1860,7 @@ class GengoWatcher:
                     headers (dict | None): Optional additional HTTP headers to include in the WebSocket handshake; pass None to omit custom headers.
 
                 Detailed behaviour:
-                    - Connects to the configured WebSocket URL and sends an authentication payload containing the configured `user_id`, the stored session token, and the browser-aligned `user_key` when available.
+                    - Connects to the configured WebSocket URL and sends an authentication payload containing the configured `user_id` and stored session token.
                     - Starts a heartbeat task that measures ping/pong latency and updates connection timing/state attributes.
                     - Starts a test-monitor task that responds to manual UI test commands (e.g. ping, notify).
                     - Listens for incoming messages and invokes the watcher's message handling for recognised events (notably `available_collection` events, which are forwarded to `_process_new_job`).
@@ -1461,13 +1895,10 @@ class GengoWatcher:
                     auth_payload = build_websocket_auth_payload(
                         user_id=user_id,
                         session_token=session_token,
-                        user_key=user_key,
                     )
-                    # Log auth attempt safely
                     self.logger.debug(
-                        "WebSocket: Sending auth payload for user_id=%s (user_key=%s)",
+                        "WebSocket: Sending auth payload for user_id=%s",
                         user_id,
-                        masked_user_key,
                     )
 
                     auth_json = json.dumps(auth_payload)
@@ -2104,6 +2535,9 @@ class GengoWatcher:
 
     def list_config_values(self):
         config_dict = self.config.list_all()
+        if not isinstance(config_dict, dict):
+            fallback_config = getattr(self.config, "config", None)
+            config_dict = fallback_config if isinstance(fallback_config, dict) else {}
         self.logger.debug(f"Listing all config values: {config_dict}")
         return config_dict
 
@@ -2134,13 +2568,13 @@ class GengoWatcher:
         """Apply configuration settings to the cancellation manager."""
         try:
             settings = {
-                "cancellation_enabled": self.config.getboolean(
+                "cancellation_enabled": self.cancellation_manager._config_getboolean(
                     "Cancellation", "enabled", fallback=False
                 ),
-                "min_improvement_ratio": self.config.getfloat(
+                "min_improvement_ratio": self.cancellation_manager._config_getfloat(
                     "Cancellation", "min_improvement_ratio", fallback=2.0
                 ),
-                "extreme_threshold": self.config.getfloat(
+                "extreme_threshold": self.cancellation_manager._config_getfloat(
                     "Cancellation", "extreme_threshold", fallback=1000.0
                 ),
             }

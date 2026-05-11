@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import asyncio
+import os
 import logging
 from pathlib import Path
+import secrets
+import stat
 import tempfile
 from typing import Any
 
@@ -17,19 +20,26 @@ from .tabs import TabRoles
 from .telemetry import BrowserWorkerTelemetry, TimingEvent
 
 
+def default_browser_worker_socket_dir() -> Path:
+    user_id = str(os.getuid()) if hasattr(os, "getuid") else "user"
+    return Path(tempfile.gettempdir()) / f"gengowatcher-browser-worker-{user_id}"
+
+
+def default_browser_worker_socket_path() -> Path:
+    return default_browser_worker_socket_dir() / "gengowatcher-browser-worker.sock"
+
+
 @dataclass(slots=True)
 class BrowserRuntimeConfig:
     profile_path: Path
     headless: bool = False
     seed_profile_path: Path | None = None
-    socket_path: Path = field(
-        default_factory=lambda: Path(tempfile.gettempdir())
-        / "gengowatcher-browser-worker.sock"
-    )
+    socket_path: Path = field(default_factory=default_browser_worker_socket_path)
     artifacts_dir: Path = field(
         default_factory=lambda: Path("logs/browser-worker-artifacts")
     )
     accept_timeout_ms: int = 12000
+    auth_token: str = ""
 
 
 class BrowserRuntime:
@@ -85,6 +95,7 @@ class BrowserRuntime:
         return roles.candidate_page.url
 
     async def handle_command(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._authorize_payload(payload)
         command_type = payload.get("type")
         if command_type != "job_url":
             raise ValueError(f"unsupported browser worker command: {command_type}")
@@ -98,6 +109,14 @@ class BrowserRuntime:
         )
         candidate_url = await self.prepare_candidate(intent)
         return {"ok": True, "job_id": intent.job_id, "url": candidate_url}
+
+    def _authorize_payload(self, payload: dict[str, Any]) -> None:
+        expected_token = str(self.config.auth_token or "")
+        if not expected_token:
+            return
+        supplied_token = str(payload.get("auth_token") or "")
+        if not secrets.compare_digest(supplied_token, expected_token):
+            raise PermissionError("browser worker command authorization failed")
 
     async def handle_client(self, reader, writer) -> None:
         response: dict[str, Any] | None = None
@@ -118,15 +137,13 @@ class BrowserRuntime:
         await writer.wait_closed()
 
     async def serve_forever(self) -> None:
-        socket_path = self.config.socket_path
-        socket_path.parent.mkdir(parents=True, exist_ok=True)
-        if socket_path.exists():
-            socket_path.unlink()
+        socket_path = self._prepare_socket_path()
 
         self._server = await asyncio.start_unix_server(
             self.handle_client,
             path=str(socket_path),
         )
+        self._secure_socket_file(socket_path)
         self._record_event("server_started", 0.0, socket_path=str(socket_path))
         try:
             async with self._server:
@@ -135,6 +152,38 @@ class BrowserRuntime:
             if socket_path.exists():
                 socket_path.unlink()
             self._server = None
+
+    def _prepare_socket_path(self) -> Path:
+        socket_path = self.config.socket_path
+        socket_dir = socket_path.parent
+        if socket_dir.exists():
+            if not socket_dir.is_dir():
+                raise ValueError(f"browser worker socket parent is not a directory: {socket_dir}")
+            mode = stat.S_IMODE(socket_dir.stat().st_mode)
+            if socket_dir == default_browser_worker_socket_dir() and mode != 0o700:
+                os.chmod(socket_dir, 0o700)
+            elif mode & 0o077:
+                self.logger.warning(
+                    "browser worker socket directory %s is accessible by group/other "
+                    "(mode %03o); prefer a 0700 directory for browser profile control",
+                    socket_dir,
+                    mode,
+                )
+        else:
+            socket_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if socket_path.exists():
+            socket_path.unlink()
+        return socket_path
+
+    def _secure_socket_file(self, socket_path: Path) -> None:
+        try:
+            os.chmod(socket_path, 0o600)
+        except OSError as exc:
+            self.logger.warning(
+                "failed to restrict browser worker socket permissions for %s: %s",
+                socket_path,
+                exc,
+            )
 
     async def commit_accept(self, job_id: str, *, accept_selector: str = "text=Accept") -> str:
         if not self.coordinator.acquire():

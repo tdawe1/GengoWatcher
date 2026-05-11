@@ -42,7 +42,7 @@ class AllTimeStats:
 
     @property
     def avg_job_value(self) -> float:
-        return self.total_value / max(self.total_jobs_accepted, 1)
+        return self.total_value / max(self.total_jobs, 1)
 
 
 @dataclass
@@ -133,9 +133,9 @@ class StatsManager:
 
             # Session stats
             self.session.jobs_found += 1
-            self.session.total_value += reward
             if accepted:
                 self.session.jobs_accepted += 1
+                self.session.total_value += reward
 
             # All-time stats
             self.all_time.total_jobs += 1
@@ -149,10 +149,10 @@ class StatsManager:
                 self.by_source.websocket += 1
             elif "email" in source_lower:
                 self.by_source.email += 1
-            elif "web" in source_lower or "rss" in source_lower:
-                self.by_source.website += 1
             elif "rss" in source_lower:
                 self.by_source.rss += 1
+            elif "web" in source_lower:
+                self.by_source.website += 1
 
             # Language stats
             self.by_language[lang_pair] += 1

@@ -122,6 +122,38 @@ class TestRawWSMessages:
         messages = watcher_instance.get_raw_ws_messages()
         assert isinstance(messages, list)
 
+    def test_capture_raw_ws_message_redacts_sensitive_json(
+        self, watcher_instance, mock_config
+    ):
+        """Raw WS debug output should not expose session tokens."""
+        mock_config.get.side_effect = lambda s, k: True if k == "raw" else None
+
+        watcher_instance._capture_raw_ws_message(
+            '{"type":"auth","user_session":"secret-token","nested":{"api_key":"abc"}}',
+            "send",
+        )
+
+        messages = watcher_instance.get_raw_ws_messages()
+        assert "secret-token" not in messages[0]
+        assert "abc" not in messages[0]
+        assert "[REDACTED]" in messages[0]
+
+    def test_capture_raw_ws_message_redacts_sensitive_text(
+        self, watcher_instance, mock_config
+    ):
+        """Non-JSON raw WS debug output should mask known token patterns."""
+        mock_config.get.side_effect = lambda s, k: True if k == "raw" else None
+
+        watcher_instance._capture_raw_ws_message(
+            "Cookie: my_gengo_session=secret-token; Authorization: Bearer abc",
+            "send",
+        )
+
+        messages = watcher_instance.get_raw_ws_messages()
+        assert "secret-token" not in messages[0]
+        assert "Bearer abc" not in messages[0]
+        assert "[REDACTED]" in messages[0]
+
     def test_clear_raw_ws_messages(self, watcher_instance, mock_config):
         """Test clearing raw WS message buffer."""
         mock_config.get.side_effect = lambda s, k: True if k == "raw" else None
