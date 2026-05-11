@@ -22,6 +22,7 @@ MANIFEST
 thoughts/
 .codex/
 .slim/
+profiles/
 
 # Virtual environments
 venv/
