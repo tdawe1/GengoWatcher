@@ -310,14 +310,11 @@ class WebAPI:
         candidate_name = candidate_path.name
         if candidate_name in {"", ".", ".."}:
             raise ValueError("Invalid stored filename")
+        if candidate_path != Path(candidate_name):
+            raise ValueError("Invalid stored filename")
 
         try:
-            if candidate_path.is_absolute():
-                resolved = candidate_path.resolve(strict=False)
-            else:
-                if candidate_path != Path(candidate_name):
-                    raise ValueError("Invalid stored filename")
-                resolved = (storage_dir / candidate_name).resolve(strict=False)
+            resolved = (storage_dir / candidate_name).resolve(strict=False)
         except OSError as exc:
             raise ValueError("Invalid path in configured storage directory") from exc
 
