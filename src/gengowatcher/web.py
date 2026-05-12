@@ -28,10 +28,9 @@ from fastapi import (
     Form,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, field_validator
 from prometheus_client import Gauge, make_asgi_app
 import uvicorn
 
@@ -44,143 +43,17 @@ from .web_file_storage import (
     StoredFileUploadResponse,
     WebFileStorage,
 )
+from .web_models import (
+    APIAuthenticator,
+    CommandRequest,
+    ConfigSection,
+    JobEntry,
+    PaginationParams,
+    WatcherStatus,
+    security,
+)
 
-# Authentication
-security = HTTPBearer(auto_error=False)
-
-
-class APIAuthenticator:
-    """Simple API key authentication for web API."""
-
-    def __init__(self, api_key: str = None):
-        """Initialize the API authenticator.
-
-        Args:
-            api_key: Optional API key string. If not provided, generates a secure random key.
-        """
-        self.api_key = api_key or secrets.token_urlsafe(32)
-
-    def authenticate(
-        self, credentials: HTTPAuthorizationCredentials = Depends(security)
-    ) -> bool:
-        """Authenticate API request using Bearer token."""
-        if not credentials:
-            return False
-        supplied = str(credentials.credentials or "")
-        expected = str(self.api_key or "")
-        return secrets.compare_digest(supplied, expected)
-
-    def get_api_key(self) -> str:
-        """Get the current API key."""
-        return self.api_key
-
-
-# Global authenticator instance
 authenticator = APIAuthenticator()
-
-
-# Pydantic models for API responses
-class JobEntry(BaseModel):
-    id: str
-    title: str
-    reward: float
-    currency: str = "USD"
-    url: str
-    timestamp: float
-    source: str  # "rss" or "websocket"
-
-    @field_validator("id", "title", "url", "source")
-    @classmethod
-    def validate_string_fields(cls, v):
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("Field must be a non-empty string")
-        return v.strip()
-
-    @field_validator("reward")
-    @classmethod
-    def validate_reward(cls, v):
-        if not isinstance(v, (int, float)) or v < 0:
-            raise ValueError("Reward must be a non-negative number")
-        return float(v)
-
-    @field_validator("timestamp")
-    @classmethod
-    def validate_timestamp(cls, v):
-        if not isinstance(v, (int, float)) or v < 0:
-            raise ValueError("Timestamp must be a valid positive number")
-        return float(v)
-
-
-class WatcherStatus(BaseModel):
-    is_running: bool
-    websocket_status: str
-    rss_status: str
-    last_check_time: Optional[float]
-    next_check_time: float
-    session_stats: Dict[str, Any]
-    failure_count: int
-    cancellation_stats: Optional[Dict[str, Any]] = None
-    health: Dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("websocket_status", "rss_status")
-    @classmethod
-    def validate_status_fields(cls, v):
-        if not isinstance(v, str):
-            raise ValueError("Status must be a string")
-        return v.strip()
-
-
-class ConfigSection(BaseModel):
-    section: str
-    options: Dict[str, Any]
-
-    @field_validator("section")
-    @classmethod
-    def validate_section(cls, v):
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("Section must be a non-empty string")
-        return v.strip()
-
-
-class CommandRequest(BaseModel):
-    command: str
-    args: Optional[List[str]] = []
-
-    @field_validator("command")
-    @classmethod
-    def validate_command(cls, v):
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("Command must be a non-empty string")
-        allowed_commands = ["check", "pause", "resume", "ping", "notify", "cancel"]
-        if v.strip().lower() not in allowed_commands:
-            raise ValueError(f"Command must be one of: {', '.join(allowed_commands)}")
-        return v.strip().lower()
-
-    @field_validator("args")
-    @classmethod
-    def validate_args(cls, v):
-        if v is not None:
-            if not isinstance(v, list):
-                raise ValueError("Args must be a list or None")
-            for arg in v:
-                if not isinstance(arg, str):
-                    raise ValueError("All args must be strings")
-        return v
-
-
-class PaginationParams(BaseModel):
-    page: int = Field(default=1, ge=1)
-    limit: int = Field(default=50, ge=1, le=100)
-
-    @field_validator("page", "limit")
-    @classmethod
-    def validate_pagination(cls, v, info):
-        field_name = info.field_name
-        if not isinstance(v, int) or v < 1:
-            raise ValueError(f"{field_name} must be a positive integer")
-        if field_name == "limit" and v > 100:
-            raise ValueError("Limit cannot exceed 100")
-        return v
 
 
 class WebAPI:
