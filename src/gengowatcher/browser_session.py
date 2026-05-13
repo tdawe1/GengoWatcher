@@ -1,5 +1,6 @@
 import base64
 import asyncio
+import concurrent.futures
 import json
 import logging
 import random
@@ -62,6 +63,17 @@ class BrowserDebugTarget:
     target_type: str = ""
     actor: str = ""
     console_actor: str = ""
+
+
+def _run_coroutine_sync(coro_func, *args, **kwargs):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_func(*args, **kwargs))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(lambda: asyncio.run(coro_func(*args, **kwargs)))
+        return future.result()
 
 
 class _FirefoxBiDiSession:
@@ -1227,8 +1239,10 @@ def fetch_browser_session_snapshot_sync(
     debug_url: str | None = None,
     cookie_name: str | tuple[str, ...] = PRIMARY_GENGO_COOKIE_NAMES,
 ) -> BrowserSessionSnapshot:
-    return asyncio.run(
-        fetch_browser_session_snapshot(debug_url=debug_url, cookie_name=cookie_name)
+    return _run_coroutine_sync(
+        fetch_browser_session_snapshot,
+        debug_url=debug_url,
+        cookie_name=cookie_name,
     )
 
 
@@ -1236,8 +1250,10 @@ def fetch_browser_session_token_sync(
     debug_url: str | None = None,
     cookie_name: str | tuple[str, ...] = PRIMARY_GENGO_COOKIE_NAMES,
 ) -> str:
-    return asyncio.run(
-        fetch_browser_session_token(debug_url=debug_url, cookie_name=cookie_name)
+    return _run_coroutine_sync(
+        fetch_browser_session_token,
+        debug_url=debug_url,
+        cookie_name=cookie_name,
     )
 
 
@@ -1285,7 +1301,7 @@ def open_url_in_browser_debug_sync(
     debug_url: str | None,
     url: str,
 ) -> str:
-    return asyncio.run(open_url_in_browser_debug(debug_url, url))
+    return _run_coroutine_sync(open_url_in_browser_debug, debug_url, url)
 
 
 async def _firefox_rdp_read_activity_state(

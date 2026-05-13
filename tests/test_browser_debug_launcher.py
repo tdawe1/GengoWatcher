@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -6,6 +7,7 @@ from gengowatcher.browser_debug_launcher import (
     FirefoxDebugLaunchSpec,
     _detect_locked_remote_debug_pref,
     build_firefox_debug_command,
+    can_connect_to_firefox_debug_server,
     ensure_managed_firefox_profile,
     get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
@@ -252,6 +254,29 @@ def test_wait_for_firefox_debug_server_retries_until_online():
     assert ready is True
     assert mock_connect.call_count == 3
     assert mock_sleep.call_count == 2
+
+
+async def _fake_probe_firefox_debug_server(debug_url: str) -> bool:
+    return debug_url == "ws://127.0.0.1:9222"
+
+
+def test_can_connect_to_firefox_debug_server_runs_without_existing_event_loop():
+    with patch(
+        "gengowatcher.browser_debug_launcher._probe_firefox_debug_server",
+        side_effect=_fake_probe_firefox_debug_server,
+    ):
+        assert can_connect_to_firefox_debug_server("ws://127.0.0.1:9222") is True
+
+
+def test_can_connect_to_firefox_debug_server_runs_inside_existing_event_loop():
+    async def run_check():
+        with patch(
+            "gengowatcher.browser_debug_launcher._probe_firefox_debug_server",
+            side_effect=_fake_probe_firefox_debug_server,
+        ):
+            return can_connect_to_firefox_debug_server("ws://127.0.0.1:9222")
+
+    assert asyncio.run(run_check()) is True
 
 
 def test_detect_locked_remote_debug_pref_finds_distribution_lock(tmp_path):
