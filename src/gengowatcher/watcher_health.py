@@ -21,7 +21,7 @@ def timestamp_or_none(value: Any) -> float | None:
     if hasattr(value, "timestamp"):
         try:
             return float(value.timestamp())
-        except Exception:
+        except (AttributeError, TypeError, ValueError, OSError, OverflowError):
             return None
     return None
 
@@ -81,8 +81,16 @@ def build_health_snapshot(
                 ws_state = "stale"
                 ws_detail = "no pong"
             elif last_pong_age <= 40:
-                ws_state = "healthy"
-                ws_detail = "ok"
+                if (
+                    browser_debug_url
+                    and quiet_age is not None
+                    and quiet_age >= watcher._get_session_quiet_stale_seconds()
+                ):
+                    ws_state = "stale"
+                    ws_detail = f"quiet {int(quiet_age)}s"
+                else:
+                    ws_state = "healthy"
+                    ws_detail = "ok"
             else:
                 ws_state = "stale"
                 ws_detail = f"pong {int(last_pong_age)}s"

@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import logging
+import os
 from pathlib import Path
 import re
+import tempfile
 import time
 from typing import Any, Optional
+import unicodedata
 
 from pydantic import BaseModel
 
@@ -50,10 +53,23 @@ class WebFileStorage:
     @staticmethod
     def sanitize_filename(filename: str) -> str:
         base_name = Path(str(filename or "upload.bin")).name.strip()
-        safe_name = re.sub(r"[\x00-\x1f\x7f]+", "", base_name)
+        normalized = unicodedata.normalize("NFKD", base_name)
+        ascii_name = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        safe_name = re.sub(r"[\x00-\x1f\x7f]+", "", ascii_name)
         safe_name = safe_name.replace("/", "_").replace("\\", "_")
-        safe_name = safe_name.replace(":", "-")
-        safe_name = re.sub(r"\s+", " ", safe_name).strip(" .")
+        safe_name = re.sub(r"[^A-Za-z0-9_ .()_-]+", "-", safe_name)
+        safe_name = re.sub(r"\s+", " ", safe_name)
+        safe_name = re.sub(r"-{2,}", "-", safe_name)
+        while ".." in safe_name:
+            safe_name = safe_name.replace("..", ".")
+        safe_name = safe_name.strip(" .-_")
+        original_suffix = Path(base_name).suffix.lstrip(".")
+        if original_suffix and "." not in safe_name:
+            safe_suffix = re.sub(r"[^A-Za-z0-9]+", "", original_suffix) or "bin"
+            if safe_name.lower() == safe_suffix.lower():
+                safe_name = f"upload.{safe_suffix}"
+            else:
+                safe_name = f"{safe_name}.{safe_suffix}"
         return safe_name or "upload.bin"
 
     @staticmethod
@@ -156,6 +172,40 @@ class WebFileStorage:
             return data
         return {}
 
+    @staticmethod
+    def _stage_atomic_file(path: Path, content: bytes) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                temp_file.write(content)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            return temp_path
+        except Exception:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
+            raise
+
+    @staticmethod
+    def _cleanup_staged_file(path: Path | None) -> None:
+        if path is None:
+            return
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
     def list_files(self) -> list[StoredFileEntry]:
         storage_dir = self.get_storage_dir()
         entries: list[StoredFileEntry] = []
@@ -208,7 +258,6 @@ class WebFileStorage:
                 raise ValueError("Invalid stored filename")
             destination = self.ensure_within_storage_dir(storage_dir / candidate_name)
             counter += 1
-        destination.write_bytes(content)
         metadata = {
             "original_name": filename or destination.name,
             "content_type": content_type,
@@ -218,10 +267,23 @@ class WebFileStorage:
             "word_count": int(word_count) if word_count is not None else None,
             "value": float(value) if value is not None else None,
         }
-        self.metadata_path(destination).write_text(
-            json.dumps(metadata, indent=2, sort_keys=True),
-            encoding="utf-8",
+        metadata_path = self.metadata_path(destination)
+        content_temp = self._stage_atomic_file(destination, content)
+        metadata_temp = self._stage_atomic_file(
+            metadata_path,
+            json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8"),
         )
+        metadata_published = False
+        try:
+            metadata_temp.replace(metadata_path)
+            metadata_published = True
+            content_temp.replace(destination)
+        except Exception:
+            self._cleanup_staged_file(content_temp)
+            self._cleanup_staged_file(metadata_temp)
+            if metadata_published:
+                self._cleanup_staged_file(metadata_path)
+            raise
         entry = self.build_file_entry(
             destination,
             original_name=filename or destination.name,

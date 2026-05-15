@@ -293,7 +293,7 @@ def test_translation_app_submission_uses_bounded_worker(watcher_instance):
     )
 
 
-def test_translation_app_submission_logs_when_queue_full(watcher_instance, caplog):
+def test_translation_app_submission_logs_when_queue_full(watcher_instance):
     w = watcher_instance
     w.config.config["TranslationApp"].update(
         {
@@ -302,7 +302,7 @@ def test_translation_app_submission_logs_when_queue_full(watcher_instance, caplo
             "auth_token": "token-123",
         }
     )
-    caplog.set_level(logging.WARNING)
+    w.logger.warning = MagicMock()
 
     with patch(
         "gengowatcher.watcher._submit_translation_app_task",
@@ -310,10 +310,12 @@ def test_translation_app_submission_logs_when_queue_full(watcher_instance, caplo
     ):
         w._submit_job_to_translation_app_async({"id": "123"})
 
-    assert "Translation-app submission queue is full" in caplog.text
+    w.logger.warning.assert_called_once_with(
+        "Translation-app submission queue is full; dropping job %s", "123"
+    )
 
 
-def test_translation_app_submission_task_logs_failures(watcher_instance, caplog):
+def test_translation_app_submission_task_logs_failures(watcher_instance):
     w = watcher_instance
     w.config.config["TranslationApp"].update(
         {
@@ -330,15 +332,16 @@ def test_translation_app_submission_task_logs_failures(watcher_instance, caplog)
     ):
         w._submit_job_to_translation_app_async({"id": "123"})
 
-    caplog.set_level(logging.ERROR)
+    w.logger.exception = MagicMock()
     with patch(
         "gengowatcher.watcher.TranslationAppClient",
         side_effect=RuntimeError("client failed"),
     ):
         queued_tasks[0]()
 
-    assert "Failed to submit job 123 to translation-app" in caplog.text
-    assert "RuntimeError: client failed" in caplog.text
+    w.logger.exception.assert_called_once_with(
+        "Failed to submit job %s to translation-app", "123"
+    )
 
 
 def test_process_new_job_populates_lang_pair_and_word_count(watcher_instance):

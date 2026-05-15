@@ -130,9 +130,3 @@ def render_plotext_bar_chart(
         return str(Text.from_ansi(built)).rstrip()
     except Exception:
         return ""
-
-
-_render_chart = render_chart
-_aggregate_series = aggregate_series
-_render_chart_with_axes = render_chart_with_axes
-_render_plotext_bar_chart = render_plotext_bar_chart

@@ -349,19 +349,3 @@ def parse_job_title_fallback(title: Any) -> tuple[str, str]:
     words_match = re.search(r"\b(\d{1,6})\s*words?\b", text, re.IGNORECASE)
     words = words_match.group(1) if words_match else default_words
     return pair, words
-
-
-_format_timestamp = format_timestamp
-_with_timestamp_prefix = with_timestamp_prefix
-_get_active_theme = get_active_theme
-_build_semantic_color_palette = build_semantic_color_palette
-_build_config_style_palette = build_config_style_palette
-_to_rich_color = to_rich_color
-_telemetry_state_style = telemetry_state_style
-_format_telemetry_metric = format_telemetry_metric
-_iter_telemetry_entries = iter_telemetry_entries
-_normalize_source = normalize_source
-_coerce_positive_int = coerce_positive_int
-_coerce_positive_float = coerce_positive_float
-_derive_display_word_count = derive_display_word_count
-_parse_job_title_fallback = parse_job_title_fallback

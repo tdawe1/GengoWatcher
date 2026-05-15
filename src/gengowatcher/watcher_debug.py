@@ -21,6 +21,23 @@ RAW_WS_SENSITIVE_PATTERNS = (
         re.compile(r"(authorization\s*:\s*bearer\s+)[^\s,;}}]+", re.IGNORECASE),
         rf"\1{RAW_WS_REDACTED}",
     ),
+    (
+        re.compile(
+            r"((?:token|api_key|secret|access_token|refresh_token|auth_token|"
+            r"secret_key|session_key|client_secret)\s*=\s*['\"]?)[^'\";,\s}]+",
+            re.IGNORECASE,
+        ),
+        rf"\1{RAW_WS_REDACTED}",
+    ),
+    (
+        re.compile(
+            r"((?:\"|')?(?:token|api_key|secret|access_token|refresh_token|"
+            r"auth_token|secret_key|session_key|client_secret)(?:\"|')?\s*:\s*"
+            r"['\"]?)[^'\",;\s}]+",
+            re.IGNORECASE,
+        ),
+        rf"\1{RAW_WS_REDACTED}",
+    ),
 )
 
 

@@ -4,9 +4,10 @@ import re
 from typing import Any
 
 LANG_PAIR_REGEX = re.compile(
-    r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", re.IGNORECASE
+    r"\b([A-Z]{2})\s*(?:→|->|(?<=\s)-(?=\s)|>)\s*([A-Z]{2})\b",
+    re.IGNORECASE,
 )
-LANG_PAIR_SPLIT_REGEX = re.compile(r"\s*(?:→|->|-|>|↔|/)\s*")
+LANG_PAIR_SPLIT_REGEX = re.compile(r"\s*(?:→|->|(?<=\s)-(?=\s)|>|↔|/)\s*")
 WORD_COUNT_REGEX = re.compile(r"\b(\d{1,6})\s*words?\b", re.IGNORECASE)
 UNIT_COUNT_REGEX = re.compile(
     r"\b(\d{1,6})\s*(?:words?|chars?|units?)\b", re.IGNORECASE

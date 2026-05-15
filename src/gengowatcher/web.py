@@ -532,6 +532,13 @@ class WebAPI:
                     "status": "error",
                     "message": "No active job to cancel or cancellation failed",
                 }
+            elif command in {"ping", "notify"}:
+                with self.watcher._test_command_lock:
+                    self.watcher._test_command = command
+                return {
+                    "status": "success",
+                    "message": f"WebSocket {command} test queued",
+                }
             else:
                 return {"status": "error", "message": f"Unknown command: {command}"}
         except Exception as e:

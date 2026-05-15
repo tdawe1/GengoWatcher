@@ -207,13 +207,3 @@ def extract_cookie_value(
     raise BrowserSessionError(
         f"None of the session cookies {cookie_names} were found for gengo.com"
     )
-
-
-_normalize_debug_url = normalize_debug_url
-_looks_like_firefox_bidi_url = looks_like_firefox_bidi_url
-_looks_like_firefox_rdp_url = looks_like_firefox_rdp_url
-_firefox_bidi_url = firefox_bidi_url
-_summarize_cdp_targets = summarize_cdp_targets
-_summarize_firefox_contexts = summarize_firefox_contexts
-_summarize_firefox_tabs = summarize_firefox_tabs
-_coerce_cookie_value = coerce_cookie_value

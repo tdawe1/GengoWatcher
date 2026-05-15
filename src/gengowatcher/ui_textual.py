@@ -34,10 +34,10 @@ from .state import AppState
 from .stats import StatsManager
 from .ui_charts import (
     BAR_CHARS,
-    _aggregate_series,
-    _render_chart,
-    _render_chart_with_axes,
-    _render_plotext_bar_chart,
+    aggregate_series as _aggregate_series,
+    render_chart as _render_chart,
+    render_chart_with_axes as _render_chart_with_axes,
+    render_plotext_bar_chart as _render_plotext_bar_chart,
 )
 from .ui_formatting import (
     ACTIVITY_LOG_MAX_LINES,
@@ -46,17 +46,17 @@ from .ui_formatting import (
     SOURCE_BUCKET_CONFIG,
     TELEMETRY_LABELS,
     Icons,
-    _build_config_style_palette,
-    _build_semantic_color_palette,
-    _coerce_positive_int,
-    _derive_display_word_count,
-    _format_telemetry_metric,
-    _format_timestamp,
-    _get_active_theme,
-    _iter_telemetry_entries,
-    _normalize_source,
-    _parse_job_title_fallback,
-    _with_timestamp_prefix,
+    build_config_style_palette as _build_config_style_palette,
+    build_semantic_color_palette as _build_semantic_color_palette,
+    coerce_positive_int as _coerce_positive_int,
+    derive_display_word_count as _derive_display_word_count,
+    format_telemetry_metric as _format_telemetry_metric,
+    format_timestamp as _format_timestamp,
+    get_active_theme as _get_active_theme,
+    iter_telemetry_entries as _iter_telemetry_entries,
+    normalize_source as _normalize_source,
+    parse_job_title_fallback as _parse_job_title_fallback,
+    with_timestamp_prefix as _with_timestamp_prefix,
 )
 from .watcher import GengoWatcher
 

@@ -103,7 +103,7 @@ class CommandRequest(BaseModel):
     def validate_command(cls, value):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("Command must be a non-empty string")
-        allowed_commands = ["check", "pause", "resume", "ping", "notify", "cancel"]
+        allowed_commands = ["check", "pause", "resume", "cancel", "ping", "notify"]
         if value.strip().lower() not in allowed_commands:
             raise ValueError(f"Command must be one of: {', '.join(allowed_commands)}")
         return value.strip().lower()
