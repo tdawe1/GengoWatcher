@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import os
 import re
@@ -16,6 +15,7 @@ from urllib.parse import urlparse
 
 import websockets
 
+from ._async_utils import run_coroutine_sync
 from .browser_session import GENGO_REALTIME_URL
 from .browser_worker.profile import BrowserProfileManager
 
@@ -341,21 +341,10 @@ async def _probe_firefox_debug_server(debug_url: str) -> bool:
     return isinstance(packet, dict) and packet.get("from") == "root"
 
 
-def _run_coroutine_sync(coro_func, *args, **kwargs):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro_func(*args, **kwargs))
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(lambda: asyncio.run(coro_func(*args, **kwargs)))
-        return future.result()
-
-
 def can_connect_to_firefox_debug_server(debug_url: str) -> bool:
     if not _looks_like_local_firefox_rdp_url(debug_url):
         return False
-    return bool(_run_coroutine_sync(_probe_firefox_debug_server, debug_url))
+    return bool(run_coroutine_sync(_probe_firefox_debug_server, debug_url))
 
 
 def wait_for_firefox_debug_server(

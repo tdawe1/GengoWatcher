@@ -1,6 +1,5 @@
 import base64
 import asyncio
-import concurrent.futures
 import json
 import logging
 import random
@@ -12,6 +11,8 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import websockets
+
+from ._async_utils import run_coroutine_sync
 
 logger = logging.getLogger(__name__)
 
@@ -63,17 +64,6 @@ class BrowserDebugTarget:
     target_type: str = ""
     actor: str = ""
     console_actor: str = ""
-
-
-def _run_coroutine_sync(coro_func, *args, **kwargs):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro_func(*args, **kwargs))
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(lambda: asyncio.run(coro_func(*args, **kwargs)))
-        return future.result()
 
 
 class _FirefoxBiDiSession:
@@ -1239,7 +1229,7 @@ def fetch_browser_session_snapshot_sync(
     debug_url: str | None = None,
     cookie_name: str | tuple[str, ...] = PRIMARY_GENGO_COOKIE_NAMES,
 ) -> BrowserSessionSnapshot:
-    return _run_coroutine_sync(
+    return run_coroutine_sync(
         fetch_browser_session_snapshot,
         debug_url=debug_url,
         cookie_name=cookie_name,
@@ -1250,7 +1240,7 @@ def fetch_browser_session_token_sync(
     debug_url: str | None = None,
     cookie_name: str | tuple[str, ...] = PRIMARY_GENGO_COOKIE_NAMES,
 ) -> str:
-    return _run_coroutine_sync(
+    return run_coroutine_sync(
         fetch_browser_session_token,
         debug_url=debug_url,
         cookie_name=cookie_name,
@@ -1301,7 +1291,7 @@ def open_url_in_browser_debug_sync(
     debug_url: str | None,
     url: str,
 ) -> str:
-    return _run_coroutine_sync(open_url_in_browser_debug, debug_url, url)
+    return run_coroutine_sync(open_url_in_browser_debug, debug_url, url)
 
 
 async def _firefox_rdp_read_activity_state(
@@ -1755,12 +1745,11 @@ def refresh_browser_page_activity_sync(
     action: str = "auto",
     previous_action: str | None = None,
 ) -> str:
-    return asyncio.run(
-        refresh_browser_page_activity(
-            debug_url=debug_url,
-            action=action,
-            previous_action=previous_action,
-        )
+    return run_coroutine_sync(
+        refresh_browser_page_activity,
+        debug_url=debug_url,
+        action=action,
+        previous_action=previous_action,
     )
 
 
