@@ -322,19 +322,15 @@ class WebAPI:
         # Accept only a single filename component (no user-influenced subpaths).
         candidate_path = Path(path)
         if candidate_path.is_absolute():
-            candidate_name = candidate_path.name
-        else:
-            candidate_name = candidate_path.name
-            if candidate_path != Path(candidate_name):
-                raise ValueError("Invalid stored filename")
+            raise ValueError("Absolute paths are not allowed")
+        candidate_name = candidate_path.name
+        if candidate_path != Path(candidate_name):
+            raise ValueError("Invalid stored filename")
         if candidate_name in {"", ".", ".."}:
             raise ValueError("Invalid stored filename")
 
         try:
-            if candidate_path.is_absolute():
-                resolved = candidate_path.resolve(strict=False)
-            else:
-                resolved = (storage_dir / candidate_name).resolve(strict=False)
+            resolved = (storage_dir / candidate_name).resolve(strict=False)
         except OSError as exc:
             raise ValueError("Invalid path in configured storage directory") from exc
 
