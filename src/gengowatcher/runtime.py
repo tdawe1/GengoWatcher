@@ -51,11 +51,18 @@ def run_application(args: argparse.Namespace, console: Console) -> None:
         )
         watcher.prompt_for_config_values()
 
-    web_thread = _start_web_server_if_requested(args, console)
+    web_thread = _start_web_server_if_requested(
+        args,
+        console,
+        config=config,
+        state=state,
+        logger=log,
+        watcher=watcher,
+    )
     if args.web_only:
         _run_web_only(console, web_thread)
 
-    _run_tui(args, console, log, config, state, watcher)
+    _run_tui(args, console, log, ui_handler, config, state, watcher)
 
 
 def _start_metrics_server_if_enabled(
@@ -108,7 +115,13 @@ def _handle_setup_commands(
 
 
 def _start_web_server_if_requested(
-    args: argparse.Namespace, console: Console
+    args: argparse.Namespace,
+    console: Console,
+    *,
+    config: AppConfig,
+    state: AppState,
+    logger: logging.Logger,
+    watcher: GengoWatcher,
 ) -> threading.Thread | None:
     if not (args.web or args.web_only):
         return None
@@ -118,7 +131,15 @@ def _start_web_server_if_requested(
 
         def start_web_server():
             print(f"Starting web server on http://127.0.0.1:{args.web_port}")
-            run_web_server(host="127.0.0.1", port=args.web_port)
+            run_web_server(
+                host="127.0.0.1",
+                port=args.web_port,
+                config=config,
+                state=state,
+                logger=logger,
+                watcher=watcher,
+                start_watcher_thread=bool(args.web_only),
+            )
 
         web_thread = threading.Thread(
             target=start_web_server, daemon=True, name="WebServerThread"
@@ -147,6 +168,7 @@ def _run_tui(
     args: argparse.Namespace,
     console: Console,
     log: logging.Logger,
+    ui_handler: logging.Handler,
     config: AppConfig,
     state: AppState,
     watcher: GengoWatcher,
@@ -157,6 +179,7 @@ def _run_tui(
         config=config,
         state=state,
         stats=stats_manager,
+        ui_log_handler=ui_handler,
     )
 
     watcher_thread = threading.Thread(
