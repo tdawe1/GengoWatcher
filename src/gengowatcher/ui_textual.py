@@ -32,6 +32,7 @@ from textual.widgets import (
 )
 
 from .config import AppConfig
+from .logging_setup import UILoggingHandler
 from .state import AppState
 from .stats import StatsManager
 from .watcher import TIER_UNIT_RATES, GengoWatcher
@@ -2106,12 +2107,14 @@ class GengoWatcherApp(App):
         state: AppState,
         watcher: GengoWatcher,
         stats: StatsManager,
+        ui_log_handler: UILoggingHandler | None = None,
     ):
         super().__init__()
         self.config = config
         self.state = state
         self.watcher = watcher
         self.stats = stats
+        self._ui_log_handler = ui_log_handler
         self._initializing_theme = True
         self._persist_theme_changes = True
         self.theme = self._configured_theme_name()
@@ -2125,6 +2128,7 @@ class GengoWatcherApp(App):
         )
         self._logging_attached = False
         self._job_added_callback = self._on_job_added_from_thread
+        self._buffered_logs_replayed = False
 
         # Register callback for when new jobs are detected
         self.watcher.on_job_added_callback = self._job_added_callback
@@ -2218,6 +2222,19 @@ class GengoWatcherApp(App):
         self._log_source.addHandler(self._textual_log_handler)
         self._logging_attached = True
 
+    def _replay_buffered_logs(self) -> None:
+        if self._buffered_logs_replayed or self._ui_log_handler is None:
+            return
+
+        queued_logs = list(getattr(self._ui_log_handler, "log_queue", ()))
+        for entry in queued_logs:
+            if not isinstance(entry, Text):
+                continue
+            self._textual_log_handler.append_log("#activity-log", entry)
+            self._textual_log_handler.append_log("#activity-log-full", entry)
+
+        self._buffered_logs_replayed = True
+
     def on_unmount(self) -> None:
         """Detach callbacks and log handlers owned by this app instance."""
         current_callback = getattr(self.watcher, "on_job_added_callback", None)
@@ -2230,6 +2247,7 @@ class GengoWatcherApp(App):
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
         self._setup_logging()
+        self._replay_buffered_logs()
         self._refresh_responsive_layout()
         self.call_after_refresh(self._refresh_responsive_layout)
         self._setup_jobs_table()
@@ -2569,6 +2587,10 @@ class TextualLogHandler(logging.Handler):
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
+
+    def append_log(self, widget_id: str, colored_text: Text) -> None:
+        """Append an already formatted log entry to a specific log widget."""
+        self._write_to_log(widget_id, colored_text)
 
     def write_log(self, msg: str, level: int = logging.INFO):
         colored_text = self._colorize_message(msg, level)
