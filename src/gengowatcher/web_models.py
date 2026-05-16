@@ -7,7 +7,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
-security = HTTPBearer(auto_error=False)
+SECURITY = HTTPBearer(auto_error=False)
 
 
 class APIAuthenticator:
@@ -18,7 +18,7 @@ class APIAuthenticator:
         self.api_key = api_key or secrets.token_urlsafe(32)
 
     def authenticate(
-        self, credentials: HTTPAuthorizationCredentials = Depends(security)
+        self, credentials: HTTPAuthorizationCredentials = Depends(SECURITY)
     ) -> bool:
         """Authenticate API request using Bearer token."""
         if not credentials:

@@ -127,7 +127,8 @@ def render_plotext_bar_chart(
         plotext.grid(True)
 
         built = plotext.build()
-        plotext.clear_figure()
         return str(Text.from_ansi(built)).rstrip()
     except Exception:
         return ""
+    finally:
+        plotext.clear_figure()

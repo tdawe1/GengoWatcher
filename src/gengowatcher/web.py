@@ -49,8 +49,8 @@ from .web_models import (
     ConfigSection,
     JobEntry,
     PaginationParams,
+    SECURITY,
     WatcherStatus,
-    security,
 )
 
 authenticator = APIAuthenticator()
@@ -720,7 +720,7 @@ else:
     )
 
 
-async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(SECURITY)):
     """Verify API authentication."""
     if not authenticator.authenticate(credentials):
         raise HTTPException(
