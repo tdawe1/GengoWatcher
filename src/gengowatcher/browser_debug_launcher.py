@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import websockets
 
 from ._async_utils import run_coroutine_sync
-from .browser_session import GENGO_REALTIME_URL
+from .browser_session_core import GENGO_AVAILABLE_JOBS_URL, GENGO_REALTIME_URL
 from .browser_worker.profile import BrowserProfileManager
 
 DEFAULT_FIREFOX_DEBUG_URL = "ws://127.0.0.1:9222"
@@ -78,6 +78,17 @@ def _firefox_debug_port(debug_url: str) -> int:
     return int(parsed.port or 6000)
 
 
+def _coerce_browser_debug_start_url(start_url: str | None) -> str:
+    resolved = str(start_url or "").strip()
+    if not resolved or resolved.rstrip("/") in {
+        GENGO_REALTIME_URL,
+        GENGO_REALTIME_URL.rstrip("/"),
+        "/t/jobs/status/available/realtime",
+    }:
+        return GENGO_AVAILABLE_JOBS_URL
+    return resolved
+
+
 def get_firefox_debug_launch_spec(
     config: Any,
     debug_url: str | None,
@@ -119,15 +130,14 @@ def get_firefox_debug_launch_spec(
             or DEFAULT_FIREFOX_DEBUG_PROFILE_PATH
         )
     ).expanduser()
-    start_url = str(
+    start_url = _coerce_browser_debug_start_url(
         _config_get(
             config,
             "WebSocket",
             "browser_debug_start_url",
-            GENGO_REALTIME_URL,
+            GENGO_AVAILABLE_JOBS_URL,
         )
-        or GENGO_REALTIME_URL
-    ).strip()
+    )
     seed_profile_raw = str(
         _config_get(
             config,
@@ -144,7 +154,7 @@ def get_firefox_debug_launch_spec(
         seed_profile_path=(
             Path(seed_profile_raw).expanduser() if seed_profile_raw else None
         ),
-        start_url=start_url or GENGO_REALTIME_URL,
+        start_url=start_url or GENGO_AVAILABLE_JOBS_URL,
         port=_firefox_debug_port(resolved_debug_url),
     )
 

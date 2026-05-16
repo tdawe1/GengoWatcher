@@ -10,9 +10,12 @@ DEFAULT_FIREFOX_BIDI_PATH = "/session"
 DEFAULT_GENGO_ORIGIN = "https://gengo.com"
 GENGO_LOCAL_STORAGE_USER_KEY = "userKey"
 GENGO_ACTIVITY_MARKER_STORAGE_KEY = "__gengowatcher_activity_marker"
+GENGO_AVAILABLE_JOBS_DETECTED_STORAGE_KEY = "__gengowatcher_available_jobs_detected"
 GENGO_REALTIME_PATH = "/t/jobs/status/available/realtime"
+GENGO_AVAILABLE_JOBS_PATH = "/t/jobs/status/available"
 GENGO_SUMMARY_PATH = "/t/dashboard"
 GENGO_REALTIME_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_REALTIME_PATH}"
+GENGO_AVAILABLE_JOBS_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_AVAILABLE_JOBS_PATH}"
 GENGO_SUMMARY_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_SUMMARY_PATH}"
 DEFAULT_ACCEPT_LANGUAGE = "en-GB,en-US;q=0.9,en;q=0.8"
 DEFAULT_CDP_RECEIVE_TIMEOUT_SEC = 5
@@ -36,6 +39,25 @@ class BrowserSessionSnapshot:
     origin: str = DEFAULT_GENGO_ORIGIN
     target_url: str = ""
     target_title: str = ""
+
+
+@dataclass(frozen=True)
+class BrowserAvailableJob:
+    job_id: int
+    title: str
+    reward: float
+    url: str
+    text: str = ""
+
+
+@dataclass(frozen=True)
+class BrowserAvailableJobsSnapshot:
+    url: str
+    title: str
+    ready_state: str
+    jobs: tuple[BrowserAvailableJob, ...]
+    detected_jobs: tuple[BrowserAvailableJob, ...] = ()
+    action: str = "inspect"
 
 
 @dataclass(frozen=True)

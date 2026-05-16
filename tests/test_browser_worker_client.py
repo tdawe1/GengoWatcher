@@ -138,16 +138,22 @@ async def test_browser_worker_client_times_out_waiting_for_response(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_submit_job_rejects_running_event_loop(tmp_path):
+async def test_submit_job_works_inside_running_event_loop(tmp_path):
     from gengowatcher.browser_worker.client import BrowserWorkerClient
 
     client = BrowserWorkerClient(socket_path=tmp_path / "browser-worker.sock")
-    client.send_command = AsyncMock(return_value={"ok": True})
+    received: dict[str, object] = {}
 
-    with pytest.raises(RuntimeError, match="submit_job_async"):
-        client.submit_job("https://gengo.com/t/jobs/details/123", "rss")
+    async def fake_send_command(payload):
+        received.update(payload)
+        return {"ok": True}
 
-    client.send_command.assert_not_called()
+    client.send_command = fake_send_command
+
+    response = client.submit_job("https://gengo.com/t/jobs/details/123", "rss")
+
+    assert response == {"ok": True}
+    assert received["url"] == "https://gengo.com/t/jobs/details/123"
 
 
 @pytest.mark.asyncio

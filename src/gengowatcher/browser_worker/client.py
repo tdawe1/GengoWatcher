@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from .._async_utils import run_coroutine_sync
 from .protocol import build_job_url_command, decode_message, encode_message
 
 
@@ -77,11 +78,4 @@ class BrowserWorkerClient:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.send_command(payload))
-        raise RuntimeError(
-            "BrowserWorkerClient.submit_job() cannot run inside an active event loop; "
-            "use submit_job_async() instead"
-        )
+        return run_coroutine_sync(self.send_command, payload)
