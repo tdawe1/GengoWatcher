@@ -17,14 +17,18 @@ from .browser_session_core import (
     DEFAULT_FIREFOX_BIDI_PATH,
     DEFAULT_GENGO_ORIGIN,
     GENGO_ACTIVITY_MARKER_STORAGE_KEY,
+    GENGO_AVAILABLE_JOBS_DETECTED_STORAGE_KEY,
+    GENGO_AVAILABLE_JOBS_PATH,
+    GENGO_AVAILABLE_JOBS_URL,
     GENGO_LOCAL_STORAGE_USER_KEY,
     GENGO_REALTIME_PATH,
-    GENGO_REALTIME_URL,
     GENGO_SUMMARY_PATH,
     GENGO_SUMMARY_URL,
     PRIMARY_GENGO_COOKIE_NAMES,
     BrowserDebugEndpoint,
     BrowserDebugTarget,
+    BrowserAvailableJob,
+    BrowserAvailableJobsSnapshot,
     BrowserSessionError,
     BrowserSessionSnapshot,
     coerce_cookie_value as _coerce_cookie_value,
@@ -40,6 +44,12 @@ from .browser_session_core import (
 )
 
 logger = logging.getLogger(__name__)
+
+GENGO_BROWSER_BROWSE_URLS = (
+    GENGO_SUMMARY_URL,
+    f"{DEFAULT_GENGO_ORIGIN}/t/jobs/",
+    f"{DEFAULT_GENGO_ORIGIN}/t/jobs/history",
+)
 
 
 class _FirefoxBiDiSession:
@@ -742,6 +752,228 @@ def _firefox_activity_state_expression() -> str:
     )
 
 
+def _available_jobs_preferred_fragments() -> tuple[str, ...]:
+    return (GENGO_AVAILABLE_JOBS_PATH, GENGO_SUMMARY_PATH, GENGO_REALTIME_PATH)
+
+
+def _coerce_available_job(value: Any) -> BrowserAvailableJob | None:
+    if not isinstance(value, dict):
+        return None
+
+    raw_job_id = value.get("id", value.get("job_id"))
+    try:
+        job_id = int(str(raw_job_id or "").strip())
+    except ValueError:
+        return None
+
+    url = str(value.get("url") or "").strip()
+    if not url:
+        url = f"{DEFAULT_GENGO_ORIGIN}/t/jobs/details/{job_id}"
+
+    title = str(value.get("title") or "").strip()
+    if not title:
+        title = f"Gengo job {job_id}"
+
+    try:
+        reward = float(value.get("reward") or 0.0)
+    except (TypeError, ValueError):
+        reward = 0.0
+
+    return BrowserAvailableJob(
+        job_id=job_id,
+        title=title,
+        reward=reward,
+        url=url,
+        text=str(value.get("text") or "").strip(),
+    )
+
+
+def _coerce_available_jobs_snapshot(
+    payload: dict[str, Any],
+    *,
+    action: str,
+) -> BrowserAvailableJobsSnapshot:
+    jobs: list[BrowserAvailableJob] = []
+    seen_job_ids: set[int] = set()
+    for raw_job in payload.get("jobs", []):
+        job = _coerce_available_job(raw_job)
+        if job is None or job.job_id in seen_job_ids:
+            continue
+        seen_job_ids.add(job.job_id)
+        jobs.append(job)
+
+    detected_jobs: list[BrowserAvailableJob] = []
+    seen_detected_ids: set[int] = set()
+    for raw_job in payload.get("detectedJobs", []):
+        job = _coerce_available_job(raw_job)
+        if job is None or job.job_id in seen_detected_ids:
+            continue
+        seen_detected_ids.add(job.job_id)
+        detected_jobs.append(job)
+
+    return BrowserAvailableJobsSnapshot(
+        url=str(payload.get("url") or "").strip(),
+        title=str(payload.get("title") or "").strip(),
+        ready_state=str(payload.get("readyState") or "").strip(),
+        jobs=tuple(jobs),
+        detected_jobs=tuple(detected_jobs),
+        action=action,
+    )
+
+
+def _empty_available_jobs_snapshot(
+    *,
+    action: str,
+    url: str = "",
+    title: str = "",
+) -> BrowserAvailableJobsSnapshot:
+    return BrowserAvailableJobsSnapshot(
+        url=url,
+        title=title,
+        ready_state="",
+        jobs=(),
+        detected_jobs=(),
+        action=action,
+    )
+
+
+def _available_jobs_dom_snapshot_expression(*, interact: bool = False) -> str:
+    storage_key = json.dumps(GENGO_AVAILABLE_JOBS_DETECTED_STORAGE_KEY)
+    should_interact = "true" if interact else "false"
+    return f"""(() => {{
+const storageKey = {storage_key};
+const shouldInteract = {should_interact};
+const compactText = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+const normalizeHref = (rawHref) => {{
+  try {{
+    return new URL(String(rawHref || ""), location.origin).href;
+  }} catch (_error) {{
+    return "";
+  }}
+}};
+const collectJobs = () => {{
+  const jobs = [];
+  const seen = new Set();
+  const anchors = Array.from(
+    document.querySelectorAll('a[href*="/jobs/details/"]')
+  );
+  for (const anchor of anchors) {{
+    const href = normalizeHref(anchor.getAttribute("href") || anchor.href || "");
+    const idMatch = href.match(/\\/jobs\\/details\\/(\\d+)/);
+    if (!idMatch) {{
+      continue;
+    }}
+    const id = idMatch[1];
+    if (seen.has(id)) {{
+      continue;
+    }}
+    seen.add(id);
+    const container = anchor.closest(
+      'tr, li, article, section, .job, .project, .item, [data-job-id], [data-id]'
+    ) || anchor;
+    const text = compactText(container.innerText || anchor.textContent || "");
+    const anchorText = compactText(
+      anchor.getAttribute("title") || anchor.textContent || ""
+    );
+    const title = (anchorText || text || `Gengo job ${{id}}`).slice(0, 300);
+    const rewardMatch =
+      text.match(/(?:US\\$|\\$)\\s*([0-9]+(?:\\.[0-9]+)?)/i) ||
+      text.match(/\\b([0-9]+(?:\\.[0-9]+)?)\\s*(?:credits?|words?)\\b/i);
+    jobs.push({{
+      id,
+      title,
+      reward: rewardMatch ? Number(rewardMatch[1]) || 0 : 0,
+      url: href,
+      text: text.slice(0, 600),
+    }});
+  }}
+  return jobs;
+}};
+const rememberDetected = (jobs) => {{
+  let stored = [];
+  try {{
+    const rawStored = JSON.parse(sessionStorage.getItem(storageKey) || "[]");
+    stored = Array.isArray(rawStored) ? rawStored : [];
+  }} catch (_error) {{
+    stored = [];
+  }}
+  const knownIds = new Set(stored.map((id) => String(id)));
+  const detected = [];
+  for (const job of jobs) {{
+    if (knownIds.has(String(job.id))) {{
+      continue;
+    }}
+    knownIds.add(String(job.id));
+    detected.push(job);
+  }}
+  try {{
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify(Array.from(knownIds).slice(-500))
+    );
+  }} catch (_error) {{}}
+  return detected;
+}};
+if (!Array.isArray(window.__gengowatcherAvailableJobsDetected)) {{
+  window.__gengowatcherAvailableJobsDetected = [];
+}}
+if (!window.__gengowatcherAvailableJobsObserver && document.documentElement) {{
+  window.__gengowatcherAvailableJobsObserver = true;
+  const observer = new MutationObserver(() => {{
+    try {{
+      window.__gengowatcherAvailableJobsDetected.push(
+        ...rememberDetected(collectJobs())
+      );
+    }} catch (_error) {{}}
+  }});
+  observer.observe(document.documentElement, {{
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["href", "class", "data-job-id", "data-id"],
+  }});
+  window.__gengowatcherAvailableJobsObserverRef = observer;
+}}
+if (shouldInteract) {{
+  const width = Math.max(1, window.innerWidth || 1);
+  const height = Math.max(1, window.innerHeight || 1);
+  const x = Math.floor(width * (0.15 + Math.random() * 0.7));
+  const y = Math.floor(height * (0.15 + Math.random() * 0.7));
+  const target =
+    document.elementFromPoint(x, y) || document.body || document.documentElement;
+  if (target) {{
+    target.dispatchEvent(
+      new MouseEvent("mousemove", {{
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+      }})
+    );
+  }}
+  if (Math.random() < 0.35) {{
+    window.scrollBy({{
+      top: Math.floor(Math.random() * 161) - 80,
+      left: 0,
+      behavior: "auto",
+    }});
+  }}
+}}
+const jobs = collectJobs();
+const queuedDetected = window.__gengowatcherAvailableJobsDetected || [];
+const detectedJobs = rememberDetected(jobs).concat(queuedDetected);
+window.__gengowatcherAvailableJobsDetected = [];
+return JSON.stringify({{
+  url: location.href || "",
+  title: document.title || "",
+  readyState: document.readyState || "",
+  jobs,
+  detectedJobs,
+}});
+}})()"""
+
+
 def _firefox_queue_reload_expression(marker: str) -> str:
     marker_literal = _javascript_string_literal(marker)
     return (
@@ -801,7 +1033,7 @@ async def _fetch_browser_session_snapshot_firefox_rdp(
     try:
         tab, _tabs_response = await _firefox_rdp_get_gengo_tab(
             client,
-            preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+            preferred_url_fragments=_available_jobs_preferred_fragments(),
         )
         page_state = await _firefox_rdp_evaluate_json(
             client,
@@ -860,7 +1092,7 @@ async def _fetch_browser_session_snapshot_firefox_bidi(
     async with _firefox_bidi_session(debug_url) as session:
         context = await _firefox_get_gengo_context(
             session,
-            preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+            preferred_url_fragments=_available_jobs_preferred_fragments(),
         )
         context_id = str(context.get("context") or "").strip()
         if not context_id:
@@ -954,7 +1186,7 @@ async def fetch_browser_session_snapshot(
 
     target = select_gengo_target(
         _load_cdp_targets(endpoint.url),
-        preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+        preferred_url_fragments=_available_jobs_preferred_fragments(),
     )
     websocket_url = str(target.get("webSocketDebuggerUrl", "")).strip()
     if not websocket_url:
@@ -1110,6 +1342,369 @@ def open_url_in_browser_debug_sync(
     return asyncio.run(open_url_in_browser_debug(debug_url, url))
 
 
+def _is_available_jobs_page_url(url: str) -> bool:
+    parsed = urlparse(str(url or "").strip())
+    return (
+        parsed.hostname == "gengo.com" or (parsed.hostname or "").endswith(".gengo.com")
+    ) and parsed.path.rstrip("/") == GENGO_AVAILABLE_JOBS_PATH
+
+
+async def _ensure_firefox_rdp_available_jobs_tab(
+    client: _FirefoxRdpClient,
+) -> dict[str, Any] | None:
+    try:
+        tab, _tabs_response = await _firefox_rdp_get_gengo_tab(
+            client,
+            preferred_url_fragments=_available_jobs_preferred_fragments(),
+        )
+    except BrowserSessionError:
+        return None
+
+    if _is_available_jobs_page_url(str(tab.get("url") or "")):
+        return tab
+
+    return None
+
+
+async def _ensure_or_open_firefox_rdp_available_jobs_tab(
+    client: _FirefoxRdpClient,
+) -> dict[str, Any]:
+    try:
+        tab, _tabs_response = await _firefox_rdp_get_gengo_tab(
+            client,
+            preferred_url_fragments=_available_jobs_preferred_fragments(),
+        )
+    except BrowserSessionError:
+        await _firefox_rdp_evaluate_json(
+            client,
+            await _firefox_rdp_get_browser_console_actor(client),
+            _firefox_open_tab_expression(GENGO_AVAILABLE_JOBS_URL),
+        )
+        await asyncio.sleep(0.4)
+        tab, _tabs_response = await _firefox_rdp_get_gengo_tab(
+            client,
+            preferred_url_fragments=(GENGO_AVAILABLE_JOBS_PATH,),
+        )
+
+    if _is_available_jobs_page_url(str(tab.get("url") or "")):
+        return tab
+
+    return await _firefox_rdp_navigate_tab(
+        client,
+        tab,
+        url=GENGO_AVAILABLE_JOBS_URL,
+        location_fragment=GENGO_AVAILABLE_JOBS_PATH,
+    )
+
+
+async def _firefox_rdp_navigate_tab(
+    client: _FirefoxRdpClient,
+    tab: dict[str, Any],
+    *,
+    url: str,
+    location_fragment: str,
+) -> dict[str, Any]:
+    tab_actor = str(tab.get("actor") or "").strip()
+    if not tab_actor:
+        raise BrowserSessionError("Firefox DevTools did not expose a tab actor")
+
+    marker = _make_firefox_activity_marker()
+    await _firefox_rdp_evaluate_json(
+        client,
+        _firefox_tab_console_actor(tab),
+        _firefox_queue_navigation_expression(url, marker),
+        inner_window_id=tab.get("innerWindowId"),
+    )
+    tab, _state = await _wait_for_firefox_rdp_page_state(
+        client,
+        actor_id=tab_actor,
+        location_fragment=location_fragment,
+        activity_marker=marker,
+    )
+    return tab
+
+
+async def _inspect_available_jobs_page_firefox_rdp(
+    debug_url: str | None,
+    *,
+    force_refresh: bool = False,
+    browse_url: str | None = None,
+    interact: bool = False,
+    allow_navigation: bool = True,
+) -> BrowserAvailableJobsSnapshot:
+    client = await _open_firefox_rdp_client(debug_url)
+    action = "inspect"
+    try:
+        if allow_navigation:
+            tab = await _ensure_or_open_firefox_rdp_available_jobs_tab(client)
+        else:
+            tab = await _ensure_firefox_rdp_available_jobs_tab(client)
+            if tab is None:
+                return _empty_available_jobs_snapshot(action="manual_browse")
+
+        if allow_navigation and browse_url:
+            browse_path = urlparse(browse_url).path or "gengo.com"
+            tab = await _firefox_rdp_navigate_tab(
+                client,
+                tab,
+                url=browse_url,
+                location_fragment=browse_path,
+            )
+            await asyncio.sleep(0.6)
+            tab = await _firefox_rdp_navigate_tab(
+                client,
+                tab,
+                url=GENGO_AVAILABLE_JOBS_URL,
+                location_fragment=GENGO_AVAILABLE_JOBS_PATH,
+            )
+            action = "browse_roundtrip"
+
+        if allow_navigation and force_refresh:
+            marker = _make_firefox_activity_marker()
+            await _firefox_rdp_evaluate_json(
+                client,
+                _firefox_tab_console_actor(tab),
+                _firefox_queue_reload_expression(marker),
+                inner_window_id=tab.get("innerWindowId"),
+            )
+            tab, _state = await _wait_for_firefox_rdp_page_state(
+                client,
+                actor_id=str(tab.get("actor") or ""),
+                location_fragment=GENGO_AVAILABLE_JOBS_PATH,
+                activity_marker=marker,
+            )
+            action = "refresh" if action == "inspect" else f"{action}+refresh"
+
+        payload = await _firefox_rdp_evaluate_json(
+            client,
+            _firefox_tab_console_actor(tab),
+            _available_jobs_dom_snapshot_expression(interact=interact),
+            inner_window_id=tab.get("innerWindowId"),
+        )
+        return _coerce_available_jobs_snapshot(payload, action=action)
+    finally:
+        await client.websocket.close()
+
+
+async def _inspect_available_jobs_page_firefox_bidi(
+    debug_url: str | None,
+    *,
+    force_refresh: bool = False,
+    browse_url: str | None = None,
+    interact: bool = False,
+    allow_navigation: bool = True,
+) -> BrowserAvailableJobsSnapshot:
+    action = "inspect"
+    async with _firefox_bidi_session(debug_url) as session:
+        context: dict[str, Any] = {}
+        try:
+            context = await _firefox_get_gengo_context(
+                session,
+                preferred_url_fragments=_available_jobs_preferred_fragments(),
+            )
+            context_id = str(context.get("context") or "").strip()
+        except BrowserSessionError:
+            if not allow_navigation:
+                return _empty_available_jobs_snapshot(action="manual_browse")
+            context_result = await session.call(
+                "browsingContext.create",
+                {"type": "tab", "background": False},
+            )
+            context_id = str(context_result.get("context") or "").strip()
+
+        if not context_id:
+            raise BrowserSessionError("Selected gengo.com browsing context has no id")
+
+        current_url = str(context.get("url") or "")
+        if not _is_available_jobs_page_url(current_url):
+            if not allow_navigation:
+                return _empty_available_jobs_snapshot(
+                    action="manual_browse",
+                    url=current_url,
+                    title=str(context.get("title") or ""),
+                )
+            await session.call(
+                "browsingContext.navigate",
+                {
+                    "context": context_id,
+                    "url": GENGO_AVAILABLE_JOBS_URL,
+                    "wait": "complete",
+                },
+            )
+
+        if allow_navigation and browse_url:
+            await session.call(
+                "browsingContext.navigate",
+                {"context": context_id, "url": browse_url, "wait": "complete"},
+            )
+            await asyncio.sleep(0.6)
+            await session.call(
+                "browsingContext.navigate",
+                {
+                    "context": context_id,
+                    "url": GENGO_AVAILABLE_JOBS_URL,
+                    "wait": "complete",
+                },
+            )
+            action = "browse_roundtrip"
+
+        if allow_navigation and force_refresh:
+            await session.call(
+                "browsingContext.reload",
+                {"context": context_id, "ignoreCache": False, "wait": "complete"},
+            )
+            action = "refresh" if action == "inspect" else f"{action}+refresh"
+
+        payload = await _firefox_evaluate_json(
+            session,
+            context_id,
+            _available_jobs_dom_snapshot_expression(interact=interact),
+        )
+        return _coerce_available_jobs_snapshot(payload, action=action)
+
+
+async def inspect_available_jobs_page(
+    debug_url: str | None = None,
+    *,
+    force_refresh: bool = False,
+    browse_url: str | None = None,
+    interact: bool = False,
+    allow_navigation: bool = True,
+) -> BrowserAvailableJobsSnapshot:
+    endpoint = _resolve_browser_endpoint(debug_url)
+    if endpoint.backend == "firefox-rdp":
+        return await _inspect_available_jobs_page_firefox_rdp(
+            endpoint.url,
+            force_refresh=force_refresh,
+            browse_url=browse_url,
+            interact=interact,
+            allow_navigation=allow_navigation,
+        )
+    if endpoint.backend == "firefox-bidi":
+        return await _inspect_available_jobs_page_firefox_bidi(
+            endpoint.url,
+            force_refresh=force_refresh,
+            browse_url=browse_url,
+            interact=interact,
+            allow_navigation=allow_navigation,
+        )
+
+    try:
+        target = select_gengo_target(
+            _load_cdp_targets(endpoint.url),
+            preferred_url_fragments=_available_jobs_preferred_fragments(),
+        )
+    except BrowserSessionError:
+        if not allow_navigation:
+            return _empty_available_jobs_snapshot(action="manual_browse")
+        raise
+    if not allow_navigation and not _is_available_jobs_page_url(
+        str(target.get("url") or "")
+    ):
+        return _empty_available_jobs_snapshot(
+            action="manual_browse",
+            url=str(target.get("url") or ""),
+            title=str(target.get("title") or ""),
+        )
+    websocket_url = str(target.get("webSocketDebuggerUrl", "")).strip()
+    if not websocket_url:
+        raise BrowserSessionError(
+            "Selected gengo.com page target has no CDP websocket URL"
+        )
+
+    action = "inspect"
+    async with websockets.connect(websocket_url, max_size=5_000_000) as websocket:
+        call_id = 1
+        await _cdp_call(websocket, "Page.enable", call_id=call_id)
+        call_id += 1
+
+        if not _is_available_jobs_page_url(str(target.get("url") or "")):
+            await _cdp_call(
+                websocket,
+                "Page.navigate",
+                {"url": GENGO_AVAILABLE_JOBS_URL},
+                call_id=call_id,
+            )
+            call_id += 1
+            _location, call_id = await _wait_for_location_contains(
+                websocket,
+                GENGO_AVAILABLE_JOBS_PATH,
+                call_id_start=call_id,
+            )
+
+        if allow_navigation and browse_url:
+            await _cdp_call(
+                websocket,
+                "Page.navigate",
+                {"url": browse_url},
+                call_id=call_id,
+            )
+            call_id += 1
+            _location, call_id = await _wait_for_location_contains(
+                websocket,
+                urlparse(browse_url).path or "gengo.com",
+                call_id_start=call_id,
+            )
+            await asyncio.sleep(0.6)
+            await _cdp_call(
+                websocket,
+                "Page.navigate",
+                {"url": GENGO_AVAILABLE_JOBS_URL},
+                call_id=call_id,
+            )
+            call_id += 1
+            _location, call_id = await _wait_for_location_contains(
+                websocket,
+                GENGO_AVAILABLE_JOBS_PATH,
+                call_id_start=call_id,
+            )
+            action = "browse_roundtrip"
+
+        if allow_navigation and force_refresh:
+            await _cdp_call(
+                websocket,
+                "Page.reload",
+                {"ignoreCache": False},
+                call_id=call_id,
+            )
+            call_id += 1
+            _location, call_id = await _wait_for_location_contains(
+                websocket,
+                GENGO_AVAILABLE_JOBS_PATH,
+                call_id_start=call_id,
+            )
+            action = "refresh" if action == "inspect" else f"{action}+refresh"
+
+        payload = _parse_json_object(
+            await _evaluate_expression(
+                websocket,
+                _available_jobs_dom_snapshot_expression(interact=interact),
+                call_id=call_id,
+                expected_type="string",
+            )
+        )
+        return _coerce_available_jobs_snapshot(payload, action=action)
+
+
+def inspect_available_jobs_page_sync(
+    debug_url: str | None = None,
+    *,
+    force_refresh: bool = False,
+    browse_url: str | None = None,
+    interact: bool = False,
+    allow_navigation: bool = True,
+) -> BrowserAvailableJobsSnapshot:
+    return asyncio.run(
+        inspect_available_jobs_page(
+            debug_url=debug_url,
+            force_refresh=force_refresh,
+            browse_url=browse_url,
+            interact=interact,
+            allow_navigation=allow_navigation,
+        )
+    )
+
+
 async def _firefox_rdp_read_activity_state(
     client: _FirefoxRdpClient,
     *,
@@ -1193,9 +1788,10 @@ async def _wait_for_location_contains(
 
 def describe_browser_activity_action(action: str) -> str:
     descriptions = {
-        "reload": "reloading the realtime dashboard",
-        "summary_roundtrip": "opening the summary dashboard and returning to realtime",
-        "job_roundtrip": "opening a visible job details page and returning to realtime",
+        "reload": "reloading the available jobs page",
+        "summary_roundtrip": "opening the summary dashboard and returning to available jobs",
+        "job_roundtrip": "opening a visible job details page and returning to available jobs",
+        "browse_roundtrip": "opening another Gengo page and returning to available jobs",
     }
     return descriptions.get(action, action.replace("_", " "))
 
@@ -1236,7 +1832,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
     try:
         tab, _tabs_response = await _firefox_rdp_get_gengo_tab(
             client,
-            preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+            preferred_url_fragments=_available_jobs_preferred_fragments(),
         )
         tab_actor = str(tab.get("actor") or "").strip()
         if not tab_actor:
@@ -1294,7 +1890,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
                 client,
                 _firefox_tab_console_actor(tab),
                 _firefox_queue_navigation_expression(
-                    GENGO_REALTIME_URL,
+                    GENGO_AVAILABLE_JOBS_URL,
                     return_marker,
                 ),
                 inner_window_id=tab.get("innerWindowId"),
@@ -1302,7 +1898,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
             await _wait_for_firefox_rdp_page_state(
                 client,
                 actor_id=tab_actor,
-                location_fragment=GENGO_REALTIME_PATH,
+                location_fragment=GENGO_AVAILABLE_JOBS_PATH,
                 activity_marker=return_marker,
             )
             return "job_roundtrip"
@@ -1330,7 +1926,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
             client,
             _firefox_tab_console_actor(tab),
             _firefox_queue_navigation_expression(
-                GENGO_REALTIME_URL,
+                GENGO_AVAILABLE_JOBS_URL,
                 return_marker,
             ),
             inner_window_id=tab.get("innerWindowId"),
@@ -1338,7 +1934,7 @@ async def _refresh_browser_page_activity_firefox_rdp(
         await _wait_for_firefox_rdp_page_state(
             client,
             actor_id=tab_actor,
-            location_fragment=GENGO_REALTIME_PATH,
+            location_fragment=GENGO_AVAILABLE_JOBS_PATH,
             activity_marker=return_marker,
         )
         return "summary_roundtrip"
@@ -1355,7 +1951,7 @@ async def _refresh_browser_page_activity_firefox_bidi(
     async with _firefox_bidi_session(debug_url) as session:
         context = await _firefox_get_gengo_context(
             session,
-            preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+            preferred_url_fragments=_available_jobs_preferred_fragments(),
         )
         context_id = str(context.get("context") or "").strip()
         if not context_id:
@@ -1404,7 +2000,7 @@ async def _refresh_browser_page_activity_firefox_bidi(
                 "browsingContext.navigate",
                 {
                     "context": context_id,
-                    "url": GENGO_REALTIME_URL,
+                    "url": GENGO_AVAILABLE_JOBS_URL,
                     "wait": "complete",
                 },
             )
@@ -1423,7 +2019,7 @@ async def _refresh_browser_page_activity_firefox_bidi(
             "browsingContext.navigate",
             {
                 "context": context_id,
-                "url": GENGO_REALTIME_URL,
+                "url": GENGO_AVAILABLE_JOBS_URL,
                 "wait": "complete",
             },
         )
@@ -1452,7 +2048,7 @@ async def refresh_browser_page_activity(
 
     target = select_gengo_target(
         _load_cdp_targets(endpoint.url),
-        preferred_url_fragments=(GENGO_REALTIME_PATH, GENGO_SUMMARY_PATH),
+        preferred_url_fragments=_available_jobs_preferred_fragments(),
     )
     websocket_url = str(target.get("webSocketDebuggerUrl", "")).strip()
     if not websocket_url:
@@ -1518,12 +2114,12 @@ async def refresh_browser_page_activity(
             await _cdp_call(
                 websocket,
                 "Page.navigate",
-                {"url": GENGO_REALTIME_URL},
+                {"url": GENGO_AVAILABLE_JOBS_URL},
                 call_id=call_id,
             )
             await _wait_for_location_contains(
                 websocket,
-                GENGO_REALTIME_PATH,
+                GENGO_AVAILABLE_JOBS_PATH,
                 call_id_start=call_id + 1,
             )
             return "job_roundtrip"
@@ -1544,12 +2140,12 @@ async def refresh_browser_page_activity(
         await _cdp_call(
             websocket,
             "Page.navigate",
-            {"url": GENGO_REALTIME_URL},
+            {"url": GENGO_AVAILABLE_JOBS_URL},
             call_id=call_id,
         )
         await _wait_for_location_contains(
             websocket,
-            GENGO_REALTIME_PATH,
+            GENGO_AVAILABLE_JOBS_PATH,
             call_id_start=call_id + 1,
         )
         return "summary_roundtrip"

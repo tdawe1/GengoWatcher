@@ -17,6 +17,7 @@ from gengowatcher.browser_session import (
     extract_cookie_value,
     fetch_browser_session_snapshot,
     fetch_browser_session_token,
+    inspect_available_jobs_page,
     open_url_in_browser_debug,
     refresh_browser_page_activity,
     select_gengo_target,
@@ -523,6 +524,146 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
 
 
 @pytest.mark.asyncio
+async def test_inspect_available_jobs_page_reads_firefox_rdp_dom_jobs():
+    responses = [
+        {"from": "root", "applicationType": "browser"},
+        {
+            "from": "root",
+            "tabs": [
+                {
+                    "actor": "tab-descriptor-1",
+                    "url": "https://gengo.com/t/jobs/status/available",
+                    "title": "Available Jobs",
+                }
+            ],
+            "selected": 0,
+        },
+        {
+            "from": "tab-descriptor-1",
+            "frame": {
+                "actor": "tab-target-1",
+                "consoleActor": "tab-console-1",
+                "innerWindowId": 101,
+                "url": "https://gengo.com/t/jobs/status/available",
+                "title": "Available Jobs",
+            },
+        },
+        {
+            "from": "tab-console-1",
+            "resultID": "dom-1",
+        },
+        {
+            "from": "tab-console-1",
+            "type": "evaluationResult",
+            "hasException": False,
+            "resultID": "dom-1",
+            "result": json.dumps(
+                {
+                    "url": "https://gengo.com/t/jobs/status/available",
+                    "title": "Available Jobs",
+                    "readyState": "complete",
+                    "jobs": [
+                        {
+                            "id": "123456",
+                            "title": "Japanese to English",
+                            "reward": 12.5,
+                            "url": "https://gengo.com/t/jobs/details/123456",
+                            "text": "Japanese to English US$12.50",
+                        }
+                    ],
+                    "detectedJobs": [],
+                }
+            ),
+            "input": "ignored",
+            "timestamp": 1,
+            "startTime": 1,
+        },
+    ]
+    mock_ws = _MockJSONWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        new=AsyncMock(return_value=mock_ws),
+    ):
+        snapshot = await inspect_available_jobs_page("ws://127.0.0.1:9222")
+
+    assert snapshot.url == "https://gengo.com/t/jobs/status/available"
+    assert snapshot.action == "inspect"
+    assert len(snapshot.jobs) == 1
+    assert snapshot.jobs[0].job_id == 123456
+    assert snapshot.jobs[0].reward == 12.5
+    assert [message["type"] for message in mock_ws._sent] == [
+        "listTabs",
+        "getTarget",
+        "evaluateJSAsync",
+    ]
+    assert "MutationObserver" in mock_ws._sent[2]["text"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_available_jobs_page_passive_firefox_rdp_does_not_reclaim_manual_tab():
+    responses = [
+        {"from": "root", "applicationType": "browser"},
+        {
+            "from": "root",
+            "tabs": [
+                {
+                    "actor": "tab-descriptor-1",
+                    "consoleActor": "tab-console-1",
+                    "url": "https://gengo.com/t/dashboard",
+                    "title": "Dashboard",
+                }
+            ],
+            "selected": 0,
+        },
+    ]
+    mock_ws = _MockJSONWebSocket(responses)
+
+    with patch(
+        "gengowatcher.browser_session.websockets.connect",
+        new=AsyncMock(return_value=mock_ws),
+    ):
+        snapshot = await inspect_available_jobs_page(
+            "ws://127.0.0.1:9222",
+            allow_navigation=False,
+        )
+
+    assert snapshot.action == "manual_browse"
+    assert snapshot.jobs == ()
+    assert mock_ws.closed is True
+    assert [message["type"] for message in mock_ws._sent] == ["listTabs"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_available_jobs_page_passive_cdp_does_not_reclaim_manual_tab():
+    with (
+        patch(
+            "gengowatcher.browser_session._load_cdp_targets",
+            return_value=[
+                {
+                    "id": "target-1",
+                    "type": "page",
+                    "url": "https://gengo.com/t/dashboard",
+                    "title": "Dashboard",
+                    "webSocketDebuggerUrl": "ws://target-1",
+                }
+            ],
+        ),
+        patch("gengowatcher.browser_session.websockets.connect") as connect,
+    ):
+        snapshot = await inspect_available_jobs_page(
+            "http://127.0.0.1:9222",
+            allow_navigation=False,
+        )
+
+    assert snapshot.action == "manual_browse"
+    assert snapshot.url == "https://gengo.com/t/dashboard"
+    assert snapshot.title == "Dashboard"
+    assert snapshot.jobs == ()
+    connect.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_navigation():
     responses = [
         {"from": "root", "applicationType": "browser"},
@@ -731,9 +872,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_
     assert mock_ws._sent[10]["innerWindowID"] == 103
     assert "location.href = targetUrl" in mock_ws._sent[3]["text"]
     assert "https://gengo.com/t/dashboard" in mock_ws._sent[3]["text"]
-    assert (
-        "https://gengo.com/t/jobs/status/available/realtime" in mock_ws._sent[7]["text"]
-    )
+    assert "https://gengo.com/t/jobs/status/available" in mock_ws._sent[7]["text"]
 
 
 @pytest.mark.asyncio
@@ -960,9 +1099,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_bidi
         "session.end",
     ]
     assert mock_ws._sent[3]["params"]["url"].endswith("/t/dashboard")
-    assert mock_ws._sent[4]["params"]["url"].endswith(
-        "/t/jobs/status/available/realtime"
-    )
+    assert mock_ws._sent[4]["params"]["url"].endswith("/t/jobs/status/available")
 
 
 @pytest.mark.asyncio
@@ -1044,9 +1181,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_cdp_navigati
     assert mock_ws._sent[2]["method"] == "Page.navigate"
     assert mock_ws._sent[2]["params"]["url"].endswith("/t/dashboard")
     assert mock_ws._sent[4]["method"] == "Page.navigate"
-    assert mock_ws._sent[4]["params"]["url"].endswith(
-        "/t/jobs/status/available/realtime"
-    )
+    assert mock_ws._sent[4]["params"]["url"].endswith("/t/jobs/status/available")
 
 
 def test_choose_browser_activity_action_avoids_repeating_previous_action():
@@ -1068,7 +1203,7 @@ def test_choose_browser_activity_action_avoids_repeating_previous_action():
 def test_describe_browser_activity_action_returns_human_readable_text():
     assert (
         describe_browser_activity_action("job_roundtrip")
-        == "opening a visible job details page and returning to realtime"
+        == "opening a visible job details page and returning to available jobs"
     )
 
 
