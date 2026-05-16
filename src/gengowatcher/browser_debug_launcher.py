@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import websockets
 
+from ._async_utils import run_coroutine_sync
 from .browser_session_core import GENGO_AVAILABLE_JOBS_URL, GENGO_REALTIME_URL
 from .browser_worker.profile import BrowserProfileManager
 
@@ -353,7 +354,7 @@ async def _probe_firefox_debug_server(debug_url: str) -> bool:
 def can_connect_to_firefox_debug_server(debug_url: str) -> bool:
     if not _looks_like_local_firefox_rdp_url(debug_url):
         return False
-    return bool(asyncio.run(_probe_firefox_debug_server(debug_url)))
+    return bool(run_coroutine_sync(_probe_firefox_debug_server, debug_url))
 
 
 def wait_for_firefox_debug_server(

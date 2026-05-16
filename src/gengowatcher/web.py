@@ -49,8 +49,8 @@ from .web_models import (
     ConfigSection,
     JobEntry,
     PaginationParams,
+    SECURITY,
     WatcherStatus,
-    security,
 )
 
 authenticator = APIAuthenticator()
@@ -87,9 +87,10 @@ class WebAPI:
         self.logger = logger
         self.file_storage = WebFileStorage(config, logger)
 
-        # Create a separate watcher instance for web API
-        # This allows web UI to run alongside TUI without conflicts
-        self.watcher = GengoWatcher(config, state, logger)
+        self.watcher = (
+            watcher if watcher is not None else GengoWatcher(config, state, logger)
+        )
+        self._manage_watcher_lifecycle = watcher is None and start_watcher_thread
 
         # Thread safety for shared state access
         self._status_lock = threading.RLock()  # Reentrant lock for better safety
@@ -719,7 +720,7 @@ else:
     )
 
 
-async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(SECURITY)):
     """Verify API authentication."""
     if not authenticator.authenticate(credentials):
         raise HTTPException(

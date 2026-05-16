@@ -49,7 +49,8 @@ def render_chart(
             if col_val > units_needed_for_row + 8:
                 line += BAR_CHARS[-1]
             elif col_val > units_needed_for_row:
-                fraction = int(col_val - units_needed_for_row)
+                rem = col_val - units_needed_for_row
+                fraction = 0 if rem <= 0 else max(1, int(rem))
                 line += BAR_CHARS[min(fraction, len(BAR_CHARS) - 1)]
             else:
                 line += BAR_CHARS[0]
@@ -126,7 +127,8 @@ def render_plotext_bar_chart(
         plotext.grid(True)
 
         built = plotext.build()
-        plotext.clear_figure()
         return str(Text.from_ansi(built)).rstrip()
     except Exception:
         return ""
+    finally:
+        plotext.clear_figure()

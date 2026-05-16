@@ -16,10 +16,14 @@ from gengowatcher.browser_session import (
     describe_browser_activity_action,
     extract_cookie_value,
     fetch_browser_session_snapshot,
+    fetch_browser_session_snapshot_sync,
     fetch_browser_session_token,
+    fetch_browser_session_token_sync,
     inspect_available_jobs_page,
     open_url_in_browser_debug,
+    open_url_in_browser_debug_sync,
     refresh_browser_page_activity,
+    refresh_browser_page_activity_sync,
     select_gengo_target,
 )
 from gengowatcher.main import handle_cli_config_commands
@@ -1248,6 +1252,59 @@ def test_build_websocket_auth_payload_omits_user_key():
         "user_id": 12345,
         "user_session": "fresh-token",
     }
+
+
+@pytest.mark.asyncio
+async def test_sync_browser_session_wrappers_work_inside_running_event_loop():
+    async def fake_snapshot(*, debug_url=None, cookie_name=None):
+        return BrowserSessionSnapshot(session_token=f"{debug_url}:{cookie_name}")
+
+    async def fake_token(*, debug_url=None, cookie_name=None):
+        return f"{debug_url}:{cookie_name}"
+
+    async def fake_open(debug_url, url):
+        return f"{debug_url} -> {url}"
+
+    async def fake_refresh(*, debug_url=None, action="auto", previous_action=None):
+        return f"{debug_url}:{action}:{previous_action}"
+
+    with (
+        patch(
+            "gengowatcher.browser_session.fetch_browser_session_snapshot",
+            side_effect=fake_snapshot,
+        ),
+        patch(
+            "gengowatcher.browser_session.fetch_browser_session_token",
+            side_effect=fake_token,
+        ),
+        patch(
+            "gengowatcher.browser_session.open_url_in_browser_debug",
+            side_effect=fake_open,
+        ),
+        patch(
+            "gengowatcher.browser_session.refresh_browser_page_activity",
+            side_effect=fake_refresh,
+        ),
+    ):
+        snapshot = fetch_browser_session_snapshot_sync(
+            "ws://127.0.0.1:9222", cookie_name="session"
+        )
+        token = fetch_browser_session_token_sync(
+            "ws://127.0.0.1:9222", cookie_name="session"
+        )
+        opened = open_url_in_browser_debug_sync(
+            "ws://127.0.0.1:9222", "https://gengo.com/t/jobs/1"
+        )
+        refreshed = refresh_browser_page_activity_sync(
+            "ws://127.0.0.1:9222",
+            action="reload",
+            previous_action="summary_roundtrip",
+        )
+
+    assert snapshot.session_token == "ws://127.0.0.1:9222:session"
+    assert token == "ws://127.0.0.1:9222:session"
+    assert opened == "ws://127.0.0.1:9222 -> https://gengo.com/t/jobs/1"
+    assert refreshed == "ws://127.0.0.1:9222:reload:summary_roundtrip"
 
 
 def test_handle_cli_sync_session_updates_config_and_debug_url(capsys):

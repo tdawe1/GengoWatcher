@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -10,6 +12,7 @@ from urllib.parse import urlparse
 
 import websockets
 
+from ._async_utils import run_coroutine_sync
 from .browser_session_core import (
     DEFAULT_ACCEPT_LANGUAGE,
     DEFAULT_BROWSER_DEBUG_URL,
@@ -22,13 +25,14 @@ from .browser_session_core import (
     GENGO_AVAILABLE_JOBS_URL,
     GENGO_LOCAL_STORAGE_USER_KEY,
     GENGO_REALTIME_PATH,
+    GENGO_REALTIME_URL,
     GENGO_SUMMARY_PATH,
     GENGO_SUMMARY_URL,
     PRIMARY_GENGO_COOKIE_NAMES,
-    BrowserDebugEndpoint,
-    BrowserDebugTarget,
     BrowserAvailableJob,
     BrowserAvailableJobsSnapshot,
+    BrowserDebugEndpoint,
+    BrowserDebugTarget,
     BrowserSessionError,
     BrowserSessionSnapshot,
     coerce_cookie_value as _coerce_cookie_value,
@@ -877,9 +881,8 @@ const collectJobs = () => {{
     );
     const title = (anchorText || text || `Gengo job ${{id}}`).slice(0, 300);
     const rewardMatch =
-    const rewardMatch =
-      text.match(/(?:US\$|\$)\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-      text.match(/\b([0-9]+(?:\.[0-9]+)?)\s*credits?\b/i);
+      text.match(/(?:US\\$|\\$)\\s*([0-9]+(?:\\.[0-9]+)?)/i) ||
+      text.match(/\\b([0-9]+(?:\\.[0-9]+)?)\\s*credits?\\b/i);
     jobs.push({{
       id,
       title,
@@ -1282,8 +1285,10 @@ def fetch_browser_session_snapshot_sync(
     debug_url: str | None = None,
     cookie_name: str | tuple[str, ...] = PRIMARY_GENGO_COOKIE_NAMES,
 ) -> BrowserSessionSnapshot:
-    return asyncio.run(
-        fetch_browser_session_snapshot(debug_url=debug_url, cookie_name=cookie_name)
+    return run_coroutine_sync(
+        fetch_browser_session_snapshot,
+        debug_url=debug_url,
+        cookie_name=cookie_name,
     )
 
 
@@ -1291,8 +1296,10 @@ def fetch_browser_session_token_sync(
     debug_url: str | None = None,
     cookie_name: str | tuple[str, ...] = PRIMARY_GENGO_COOKIE_NAMES,
 ) -> str:
-    return asyncio.run(
-        fetch_browser_session_token(debug_url=debug_url, cookie_name=cookie_name)
+    return run_coroutine_sync(
+        fetch_browser_session_token,
+        debug_url=debug_url,
+        cookie_name=cookie_name,
     )
 
 
@@ -1340,7 +1347,7 @@ def open_url_in_browser_debug_sync(
     debug_url: str | None,
     url: str,
 ) -> str:
-    return asyncio.run(open_url_in_browser_debug(debug_url, url))
+    return run_coroutine_sync(open_url_in_browser_debug, debug_url, url)
 
 
 def _is_available_jobs_page_url(url: str) -> bool:
@@ -1695,14 +1702,13 @@ def inspect_available_jobs_page_sync(
     interact: bool = False,
     allow_navigation: bool = True,
 ) -> BrowserAvailableJobsSnapshot:
-    return asyncio.run(
-        inspect_available_jobs_page(
-            debug_url=debug_url,
-            force_refresh=force_refresh,
-            browse_url=browse_url,
-            interact=interact,
-            allow_navigation=allow_navigation,
-        )
+    return run_coroutine_sync(
+        inspect_available_jobs_page,
+        debug_url=debug_url,
+        force_refresh=force_refresh,
+        browse_url=browse_url,
+        interact=interact,
+        allow_navigation=allow_navigation,
     )
 
 
@@ -2158,12 +2164,11 @@ def refresh_browser_page_activity_sync(
     action: str = "auto",
     previous_action: str | None = None,
 ) -> str:
-    return asyncio.run(
-        refresh_browser_page_activity(
-            debug_url=debug_url,
-            action=action,
-            previous_action=previous_action,
-        )
+    return run_coroutine_sync(
+        refresh_browser_page_activity,
+        debug_url=debug_url,
+        action=action,
+        previous_action=previous_action,
     )
 
 

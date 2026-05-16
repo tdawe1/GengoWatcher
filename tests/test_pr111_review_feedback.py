@@ -16,7 +16,7 @@ from gengowatcher.watcher_job_metadata import (
     parse_lang_pair_from_title,
 )
 from gengowatcher.web_file_storage import WebFileStorage
-from gengowatcher.web_models import CommandRequest
+from gengowatcher.web_models import CommandRequest, SECURITY
 
 
 def _storage(tmp_path: Path) -> WebFileStorage:
@@ -76,6 +76,57 @@ def test_timestamp_or_none_only_swallows_expected_timestamp_conversion_errors():
 def test_command_request_accepts_websocket_test_commands():
     for command in ("ping", "notify"):
         assert CommandRequest(command=command).command == command
+
+
+def test_command_request_args_default_is_not_shared_and_accepts_none():
+    first = CommandRequest(command="check")
+    second = CommandRequest(command="check")
+
+    first.args.append("now")
+
+    assert second.args == []
+    assert CommandRequest(command="check", args=None).args == []
+
+
+def test_tiny_nonzero_chart_value_renders_minimal_block():
+    chart = ui_charts.render_chart([0.01, 1.0], width=2, height=2)
+
+    assert chart.splitlines()[-1][0] == ui_charts.BAR_CHARS[1]
+
+
+def test_web_models_security_singleton_uses_constant_name():
+    assert SECURITY.auto_error is False
+
+
+def test_plotext_chart_clears_figure_after_exception(monkeypatch):
+    class RaisingPlotext:
+        def __init__(self):
+            self.clear_count = 0
+
+        def clear_figure(self):
+            self.clear_count += 1
+
+        def plotsize(self, width, height):
+            pass
+
+        def bar(self, *args, **kwargs):
+            raise RuntimeError("plot failed")
+
+    fake_plotext = RaisingPlotext()
+    monkeypatch.setattr(ui_charts, "plotext", fake_plotext)
+
+    assert (
+        ui_charts.render_plotext_bar_chart(
+            [1.0],
+            width=10,
+            height=4,
+            x_left="old",
+            x_mid="mid",
+            x_right="new",
+        )
+        == ""
+    )
+    assert fake_plotext.clear_count == 2
 
 
 def test_sanitize_filename_output_matches_stored_name_validator(tmp_path):
