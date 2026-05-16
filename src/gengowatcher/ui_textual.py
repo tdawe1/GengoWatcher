@@ -17,10 +17,8 @@ from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.color import Color
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
-from textual.theme import BUILTIN_THEMES, Theme
 from textual.widgets import (
     DataTable,
     Footer,
@@ -32,522 +30,36 @@ from textual.widgets import (
 )
 
 from .config import AppConfig
+from .logging_setup import UILoggingHandler
 from .state import AppState
 from .stats import StatsManager
-from .watcher import TIER_UNIT_RATES, GengoWatcher
-
-try:
-    import plotext as plotext
-except ImportError:  # pragma: no cover - optional runtime dependency
-    plotext = None
-
-# =============================================================================
-# Constants
-# =============================================================================
-
-
-class Icons:
-    FOUND = ""
-    ACCEPTED = ""
-    VALUE = ""
-    RATE = ""
-    TODAY = ""
-    MIN_WORDS = "≥"
-
-    WEBSOCKET = ""
-    EMAIL = ""
-    WEB = ""
-    RSS = ""
-    CAPTCHA = ""
-    WORKFLOW = ""
-    AUTO = ""
-
-    PANEL_ACTIVITY = ""
-    PANEL_JOBS = ""
-    PANEL_CHART = ""
-    PANEL_CONFIG = ""
-    PANEL_SESSION = ""
-    PANEL_TELEMETRY = ""
-    IDLE = "○"
-    LIVE = "∿∿∿"
-    POLLING = "↻"
-
-
-def _format_timestamp(timestamp: Any) -> str:
-    """Normalize a timestamp value to "HH:MM:SS" for display."""
-
-    if timestamp is None:
-        return ""
-
-    if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
-        try:
-            dt = datetime.datetime.fromtimestamp(timestamp)
-        except (OSError, OverflowError, ValueError):
-            return ""
-        return dt.strftime("%H:%M:%S")
-
-    if isinstance(timestamp, str):
-        cleaned = timestamp.strip()
-        if not cleaned:
-            return ""
-
-        iso_candidate = cleaned
-        if iso_candidate.endswith("Z"):
-            iso_candidate = iso_candidate[:-1] + "+00:00"
-        try:
-            dt = datetime.datetime.fromisoformat(iso_candidate)
-            return dt.strftime("%H:%M:%S")
-        except ValueError:
-            pass
-
-        for sep in ("T", " "):
-            if sep in cleaned:
-                _, _, tail = cleaned.partition(sep)
-                match = re.match(r"(\d{2}:\d{2}:\d{2})", tail)
-                if match:
-                    return match.group(1)
-
-        match = re.match(r"(\d{2}:\d{2}:\d{2})", cleaned)
-        if match:
-            return match.group(1)
-        return ""
-
-    return ""
-
-
-_TIMESTAMP_PREFIX_PATTERN = re.compile(
-    r"^\s*(?:"
-    r"\[\d{2}:\d{2}:\d{2}\]"
-    r"|\d{2}:\d{2}:\d{2}\b"
-    r"|\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\]?"
-    r")"
+from .ui_charts import (
+    BAR_CHARS,
+    aggregate_series as _aggregate_series,
+    render_chart as _render_chart,
+    render_chart_with_axes as _render_chart_with_axes,
+    render_plotext_bar_chart as _render_plotext_bar_chart,
 )
-
-
-def _with_timestamp_prefix(
-    message: str,
-    now: datetime.datetime | None = None,
-) -> str:
-    """Prefix a message with [HH:MM:SS] if it has no leading timestamp."""
-    text = "" if message is None else str(message)
-    if _TIMESTAMP_PREFIX_PATTERN.match(text):
-        return text
-
-    current_time = now or datetime.datetime.now()
-    return f"[{current_time.strftime('%H:%M:%S')}] {text}".rstrip()
-
-
-SOURCE_BUCKET_CONFIG = {
-    "websocket": {"label": "WebSocket", "color": "secondary"},
-    "email": {"label": "Email", "color": "accent"},
-    "website": {"label": "Website", "color": "primary"},
-    "rss": {"label": "RSS", "color": "success"},
-    "unknown": {"label": "Unknown", "color": "text-muted"},
-}
-
-ACTIVITY_PREVIEW_MAX_LINES = 250
-ACTIVITY_LOG_MAX_LINES = 1000
-OUTPUT_LOG_MAX_LINES = 500
-TELEMETRY_SECTION_ORDER = (
-    "websocket",
-    "rss",
-    "session",
-    "workflow",
-    "email",
-    "browser",
+from .ui_formatting import (
+    ACTIVITY_LOG_MAX_LINES,
+    ACTIVITY_PREVIEW_MAX_LINES,
+    OUTPUT_LOG_MAX_LINES,
+    SOURCE_BUCKET_CONFIG,
+    TELEMETRY_LABELS,
+    Icons,
+    build_config_style_palette as _build_config_style_palette,
+    build_semantic_color_palette as _build_semantic_color_palette,
+    coerce_positive_int as _coerce_positive_int,
+    derive_display_word_count as _derive_display_word_count,
+    format_telemetry_metric as _format_telemetry_metric,
+    format_timestamp as _format_timestamp,
+    get_active_theme as _get_active_theme,
+    iter_telemetry_entries as _iter_telemetry_entries,
+    normalize_source as _normalize_source,
+    parse_job_title_fallback as _parse_job_title_fallback,
+    with_timestamp_prefix as _with_timestamp_prefix,
 )
-TELEMETRY_LABELS = {
-    "websocket": ("WS", "WEBSOCKET"),
-    "rss": ("RSS", "RSS"),
-    "session": ("Session", "SESSION"),
-    "workflow": ("Workflow", "WORKFLOW"),
-    "email": ("Email", "EMAIL"),
-    "browser": ("Browser", "BROWSER"),
-}
-
-
-def _get_active_theme(owner: Any) -> Theme:
-    """Get the current Textual theme for an app/widget/handler owner."""
-    app = None
-    try:
-        app = owner.app
-    except Exception:
-        app = getattr(owner, "__dict__", {}).get("app")
-    if app is not None:
-        theme = getattr(app, "current_theme", None)
-        if isinstance(theme, Theme):
-            return theme
-    return BUILTIN_THEMES["textual-dark"]
-
-
-def _build_semantic_color_palette(theme: Theme) -> dict[str, str]:
-    """Build semantic Rich color roles from a Textual theme."""
-    generated = theme.to_color_system().generate()
-
-    def rich_color(name: str) -> str:
-        return _to_rich_color(generated[name])
-
-    return {
-        "timestamp": rich_color("foreground-muted"),
-        "job_id": rich_color("primary"),
-        "money": rich_color("warning"),
-        "lang_pair": rich_color("secondary"),
-        "number": rich_color("accent"),
-        "success": rich_color("success"),
-        "error_word": rich_color("error"),
-        "warning_word": rich_color("warning"),
-        "source_ws": rich_color("secondary"),
-        "source_email": rich_color("accent"),
-        "source_rss": rich_color("success"),
-        "source_web": rich_color("primary"),
-        "url": rich_color("accent"),
-        "default": rich_color("foreground"),
-        "level_debug": rich_color("foreground-muted"),
-        "level_info": rich_color("foreground"),
-        "level_warning": rich_color("warning"),
-        "level_error": rich_color("error"),
-        "level_success": rich_color("success"),
-        "level_job": rich_color("primary"),
-        "level_critical": _to_rich_color(
-            generated.get("error-lighten-1", generated["error"])
-        ),
-        "bracket": rich_color("foreground-muted"),
-        "punctuation": rich_color("foreground-muted"),
-    }
-
-
-def _build_config_style_palette(theme: Theme) -> dict[str, str]:
-    """Build semantic styles for ConfigPreview from a Textual theme."""
-    generated = theme.to_color_system().generate()
-    return {
-        "section_header": f"bold {_to_rich_color(generated['primary'])}",
-        "section_rule": _to_rich_color(generated["foreground-muted"]),
-        "key": _to_rich_color(generated["foreground-muted"]),
-        "bool_true": _to_rich_color(generated["success"]),
-        "bool_false": _to_rich_color(generated["error"]),
-        "sensitive": _to_rich_color(generated["secondary"]),
-        "number": _to_rich_color(generated["accent"]),
-        "value": _to_rich_color(generated["foreground"]),
-    }
-
-
-def _to_rich_color(color_value: str) -> str:
-    """Normalize a Textual color value to a Rich-compatible color string."""
-    try:
-        return Color.parse(color_value).hex6
-    except Exception:
-        return color_value
-
-
-def _telemetry_state_style(owner: Any, state: str) -> str:
-    colors = _build_semantic_color_palette(_get_active_theme(owner))
-    state_lower = str(state or "").lower()
-    if state_lower == "healthy":
-        return colors["success"]
-    if state_lower in {"working", "stale"}:
-        return colors["warning_word"]
-    if state_lower in {"error", "disabled"}:
-        return colors["error_word" if state_lower == "error" else "timestamp"]
-    return colors["default"]
-
-
-def _format_telemetry_metric(name: str, value: Any) -> str:
-    if value is None or value == "":
-        return ""
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if name.endswith("_sec"):
-            return f"{int(round(value))}s"
-        if name.endswith("_ms"):
-            return f"{int(round(value))}ms"
-        if float(value).is_integer():
-            return str(int(value))
-        return f"{value:.2f}"
-    return str(value)
-
-
-def _iter_telemetry_entries(
-    snapshot: dict[str, Any],
-) -> list[tuple[str, dict[str, Any]]]:
-    ordered: list[tuple[str, dict[str, Any]]] = []
-    for key in TELEMETRY_SECTION_ORDER:
-        value = snapshot.get(key)
-        if isinstance(value, dict):
-            ordered.append((key, value))
-    for key, value in snapshot.items():
-        if key in TELEMETRY_SECTION_ORDER or not isinstance(value, dict):
-            continue
-        ordered.append((str(key), value))
-    return ordered
-
-
-def _normalize_source(source: Any) -> str:
-    """Map incoming source strings into the normalized buckets."""
-
-    if source is None:
-        return "unknown"
-
-    normalized = str(source).strip().lower()
-    if not normalized:
-        return "unknown"
-
-    if "websocket" in normalized or normalized in ("ws", "socket"):
-        return "websocket"
-    if any(token in normalized for token in ("email", "imap", "mail")):
-        return "email"
-    if any(token in normalized for token in ("rss", "feed")):
-        return "rss"
-    if any(
-        token in normalized for token in ("web", "http", "browser", "scrape", "website")
-    ):
-        return "website"
-    return "unknown"
-
-
-def _coerce_positive_int(value: Any) -> int:
-    """Best-effort conversion to positive int from numeric/text values."""
-    try:
-        parsed = int(float(value))
-    except (TypeError, ValueError):
-        if not isinstance(value, str):
-            return 0
-        match = re.search(r"(\d+)", value)
-        if not match:
-            return 0
-        try:
-            parsed = int(match.group(1))
-        except ValueError:
-            return 0
-    return parsed if parsed > 0 else 0
-
-
-def _coerce_positive_float(value: Any) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return parsed if parsed > 0 else 0.0
-
-
-def _derive_display_word_count(job: dict[str, Any]) -> int:
-    """
-    Derive a display word/unit count for tables.
-
-    Uses explicit unit fields first, then estimates from reward and tier.
-    """
-    for key in (
-        "word_count",
-        "words",
-        "unit_count",
-        "unit",
-        "units",
-        "wordCount",
-        "unitCount",
-    ):
-        count = _coerce_positive_int(job.get(key))
-        if count > 0:
-            return count
-
-    reward = _coerce_positive_float(job.get("reward"))
-    if reward <= 0:
-        return 0
-
-    tier_text = str(
-        job.get("tier") or job.get("job_tier") or job.get("service_level") or ""
-    ).lower()
-    if not tier_text:
-        title = str(job.get("title") or "")
-        match = re.search(r"\(([^)]+)\)", title)
-        if match:
-            tier_text = match.group(1).strip().lower()
-
-    normalized = tier_text.replace("-", "").replace("_", "").strip()
-    if any(token in normalized for token in ("pro", "professional")):
-        rate = TIER_UNIT_RATES["pro"]
-    elif any(token in normalized for token in ("edit", "proofread", "proofreading")):
-        rate = TIER_UNIT_RATES["edit"]
-    else:
-        # Default to Standard when tier is absent so historic WS rows still
-        # show an estimate.
-        rate = TIER_UNIT_RATES["standard"]
-
-    return max(1, int(round(reward / rate)))
-
-
-# Fractional block characters for bar chart rendering
-# Characters arranged from empty to full: ▁▂▃▄▅▆▇█
-BAR_CHARS = " ▁▂▃▄▅▆▇█"
-
-
-def _render_chart(
-    values: list[float],
-    width: int = 20,
-    height: int = 5,
-) -> str:
-    """
-    Render a bar chart using fractional block characters.
-
-    Args:
-        values: List of numeric values to display
-        width: Width of the chart in characters
-        height: Height of the chart in lines
-
-    Returns:
-        String representation of the chart with newlines
-    """
-    if not values or width <= 0 or height <= 0:
-        return ""
-
-    # Normalize values to fit within the height
-    max_val = max(values) if values else 1.0
-    if max_val == 0:
-        max_val = 1.0
-
-    # Resample values to fit width if needed
-    if len(values) > width:
-        # Downsample by averaging buckets
-        step = len(values) / width
-        resampled = []
-        for i in range(width):
-            start_idx = int(i * step)
-            end_idx = int((i + 1) * step)
-            bucket = values[start_idx:end_idx]
-            resampled.append(sum(bucket) / len(bucket) if bucket else 0)
-        values = resampled
-    elif len(values) < width:
-        # Pad with zeros on the right
-        values = list(values) + [0.0] * (width - len(values))
-
-    # Normalize to chart height (using fractional blocks)
-    # Each position can be 0 to (height * 8) where 8 is the number of
-    # fractional states
-    max_units = height * 8
-    normalized = [(v / max_val) * max_units for v in values]
-
-    # Build chart from top to bottom
-    lines = []
-    for row in range(height - 1, -1, -1):
-        line = ""
-        for col_val in normalized:
-            # Determine which character to use for this row
-            # row represents height from bottom (0 = bottom row, height-1 = top
-            # row)
-            units_at_col = col_val
-            units_needed_for_row = row * 8
-
-            if units_at_col > units_needed_for_row + 8:
-                # Full block for this row
-                line += BAR_CHARS[-1]  # █
-            elif units_at_col > units_needed_for_row:
-                # Partial block for this row
-                fraction = int(units_at_col - units_needed_for_row)
-                line += BAR_CHARS[min(fraction, len(BAR_CHARS) - 1)]
-            else:
-                # Empty for this row
-                line += BAR_CHARS[0]  # space
-        lines.append(line)
-
-    return "\n".join(lines)
-
-
-def _aggregate_series(values: list[float], bin_size: int = 2) -> list[float]:
-    """Aggregate a series into fixed-size bins."""
-    if bin_size <= 1:
-        return list(values)
-    aggregated: list[float] = []
-    for i in range(0, len(values), bin_size):
-        aggregated.append(float(sum(values[i : i + bin_size])))
-    return aggregated
-
-
-def _render_chart_with_axes(
-    values: list[float],
-    *,
-    width: int = 12,
-    height: int = 4,
-    x_left: str = "old",
-    x_right: str = "new",
-) -> str:
-    """Render chart with minimal y-axis and x-axis labels."""
-    chart = _render_chart(values, width=width, height=height)
-    if not chart:
-        return ""
-
-    lines = chart.splitlines()
-    max_val = max(values) if values else 0.0
-    if max_val <= 0:
-        max_val = 1.0
-
-    y_label_width = max(1, len(str(int(round(max_val)))))
-    with_axis: list[str] = []
-    for row_idx, line in enumerate(lines):
-        # Top row shows the highest approximate bucket value.
-        approx_value = int(round(max_val * (height - row_idx) / height))
-        with_axis.append(f"{approx_value:>{y_label_width}} |{line}")
-
-    with_axis.append(f"{0:>{y_label_width}} +{'─' * width}")
-    left_pad = " " * (y_label_width + 2)
-    spacing = max(1, width - len(x_left) - len(x_right))
-    with_axis.append(f"{left_pad}{x_left}{' ' * spacing}{x_right}")
-    return "\n".join(with_axis)
-
-
-def _render_plotext_bar_chart(
-    values: list[float],
-    *,
-    width: int,
-    height: int,
-    x_left: str,
-    x_mid: str,
-    x_right: str,
-) -> str:
-    """Render a bar chart via plotext with true axes/ticks."""
-    if plotext is None or not values or width <= 0 or height <= 0:
-        return ""
-
-    try:
-        x = list(range(1, len(values) + 1))
-        mid = max(1, len(values) // 2)
-        right = len(values)
-
-        plotext.clear_figure()
-        plotext.plotsize(width, height)
-        plotext.bar(x, values, fill=True, width=0.8)
-        plotext.xticks([1, mid, right], [x_left, x_mid, x_right])
-        plotext.ylabel("jobs")
-        plotext.xlabel("time")
-        plotext.grid(True)
-
-        # Convert ANSI output into plain text, preserving chart glyphs.
-        built = plotext.build()
-        plotext.clear_figure()
-        return str(Text.from_ansi(built)).rstrip()
-    except Exception:
-        return ""
-
-
-def _parse_job_title_fallback(title: Any) -> tuple[str, str]:
-    """Fallback parser for language pair and word count from job title."""
-
-    default_pair = "??→??"
-    default_words = "0"
-    if not title:
-        return default_pair, default_words
-
-    text = str(title)
-    pair_match = re.search(
-        r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", text, re.IGNORECASE
-    )
-    if pair_match:
-        pair = f"{pair_match.group(1).upper()}→{pair_match.group(2).upper()}"
-    else:
-        pair = default_pair
-
-    words_match = re.search(r"\b(\d{1,6})\s*words?\b", text, re.IGNORECASE)
-    words = words_match.group(1) if words_match else default_words
-    return pair, words
-
+from .watcher import GengoWatcher
 
 # =============================================================================
 # Widgets
@@ -2106,12 +1618,14 @@ class GengoWatcherApp(App):
         state: AppState,
         watcher: GengoWatcher,
         stats: StatsManager,
+        ui_log_handler: UILoggingHandler | None = None,
     ):
         super().__init__()
         self.config = config
         self.state = state
         self.watcher = watcher
         self.stats = stats
+        self._ui_log_handler = ui_log_handler
         self._initializing_theme = True
         self._persist_theme_changes = True
         self.theme = self._configured_theme_name()
@@ -2125,6 +1639,7 @@ class GengoWatcherApp(App):
         )
         self._logging_attached = False
         self._job_added_callback = self._on_job_added_from_thread
+        self._buffered_logs_replayed = False
 
         # Register callback for when new jobs are detected
         self.watcher.on_job_added_callback = self._job_added_callback
@@ -2218,6 +1733,19 @@ class GengoWatcherApp(App):
         self._log_source.addHandler(self._textual_log_handler)
         self._logging_attached = True
 
+    def _replay_buffered_logs(self) -> None:
+        if self._buffered_logs_replayed or self._ui_log_handler is None:
+            return
+
+        queued_logs = list(getattr(self._ui_log_handler, "log_queue", ()))
+        for entry in queued_logs:
+            if not isinstance(entry, Text):
+                continue
+            self._textual_log_handler.append_log("#activity-log", entry)
+            self._textual_log_handler.append_log("#activity-log-full", entry)
+
+        self._buffered_logs_replayed = True
+
     def on_unmount(self) -> None:
         """Detach callbacks and log handlers owned by this app instance."""
         current_callback = getattr(self.watcher, "on_job_added_callback", None)
@@ -2230,6 +1758,7 @@ class GengoWatcherApp(App):
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
         self._setup_logging()
+        self._replay_buffered_logs()
         self._refresh_responsive_layout()
         self.call_after_refresh(self._refresh_responsive_layout)
         self._setup_jobs_table()
@@ -2569,6 +2098,10 @@ class TextualLogHandler(logging.Handler):
             log.write(colored_text)
         except NoMatches:
             pass  # Widget not mounted yet
+
+    def append_log(self, widget_id: str, colored_text: Text) -> None:
+        """Append an already formatted log entry to a specific log widget."""
+        self._write_to_log(widget_id, colored_text)
 
     def write_log(self, msg: str, level: int = logging.INFO):
         colored_text = self._colorize_message(msg, level)

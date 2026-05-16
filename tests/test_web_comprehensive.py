@@ -15,7 +15,9 @@ from gengowatcher.web import (
     ConfigSection,
     CommandRequest,
     PaginationParams,
+    run_web_server,
 )
+import gengowatcher.web as web_module
 from gengowatcher.config import AppConfig
 from gengowatcher.state import AppState
 
@@ -197,7 +199,7 @@ class TestPydanticModels:
 
     def test_command_request_valid_commands(self):
         """Test all valid commands."""
-        valid_commands = ["check", "pause", "resume", "ping", "notify", "cancel"]
+        valid_commands = ["check", "pause", "resume", "cancel", "ping", "notify"]
         for cmd in valid_commands:
             request = CommandRequest(command=cmd, args=[])
             assert request.command == cmd
@@ -232,6 +234,85 @@ class TestWebAPIInitialization:
                 assert api.logger == mock_logger
                 mock_watcher_class.assert_called_once()
                 mock_thread.assert_called_once()
+
+    def test_web_api_reuses_shared_watcher_without_starting_thread(
+        self, mock_config, mock_state, mock_logger
+    ):
+        """Shared watcher mode must not create a duplicate monitor thread."""
+        shared_watcher = MagicMock()
+
+        with patch("gengowatcher.web.GengoWatcher") as mock_watcher_class:
+            with patch("threading.Thread") as mock_thread:
+                api = WebAPI(
+                    mock_config,
+                    mock_state,
+                    mock_logger,
+                    watcher=shared_watcher,
+                    start_watcher_thread=False,
+                )
+
+        assert api.watcher is shared_watcher
+        mock_watcher_class.assert_not_called()
+        mock_thread.assert_not_called()
+
+    def test_shutdown_does_not_stop_shared_watcher(
+        self, mock_config, mock_state, mock_logger
+    ):
+        """Runtime-owned watchers should not be shut down by the web wrapper."""
+        shared_watcher = MagicMock()
+        api = WebAPI(
+            mock_config,
+            mock_state,
+            mock_logger,
+            watcher=shared_watcher,
+            start_watcher_thread=False,
+        )
+
+        api.shutdown()
+
+        shared_watcher.handle_exit.assert_not_called()
+
+    def test_run_web_server_requires_complete_runtime_context(
+        self, mock_config, mock_state
+    ):
+        with pytest.raises(ValueError, match="config and state"):
+            run_web_server(config=mock_config)
+
+        with pytest.raises(ValueError, match="config and state"):
+            run_web_server(state=mock_state)
+
+    def test_run_web_server_stores_shared_runtime_context(
+        self, mock_config, mock_state, mock_logger
+    ):
+        shared_watcher = MagicMock()
+        try:
+            with patch("gengowatcher.web.uvicorn.run") as mock_uvicorn_run:
+                run_web_server(
+                    host="127.0.0.1",
+                    port=37181,
+                    config=mock_config,
+                    state=mock_state,
+                    logger=mock_logger,
+                    watcher=shared_watcher,
+                    start_watcher_thread=False,
+                )
+
+            assert web_module.shared_runtime_context == {
+                "config": mock_config,
+                "state": mock_state,
+                "logger": mock_logger,
+                "watcher": shared_watcher,
+                "start_watcher_thread": False,
+            }
+            mock_uvicorn_run.assert_called_once_with(
+                web_module.app,
+                host="127.0.0.1",
+                port=37181,
+                reload=False,
+                log_level="info",
+            )
+        finally:
+            web_module.shared_runtime_context = None
 
     def test_web_api_thread_safety_locks(self, mock_config, mock_state, mock_logger):
         """Test that thread safety locks are created."""
@@ -503,6 +584,14 @@ class TestWebAPICommands:
 
         result = web_api.execute_command("cancel")
         assert result["status"] == "error"
+
+    def test_execute_command_websocket_test_commands(self, web_api):
+        """Test websocket diagnostic commands."""
+        for command in ("ping", "notify"):
+            result = web_api.execute_command(command)
+
+            assert result["status"] == "success"
+            assert web_api.watcher._test_command == command
 
     def test_execute_command_unknown(self, web_api):
         """Test unknown command."""

@@ -29,6 +29,7 @@ from gengowatcher.ui_textual import (
     _with_timestamp_prefix,
     BAR_CHARS,
 )
+from gengowatcher.logging_setup import UILoggingHandler
 from gengowatcher.stats import StatsManager
 from textual.css.query import NoMatches
 from textual.theme import Theme
@@ -797,6 +798,49 @@ class TestGengoWatcherApp:
 
         mock_config.set.assert_called_with("UI", "theme_name", "gruvbox")
         mock_config.save_config.assert_called_once()
+
+    def test_on_mount_replays_buffered_startup_logs(
+        self, mock_config, mock_state, mock_watcher, mock_stats
+    ):
+        buffered_handler = UILoggingHandler()
+        record = logging.LogRecord(
+            "gengowatcher",
+            logging.INFO,
+            __file__,
+            1,
+            "WebSocket: Connection established and authenticated.",
+            (),
+            None,
+        )
+        buffered_handler.emit(record)
+
+        app = GengoWatcherApp(
+            config=mock_config,
+            state=mock_state,
+            watcher=mock_watcher,
+            stats=mock_stats,
+            ui_log_handler=buffered_handler,
+        )
+        app._refresh_responsive_layout = MagicMock()
+        app.call_after_refresh = MagicMock()
+        app._setup_jobs_table = MagicMock()
+        app._refresh_dashboard_panels = MagicMock()
+        app.set_interval = MagicMock()
+        app._textual_log_handler.append_log = MagicMock()
+
+        try:
+            app.on_mount()
+
+            replay_calls = app._textual_log_handler.append_log.call_args_list
+            assert len(replay_calls) == 2
+            assert replay_calls[0].args[0] == "#activity-log"
+            assert replay_calls[1].args[0] == "#activity-log-full"
+            assert "WebSocket: Connection established and authenticated." in str(
+                replay_calls[0].args[1]
+            )
+            assert app._buffered_logs_replayed is True
+        finally:
+            app.on_unmount()
 
     @pytest.mark.asyncio
     async def test_app_has_bindings(

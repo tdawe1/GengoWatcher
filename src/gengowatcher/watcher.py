@@ -42,6 +42,34 @@ from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
+from .translation_app_queue import (
+    submit_translation_app_task as _submit_translation_app_task,
+)
+from .watcher_debug import (
+    redact_raw_ws_text as _redact_raw_ws_text,
+    redact_raw_ws_value as _redact_raw_ws_value,
+)
+from .watcher_job_metadata import (
+    TIER_UNIT_RATES,
+    coerce_positive_float,
+    coerce_positive_int,
+    derive_lang_pair,
+    derive_word_count,
+    estimate_word_count_from_reward,
+    format_lang_token,
+    normalize_lang_pair_string,
+    normalize_meta,
+    parse_lang_pair_from_title,
+    pick_meta_value,
+    resolve_tier_rate,
+)
+from .watcher_health import (
+    alert_on_health_snapshot as _alert_on_health_snapshot,
+    build_health_snapshot,
+    get_websocket_quiet_age,
+    has_error_message,
+    timestamp_or_none,
+)
 
 from . import notifier
 
@@ -74,100 +102,6 @@ PLACEHOLDER_CONFIG_VALUES = {
 }
 
 SENSITIVE_KEYWORDS = {"password", "session", "key"}
-RAW_WS_REDACTED = "[REDACTED]"
-RAW_WS_SENSITIVE_KEYWORDS = (
-    "authorization",
-    "cookie",
-    "session",
-    "token",
-    "secret",
-    "key",
-)
-RAW_WS_SENSITIVE_PATTERNS = (
-    (
-        re.compile(r"(my_gengo_session=)[^;\s\"']+", re.IGNORECASE),
-        rf"\1{RAW_WS_REDACTED}",
-    ),
-    (
-        re.compile(r"(authorization\s*:\s*bearer\s+)[^\s,;}}]+", re.IGNORECASE),
-        rf"\1{RAW_WS_REDACTED}",
-    ),
-)
-LANG_PAIR_REGEX = re.compile(
-    r"\b([A-Z]{2})\s*(?:→|->|-|>)\s*([A-Z]{2})\b", re.IGNORECASE
-)
-LANG_PAIR_SPLIT_REGEX = re.compile(r"\s*(?:→|->|-|>|↔|/)\s*")
-WORD_COUNT_REGEX = re.compile(r"\b(\d{1,6})\s*words?\b", re.IGNORECASE)
-UNIT_COUNT_REGEX = re.compile(
-    r"\b(\d{1,6})\s*(?:words?|chars?|units?)\b", re.IGNORECASE
-)
-TITLE_TIER_REGEX = re.compile(r"\(([^)]+)\)")
-TRANSLATION_APP_SUBMISSION_MAX_WORKERS = 1
-TRANSLATION_APP_SUBMISSION_MAX_PENDING = 16
-_translation_app_executor = None
-_translation_app_executor_lock = threading.Lock()
-_translation_app_submission_slots = threading.BoundedSemaphore(
-    TRANSLATION_APP_SUBMISSION_MAX_WORKERS + TRANSLATION_APP_SUBMISSION_MAX_PENDING
-)
-TIER_UNIT_RATES = {
-    "standard": 0.02,
-    "pro": 0.05,
-    "edit": 0.01,
-}
-
-
-def _get_translation_app_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _translation_app_executor
-    with _translation_app_executor_lock:
-        if _translation_app_executor is None:
-            _translation_app_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=TRANSLATION_APP_SUBMISSION_MAX_WORKERS,
-                thread_name_prefix="TranslationAppSubmit",
-            )
-        return _translation_app_executor
-
-
-def _submit_translation_app_task(task: Callable[[], None]) -> concurrent.futures.Future:
-    if not _translation_app_submission_slots.acquire(blocking=False):
-        raise queue.Full("translation-app submission queue is full")
-
-    try:
-        future = _get_translation_app_executor().submit(task)
-    except Exception:
-        _translation_app_submission_slots.release()
-        raise
-
-    future.add_done_callback(
-        lambda _future: _translation_app_submission_slots.release()
-    )
-    return future
-
-
-def _raw_ws_key_is_sensitive(key: object) -> bool:
-    normalized = str(key).lower()
-    return any(keyword in normalized for keyword in RAW_WS_SENSITIVE_KEYWORDS)
-
-
-def _redact_raw_ws_value(value):
-    if isinstance(value, dict):
-        return {
-            key: (
-                RAW_WS_REDACTED
-                if _raw_ws_key_is_sensitive(key)
-                else _redact_raw_ws_value(item)
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_raw_ws_value(item) for item in value]
-    return value
-
-
-def _redact_raw_ws_text(message: str) -> str:
-    redacted = message
-    for pattern, replacement in RAW_WS_SENSITIVE_PATTERNS:
-        redacted = pattern.sub(replacement, redacted)
-    return redacted
 
 
 class GengoWatcher:
@@ -394,322 +328,23 @@ class GengoWatcher:
         return max(self._get_session_quiet_probe_seconds() * 2, 300)
 
     def _get_websocket_quiet_age(self, current_time: float) -> float | None:
-        if self.websocket_connected_at_ts is None:
-            return None
-        last_activity_ts = (
-            self.websocket_last_message_ts or self.websocket_connected_at_ts
-        )
-        return max(0.0, current_time - last_activity_ts)
+        return get_websocket_quiet_age(self, current_time)
 
     @staticmethod
     def _timestamp_or_none(value):
-        if value is None:
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        if hasattr(value, "timestamp"):
-            try:
-                return float(value.timestamp())
-            except Exception:
-                return None
-        return None
+        return timestamp_or_none(value)
 
     def get_health_snapshot(
         self, now: float | None = None
     ) -> dict[str, dict[str, object]]:
-        """Return actionable subsystem health instead of coarse absolute state."""
-        current_time = now if now is not None else time.time()
-        check_interval = float(self.config.get("Watcher", "check_interval") or 45)
-        browser_debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
-        ws_enabled = self.config.getboolean(
-            "WebSocket", "enable_websocket", fallback=True
-        )
-        email_enabled = self.config.getboolean(
-            "EmailMonitor", "enabled", fallback=False
-        )
-        website_enabled = self.config.getboolean(
-            "WebsiteMonitor", "enabled", fallback=False
-        )
-        auto_enabled = self.config.getboolean("AutoAccept", "enabled", fallback=False)
-        browser_worker_enabled = self.config.getboolean(
-            "BrowserWorker", "enabled", fallback=False
-        )
-        cancellation_enabled = self.config.getboolean(
-            "Cancellation", "enabled", fallback=False
-        )
-        sync_interval = self._get_session_sync_interval_seconds()
-
-        ws_state = "disabled"
-        ws_detail = "off"
-        last_pong_age = None
-        last_message_age = None
-        quiet_age = self._get_websocket_quiet_age(current_time)
-        if self.websocket_last_pong_ts is not None:
-            last_pong_age = max(0.0, current_time - self.websocket_last_pong_ts)
-        if self.websocket_last_message_ts is not None:
-            last_message_age = max(0.0, current_time - self.websocket_last_message_ts)
-
-        if ws_enabled:
-            if (
-                self._websocket_sync_failed
-                or self.websocket_status == "Session Sync Failed"
-            ):
-                ws_state = "error"
-                ws_detail = "sync failed"
-            elif self.websocket_status == "Disabled":
-                ws_state = "disabled"
-                ws_detail = "off"
-            elif self.websocket_status in ("Connecting", "Authenticating", "Enabled"):
-                ws_state = "working"
-                ws_detail = self.websocket_status.lower()
-            elif self.websocket_status == "Live":
-                if last_pong_age is None:
-                    ws_state = "stale"
-                    ws_detail = "no pong"
-                elif last_pong_age <= 40:
-                    ws_state = "healthy"
-                    ws_detail = "ok"
-                else:
-                    ws_state = "stale"
-                    ws_detail = f"pong {int(last_pong_age)}s"
-            elif self.websocket_status in ("Offline", "Stopped"):
-                ws_state = "error"
-                ws_detail = self.websocket_status.lower()
-            else:
-                ws_state = "stale"
-                ws_detail = str(self.websocket_status or "unknown").lower()
-
-        rss_state = "working"
-        rss_detail = str(self.rss_action or "init").lower()
-        last_check_ts = self._timestamp_or_none(self.last_check_time)
-        rss_age = (
-            None if last_check_ts is None else max(0.0, current_time - last_check_ts)
-        )
-        if self._has_error_message(self.rss_action):
-            rss_state = "error"
-        elif any(
-            token in str(self.rss_action)
-            for token in (
-                "Fetching",
-                "Processing",
-                "Priming",
-                "Backoff",
-                "Initializing",
-            )
-        ):
-            rss_state = "working"
-        elif last_check_ts is None:
-            rss_state = "stale"
-            rss_detail = "never checked"
-        elif rss_age <= max(check_interval * 2, 90):
-            rss_state = "healthy"
-            rss_detail = "ok"
-        else:
-            rss_state = "stale"
-            rss_detail = f"last {int(rss_age)}s"
-
-        auto_profile = self.config.get("AutoAccept", "browser_profile_path") or ""
-        if not auto_enabled:
-            auto_state = "disabled"
-            auto_detail = "off"
-        elif not auto_profile:
-            auto_state = "error"
-            auto_detail = "misconfig"
-        elif getattr(self, "is_processing", False):
-            auto_state = "working"
-            auto_detail = "running"
-        else:
-            auto_state = "healthy"
-            auto_detail = "ready"
-
-        if getattr(self, "is_processing", False):
-            workflow_state = "working"
-            workflow_detail = "running"
-        elif not any((auto_enabled, browser_worker_enabled, cancellation_enabled)):
-            workflow_state = "disabled"
-            workflow_detail = "manual"
-        elif self._websocket_sync_failed:
-            workflow_state = "error"
-            workflow_detail = "blocked"
-        else:
-            workflow_state = "healthy"
-            workflow_detail = "idle"
-
-        email_last_check_ts = self._timestamp_or_none(self.email_last_check_time)
-        email_age = (
-            None
-            if email_last_check_ts is None
-            else max(0.0, current_time - email_last_check_ts)
-        )
-        email_status = str(self.email_monitor_status or "Disabled")
-        if not email_enabled:
-            email_state = "disabled"
-            email_detail = "off"
-        elif self._has_error_message(email_status):
-            email_state = "error"
-            email_detail = email_status.lower()
-        elif email_status in ("Checking",):
-            email_state = "working"
-            email_detail = email_status.lower()
-        elif email_last_check_ts is None:
-            email_state = "stale"
-            email_detail = "never checked"
-        elif email_age <= max(check_interval * 2, 90):
-            email_state = "healthy"
-            email_detail = email_status.lower()
-        else:
-            email_state = "stale"
-            email_detail = f"last {int(email_age)}s"
-
-        browser_last_check_ts = self._timestamp_or_none(self.website_last_check_time)
-        browser_age = (
-            None
-            if browser_last_check_ts is None
-            else max(0.0, current_time - browser_last_check_ts)
-        )
-        browser_status = str(self.website_monitor_status or "Disabled")
-        if browser_worker_enabled:
-            if self.browser_worker_client is None:
-                browser_state = "error"
-                browser_detail = "worker cfg!"
-            else:
-                browser_state = "healthy"
-                browser_detail = "worker ready"
-        elif not website_enabled:
-            browser_state = "disabled"
-            browser_detail = "off"
-        elif self._has_error_message(browser_status):
-            browser_state = "error"
-            browser_detail = browser_status.lower()
-        elif browser_status in ("Checking",):
-            browser_state = "working"
-            browser_detail = browser_status.lower()
-        elif browser_last_check_ts is None:
-            browser_state = "stale"
-            browser_detail = "never checked"
-        elif browser_age <= max(check_interval * 2, 90):
-            browser_state = "healthy"
-            browser_detail = browser_status.lower()
-        else:
-            browser_state = "stale"
-            browser_detail = f"last {int(browser_age)}s"
-
-        session_state = "disabled"
-        session_detail = "off"
-        session_age = None
-        if browser_debug_url:
-            if self._browser_session_last_sync_ts is not None:
-                session_age = max(
-                    0.0, current_time - self._browser_session_last_sync_ts
-                )
-            if (
-                self._websocket_sync_failed
-                or self._browser_session_last_sync_state == "error"
-            ):
-                session_state = "error"
-                session_detail = self._browser_session_last_sync_detail or "sync failed"
-            elif self._browser_session_last_sync_ts is None:
-                session_state = "stale"
-                session_detail = "never synced"
-            elif session_age is not None and session_age > max(
-                sync_interval * 1.25, 60
-            ):
-                session_state = "stale"
-                session_detail = f"last {int(session_age)}s"
-            else:
-                session_state = "healthy"
-                session_detail = self._browser_session_last_sync_detail or "ok"
-
-        return {
-            "websocket": {
-                "state": ws_state,
-                "detail": ws_detail,
-                "status": self.websocket_status,
-                "last_pong_age_sec": last_pong_age,
-                "last_message_age_sec": last_message_age,
-                "quiet_age_sec": quiet_age,
-                "ping_latency_ms": self.websocket_ping_latency_ms,
-                "reconnect_count": self.websocket_reconnect_count,
-                "last_close_code": self.websocket_last_close_code,
-                "last_close_reason": self.websocket_last_close_reason,
-            },
-            "rss": {
-                "state": rss_state,
-                "detail": rss_detail,
-                "status": self.rss_action,
-                "last_success_age_sec": rss_age,
-                "failure_count": self.failure_count,
-                "next_check_in_sec": max(0.0, self.next_check_time - current_time),
-            },
-            "auto": {
-                "state": auto_state,
-                "detail": auto_detail,
-                "enabled": auto_enabled,
-            },
-            "workflow": {
-                "state": workflow_state,
-                "detail": workflow_detail,
-                "processing": bool(getattr(self, "is_processing", False)),
-            },
-            "email": {
-                "state": email_state,
-                "detail": email_detail,
-                "status": email_status,
-                "last_check_age_sec": email_age,
-                "jobs_found_session": self.email_jobs_found_session,
-            },
-            "browser": {
-                "state": browser_state,
-                "detail": browser_detail,
-                "status": browser_status,
-                "last_check_age_sec": browser_age,
-                "jobs_found_session": self.website_jobs_found_session,
-            },
-            "session": {
-                "state": session_state,
-                "detail": session_detail,
-                "last_sync_age_sec": session_age,
-                "debug_url": browser_debug_url,
-                "sync_interval_sec": sync_interval,
-                "last_sync_state": self._browser_session_last_sync_state,
-            },
-        }
+        return build_health_snapshot(self, now=now)
 
     @staticmethod
     def _has_error_message(status: object) -> bool:
-        return bool(status and "error" in str(status).lower())
+        return has_error_message(status)
 
     def alert_on_health_snapshot(self, snapshot: dict[str, dict[str, object]]) -> None:
-        """Send one-shot alerts when subsystem health enters a critical state."""
-        for key in ("websocket", "rss", "session", "workflow", "email", "browser"):
-            entry = snapshot.get(key, {}) if isinstance(snapshot, dict) else {}
-            if not isinstance(entry, dict):
-                continue
-            state = str(entry.get("state") or "")
-            detail = str(entry.get("detail") or "")
-            previous = self._health_alert_states.get(key)
-            self._health_alert_states[key] = state
-            if state not in {"stale", "error"} or previous == state:
-                continue
-            sound_file = None
-            play_sound = True
-            if key == "websocket" and state == "stale":
-                sound_file = (
-                    self.config.get(
-                        "Paths",
-                        "websocket_stale_sound_file",
-                        fallback="",
-                    )
-                    or None
-                )
-                if detail.startswith("quiet "):
-                    play_sound = False
-            self.show_notification(
-                message=f"{key.title()} is {state}: {detail}",
-                title="GengoWatcher Telemetry Alert",
-                play_sound=play_sound,
-                sound_file=sound_file,
-            )
+        _alert_on_health_snapshot(self, snapshot)
 
     def _sync_session_from_browser(
         self,
@@ -1391,162 +1026,37 @@ class GengoWatcher:
                 self.logger.debug(f"Error in job added callback: {e}")
 
     def _normalize_meta(self, meta) -> dict:
-        if meta is None or not hasattr(meta, "get"):
-            return {}
-        return meta
+        return normalize_meta(meta)
 
     def _pick_meta_value(self, meta: dict, keys: list[str]):
-        for key in keys:
-            value = meta.get(key)
-            if value:
-                return value
-        return None
+        return pick_meta_value(meta, keys)
 
     def _format_lang_token(self, token: str) -> str:
-        if not token:
-            return ""
-        cleaned = "".join(ch for ch in str(token) if ch.isalpha())
-        if not cleaned:
-            return ""
-        if len(cleaned) == 2:
-            return cleaned.upper()
-        return cleaned[:2].upper()
+        return format_lang_token(token)
 
     def _normalize_lang_pair_string(self, value) -> str:
-        if not value:
-            return ""
-        candidate = str(value)
-        parts = LANG_PAIR_SPLIT_REGEX.split(candidate)
-        if len(parts) < 2:
-            return ""
-        left = self._format_lang_token(parts[0])
-        right = self._format_lang_token(parts[1])
-        if left and right:
-            return f"{left}→{right}"
-        return ""
+        return normalize_lang_pair_string(value)
 
     def _parse_lang_pair_from_title(self, title) -> str:
-        if not title:
-            return ""
-        text = str(title)
-        primary = text.split("|")[0]
-        match = LANG_PAIR_REGEX.search(primary)
-        if match:
-            return f"{match.group(1).upper()}→{match.group(2).upper()}"
-        return self._normalize_lang_pair_string(primary)
+        return parse_lang_pair_from_title(title)
 
     def _derive_lang_pair(self, title, source_meta) -> str:
-        meta = self._normalize_meta(source_meta)
-        for key in ("lang_pair", "language_pair"):
-            normalized = self._normalize_lang_pair_string(meta.get(key))
-            if normalized:
-                return normalized
-
-        src = self._pick_meta_value(
-            meta, ["lc_src", "source_lang", "source_language", "source"]
-        )
-        tgt = self._pick_meta_value(
-            meta, ["lc_tgt", "target_lang", "target_language", "target"]
-        )
-        if src and tgt:
-            left = self._format_lang_token(src)
-            right = self._format_lang_token(tgt)
-            if left and right:
-                return f"{left}→{right}"
-
-        fallback = self._parse_lang_pair_from_title(title)
-        return fallback or "??→??"
+        return derive_lang_pair(title, source_meta)
 
     def _coerce_positive_int(self, value) -> int:
-        try:
-            parsed = int(float(value))
-        except (TypeError, ValueError):
-            if isinstance(value, str):
-                match = re.search(r"(\d+)", value)
-                if not match:
-                    return 0
-                try:
-                    parsed = int(match.group(1))
-                except ValueError:
-                    return 0
-            else:
-                return 0
-        return parsed if parsed > 0 else 0
+        return coerce_positive_int(value)
 
     def _coerce_positive_float(self, value) -> float:
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return 0.0
-        return parsed if parsed > 0 else 0.0
+        return coerce_positive_float(value)
 
     def _resolve_tier_rate(self, tier_value) -> float:
-        if not tier_value:
-            return 0.0
-        normalized = str(tier_value).strip().lower().replace("-", "").replace("_", "")
-        if normalized in ("standard", "std", "basic"):
-            return TIER_UNIT_RATES["standard"]
-        if normalized in ("pro", "professional"):
-            return TIER_UNIT_RATES["pro"]
-        if normalized in ("edit", "proofread", "proofreading"):
-            return TIER_UNIT_RATES["edit"]
-        return 0.0
+        return resolve_tier_rate(tier_value)
 
     def _estimate_word_count_from_reward(self, reward, title, source_meta) -> int:
-        meta = self._normalize_meta(source_meta)
-        reward_value = self._coerce_positive_float(reward)
-        if reward_value <= 0:
-            reward_value = self._coerce_positive_float(
-                self._pick_meta_value(meta, ["rewards", "reward"])
-            )
-        if reward_value <= 0:
-            return 0
-
-        for key in (
-            "reward_per_unit",
-            "unit_reward",
-            "unit_price",
-            "price_per_unit",
-            "rate_per_unit",
-        ):
-            rate = self._coerce_positive_float(meta.get(key))
-            if rate > 0:
-                return max(1, int(round(reward_value / rate)))
-
-        tier = self._pick_meta_value(meta, ["tier", "job_tier", "service_level"])
-        if not tier and title:
-            match = TITLE_TIER_REGEX.search(str(title))
-            if match:
-                tier = match.group(1)
-
-        rate = self._resolve_tier_rate(tier)
-        if rate > 0:
-            return max(1, int(round(reward_value / rate)))
-        return 0
+        return estimate_word_count_from_reward(reward, title, source_meta)
 
     def _derive_word_count(self, title, source_meta, reward=0.0) -> int:
-        meta = self._normalize_meta(source_meta)
-        for key in (
-            "word_count",
-            "words",
-            "unit",
-            "units",
-            "unit_count",
-            "wordCount",
-            "unitCount",
-        ):
-            count = self._coerce_positive_int(meta.get(key))
-            if count > 0:
-                return count
-
-        text = str(title) if title else ""
-        match = WORD_COUNT_REGEX.search(text) or UNIT_COUNT_REGEX.search(text)
-        if match:
-            count = self._coerce_positive_int(match.group(1))
-            if count > 0:
-                return count
-
-        return self._estimate_word_count_from_reward(reward, title, source_meta)
+        return derive_word_count(title, source_meta, reward)
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """

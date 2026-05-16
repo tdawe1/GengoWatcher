@@ -608,10 +608,10 @@ class TestWatcherInitialization:
         assert watcher_instance._next_quiet_socket_sync_ts == 1350.0
         mock_sync.assert_called_once_with(fail_hard=False, alert_on_failure=False)
 
-    def test_get_health_snapshot_keeps_quiet_live_websocket_healthy(
+    def test_get_health_snapshot_marks_quiet_live_websocket_stale(
         self, watcher_instance
     ):
-        """A live socket with fresh pongs should stay healthy even if the feed is quiet."""
+        """Quiet live sockets should be stale without using the hard stale sound."""
         watcher_instance.websocket_status = "Live"
         watcher_instance.websocket_connected_at_ts = 999_600.0
         watcher_instance.websocket_last_message_ts = None
@@ -653,8 +653,8 @@ class TestWatcherInitialization:
 
         health = watcher_instance.get_health_snapshot(now=1_000_000.0)
 
-        assert health["websocket"]["state"] == "healthy"
-        assert health["websocket"]["detail"] == "ok"
+        assert health["websocket"]["state"] == "stale"
+        assert health["websocket"]["detail"] == "quiet 400s"
         assert health["websocket"]["quiet_age_sec"] == 400.0
 
     def test_initialization_validates_check_interval(
