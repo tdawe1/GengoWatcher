@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,7 +13,7 @@ security = HTTPBearer(auto_error=False)
 class APIAuthenticator:
     """Simple API key authentication for web API."""
 
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str | None = None):
         """Initialize the API authenticator."""
         self.api_key = api_key or secrets.token_urlsafe(32)
 
@@ -67,12 +67,12 @@ class WatcherStatus(BaseModel):
     is_running: bool
     websocket_status: str
     rss_status: str
-    last_check_time: Optional[float]
+    last_check_time: float | None
     next_check_time: float
-    session_stats: Dict[str, Any]
+    session_stats: dict[str, Any]
     failure_count: int
-    cancellation_stats: Optional[Dict[str, Any]] = None
-    health: Dict[str, Any] = Field(default_factory=dict)
+    cancellation_stats: dict[str, Any] | None = None
+    health: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("websocket_status", "rss_status")
     @classmethod
@@ -84,7 +84,7 @@ class WatcherStatus(BaseModel):
 
 class ConfigSection(BaseModel):
     section: str
-    options: Dict[str, Any]
+    options: dict[str, Any]
 
     @field_validator("section")
     @classmethod
@@ -96,7 +96,7 @@ class ConfigSection(BaseModel):
 
 class CommandRequest(BaseModel):
     command: str
-    args: Optional[List[str]] = []
+    args: list[str] = Field(default_factory=list)
 
     @field_validator("command")
     @classmethod
@@ -108,9 +108,11 @@ class CommandRequest(BaseModel):
             raise ValueError(f"Command must be one of: {', '.join(allowed_commands)}")
         return value.strip().lower()
 
-    @field_validator("args")
+    @field_validator("args", mode="before")
     @classmethod
     def validate_args(cls, value):
+        if value is None:
+            return []
         if value is not None:
             if not isinstance(value, list):
                 raise ValueError("Args must be a list or None")
@@ -123,13 +125,3 @@ class CommandRequest(BaseModel):
 class PaginationParams(BaseModel):
     page: int = Field(default=1, ge=1)
     limit: int = Field(default=50, ge=1, le=100)
-
-    @field_validator("page", "limit")
-    @classmethod
-    def validate_pagination(cls, value, info):
-        field_name = info.field_name
-        if not isinstance(value, int) or value < 1:
-            raise ValueError(f"{field_name} must be a positive integer")
-        if field_name == "limit" and value > 100:
-            raise ValueError("Limit cannot exceed 100")
-        return value

@@ -78,6 +78,22 @@ def test_command_request_accepts_websocket_test_commands():
         assert CommandRequest(command=command).command == command
 
 
+def test_command_request_args_default_is_not_shared_and_accepts_none():
+    first = CommandRequest(command="check")
+    second = CommandRequest(command="check")
+
+    first.args.append("now")
+
+    assert second.args == []
+    assert CommandRequest(command="check", args=None).args == []
+
+
+def test_tiny_nonzero_chart_value_renders_minimal_block():
+    chart = ui_charts.render_chart([0.01, 1.0], width=2, height=2)
+
+    assert chart.splitlines()[-1][0] == ui_charts.BAR_CHARS[1]
+
+
 def test_sanitize_filename_output_matches_stored_name_validator(tmp_path):
     storage = _storage(tmp_path)
 
