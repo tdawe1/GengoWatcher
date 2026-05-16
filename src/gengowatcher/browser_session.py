@@ -877,8 +877,9 @@ const collectJobs = () => {{
     );
     const title = (anchorText || text || `Gengo job ${{id}}`).slice(0, 300);
     const rewardMatch =
-      text.match(/(?:US\\$|\\$)\\s*([0-9]+(?:\\.[0-9]+)?)/i) ||
-      text.match(/\\b([0-9]+(?:\\.[0-9]+)?)\\s*(?:credits?|words?)\\b/i);
+    const rewardMatch =
+      text.match(/(?:US\$|\$)\s*([0-9]+(?:\.[0-9]+)?)/i) ||
+      text.match(/\b([0-9]+(?:\.[0-9]+)?)\s*credits?\b/i);
     jobs.push({{
       id,
       title,
