@@ -113,12 +113,11 @@ class CommandRequest(BaseModel):
     def validate_args(cls, value):
         if value is None:
             return []
-        if value is not None:
-            if not isinstance(value, list):
-                raise ValueError("Args must be a list or None")
-            for arg in value:
-                if not isinstance(arg, str):
-                    raise ValueError("All args must be strings")
+        if not isinstance(value, list):
+            raise ValueError("Args must be a list or None")
+        for arg in value:
+            if not isinstance(arg, str):
+                raise ValueError("All args must be strings")
         return value
 
 
