@@ -109,7 +109,7 @@ class TestAPIAuthenticator:
         mock_creds.credentials = "valid_key"
 
         with patch(
-            "gengowatcher.web.secrets.compare_digest", return_value=True
+            "gengowatcher.web_models.secrets.compare_digest", return_value=True
         ) as compare:
             result = auth.authenticate(mock_creds)
 

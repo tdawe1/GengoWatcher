@@ -199,7 +199,7 @@ class TestPydanticModels:
 
     def test_command_request_valid_commands(self):
         """Test all valid commands."""
-        valid_commands = ["check", "pause", "resume", "ping", "notify", "cancel"]
+        valid_commands = ["check", "pause", "resume", "cancel", "ping", "notify"]
         for cmd in valid_commands:
             request = CommandRequest(command=cmd, args=[])
             assert request.command == cmd
@@ -584,6 +584,14 @@ class TestWebAPICommands:
 
         result = web_api.execute_command("cancel")
         assert result["status"] == "error"
+
+    def test_execute_command_websocket_test_commands(self, web_api):
+        """Test websocket diagnostic commands."""
+        for command in ("ping", "notify"):
+            result = web_api.execute_command(command)
+
+            assert result["status"] == "success"
+            assert web_api.watcher._test_command == command
 
     def test_execute_command_unknown(self, web_api):
         """Test unknown command."""
