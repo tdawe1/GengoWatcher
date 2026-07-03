@@ -247,7 +247,6 @@ def test_textual_log_handler_writes_info_to_output_log():
     written_widget_ids = [call.args[0] for call in handler._write_to_log.call_args_list]
     assert written_widget_ids == [
         "#activity-log",
-        "#activity-log-full",
         "#output-log",
     ]
 

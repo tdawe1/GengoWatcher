@@ -50,6 +50,13 @@ def test_config_loads_default_values(test_dir):
     )
     assert app_config.get("WebSocket", "user_key") == "REPLACE_WITH_YOUR_USER_KEY"
     assert app_config.get("WebSocket", "browser_debug_seed_profile_path") == ""
+    assert (
+        app_config.get("WebSocket", "browser_debug_start_url")
+        == "https://gengo.com/t/jobs/status/available"
+    )
+    assert app_config.get("BrowserJobs", "enabled") is True
+    assert app_config.get("BrowserJobs", "allow_navigation") is False
+    assert app_config.get("BrowserJobs", "poll_interval_sec") == 1.5
     assert app_config.get("Metrics", "enabled") is False
     assert app_config.get("Metrics", "host") == "127.0.0.1"
     assert app_config.get("Metrics", "port") == 9091
@@ -106,8 +113,7 @@ enabled = false
 host = "127.0.0.1"
 port = 8000
 auth_token = "REPLACE_WITH_YOUR_WEB_API_TOKEN"
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 
@@ -155,8 +161,7 @@ log_stdio_enabled = true
 
 [WebServer]
 cors_origins = http://localhost:3000, http://127.0.0.1:5173
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 
@@ -184,8 +189,7 @@ def test_legacy_config_backfills_placeholder_toml_values(test_dir):
 user_id = 0
 user_session = "REPLACE_WITH_YOUR_SESSION_TOKEN"
 user_key = "REPLACE_WITH_YOUR_USER_KEY"
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
     (test_dir / "config.ini").write_text(
@@ -194,8 +198,7 @@ user_key = "REPLACE_WITH_YOUR_USER_KEY"
 user_id = 789487
 user_session = migrated-session-token
 user_key = migrated-user-key
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 

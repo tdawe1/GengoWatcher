@@ -16,6 +16,10 @@ from gengowatcher.ui_textual import (
     TelemetryPanel,
     TelemetryTab,
     ApiTab,
+    API_AUDIT_COLUMNS,
+    API_BROWSER_JOB_COLUMNS,
+    API_EVENT_COLUMNS,
+    API_STATUS_COLUMNS,
     ActivityPreview,
     JobsPreview,
     HourlyActivity,
@@ -23,8 +27,10 @@ from gengowatcher.ui_textual import (
     SessionStats,
     StatsPanel,
     TextualLogHandler,
+    TELEMETRY_TAB_COLUMNS,
     Icons,
     _derive_display_word_count,
+    _data_table_column_labels,
 )
 
 
@@ -445,7 +451,7 @@ class TestStatusRow:
     async def test_telemetry_tab_renders_detailed_sections(self, mock_watcher):
         """Telemetry tab should render enabled/disabled sections and details."""
         from textual.app import App
-        from textual.widgets import Static
+        from textual.widgets import DataTable
 
         mock_watcher.get_health_snapshot.return_value = {
             "websocket": {
@@ -490,23 +496,15 @@ class TestStatusRow:
             tab = app.query_one(TelemetryTab)
             tab.refresh_telemetry()
             await pilot.pause(0.1)
-            content = tab.query_one("#telemetry-tab-content", Static)
-            rendered = str(content.render())
-            assert "ENABLED MODULES" in rendered
-            assert "DISABLED MODULES" in rendered
-            assert "WEBSOCKET" in rendered
-            assert "BROWSER" in rendered
-            assert "EMAIL" in rendered
-            assert "last_pong_age_sec" in rendered
-            assert "ping_latency_ms" in rendered
-            assert "RSS" in rendered
-            assert "API" in rendered
+            table = tab.query_one("#telemetry-tab-table", DataTable)
+            assert _data_table_column_labels(table) == TELEMETRY_TAB_COLUMNS
+            assert table.row_count >= 4
 
     @pytest.mark.asyncio
     async def test_api_tab_renders_audit_summary(self, mock_watcher):
         """API tab should expose audit counters and recent entries."""
         from textual.app import App
-        from textual.widgets import Static
+        from textual.widgets import DataTable
 
         mock_watcher.get_health_snapshot.return_value = {
             "api_events": {
@@ -561,19 +559,17 @@ class TestStatusRow:
                 tab = app.query_one(ApiTab)
                 tab.refresh_api()
                 await pilot.pause(0.1)
-            content = tab.query_one("#api-tab-content", Static)
-            rendered = str(content.render())
-            assert "HTTP API" in rendered
-            assert "Server" in rendered
-            assert "HEALTHY" in rendered
-            assert "http://127.0.0.1:8765" in rendered
-            assert "API JOB EVENTS" in rendered
-            assert "Gengo job feed" in rendered
-            assert "WebSocket" in rendered
-            assert "RECENT API AUDIT" in rendered
-            assert "logs/webhooks.jsonl" in rendered
-            assert "job.discovered" in rendered
-            assert "evt-1" in rendered
+            status_table = tab.query_one("#api-status-table", DataTable)
+            jobs_table = tab.query_one("#api-browser-jobs-table", DataTable)
+            events_table = tab.query_one("#api-events-table", DataTable)
+            audit_table = tab.query_one("#api-audit-table", DataTable)
+            assert _data_table_column_labels(status_table) == API_STATUS_COLUMNS
+            assert _data_table_column_labels(jobs_table) == API_BROWSER_JOB_COLUMNS
+            assert _data_table_column_labels(events_table) == API_EVENT_COLUMNS
+            assert _data_table_column_labels(audit_table) == API_AUDIT_COLUMNS
+            assert status_table.row_count >= 3
+            assert events_table.row_count >= 8
+            assert audit_table.row_count == 1
 
     def test_status_indicator_uses_distinct_pulse_cadence_by_state(self):
         """Critical states should pulse faster than non-critical ones."""

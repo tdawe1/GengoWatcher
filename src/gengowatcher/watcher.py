@@ -26,9 +26,12 @@ import websockets
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatusCode
 
 from .browser_session import (
+    GENGO_AVAILABLE_JOBS_URL,
+    GENGO_BROWSER_BROWSE_URLS,
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     fetch_browser_session_snapshot_sync,
+    inspect_available_jobs_page_sync,
     open_url_in_browser_debug_sync,
     refresh_browser_page_activity_sync,
 )
@@ -210,6 +213,12 @@ class GengoWatcher:
         self.website_monitor_status = "Disabled"
         self.website_last_check_time = None
         self.website_jobs_found_session = 0
+
+        # Browser available-jobs page monitor metrics (read by UI/health callers)
+        self.browser_jobs_monitor_status = "Disabled"
+        self.browser_jobs_last_check_time = None
+        self.browser_jobs_found_session = 0
+        self.browser_jobs_last_action = ""
         self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
@@ -624,6 +633,33 @@ class GengoWatcher:
         )
         return False
 
+    def _sync_session_before_websocket_connect(self) -> bool:
+        """Try to sync browser session once before building websocket auth."""
+        debug_url = self.config.get("WebSocket", "browser_debug_url")
+        if not debug_url:
+            return True
+
+        sync_fail_hard = self.config.getboolean(
+            "WebSocket", "session_sync_fail_hard", fallback=True
+        )
+        sync_alert_on_failure = self.config.getboolean(
+            "WebSocket",
+            "session_sync_alert_on_failure",
+            fallback=True,
+        )
+        self.logger.info(
+            "WebSocket: Syncing browser session from %s before connecting.",
+            debug_url,
+        )
+        self._sync_session_from_browser(
+            fail_hard=sync_fail_hard,
+            alert_on_failure=sync_alert_on_failure,
+        )
+        if self._websocket_sync_failed:
+            self.logger.error("WebSocket: Browser session sync failed before connect.")
+            return False
+        return True
+
     def _is_gengo_rss_feed(self) -> bool:
         feed_url = str(self.config.get("Watcher", "feed_url") or "")
         return "gengo.com" in feed_url.lower()
@@ -697,6 +733,84 @@ class GengoWatcher:
         self._last_browser_activity_action = action
         return action
 
+    def _browser_jobs_monitor_enabled(self) -> bool:
+        if not self.config.getboolean("BrowserJobs", "enabled", fallback=True):
+            return False
+        return bool(self.config.get("WebSocket", "browser_debug_url", fallback=""))
+
+    def _browser_jobs_navigation_enabled(self) -> bool:
+        return self.config.getboolean("BrowserJobs", "allow_navigation", fallback=False)
+
+    def _get_browser_jobs_poll_interval_seconds(self) -> float:
+        interval = float(
+            self.config.getfloat("BrowserJobs", "poll_interval_sec", fallback=1.5)
+            or 1.5
+        )
+        return max(0.25, interval)
+
+    def _pick_browser_jobs_refresh_delay_seconds(self) -> float:
+        min_delay = float(
+            self.config.getfloat("BrowserJobs", "refresh_min_sec", fallback=20.0)
+            or 20.0
+        )
+        max_delay = float(
+            self.config.getfloat("BrowserJobs", "refresh_max_sec", fallback=65.0)
+            or 65.0
+        )
+        if max_delay < min_delay:
+            min_delay, max_delay = max_delay, min_delay
+        return random.uniform(max(1.0, min_delay), max(1.0, max_delay))
+
+    def _pick_browser_jobs_browse_delay_seconds(self) -> float:
+        min_delay = float(
+            self.config.getfloat("BrowserJobs", "browse_min_sec", fallback=180.0)
+            or 180.0
+        )
+        max_delay = float(
+            self.config.getfloat("BrowserJobs", "browse_max_sec", fallback=420.0)
+            or 420.0
+        )
+        if max_delay < min_delay:
+            min_delay, max_delay = max_delay, min_delay
+        return random.uniform(max(10.0, min_delay), max(10.0, max_delay))
+
+    def _browser_jobs_mouse_activity_enabled(self) -> bool:
+        probability = float(
+            self.config.getfloat(
+                "BrowserJobs",
+                "mouse_activity_probability",
+                fallback=0.25,
+            )
+            or 0.0
+        )
+        return random.random() < min(1.0, max(0.0, probability))
+
+    def _process_browser_jobs_snapshot(self, snapshot) -> int:
+        processed = 0
+        candidates = list(snapshot.detected_jobs) + list(snapshot.jobs)
+        seen_candidate_ids: set[int] = set()
+        for job in candidates:
+            if job.job_id in seen_candidate_ids:
+                continue
+            seen_candidate_ids.add(job.job_id)
+            self._process_new_job(
+                job.job_id,
+                job.title,
+                job.reward,
+                job.url,
+                source="BrowserJobs",
+                source_meta={
+                    "title": job.title,
+                    "reward": job.reward,
+                    "url": job.url,
+                    "text": job.text,
+                    "browser_action": snapshot.action,
+                    "browser_page_url": snapshot.url,
+                },
+            )
+            processed += 1
+        return processed
+
     def get_monitor_status(self) -> dict:
         """
         Check health of all monitor threads.
@@ -705,7 +819,15 @@ class GengoWatcher:
             dict: Mapping of monitor name to status ("alive", "dead", "disabled")
         """
         status = {}
-        for name in ["rss", "websocket", "email", "website", "browser_worker"]:
+        for name in [
+            "rss",
+            "websocket",
+            "email",
+            "website",
+            "browser_worker",
+            "native_browser",
+            "browser_jobs",
+        ]:
             thread = self._monitor_threads.get(name)
             if thread is None:
                 status[name] = "disabled"
@@ -715,6 +837,7 @@ class GengoWatcher:
                 status[name] = "dead"
         status["email_detail"] = self.email_monitor_status
         status["website_detail"] = self.website_monitor_status
+        status["browser_jobs_detail"] = self.browser_jobs_monitor_status
         return status
 
     def _sync_monitor_metrics(self):
@@ -1680,6 +1803,8 @@ class GengoWatcher:
         self.logger.info(f"WebSocket: Initializing connection to {ws_url}")
 
         try:
+            if not await asyncio.to_thread(self._sync_session_before_websocket_connect):
+                return
             # Determine User-Agent
             user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
             custom_ua = self.config.get("Network", "browser_user_agent")
@@ -1779,6 +1904,16 @@ class GengoWatcher:
                         "WebSocket: Connection established and authenticated."
                     )
 
+                    sync_fail_hard = self.config.getboolean(
+                        "WebSocket", "session_sync_fail_hard", fallback=True
+                    )
+                    sync_alert_on_failure = self.config.getboolean(
+                        "WebSocket",
+                        "session_sync_alert_on_failure",
+                        fallback=True,
+                    )
+                    debug_url = self.config.get("WebSocket", "browser_debug_url")
+
                     # Heartbeat task: send periodic ping to measure latency and expose countdown to UI
                     HEARTBEAT_INTERVAL = 25  # seconds
 
@@ -1846,15 +1981,6 @@ class GengoWatcher:
 
                     session_refresh_task = None
                     sync_interval = self._get_session_sync_interval_seconds()
-                    sync_fail_hard = self.config.getboolean(
-                        "WebSocket", "session_sync_fail_hard", fallback=True
-                    )
-                    sync_alert_on_failure = self.config.getboolean(
-                        "WebSocket",
-                        "session_sync_alert_on_failure",
-                        fallback=True,
-                    )
-                    debug_url = self.config.get("WebSocket", "browser_debug_url")
 
                     if debug_url and sync_interval > 0:
 
@@ -2372,8 +2498,98 @@ class GengoWatcher:
                 self._monitor_threads["website"] = website_thread
                 self.logger.info("Website monitor thread started (deprecated)")
 
+        if self._browser_jobs_monitor_enabled():
+            browser_jobs_thread = threading.Thread(
+                target=self._run_browser_jobs_monitor, daemon=True
+            )
+            browser_jobs_thread.start()
+            self._monitor_threads["browser_jobs"] = browser_jobs_thread
+            self.logger.info("Browser available-jobs monitor thread started")
+        else:
+            self.browser_jobs_monitor_status = "Disabled"
+
         self.shutdown_event.wait()
         self.logger.info("Watcher parent thread shutting down.")
+
+    def _run_browser_jobs_monitor(self):
+        self.logger.info("Browser available-jobs monitor thread started.")
+        debug_url = str(self.config.get("WebSocket", "browser_debug_url", fallback=""))
+        if not debug_url:
+            self.browser_jobs_monitor_status = "Disabled"
+            return
+
+        allow_navigation = self._browser_jobs_navigation_enabled()
+        if allow_navigation:
+            self._open_in_managed_firefox_debug_session(GENGO_AVAILABLE_JOBS_URL)
+        self.browser_jobs_monitor_status = "Starting"
+        next_refresh_ts = time.time() + self._pick_browser_jobs_refresh_delay_seconds()
+        next_browse_ts = time.time() + self._pick_browser_jobs_browse_delay_seconds()
+        error_count = 0
+
+        while not self.shutdown_event.is_set():
+            try:
+                now = time.time()
+                force_refresh = allow_navigation and now >= next_refresh_ts
+                browse_url = None
+                if allow_navigation and now >= next_browse_ts:
+                    browse_url = random.choice(GENGO_BROWSER_BROWSE_URLS)
+
+                snapshot = inspect_available_jobs_page_sync(
+                    debug_url,
+                    force_refresh=force_refresh,
+                    browse_url=browse_url,
+                    interact=(
+                        allow_navigation
+                        and (
+                            force_refresh
+                            or bool(browse_url)
+                            or self._browser_jobs_mouse_activity_enabled()
+                        )
+                    ),
+                    allow_navigation=allow_navigation,
+                )
+                error_count = 0
+                self.browser_jobs_last_check_time = time.time()
+                self.browser_jobs_last_action = snapshot.action
+                if snapshot.action == "manual_browse":
+                    self.browser_jobs_monitor_status = "Paused: browser in manual use"
+                else:
+                    self.browser_jobs_monitor_status = "Watching"
+
+                    processed = self._process_browser_jobs_snapshot(snapshot)
+                    if processed:
+                        self.browser_jobs_found_session += processed
+                        self.logger.info(
+                            "Browser available-jobs page reported %d candidate job(s).",
+                            processed,
+                        )
+
+                    if force_refresh:
+                        next_refresh_ts = (
+                            time.time()
+                            + self._pick_browser_jobs_refresh_delay_seconds()
+                        )
+                    if browse_url:
+                        next_browse_ts = (
+                            time.time() + self._pick_browser_jobs_browse_delay_seconds()
+                        )
+            except Exception as exc:
+                error_count += 1
+                self.browser_jobs_monitor_status = f"Error: {exc}"
+                log_method = (
+                    self.logger.warning if error_count == 1 else self.logger.debug
+                )
+                log_method(
+                    "Browser available-jobs monitor check failed: %s",
+                    exc,
+                    exc_info=error_count == 1,
+                )
+
+            if self.shutdown_event.wait(self._get_browser_jobs_poll_interval_seconds()):
+                break
+
+        self.browser_jobs_monitor_status = "Stopped"
+        self.logger.info("Browser available-jobs monitor thread stopped.")
 
     def _run_rss_monitor(self):
         self.logger.debug("Starting RSS monitor thread.")

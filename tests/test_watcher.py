@@ -92,6 +92,10 @@ def test_open_in_browser_default(monkeypatch, watcher_instance):
     mock_webbrowser_open.assert_called_once_with("http://example.com")
 
 
+def test_browser_jobs_navigation_disabled_by_default(watcher_instance):
+    assert watcher_instance._browser_jobs_navigation_enabled() is False
+
+
 def test_handle_exit(watcher_instance):
     """Test that state is saved on exit.
 

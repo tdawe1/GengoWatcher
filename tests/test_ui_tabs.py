@@ -98,7 +98,6 @@ async def test_main_tabs_exist():
         tab_ids = [pane.id for pane in pilot.app.query("TabPane")]
         assert "dashboard" in tab_ids
         assert "jobs" in tab_ids
-        assert "activity" in tab_ids
         assert "output" in tab_ids
         assert "charts" in tab_ids
         assert "telemetry" in tab_ids
@@ -123,10 +122,10 @@ async def test_tab_switching_with_keys():
         await pilot.pause()
         assert tabbed.active == "jobs"
 
-        # Switch to activity tab
-        tabbed.active = "activity"
+        # Switch to output tab
+        tabbed.active = "output"
         await pilot.pause()
-        assert tabbed.active == "activity"
+        assert tabbed.active == "output"
 
 
 @pytest.mark.asyncio
@@ -141,7 +140,6 @@ async def test_tab_switching_all_tabs():
         tabs = [
             "dashboard",
             "jobs",
-            "activity",
             "output",
             "charts",
             "telemetry",
@@ -355,19 +353,17 @@ async def test_jobs_tab_renders_accepted_workbench_job():
 
 
 @pytest.mark.asyncio
-async def test_activity_tab_contains_richlog():
-    """Verify Activity tab contains RichLog."""
+async def test_dashboard_activity_preview_contains_richlog():
+    """Verify dashboard activity preview contains RichLog."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from textual.widgets import TabbedContent, RichLog
+        from textual.widgets import RichLog
 
-        tabbed = pilot.app.query_one(TabbedContent)
-        tabbed.active = "activity"
         await pilot.pause()
 
-        # Check for activity log
-        log = pilot.app.query_one("#activity-log-full", RichLog)
+        # Check for dashboard activity log
+        log = pilot.app.query_one("#activity-log", RichLog)
         assert log is not None
 
 
@@ -474,8 +470,8 @@ async def test_tab_count():
 
         tabs = pilot.app.query(TabPane)
         assert (
-            len(tabs) == 7
-        )  # dashboard, jobs, activity, output, charts, telemetry, api
+            len(tabs) == 6
+        )  # dashboard, jobs, output, charts, telemetry, api
 
 
 @pytest.mark.asyncio
@@ -587,7 +583,6 @@ async def test_tab_switching_performance():
         tabs = [
             "dashboard",
             "jobs",
-            "activity",
             "output",
             "charts",
             "telemetry",

@@ -80,7 +80,7 @@ async def test_tab_count():
 
     async with app.run_test() as pilot:
         tab_panes = pilot.app.query("TabPane")
-        assert len(list(tab_panes)) == 7
+        assert len(list(tab_panes)) == 6
 
 
 @pytest.mark.asyncio
@@ -96,7 +96,6 @@ async def test_tab_switching_cycle():
         tabs = [
             "dashboard",
             "jobs",
-            "activity",
             "output",
             "charts",
             "telemetry",
@@ -130,19 +129,17 @@ async def test_jobs_tab_contains_table():
 
 
 @pytest.mark.asyncio
-async def test_activity_tab_contains_log():
-    """Test that Activity tab contains a RichLog."""
+async def test_dashboard_contains_activity_log():
+    """Test that dashboard keeps the recent activity RichLog."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from textual.widgets import TabbedContent, RichLog
+        from textual.widgets import RichLog
 
-        tabbed = pilot.app.query_one(TabbedContent)
-        tabbed.active = "activity"
         await pilot.pause()
 
         try:
-            activity_log = pilot.app.query_one("#activity-log-full", RichLog)
+            activity_log = pilot.app.query_one("#activity-log", RichLog)
             assert activity_log is not None
         except NoMatches:
             logs = list(pilot.app.query(RichLog))
@@ -266,7 +263,6 @@ async def test_rapid_tab_switching():
         tabs = [
             "dashboard",
             "jobs",
-            "activity",
             "output",
             "charts",
             "telemetry",

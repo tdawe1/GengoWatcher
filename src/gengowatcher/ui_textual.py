@@ -42,7 +42,6 @@ from .ui_charts import (
     render_plotext_bar_chart as _render_plotext_bar_chart,
 )
 from .ui_formatting import (
-    ACTIVITY_LOG_MAX_LINES,
     ACTIVITY_PREVIEW_MAX_LINES,
     OUTPUT_LOG_MAX_LINES,
     SOURCE_BUCKET_CONFIG,
@@ -81,6 +80,11 @@ JOBS_FULL_COLUMNS = (
     "Text",
     "Segs",
 )
+TELEMETRY_TAB_COLUMNS = ("Group", "Module", "State", "Detail", "Metrics")
+API_STATUS_COLUMNS = ("Area", "State", "Detail", "Value")
+API_BROWSER_JOB_COLUMNS = ("ID", "State", "Left", "Order", "WB", "Text", "Segs")
+API_EVENT_COLUMNS = ("Metric", "Value")
+API_AUDIT_COLUMNS = ("Time", "Dir", "Stage", "Status", "Type", "Event")
 
 
 def _format_duration_seconds(value: object) -> str:
@@ -1550,7 +1554,7 @@ class TelemetryTab(Static):
         self._last_snapshot: dict[str, dict[str, object]] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static("Telemetry details unavailable", id="telemetry-tab-content")
+        yield DataTable(id="telemetry-tab-table")
 
     def on_mount(self) -> None:
         self.refresh_telemetry()
@@ -1568,33 +1572,28 @@ class TelemetryTab(Static):
         self._render_cached_snapshot()
 
     def _render_cached_snapshot(self) -> None:
-        text = Text()
         snapshot = self._last_snapshot
-        colors = _build_semantic_color_palette(_get_active_theme(self))
-        if isinstance(snapshot, dict):
-            ordered = []
-            for key, _label in TelemetryPanel.ROWS:
-                entry = snapshot.get(key)
-                if isinstance(entry, dict):
-                    ordered.append((key, entry, str(entry.get("state") or "disabled")))
-            enabled = [row for row in ordered if row[2] != "disabled"]
-            disabled = [row for row in ordered if row[2] == "disabled"]
-            self._append_detailed_section(text, "ENABLED MODULES", enabled, colors)
-            if enabled and disabled:
-                text.append("\n")
-            self._append_detailed_section(text, "DISABLED MODULES", disabled, colors)
         try:
-            self.query_one("#telemetry-tab-content", Static).update(text)
+            table = self.query_one("#telemetry-tab-table", DataTable)
         except NoMatches:
-            pass
-
-    def _append_detailed_section(
-        self, text: Text, title: str, rows, colors: dict[str, str]
-    ) -> None:
-        if not rows:
             return
-        text.append(f"{title}\n", style=f"bold {colors['source_ws']}")
-        for idx, (key, entry, state) in enumerate(rows):
+
+        _ensure_data_table_columns(table, TELEMETRY_TAB_COLUMNS)
+        table.clear()
+        table.cursor_type = "row"
+
+        rows = []
+        if isinstance(snapshot, dict):
+            for key, label in TelemetryPanel.ROWS:
+                entry = snapshot.get(key)
+                if not isinstance(entry, dict):
+                    continue
+                state = str(entry.get("state") or "disabled")
+                group = "Disabled" if state == "disabled" else "Enabled"
+                rows.append((group, key, label, entry, state))
+
+        rows.sort(key=lambda row: (row[0] == "Disabled", row[2]))
+        for group, key, label, entry, state in rows:
             pulse_state = str({"healthy": "live"}.get(state, state))
             frames = StatusIndicator._pulse_frames_for_state(pulse_state)
             step = StatusIndicator._pulse_step_for_state(pulse_state)
@@ -1603,15 +1602,19 @@ class TelemetryTab(Static):
                 if len(frames) > 1 and step > 0
                 else TelemetryPanel.HEALTH_ICONS.get(state, "·")
             )
-            state_style = colors[TelemetryPanel.STATE_STYLE_KEYS.get(state, "default")]
-            label = key.upper()
-            text.append(f"{icon} {label:<12}  ", style="bold")
-            text.append(f"{state.upper()}\n", style=f"bold {state_style}")
+            detail = str(entry.get("detail") or "")
+            metrics = []
             for field, value in entry.items():
-                text.append(f"  {field:<20}  ", style=colors["timestamp"])
-                text.append(f"{value}\n", style=colors["default"])
-            if idx < len(rows) - 1:
-                text.append("\n")
+                if field in {"state", "detail"} or value is None:
+                    continue
+                metrics.append(f"{field}={TelemetryPanel._format_detail_field(field, value)}")
+            table.add_row(
+                group,
+                f"{icon} {label}",
+                state.upper(),
+                detail,
+                "  ".join(metrics),
+            )
 
 
 class ApiTab(Static):
@@ -1622,7 +1625,14 @@ class ApiTab(Static):
         self.watcher = watcher
 
     def compose(self) -> ComposeResult:
-        yield Static("API details unavailable", id="api-tab-content")
+        yield Static("HTTP API", classes="chart-section-header")
+        yield DataTable(id="api-status-table")
+        yield Static("Browser-Collected Jobs", classes="chart-section-header")
+        yield DataTable(id="api-browser-jobs-table")
+        yield Static("API Job Events", classes="chart-section-header")
+        yield DataTable(id="api-events-table")
+        yield Static("Recent API Audit", classes="chart-section-header")
+        yield DataTable(id="api-audit-table")
 
     def on_mount(self) -> None:
         self.refresh_api()
@@ -1720,9 +1730,56 @@ class ApiTab(Static):
                 f"text={text_count:<7} segs={segments}\n", style=colors["default"]
             )
 
+    def _populate_browser_jobs_table(self, table: DataTable) -> None:
+        _ensure_data_table_columns(table, API_BROWSER_JOB_COLUMNS)
+        table.clear()
+        for job in self._browser_collected_jobs():
+            job_id = str(job.get("id") or "?")[:12]
+            state = str(
+                job.get("acceptance_state") or job.get("lifecycle_state") or "observed"
+            )
+            table.add_row(
+                job_id,
+                state,
+                _format_job_time_left(job) or "--",
+                _format_job_order(job) or "--",
+                _format_workbench_marker(job) or "--",
+                _format_text_count(job) or "0c",
+                _format_segment_count(job) or "0",
+            )
+
+    @staticmethod
+    def _event_metric_rows(event_health: dict[str, Any]) -> list[tuple[str, str]]:
+        rows = [
+            ("State", str(event_health.get("state") or "disabled")),
+            ("Detail", str(event_health.get("detail") or "off")),
+            ("Ingress enabled", str(event_health.get("incoming_enabled"))),
+            ("Outgoing enabled", str(event_health.get("outbound_enabled"))),
+            ("Targets", str(event_health.get("target_count"))),
+            ("Audit enabled", str(event_health.get("audit_enabled"))),
+            ("Debug enabled", str(event_health.get("debug_enabled"))),
+            ("Audit log", str(event_health.get("audit_log_path", ""))),
+        ]
+        counters = (
+            "in={incoming_total} out={outgoing_total} processed={processed_total} "
+            "delivered={delivered_total} failed={failed_total} duplicate={duplicate_total}"
+        ).format(
+            **{
+                key: event_health.get(key, 0)
+                for key in (
+                    "incoming_total",
+                    "outgoing_total",
+                    "processed_total",
+                    "delivered_total",
+                    "failed_total",
+                    "duplicate_total",
+                )
+            }
+        )
+        rows.append(("Counters", counters))
+        return rows
+
     def refresh_api(self) -> None:
-        colors = _build_semantic_color_palette(_get_active_theme(self))
-        text = Text()
         health_getter = getattr(self.watcher, "get_health_snapshot", None)
         snapshot = health_getter() if callable(health_getter) else {}
         api_health = _api_health_entry(self, self.watcher)
@@ -1737,96 +1794,59 @@ class ApiTab(Static):
         summary = summary_getter(12) if callable(summary_getter) else {}
         recent = summary.get("recent", []) if isinstance(summary, dict) else []
 
-        api_state = str(api_health.get("state") or "disabled")
-        api_detail = str(api_health.get("detail") or "off")
-        api_state_style = colors[
-            TelemetryPanel.STATE_STYLE_KEYS.get(api_state, "default")
-        ]
-        text.append("HTTP API\n", style=f"bold {colors['source_ws']}")
-        text.append("Server          ", style=colors["timestamp"])
-        text.append(f"{api_state.upper()} ", style=f"bold {api_state_style}")
-        text.append(f"{api_detail}\n", style=colors["default"])
-        text.append("URL             ", style=colors["timestamp"])
-        text.append(f"{api_health.get('url')}\n", style=colors["url"])
-        text.append("Enabled         ", style=colors["timestamp"])
-        text.append(f"{api_health.get('enabled')}\n", style=colors["default"])
-        text.append("Gengo job feed  ", style=colors["timestamp"])
-        text.append(
-            f"{self._websocket_job_feed_summary(snapshot)}\n",
-            style=colors["default"],
+        try:
+            status_table = self.query_one("#api-status-table", DataTable)
+            jobs_table = self.query_one("#api-browser-jobs-table", DataTable)
+            events_table = self.query_one("#api-events-table", DataTable)
+            audit_table = self.query_one("#api-audit-table", DataTable)
+        except NoMatches:
+            return
+
+        _ensure_data_table_columns(status_table, API_STATUS_COLUMNS)
+        status_table.clear()
+        status_table.add_row(
+            "Server",
+            str(api_health.get("state") or "disabled").upper(),
+            str(api_health.get("detail") or "off"),
+            str(api_health.get("url") or ""),
         )
-        self._append_browser_collected_section(text, colors)
-
-        event_state = str(event_health.get("state") or "disabled")
-        event_detail = str(event_health.get("detail") or "off")
-        event_state_style = colors[
-            TelemetryPanel.STATE_STYLE_KEYS.get(event_state, "default")
-        ]
-        text.append("\nAPI JOB EVENTS\n", style=f"bold {colors['source_ws']}")
-        text.append("State           ", style=colors["timestamp"])
-        text.append(f"{event_state.upper()} ", style=f"bold {event_state_style}")
-        text.append(f"{event_detail}\n", style=colors["default"])
-        for label, key in (
-            ("Ingress", "incoming_enabled"),
-            ("Outgoing", "outbound_enabled"),
-            ("Targets", "target_count"),
-            ("Audit", "audit_enabled"),
-            ("Debug", "debug_enabled"),
-        ):
-            text.append(f"{label:<15} ", style=colors["timestamp"])
-            text.append(f"{event_health.get(key)}\n", style=colors["default"])
-
-        text.append("Audit log       ", style=colors["timestamp"])
-        text.append(f"{event_health.get('audit_log_path', '')}\n", style=colors["url"])
-        text.append("Counters        ", style=colors["timestamp"])
-        text.append(
-            "in={incoming_total} out={outgoing_total} processed={processed_total} "
-            "delivered={delivered_total} failed={failed_total} duplicate={duplicate_total}\n".format(
-                **{
-                    key: event_health.get(key, 0)
-                    for key in (
-                        "incoming_total",
-                        "outgoing_total",
-                        "processed_total",
-                        "delivered_total",
-                        "failed_total",
-                        "duplicate_total",
-                    )
-                }
-            ),
-            style=colors["default"],
+        status_table.add_row(
+            "Enabled",
+            "",
+            "",
+            str(api_health.get("enabled")),
+        )
+        status_table.add_row(
+            "Gengo job feed",
+            "",
+            "",
+            self._websocket_job_feed_summary(snapshot),
         )
 
-        text.append("\nRECENT API AUDIT\n", style=f"bold {colors['source_ws']}")
+        self._populate_browser_jobs_table(jobs_table)
+
+        _ensure_data_table_columns(events_table, API_EVENT_COLUMNS)
+        events_table.clear()
+        for label, value in self._event_metric_rows(event_health):
+            events_table.add_row(label, value)
+
+        _ensure_data_table_columns(audit_table, API_AUDIT_COLUMNS)
+        audit_table.clear()
         if not recent:
-            text.append("No API audit records yet.", style=colors["timestamp"])
+            audit_table.add_row("--", "--", "--", "--", "No API audit records", "")
         for entry in recent[-12:]:
             if not isinstance(entry, dict):
                 continue
-            ts = _format_timestamp(entry.get("ts")) or "--:--:--"
-            direction = str(entry.get("direction") or "?")
-            stage = str(entry.get("stage") or "?")
-            status = str(entry.get("status") or "")
-            event_type = str(entry.get("event_type") or "")
             event_id = str(entry.get("event_id") or entry.get("request_id") or "")
             error = str(entry.get("error") or "")
-            status_key = "error_word" if status in {"failed", "rejected"} else "success"
-            text.append(f"{ts} ", style=colors["timestamp"])
-            text.append(f"{direction:<8} ", style=colors["source_web"])
-            text.append(f"{stage:<18} ", style=colors["source_rss"])
-            text.append(f"{status:<10} ", style=colors[status_key])
-            if event_type:
-                text.append(f"{event_type} ", style=colors["source_ws"])
-            if event_id:
-                text.append(f"{event_id} ", style=colors["job_id"])
-            if error:
-                text.append(f"{error[:120]}", style=colors["error_word"])
-            text.append("\n")
-
-        try:
-            self.query_one("#api-tab-content", Static).update(text)
-        except NoMatches:
-            pass
+            audit_table.add_row(
+                _format_timestamp(entry.get("ts")) or "--:--:--",
+                str(entry.get("direction") or "?"),
+                str(entry.get("stage") or "?"),
+                str(entry.get("status") or ""),
+                str(entry.get("event_type") or ""),
+                error[:120] if error else event_id,
+            )
 
 
 class StatsPanel(Static):
@@ -2236,7 +2256,6 @@ class GengoWatcherApp(App):
             if not isinstance(entry, Text):
                 continue
             self._textual_log_handler.append_log("#activity-log", entry)
-            self._textual_log_handler.append_log("#activity-log-full", entry)
             self._textual_log_handler.append_log("#output-log", entry)
 
         self._buffered_logs_replayed = True
@@ -2826,8 +2845,6 @@ class GengoWatcherApp(App):
         pane_id = event.pane.id
         if pane_id == "jobs":
             self._load_jobs_into_table()
-        elif pane_id == "activity":
-            self._refresh_widget("#activity-log-full", "refresh")
         elif pane_id == "output":
             self._refresh_widget("#output-log", "refresh")
         elif pane_id == "charts":
@@ -2841,7 +2858,7 @@ class GengoWatcherApp(App):
         # 1. Title Bar
         """
         Build and yield the main UI layout: title bar, tabbed content
-        (Dashboard, Jobs, Activity, Output, Charts, Stats), and the
+        (Dashboard, Jobs, Output, Charts, Stats), and the
         bottom input/footer.
 
         Returns:
@@ -2872,12 +2889,6 @@ class GengoWatcherApp(App):
 
             with TabPane("Jobs", id="jobs"):
                 yield JobsPanel(state=self.state)
-            with TabPane("Activity", id="activity"):
-                yield RichLog(
-                    id="activity-log-full",
-                    markup=True,
-                    max_lines=ACTIVITY_LOG_MAX_LINES,
-                )
             with TabPane("Output", id="output"):
                 yield RichLog(
                     id="output-log",
@@ -3013,8 +3024,6 @@ class TextualLogHandler(logging.Handler):
         colored_text = self._colorize_message(msg, level)
         # Write to dashboard activity log
         self._write_to_log("#activity-log", colored_text)
-        # Also write to full activity log tab
-        self._write_to_log("#activity-log-full", colored_text)
         # Also write to output log for the full system output stream.
         self._write_to_log("#output-log", colored_text)
 

@@ -252,6 +252,34 @@ class TestWatcherInitialization:
         )
         watcher_instance.config.save_config.assert_called()
 
+    def test_sync_session_before_websocket_connect_runs_initial_sync(
+        self, watcher_instance
+    ):
+        """Websocket startup should sync once so session health is not stale."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        watcher_instance._sync_session_from_browser = MagicMock(return_value=False)
+
+        assert watcher_instance._sync_session_before_websocket_connect() is True
+
+        watcher_instance._sync_session_from_browser.assert_called_once_with(
+            fail_hard=True,
+            alert_on_failure=True,
+        )
+
+    def test_sync_session_before_websocket_connect_skips_without_debug_url(
+        self, watcher_instance
+    ):
+        """No browser debug URL means there is nothing to sync before connect."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "",
+        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        watcher_instance._sync_session_from_browser = MagicMock()
+
+        assert watcher_instance._sync_session_before_websocket_connect() is True
+        watcher_instance._sync_session_from_browser.assert_not_called()
+
     def test_sync_session_from_browser_fail_hard_alerts_and_stops_without_cache(
         self, watcher_instance
     ):
