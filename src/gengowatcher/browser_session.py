@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -11,24 +13,6 @@ from urllib.parse import urlparse
 import websockets
 
 from ._async_utils import run_coroutine_sync
-
-logger = logging.getLogger(__name__)
-
-DEFAULT_BROWSER_DEBUG_URL = "http://127.0.0.1:9222"
-DEFAULT_FIREFOX_BIDI_PATH = "/session"
-DEFAULT_GENGO_ORIGIN = "https://gengo.com"
-GENGO_LOCAL_STORAGE_USER_KEY = "userKey"
-GENGO_ACTIVITY_MARKER_STORAGE_KEY = "__gengowatcher_activity_marker"
-GENGO_REALTIME_PATH = "/t/jobs/status/available/realtime"
-GENGO_SUMMARY_PATH = "/t/dashboard"
-GENGO_REALTIME_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_REALTIME_PATH}"
-GENGO_SUMMARY_URL = f"{DEFAULT_GENGO_ORIGIN}{GENGO_SUMMARY_PATH}"
-DEFAULT_ACCEPT_LANGUAGE = "en-GB,en-US;q=0.9,en;q=0.8"
-DEFAULT_CDP_RECEIVE_TIMEOUT_SEC = 5
-PRIMARY_GENGO_COOKIE_NAMES = (
-    "myG_myGSession_",
-    "my_gengo_session",
-    "myG_rdsessID",
 from .browser_session_core import (
     DEFAULT_ACCEPT_LANGUAGE,
     DEFAULT_BROWSER_DEBUG_URL,

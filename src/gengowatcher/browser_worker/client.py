@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from .._async_utils import run_coroutine_sync
 from .protocol import build_job_url_command, decode_message, encode_message
 
 
@@ -36,19 +37,29 @@ class BrowserWorkerClient:
             auth_token=self.auth_token,
         )
 
-    async def send_command(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def send_command(
+        self,
+        payload: dict[str, Any],
+        *,
+        response_timeout: float | None = None,
+    ) -> dict[str, Any]:
         reader, writer = await asyncio.open_unix_connection(str(self.socket_path))
         try:
             writer.write(encode_message(payload))
             await writer.drain()
+            effective_timeout = (
+                float(response_timeout)
+                if response_timeout is not None
+                else self.response_timeout
+            )
             try:
                 response = await asyncio.wait_for(
                     reader.readline(),
-                    timeout=self.response_timeout,
+                    timeout=effective_timeout,
                 )
             except asyncio.TimeoutError as exc:
                 raise RuntimeError(
-                    f"browser worker timed out after {self.response_timeout:.1f}s"
+                    f"browser worker timed out after {effective_timeout:.1f}s"
                 ) from exc
         finally:
             writer.close()
@@ -65,9 +76,18 @@ class BrowserWorkerClient:
         source: str,
         *,
         metadata: dict[str, Any] | None = None,
+        track_acceptance: bool = False,
+        acceptance_timeout_sec: float = 0.0,
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
-        return await self.send_command(payload)
+        response_timeout = None
+        if track_acceptance and acceptance_timeout_sec > 0:
+            payload["track_acceptance"] = True
+            payload["acceptance_timeout_ms"] = int(acceptance_timeout_sec * 1000)
+            response_timeout = max(self.response_timeout, acceptance_timeout_sec + 5.0)
+        if response_timeout is None:
+            return await self.send_command(payload)
+        return await self.send_command(payload, response_timeout=response_timeout)
 
     def submit_job(
         self,
@@ -75,13 +95,19 @@ class BrowserWorkerClient:
         source: str,
         *,
         metadata: dict[str, Any] | None = None,
+        track_acceptance: bool = False,
+        acceptance_timeout_sec: float = 0.0,
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.send_command(payload))
-        raise RuntimeError(
-            "BrowserWorkerClient.submit_job() cannot run inside an active event loop; "
-            "use submit_job_async() instead"
+        response_timeout = None
+        if track_acceptance and acceptance_timeout_sec > 0:
+            payload["track_acceptance"] = True
+            payload["acceptance_timeout_ms"] = int(acceptance_timeout_sec * 1000)
+            response_timeout = max(self.response_timeout, acceptance_timeout_sec + 5.0)
+        if response_timeout is None:
+            return run_coroutine_sync(self.send_command, payload)
+        return run_coroutine_sync(
+            self.send_command,
+            payload,
+            response_timeout=response_timeout,
         )

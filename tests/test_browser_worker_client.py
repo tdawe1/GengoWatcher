@@ -78,6 +78,10 @@ def watcher_deps():
             "min_reward": 0.0,
             "max_reward": 999999.0,
         },
+        "Browser": {
+            "backend": "legacy",
+            "allow_playwright": True,
+        },
         "BrowserWorker": {
             "enabled": True,
             "socket_path": "/tmp/gengowatcher.sock",
@@ -138,16 +142,22 @@ async def test_browser_worker_client_times_out_waiting_for_response(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_submit_job_rejects_running_event_loop(tmp_path):
+async def test_submit_job_works_inside_running_event_loop(tmp_path):
     from gengowatcher.browser_worker.client import BrowserWorkerClient
 
     client = BrowserWorkerClient(socket_path=tmp_path / "browser-worker.sock")
-    client.send_command = AsyncMock(return_value={"ok": True})
+    received: dict[str, object] = {}
 
-    with pytest.raises(RuntimeError, match="submit_job_async"):
-        client.submit_job("https://gengo.com/t/jobs/details/123", "rss")
+    async def fake_send_command(payload):
+        received.update(payload)
+        return {"ok": True}
 
-    client.send_command.assert_not_called()
+    client.send_command = fake_send_command
+
+    response = client.submit_job("https://gengo.com/t/jobs/details/123", "rss")
+
+    assert response == {"ok": True}
+    assert received["url"] == "https://gengo.com/t/jobs/details/123"
 
 
 @pytest.mark.asyncio
@@ -164,6 +174,27 @@ async def test_submit_job_async_works_inside_running_event_loop(tmp_path):
 
     assert response == {"ok": True}
     client.send_command.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_submit_job_async_can_request_acceptance_tracking(tmp_path):
+    from gengowatcher.browser_worker.client import BrowserWorkerClient
+
+    client = BrowserWorkerClient(socket_path=tmp_path / "browser-worker.sock")
+    client.send_command = AsyncMock(return_value={"ok": True, "accepted": False})
+
+    response = await client.submit_job_async(
+        "https://gengo.com/t/jobs/details/123",
+        "rss",
+        track_acceptance=True,
+        acceptance_timeout_sec=180.0,
+    )
+
+    assert response == {"ok": True, "accepted": False}
+    payload = client.send_command.await_args.args[0]
+    assert payload["track_acceptance"] is True
+    assert payload["acceptance_timeout_ms"] == 180000
+    assert client.send_command.await_args.kwargs["response_timeout"] == 185.0
 
 
 def test_watcher_routes_eligible_job_to_browser_worker(watcher_deps):
@@ -187,7 +218,70 @@ def test_watcher_routes_eligible_job_to_browser_worker(watcher_deps):
         )
 
     watcher.browser_worker_client.submit_job.assert_called_once()
+    call = watcher.browser_worker_client.submit_job.call_args
+    assert call.args == ("https://gengo.com/t/jobs/details/123", "rss")
+    assert call.kwargs["metadata"]["id"] == "123"
+    assert call.kwargs["metadata"]["reward"] == 25.0
+    assert "track_acceptance" not in call.kwargs
     thread_cls.assert_not_called()
+
+
+def test_watcher_disables_browser_worker_in_native_mode(watcher_deps):
+    logger = logging.getLogger("test_browser_worker_native_disabled")
+    config, state = watcher_deps
+    config.config["Browser"] = {
+        "backend": "native",
+        "allow_playwright": False,
+    }
+
+    watcher = GengoWatcher(config=config, state=state, logger=logger)
+
+    assert watcher.native_browser_mode is True
+    assert watcher.browser_worker_enabled is False
+
+
+def test_browser_worker_telemetry_event_marks_job_accepted(watcher_deps):
+    logger = logging.getLogger("test_browser_worker_event_listener")
+    config, state = watcher_deps
+    watcher = GengoWatcher(config=config, state=state, logger=logger)
+
+    event_payload = {
+        "event": {"name": "accepted_workbench_payload", "monotonic_ms": 0.0},
+        "job_id": "123",
+        "url": "https://gengo.com/t/workbench/123",
+        "source": "window.__GENGO_WORKBENCH_DATA__",
+        "payload": {
+            "summary": {"order_id": 123, "seconds_left": 600},
+            "jobs": [{"id": 98936958}],
+        },
+    }
+    state.mark_job_accepted.return_value = True
+    state.get_job.return_value = {
+        "id": "123",
+        "accepted": True,
+        "accepted_source_text": "Workbench source text",
+    }
+    watcher.on_api_event_callback = MagicMock()
+
+    watcher._handle_browser_worker_telemetry_payload(event_payload)
+
+    state.mark_job_accepted.assert_called_once_with(
+        "123",
+        accepted_workbench={
+            "source": "window.__GENGO_WORKBENCH_DATA__",
+            "payload": event_payload["payload"],
+        },
+        workbench_url="https://gengo.com/t/workbench/123",
+    )
+    state.save_state.assert_called()
+    watcher.on_api_event_callback.assert_called_once_with(
+        "job.accepted",
+        {
+            "id": "123",
+            "accepted": True,
+            "accepted_source_text": "Workbench source text",
+        },
+    )
 
 
 def test_watcher_falls_back_to_standard_acceptance_when_browser_worker_submit_fails():
@@ -207,6 +301,11 @@ def test_watcher_falls_back_to_standard_acceptance_when_browser_worker_submit_fa
             "job_sources": "rss,websocket",
             "min_reward": 0.0,
             "max_reward": 999999.0,
+            "allow_http_fallback": True,
+        },
+        "Browser": {
+            "backend": "legacy",
+            "allow_playwright": True,
         },
         "BrowserWorker": {
             "enabled": True,
@@ -263,3 +362,36 @@ def test_watcher_falls_back_to_standard_acceptance_when_browser_worker_submit_fa
 
     watcher.browser_worker_client.submit_job.assert_called_once()
     thread_cls.assert_called_once()
+
+
+def test_watcher_does_not_use_standard_acceptance_when_http_fallback_disabled(
+    watcher_deps,
+):
+    logger = logging.getLogger("test_browser_worker_http_fallback_disabled")
+    config, state = watcher_deps
+    config.config["AutoAccept"]["allow_http_fallback"] = False
+    config.config["BrowserWorker"]["enabled"] = False
+
+    watcher = GengoWatcher(config=config, state=state, logger=logger)
+    watcher.show_notification = MagicMock()
+    watcher.job_acceptance_engine.is_job_eligible = MagicMock(return_value=True)
+    watcher.cancellation_manager.should_cancel_for_job = MagicMock(return_value=False)
+
+    with patch("gengowatcher.watcher.threading.Thread") as thread_cls:
+        watcher._process_new_job(
+            123,
+            "Test Job",
+            25.0,
+            "https://gengo.com/t/jobs/details/123",
+            "rss",
+        )
+
+    thread_cls.assert_not_called()
+    state.update_job.assert_called_with(
+        "123",
+        {
+            "acceptance_state": "http_fallback_disabled",
+            "lifecycle_state": "detected",
+            "accept_path": "native_browser",
+        },
+    )

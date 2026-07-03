@@ -163,22 +163,23 @@ StatusRow {
     width: 100%;
     layout: horizontal;
     align: center middle;
-    margin: 0 1 1 1;
-    padding: 0 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
     border: round $surface-muted;
 }
 
 StatusIndicator {
     layout: horizontal;
-    margin: 0 2;
-    min-width: 8;
+    margin: 0;
+    min-width: 6;
     align: center middle;
     width: 1fr;
 }
 
 .status-label {
-    width: auto;
+    width: 100%;
     color: $text-muted;
+    text-overflow: ellipsis;
 }
 
 /* Status Colors */
@@ -308,6 +309,16 @@ JobsPreview {
     border-title-color: $accent-blue;
 }
 
+JobsPanel {
+    width: 100%;
+    height: 1fr;
+}
+
+#jobs-table-full {
+    width: 100%;
+    height: 1fr;
+}
+
 ActivityPreview {
     height: 1fr;
     min-height: 5;
@@ -360,6 +371,10 @@ TelemetryTab {
     padding: 1 2;
 }
 
+ApiTab {
+    padding: 1 2;
+}
+
 RichLog {
     border: none;
     scrollbar-color: $surface-muted;
@@ -390,7 +405,8 @@ JobsPreview {
 }
 
 .dashboard-compact StatusIndicator {
-    margin: 0 1;
+    margin: 0;
+    min-width: 5;
 }
 
 .dashboard-compact .status-label {

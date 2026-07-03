@@ -31,6 +31,8 @@ def test_submit_job_posts_expected_payload():
                 "timestamp": 1712736000.0,
                 "lang_pair": "JA→EN",
                 "word_count": 320,
+                "accepted_source_text": "source from workbench",
+                "translation_workflow": {"state": "started"},
             }
         )
 
@@ -42,6 +44,8 @@ def test_submit_job_posts_expected_payload():
     assert kwargs["headers"]["Authorization"] == "Bearer token-123"
     assert kwargs["json"]["lang_pair"] == "JA→EN"
     assert kwargs["json"]["word_count"] == 320
+    assert kwargs["json"]["accepted_source_text"] == "source from workbench"
+    assert kwargs["json"]["translation_workflow"] == {"state": "started"}
 
 
 def test_submit_job_returns_false_on_http_error():

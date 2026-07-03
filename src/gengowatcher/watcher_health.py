@@ -30,6 +30,104 @@ def has_error_message(status: object) -> bool:
     return bool(status and "error" in str(status).lower())
 
 
+def build_api_event_health_snapshot(watcher: Any) -> dict[str, object]:
+    config = getattr(watcher, "config", None)
+    incoming_enabled = False
+    outbound_configured = False
+    if config is not None:
+        try:
+            incoming_enabled = config.getboolean(
+                "Webhooks", "incoming_enabled", fallback=False
+            )
+        except Exception:
+            incoming_enabled = False
+        try:
+            outbound_configured = config.getboolean(
+                "Webhooks", "outbound_enabled", fallback=False
+            )
+        except Exception:
+            outbound_configured = False
+
+    dispatcher = getattr(watcher, "webhook_dispatcher", None)
+    target_count = len(getattr(dispatcher, "targets", []) or [])
+    outbound_enabled = bool(getattr(dispatcher, "enabled", False))
+    audit_logger = getattr(watcher, "webhook_audit_logger", None)
+    summary_getter = getattr(audit_logger, "summary", None)
+    summary = summary_getter(10) if callable(summary_getter) else {}
+    counters = summary.get("counters", {}) if isinstance(summary, dict) else {}
+    last_entry = summary.get("last_entry") if isinstance(summary, dict) else None
+    failed_total = int(summary.get("failed_total", 0) or 0)
+    incoming_total = int(summary.get("incoming_total", 0) or 0)
+    outgoing_total = int(summary.get("outgoing_total", 0) or 0)
+    processed_total = int(summary.get("processed_total", 0) or 0)
+    delivered_total = int(summary.get("delivered_total", 0) or 0)
+
+    if not incoming_enabled and not outbound_configured and not outbound_enabled:
+        state = "disabled"
+        detail = "off"
+    elif failed_total:
+        state = "error"
+        detail = f"{failed_total} failed"
+    elif incoming_total or outgoing_total:
+        state = "healthy"
+        detail = f"in {incoming_total} out {outgoing_total}"
+    elif incoming_enabled and outbound_configured and target_count == 0:
+        state = "healthy"
+        detail = "ingress ready"
+    elif outbound_configured and target_count == 0:
+        state = "healthy"
+        detail = "no outgoing targets"
+    else:
+        state = "healthy"
+        detail = "ready"
+
+    return {
+        "state": state,
+        "detail": detail,
+        "incoming_enabled": incoming_enabled,
+        "outbound_enabled": outbound_enabled,
+        "target_count": target_count,
+        "audit_enabled": (
+            bool(summary.get("enabled", False)) if isinstance(summary, dict) else False
+        ),
+        "debug_enabled": (
+            bool(summary.get("debug_enabled", False))
+            if isinstance(summary, dict)
+            else False
+        ),
+        "audit_log_path": (
+            summary.get("audit_log_path", "") if isinstance(summary, dict) else ""
+        ),
+        "incoming_total": incoming_total,
+        "outgoing_total": outgoing_total,
+        "processed_total": processed_total,
+        "delivered_total": delivered_total,
+        "failed_total": failed_total,
+        "duplicate_total": (
+            int(summary.get("duplicate_total", 0) or 0)
+            if isinstance(summary, dict)
+            else 0
+        ),
+        "last_stage": (
+            str(last_entry.get("stage") or "") if isinstance(last_entry, dict) else ""
+        ),
+        "last_status": (
+            str(last_entry.get("status") or "") if isinstance(last_entry, dict) else ""
+        ),
+        "last_event_type": (
+            str(last_entry.get("event_type") or "")
+            if isinstance(last_entry, dict)
+            else ""
+        ),
+        "counters": counters,
+    }
+
+
+def build_webhook_health_snapshot(watcher: Any) -> dict[str, object]:
+    """Backward-compatible alias for older tests/imports."""
+    return build_api_event_health_snapshot(watcher)
+
+
 def build_health_snapshot(
     watcher: Any, now: float | None = None
 ) -> dict[str, dict[str, object]]:
@@ -43,6 +141,9 @@ def build_health_snapshot(
     email_enabled = watcher.config.getboolean("EmailMonitor", "enabled", fallback=False)
     website_enabled = watcher.config.getboolean(
         "WebsiteMonitor", "enabled", fallback=False
+    )
+    native_browser_enabled = watcher.config.getboolean(
+        "NativeBrowserListener", "enabled", fallback=False
     )
     auto_enabled = watcher.config.getboolean("AutoAccept", "enabled", fallback=False)
     browser_worker_enabled = watcher.config.getboolean(
@@ -181,6 +282,27 @@ def build_health_snapshot(
         email_state = "stale"
         email_detail = f"last {int(email_age)}s"
 
+    native_listener = getattr(watcher, "_native_listener", None)
+    native_thread = getattr(watcher, "_monitor_threads", {}).get("native_browser")
+    native_thread_alive = bool(
+        native_thread is not None
+        and getattr(native_thread, "is_alive", lambda: False)()
+    )
+    native_last_poll_ts = timestamp_or_none(
+        getattr(native_listener, "last_success_ts", None)
+        or getattr(native_listener, "last_poll_ts", None)
+    )
+    native_poll_age = (
+        None
+        if native_last_poll_ts is None
+        else max(0.0, current_time - native_last_poll_ts)
+    )
+    native_error = str(getattr(native_listener, "last_error", "") or "")
+    native_collection_id = getattr(native_listener, "detected_collection_id", None)
+    native_debug_url = str(
+        getattr(native_listener, "debug_url", browser_debug_url) or ""
+    )
+
     browser_last_check_ts = timestamp_or_none(watcher.website_last_check_time)
     browser_age = (
         None
@@ -195,6 +317,27 @@ def build_health_snapshot(
         else:
             browser_state = "healthy"
             browser_detail = "worker ready"
+    elif native_browser_enabled:
+        browser_status = str(getattr(watcher, "native_browser_status", "") or "Started")
+        browser_age = native_poll_age
+        if native_error:
+            browser_state = "error"
+            browser_detail = native_error[:80]
+        elif not native_thread_alive:
+            browser_state = "stale"
+            browser_detail = "listener stopped"
+        elif native_collection_id:
+            browser_state = "healthy"
+            browser_detail = f"workbench {native_collection_id}"
+        elif native_poll_age is None:
+            browser_state = "working"
+            browser_detail = "starting"
+        elif native_poll_age <= max(check_interval * 2, 90):
+            browser_state = "working"
+            browser_detail = "listening"
+        else:
+            browser_state = "stale"
+            browser_detail = f"last {int(native_poll_age)}s"
     elif not website_enabled:
         browser_state = "disabled"
         browser_detail = "off"
@@ -280,6 +423,16 @@ def build_health_snapshot(
             "status": browser_status,
             "last_check_age_sec": browser_age,
             "jobs_found_session": watcher.website_jobs_found_session,
+            "native_enabled": native_browser_enabled,
+            "native_thread_alive": native_thread_alive,
+            "debug_url": native_debug_url if native_browser_enabled else "",
+            "collection_id": native_collection_id or "",
+            "workbench_url": str(
+                getattr(native_listener, "last_workbench_url", "") or ""
+            ),
+            "workbench_detected_count": int(
+                getattr(native_listener, "workbench_detected_count", 0) or 0
+            ),
         },
         "session": {
             "state": session_state,
@@ -289,6 +442,7 @@ def build_health_snapshot(
             "sync_interval_sec": sync_interval,
             "last_sync_state": watcher._browser_session_last_sync_state,
         },
+        "api_events": build_api_event_health_snapshot(watcher),
     }
 
 
@@ -296,7 +450,15 @@ def alert_on_health_snapshot(
     watcher: Any, snapshot: dict[str, dict[str, object]]
 ) -> None:
     """Send one-shot alerts when subsystem health enters a critical state."""
-    for key in ("websocket", "rss", "session", "workflow", "email", "browser"):
+    for key in (
+        "websocket",
+        "rss",
+        "session",
+        "workflow",
+        "email",
+        "browser",
+        "api_events",
+    ):
         entry = snapshot.get(key, {}) if isinstance(snapshot, dict) else {}
         if not isinstance(entry, dict):
             continue
@@ -306,6 +468,18 @@ def alert_on_health_snapshot(
         watcher._health_alert_states[key] = state
         if state not in {"stale", "error"} or previous == state:
             continue
+        emitter = getattr(watcher, "_emit_webhook_event", None)
+        if callable(emitter):
+            emitter(
+                "health.changed",
+                {
+                    "subsystem": key,
+                    "state": state,
+                    "previous_state": previous,
+                    "detail": detail,
+                    "snapshot": entry,
+                },
+            )
         sound_file = None
         play_sound = True
         if key == "websocket" and state == "stale":
@@ -319,8 +493,9 @@ def alert_on_health_snapshot(
             )
             if detail.startswith("quiet "):
                 play_sound = False
+        label = "API Events" if key == "api_events" else key.title()
         watcher.show_notification(
-            message=f"{key.title()} is {state}: {detail}",
+            message=f"{label} is {state}: {detail}",
             title="GengoWatcher Telemetry Alert",
             play_sound=play_sound,
             sound_file=sound_file,

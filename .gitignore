@@ -51,6 +51,7 @@ logs/
 *.log
 *.log.*
 wakapi_db.db
+scrape/
 
 # Application files (user-specific)
 config.toml
@@ -116,3 +117,7 @@ stats.json
 archives/
 docs/plans/
 scripts/run_codex_exec_cycle.sh
+
+COMMIT_LOG.md
+UI_FIXES_SUMMARY.md
+scripts/index_gengo_scrape.py

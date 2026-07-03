@@ -321,10 +321,12 @@ class TestWebAPIIntegration:
         api, watcher = api_system
         pause_file = tmp_path / "pause"
         watcher.PAUSE_FILE = str(pause_file)
+        watcher.pause_monitoring.side_effect = lambda: pause_file.write_text("")
 
         result = api.execute_command("pause")
 
         assert result["status"] == "success"
+        watcher.pause_monitoring.assert_called_once()
         assert pause_file.exists()
 
     @pytest.mark.asyncio

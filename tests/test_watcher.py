@@ -104,6 +104,27 @@ def test_handle_exit(watcher_instance):
     # Note: save_config is not called in handle_exit - config changes are saved elsewhere
 
 
+def test_pause_and_resume_monitoring_update_file_status_and_wake_event(
+    tmp_path, watcher_instance
+):
+    pause_file = tmp_path / "gengowatcher.pause"
+    watcher_instance.PAUSE_FILE = str(pause_file)
+    watcher_instance.check_now_event.clear()
+
+    watcher_instance.pause_monitoring()
+
+    assert pause_file.exists()
+    assert watcher_instance.rss_action == "Paused"
+    assert watcher_instance.check_now_event.is_set()
+
+    watcher_instance.check_now_event.clear()
+    watcher_instance.resume_monitoring()
+
+    assert not pause_file.exists()
+    assert watcher_instance.rss_action == "Resume requested"
+    assert watcher_instance.check_now_event.is_set()
+
+
 @patch("gengowatcher.watcher.feedparser.parse")
 def test_fetch_rss(mock_parse, watcher_instance):
     """Test the RSS fetching logic."""
@@ -252,6 +273,31 @@ def test_process_new_job_submits_to_translation_app_when_configured(watcher_inst
     assert payload["id"] == "123"
     assert payload["title"] == "New Job"
     assert payload["source"] == "RSS"
+
+
+def test_process_new_job_emits_api_lifecycle_events(watcher_instance):
+    w = watcher_instance
+    w.show_notification = MagicMock()
+    w.job_acceptance_engine.is_job_eligible = MagicMock(return_value=False)
+    w._submit_job_to_translation_app_async = MagicMock()
+    w.on_api_event_callback = MagicMock()
+    w.state.total_new_entries_found = 0
+    w.state.seen_job_ids = collections.deque(maxlen=50)
+
+    w._process_new_job(
+        123,
+        "Japanese > English | New Job",
+        10.0,
+        "https://gengo.com/t/jobs/details/123",
+        "RSS",
+    )
+
+    event_types = [call.args[0] for call in w.on_api_event_callback.call_args_list]
+    assert event_types[:2] == ["job.discovered", "job.details"]
+    details_payload = w.on_api_event_callback.call_args_list[1].args[1]
+    assert details_payload["id"] == "123"
+    assert details_payload["lifecycle_state"] == "detected"
+    assert details_payload["acceptance_state"] == "not_requested"
 
 
 def test_translation_app_submission_uses_bounded_worker(watcher_instance):

@@ -80,7 +80,7 @@ async def test_tab_count():
 
     async with app.run_test() as pilot:
         tab_panes = pilot.app.query("TabPane")
-        assert len(list(tab_panes)) == 6
+        assert len(list(tab_panes)) == 7
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,15 @@ async def test_tab_switching_cycle():
 
         tabbed = pilot.app.query_one(TabbedContent)
 
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
+        tabs = [
+            "dashboard",
+            "jobs",
+            "activity",
+            "output",
+            "charts",
+            "telemetry",
+            "api",
+        ]
 
         for tab_id in tabs:
             tabbed.active = tab_id
@@ -156,7 +164,7 @@ async def test_dashboard_metrics_row():
 
 @pytest.mark.asyncio
 async def test_dashboard_status_row():
-    """Test that StatusRow displays correctly with 7 indicators."""
+    """Test that StatusRow displays correctly with 8 indicators."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
@@ -164,7 +172,7 @@ async def test_dashboard_status_row():
 
         status_row = pilot.app.query_one(StatusRow)
         indicators = list(status_row.query(StatusIndicator))
-        assert len(indicators) == 7
+        assert len(indicators) == 8
 
 
 @pytest.mark.asyncio
@@ -255,7 +263,15 @@ async def test_rapid_tab_switching():
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
+        tabs = [
+            "dashboard",
+            "jobs",
+            "activity",
+            "output",
+            "charts",
+            "telemetry",
+            "api",
+        ]
 
         for _ in range(3):
             for tab_id in tabs:

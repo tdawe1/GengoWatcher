@@ -25,6 +25,8 @@ class Icons:
     CAPTCHA = ""
     WORKFLOW = ""
     AUTO = ""
+    API = ""
+    WEBHOOK = ""
 
     PANEL_ACTIVITY = ""
     PANEL_JOBS = ""
@@ -55,6 +57,7 @@ TELEMETRY_SECTION_ORDER = (
     "workflow",
     "email",
     "browser",
+    "api_events",
 )
 TELEMETRY_LABELS = {
     "websocket": ("WS", "WEBSOCKET"),
@@ -63,6 +66,7 @@ TELEMETRY_LABELS = {
     "workflow": ("Workflow", "WORKFLOW"),
     "email": ("Email", "EMAIL"),
     "browser": ("Browser", "BROWSER"),
+    "api_events": ("API", "API"),
 }
 
 _TIMESTAMP_PREFIX_PATTERN = re.compile(
@@ -296,6 +300,8 @@ def derive_display_word_count(job: dict[str, Any]) -> int:
     for key in (
         "word_count",
         "words",
+        "accepted_unit_count",
+        "accepted_word_count",
         "unit_count",
         "unit",
         "units",

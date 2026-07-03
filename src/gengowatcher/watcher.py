@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 import webbrowser
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
@@ -70,6 +70,7 @@ from .watcher_health import (
     has_error_message,
     timestamp_or_none,
 )
+from .webhooks import WebhookAuditLogger, WebhookDispatcher
 
 from . import notifier
 
@@ -101,7 +102,27 @@ PLACEHOLDER_CONFIG_VALUES = {
     "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN",
 }
 
-SENSITIVE_KEYWORDS = {"password", "session", "key"}
+SENSITIVE_KEYWORDS = {"auth", "cookie", "key", "password", "secret", "session", "token"}
+
+
+def _redact_config_for_log(value: Any, key: str = "") -> Any:
+    """Return a log-safe copy of nested config data."""
+    if isinstance(value, dict):
+        return {
+            item_key: _redact_config_for_log(item_value, str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_config_for_log(item, key) for item in value]
+
+    if any(marker in key.lower() for marker in SENSITIVE_KEYWORDS):
+        if value in (None, ""):
+            return value
+        text = str(value)
+        if len(text) <= 8:
+            return "***"
+        return f"{text[:4]}...{text[-4:]}"
+    return value
 
 
 class GengoWatcher:
@@ -127,9 +148,29 @@ class GengoWatcher:
         self.logger = logger
         self.config = config
         self.state = state
+        self.webhook_audit_logger = WebhookAuditLogger.from_config(config, logger)
+        self.webhook_dispatcher = WebhookDispatcher.from_config(
+            config,
+            logger,
+            self.webhook_audit_logger,
+        )
+        self.browser_backend = str(
+            config.get("Browser", "backend", fallback="native") or ""
+        ).lower()
+        self.native_browser_mode = self.browser_backend == "native"
         self.browser_worker_enabled = config.getboolean(
             "BrowserWorker", "enabled", fallback=False
         )
+        if (
+            self.native_browser_mode
+            and self.browser_worker_enabled
+            and not config.getboolean("Browser", "allow_playwright", fallback=False)
+        ):
+            logger.warning(
+                "BrowserWorker disabled: native browser mode does not allow "
+                "BrowserWorker/Playwright unless Browser.allow_playwright is true"
+            )
+            self.browser_worker_enabled = False
 
         # Validate critical config values to prevent infinite loops or crashes
         check_interval = config.get("Watcher", "check_interval")
@@ -191,13 +232,15 @@ class GengoWatcher:
         self._raw_ws_messages = deque(maxlen=50)
         self._raw_ws_lock = threading.Lock()
         self.logger.debug(
-            f"Initializing GengoWatcher with config: {self.config.config}"
+            "Initializing GengoWatcher with config: %s",
+            _redact_config_for_log(self.config.config),
         )
         if self.config.get("Logging", "log_all_entries_enabled"):
             self._setup_csv_logging()
 
         # Callback for UI notification when a new job is added (set by UI)
         self.on_job_added_callback: Optional[Callable[[dict], None]] = None
+        self.on_api_event_callback: Optional[Callable[[str, dict], None]] = None
 
         # Initialize job acceptance engine (without CAPTCHA support)
         self.job_acceptance_engine = JobAcceptanceEngine(
@@ -213,6 +256,52 @@ class GengoWatcher:
         self._configure_cancellation_manager()
 
         self.logger.info(f"GengoWatcher v{__version__} initialized.")
+
+    def _emit_webhook_event(
+        self,
+        event_type: str,
+        payload: dict,
+        *,
+        event_id: str | None = None,
+    ) -> None:
+        """Emit an outbound webhook event without blocking watcher monitors."""
+        dispatcher = getattr(self, "webhook_dispatcher", None)
+        if dispatcher is None or not getattr(dispatcher, "enabled", False):
+            return
+        try:
+            self.logger.info(
+                "Webhook emit queued type=%s job=%s",
+                event_type,
+                payload.get("id", payload.get("subsystem", "n/a")),
+            )
+            dispatcher.emit(event_type, dict(payload), event_id=event_id)
+        except Exception:
+            self.logger.exception(
+                "Failed to queue webhook event %s for job %s",
+                event_type,
+                payload.get("id", "unknown"),
+            )
+
+    def _emit_api_event(self, event_type: str, payload: dict) -> None:
+        """Emit an in-process API websocket event without blocking monitors."""
+        callback = getattr(self, "on_api_event_callback", None)
+        if not callable(callback):
+            return
+        try:
+            callback(event_type, dict(payload))
+        except Exception:
+            self.logger.exception(
+                "Failed to publish API event %s for job %s",
+                event_type,
+                payload.get("id", payload.get("job_id", "unknown")),
+            )
+
+    @staticmethod
+    def _json_safe(value):
+        try:
+            return json.loads(json.dumps(value, default=str))
+        except Exception:
+            return str(value)
 
     def _build_browser_worker_client(self):
         if BrowserWorkerClient is None:
@@ -235,6 +324,17 @@ class GengoWatcher:
             logger=self.logger,
             auth_token=auth_token,
         )
+
+    def _browser_worker_telemetry_path(self) -> Path:
+        artifacts_dir = str(
+            self.config.get(
+                "BrowserWorker",
+                "artifacts_dir",
+                fallback="logs/browser-worker-artifacts",
+            )
+            or "logs/browser-worker-artifacts"
+        )
+        return Path(artifacts_dir) / "worker.jsonl"
 
     @staticmethod
     def _mask_secret(value) -> str:
@@ -605,7 +705,7 @@ class GengoWatcher:
             dict: Mapping of monitor name to status ("alive", "dead", "disabled")
         """
         status = {}
-        for name in ["rss", "websocket", "email", "website"]:
+        for name in ["rss", "websocket", "email", "website", "browser_worker"]:
             thread = self._monitor_threads.get(name)
             if thread is None:
                 status[name] = "disabled"
@@ -917,6 +1017,10 @@ class GengoWatcher:
                 "source": source,
                 "lang_pair": lang_pair,
                 "word_count": word_count,
+                "source_meta": self._json_safe(source_meta or {}),
+                "lifecycle_state": "detected",
+                "acceptance_state": "not_requested",
+                "workflow_state": "new",
             }
 
             try:
@@ -948,23 +1052,61 @@ class GengoWatcher:
                 return
 
         eligible_for_auto_accept = self.job_acceptance_engine.is_job_eligible(job_data)
+        allow_http_fallback = self.config.getboolean(
+            "AutoAccept", "allow_http_fallback", fallback=False
+        )
+        self._emit_webhook_event("job.discovered", job_data)
+        self._emit_api_event("job.discovered", job_data)
+        self._emit_api_event("job.details", job_data)
 
         if self.browser_worker_enabled and eligible_for_auto_accept:
             self.logger.info(
                 "Routing job %s to browser worker via local client", job_id
             )
             if not self.browser_worker_client:
-                self.logger.error(
-                    "Browser worker is enabled for job %s but the local client is unavailable;"
-                    " falling back to standard acceptance path",
-                    job_id,
-                )
+                if allow_http_fallback:
+                    self.logger.error(
+                        "Browser worker is enabled for job %s but the local client is unavailable;"
+                        " falling back to standard acceptance path",
+                        job_id,
+                    )
+                else:
+                    self.logger.error(
+                        "Browser worker is enabled for job %s but the local client is unavailable;"
+                        " HTTP fallback is disabled",
+                        job_id,
+                    )
             else:
                 try:
                     self.browser_worker_client.submit_job(
                         url,
                         source,
                         metadata=job_data,
+                    )
+                    self._emit_webhook_event(
+                        "job.accept_requested",
+                        {
+                            **job_data,
+                            "accept_path": "browser_worker",
+                        },
+                    )
+                    accept_requested_payload = {
+                        **job_data,
+                        "accept_path": "browser_worker",
+                        "acceptance_state": "requested",
+                        "lifecycle_state": "accept_requested",
+                    }
+                    self.state.update_job(
+                        str(job_id),
+                        {
+                            "acceptance_state": "requested",
+                            "lifecycle_state": "accept_requested",
+                            "accept_path": "browser_worker",
+                        },
+                    )
+                    self._emit_api_event(
+                        "job.accept_requested",
+                        accept_requested_payload,
                     )
                     self.state.save_state()
                     if self.on_job_added_callback:
@@ -974,17 +1116,19 @@ class GengoWatcher:
                             self.logger.debug(f"Error in job added callback: {e}")
                     return
                 except Exception as e:
-                    self.logger.error(
-                        "Failed to submit job %s to browser worker: %s; falling back to"
-                        " standard acceptance path",
-                        job_id,
-                        e,
-                    )
-            self.logger.info(
-                "Continuing with standard acceptance flow for job %s after browser worker"
-                " handoff failed",
-                job_id,
-            )
+                    if allow_http_fallback:
+                        self.logger.error(
+                            "Failed to submit job %s to browser worker: %s; falling back to"
+                            " standard acceptance path",
+                            job_id,
+                            e,
+                        )
+                    else:
+                        self.logger.error(
+                            "Failed to submit job %s to browser worker: %s; HTTP fallback is disabled",
+                            job_id,
+                            e,
+                        )
 
         # Consider cancelling a current job if this one is better
         try:
@@ -1007,9 +1151,48 @@ class GengoWatcher:
 
         # Check if job should be auto-accepted
         if eligible_for_auto_accept:
+            if not allow_http_fallback:
+                self.logger.info(
+                    "Job %s meets auto-accept criteria, but standard HTTP acceptance is disabled",
+                    job_id,
+                )
+                self.state.update_job(
+                    str(job_id),
+                    {
+                        "acceptance_state": "http_fallback_disabled",
+                        "lifecycle_state": "detected",
+                        "accept_path": "native_browser",
+                    },
+                )
+                self.state.save_state()
+                self._submit_job_to_translation_app_async(job_data)
+                return
+
             self.logger.info(
                 f"Job {job_id} meets auto-accept criteria, queuing for acceptance"
             )
+            self._emit_webhook_event(
+                "job.accept_requested",
+                {
+                    **job_data,
+                    "accept_path": "standard",
+                },
+            )
+            accept_requested_payload = {
+                **job_data,
+                "accept_path": "standard",
+                "acceptance_state": "requested",
+                "lifecycle_state": "accept_requested",
+            }
+            self.state.update_job(
+                str(job_id),
+                {
+                    "acceptance_state": "requested",
+                    "lifecycle_state": "accept_requested",
+                    "accept_path": "standard",
+                },
+            )
+            self._emit_api_event("job.accept_requested", accept_requested_payload)
             threading.Thread(
                 target=self._async_job_acceptance_wrapper, args=(job_data,), daemon=True
             ).start()
@@ -1073,12 +1256,163 @@ class GengoWatcher:
             )
             if success:
                 self._on_job_accepted(job_data)
+            else:
+                self.state.update_job(
+                    str(job_data.get("id")),
+                    {
+                        "acceptance_state": "failed",
+                        "lifecycle_state": "accept_failed",
+                        "accept_failure_reason": "accept_job returned false",
+                    },
+                )
+                self.state.save_state()
+                failed_payload = {
+                    **job_data,
+                    "acceptance_state": "failed",
+                    "lifecycle_state": "accept_failed",
+                    "reason": "accept_job returned false",
+                }
+                self._emit_webhook_event(
+                    "job.accept_failed",
+                    failed_payload,
+                )
+                self._emit_api_event("job.accept_failed", failed_payload)
         except Exception as e:
             self.logger.error(
                 f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}"
             )
+            self.state.update_job(
+                str(job_data.get("id")),
+                {
+                    "acceptance_state": "failed",
+                    "lifecycle_state": "accept_failed",
+                    "accept_failure_reason": str(e),
+                },
+            )
+            self.state.save_state()
+            failed_payload = {
+                **job_data,
+                "acceptance_state": "failed",
+                "lifecycle_state": "accept_failed",
+                "reason": str(e),
+            }
+            self._emit_webhook_event(
+                "job.accept_failed",
+                failed_payload,
+            )
+            self._emit_api_event("job.accept_failed", failed_payload)
         finally:
             loop.close()
+
+    def _run_browser_worker_event_listener(self) -> None:
+        telemetry_path = self._browser_worker_telemetry_path()
+        self.logger.info("Browser worker event listener watching %s", telemetry_path)
+        initialized = False
+        while not self.shutdown_event.is_set():
+            if not telemetry_path.exists():
+                self.shutdown_event.wait(1.0)
+                continue
+
+            try:
+                with telemetry_path.open("r", encoding="utf-8") as handle:
+                    if not initialized:
+                        handle.seek(0, os.SEEK_END)
+                        initialized = True
+                    while not self.shutdown_event.is_set():
+                        line = handle.readline()
+                        if not line:
+                            try:
+                                if telemetry_path.stat().st_size < handle.tell():
+                                    initialized = False
+                                    break
+                            except OSError:
+                                initialized = False
+                                break
+                            self.shutdown_event.wait(0.5)
+                            continue
+                        self._handle_browser_worker_telemetry_line(line)
+            except OSError as exc:
+                self.logger.debug(
+                    "Browser worker telemetry listener could not read %s: %s",
+                    telemetry_path,
+                    exc,
+                )
+                self.shutdown_event.wait(1.0)
+            except Exception:
+                self.logger.exception("Browser worker telemetry listener failed")
+                self.shutdown_event.wait(1.0)
+        self.logger.info("Browser worker event listener stopped.")
+
+    def _handle_browser_worker_telemetry_line(self, line: str) -> None:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            self.logger.debug("Ignoring malformed browser worker telemetry line")
+            return
+        if isinstance(payload, dict):
+            self._handle_browser_worker_telemetry_payload(payload)
+
+    def _handle_browser_worker_telemetry_payload(self, event_payload: dict) -> None:
+        event = event_payload.get("event")
+        if not isinstance(event, dict):
+            return
+        if event.get("name") != "accepted_workbench_payload":
+            return
+
+        payload = event_payload.get("payload")
+        if not isinstance(payload, dict):
+            return
+
+        summary = payload.get("summary")
+        if not isinstance(summary, dict):
+            summary = {}
+        job_id = str(
+            event_payload.get("job_id") or summary.get("order_id") or ""
+        ).strip()
+        if not job_id:
+            return
+
+        accepted_workbench = {
+            "source": str(event_payload.get("source") or "browser_worker"),
+            "payload": payload,
+        }
+        updated = self.state.mark_job_accepted(
+            job_id,
+            accepted_workbench=accepted_workbench,
+            workbench_url=event_payload.get("url"),
+        )
+        if updated:
+            self.state.save_state()
+            current_job = self.state.get_job(job_id)
+            accepted_job = (
+                current_job
+                if isinstance(current_job, dict)
+                else {
+                    "id": job_id,
+                    "workbench_url": event_payload.get("url"),
+                    "accepted_workbench": accepted_workbench,
+                    "source": "browser_worker",
+                }
+            )
+            self.logger.info(
+                "Browser worker captured accepted job %s; countdown tracking updated",
+                job_id,
+            )
+            self._emit_webhook_event(
+                "job.accepted",
+                {
+                    "id": job_id,
+                    "workbench_url": event_payload.get("url"),
+                    "accepted_workbench": accepted_workbench,
+                    "source": "browser_worker",
+                },
+            )
+            self._emit_api_event("job.accepted", accepted_job)
+        else:
+            self.logger.debug(
+                "Browser worker captured accepted job %s but no stored job matched",
+                job_id,
+            )
 
     def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
         """Wrapper to cancel the current job without blocking the main thread."""
@@ -1101,10 +1435,35 @@ class GengoWatcher:
         try:
             job_id = str(job_data.get("id"))
             reward = float(job_data.get("reward", 0.0))
+            try:
+                self.state.mark_job_accepted(
+                    job_id,
+                    accepted_workbench=job_data.get("accepted_workbench"),
+                    workbench_url=job_data.get("workbench_url"),
+                )
+                self.state.save_state()
+            except Exception:
+                self.logger.exception(
+                    "Failed to persist accepted job metadata for job %s",
+                    job_id,
+                )
             self.cancellation_manager.set_current_job(job_id, reward)
             self.logger.debug(
                 f"Tracking job {job_id} (${reward:.2f}) as current engagement"
             )
+            current_job = self.state.get_job(job_id)
+            accepted_job = (
+                current_job
+                if isinstance(current_job, dict)
+                else {
+                    **job_data,
+                    "accepted": True,
+                    "acceptance_state": "accepted",
+                    "lifecycle_state": "accepted",
+                }
+            )
+            self._emit_webhook_event("job.accepted", accepted_job)
+            self._emit_api_event("job.accepted", accepted_job)
         except Exception as e:
             self.logger.error(
                 f"Failed to record accepted job for cancellation tracking: {e}"
@@ -1918,11 +2277,28 @@ class GengoWatcher:
         self.logger.debug("Starting watcher parent thread.")
         self.logger.info("Watcher parent thread started. Launching monitors...")
 
+        if self.browser_worker_enabled:
+            browser_worker_thread = threading.Thread(
+                target=self._run_browser_worker_event_listener,
+                daemon=True,
+                name="BrowserWorkerEventListener",
+            )
+            browser_worker_thread.start()
+            self._monitor_threads["browser_worker"] = browser_worker_thread
+
         rss_thread = threading.Thread(target=self._run_rss_monitor, daemon=True)
         rss_thread.start()
         self._monitor_threads["rss"] = rss_thread
 
-        if self.config.get("WebSocket", "enable_websocket"):
+        # Check for gateway mode
+        use_gateway = self.config.getboolean("WebSocket", "use_gateway", fallback=False)
+        if use_gateway:
+            gateway_url = self.config.get(
+                "WebSocket", "gateway_url", fallback="http://127.0.0.1:8000"
+            )
+            self.websocket_status = "Gateway Connected"
+            self.logger.info(f"WebSocket using external gateway at {gateway_url}")
+        elif self.config.get("WebSocket", "enable_websocket"):
             ws_thread = threading.Thread(
                 target=self._run_websocket_monitor, daemon=True
             )
@@ -1932,6 +2308,44 @@ class GengoWatcher:
         else:
             self.websocket_status = "Disabled"
 
+        # Native Browser Listener (replaces WebsiteMonitor)
+        use_native_browser = self.config.getboolean(
+            "NativeBrowserListener", "enabled", fallback=False
+        )
+        if use_native_browser:
+            from .native_browser_listener import NativeBrowserListener
+            from .state_projector import StateProjector
+
+            debug_url = self.config.get(
+                "Browser", "debug_url", fallback="ws://127.0.0.1:6000"
+            )
+            maybe_launch_managed_firefox_debug(
+                self.config,
+                str(debug_url),
+                logger=self.logger,
+            )
+            interval_ms = self.config.getint(
+                "NativeBrowserListener", "capture_interval_ms", fallback=750
+            )
+
+            self._native_listener = NativeBrowserListener(
+                debug_url=debug_url,
+                capture_interval_ms=interval_ms,
+            )
+            self._state_projector = StateProjector(self.state, notifier=self)
+
+            native_thread = threading.Thread(
+                target=self._run_native_browser_listener, daemon=True
+            )
+            native_thread.start()
+            self._monitor_threads["native_browser"] = native_thread
+            self.native_browser_status = "Started"
+            self.logger.info(
+                "Native browser listener started (replaces WebsiteMonitor)"
+            )
+        else:
+            self.native_browser_status = "Disabled"
+
         if self.config.get("EmailMonitor", "enabled"):
             email_thread = threading.Thread(target=self._run_email_monitor, daemon=True)
             email_thread.start()
@@ -1939,12 +2353,24 @@ class GengoWatcher:
             self.logger.info("Email monitor thread started")
 
         if self.config.get("WebsiteMonitor", "enabled"):
-            website_thread = threading.Thread(
-                target=self._run_website_monitor, daemon=True
-            )
-            website_thread.start()
-            self._monitor_threads["website"] = website_thread
-            self.logger.info("Website monitor thread started")
+            # HARD DISABLE: Cannot run with native browser backend
+            backend = self.config.get("Browser", "backend", fallback="native")
+            if backend == "native":
+                self.logger.warning(
+                    "WebsiteMonitor disabled - native browser mode requires "
+                    "NativeBrowserListener"
+                )
+            else:
+                # DEPRECATED: WebsiteMonitor is deprecated; use NativeBrowserListener
+                self.logger.warning(
+                    "WebsiteMonitor is deprecated; use NativeBrowserListener instead"
+                )
+                website_thread = threading.Thread(
+                    target=self._run_website_monitor, daemon=True
+                )
+                website_thread.start()
+                self._monitor_threads["website"] = website_thread
+                self.logger.info("Website monitor thread started (deprecated)")
 
         self.shutdown_event.wait()
         self.logger.info("Watcher parent thread shutting down.")
@@ -2015,6 +2441,40 @@ class GengoWatcher:
 
         self.logger.info("RSS monitor thread stopped.")
 
+    def _run_native_browser_listener(self):
+        """Run native browser listener loop - drains events into state projector."""
+        from queue import Empty
+
+        self.logger.info("Native browser listener starting...")
+        while not self.shutdown_event.is_set():
+            try:
+                # Poll native listener (publishes events)
+                if hasattr(self, "_native_listener"):
+                    self._native_listener.run_once()
+
+                # Drain events into state projector
+                if hasattr(self, "_state_projector"):
+                    try:
+                        from .event_bus import get_native_events_queue
+                        from .events import EventEnvelope
+
+                        q = get_native_events_queue()
+                        while True:
+                            try:
+                                event_dict = q.get_nowait()
+                                event = EventEnvelope.from_dict(event_dict)
+                                self._state_projector.project(event)
+                            except Empty:
+                                break
+                            except Exception as e:
+                                self.logger.debug(f"Event projection error: {e}")
+                    except Exception as e:
+                        self.logger.debug(f"Event bus drain error: {e}")
+
+            except Exception as e:
+                self.logger.debug(f"Native browser listener error: {e}")
+            time.sleep(0.75)  # Capture interval
+
     def run_notify_test(self):
         self.logger.info("Sending a test notification...")
         self.show_notification(
@@ -2024,6 +2484,29 @@ class GengoWatcher:
             open_link=True,
             url="https://gengo.com/t/jobs/status/available",
         )
+
+    def pause_monitoring(self):
+        """Pause RSS monitoring and wake the monitor so state updates immediately."""
+        Path(self.PAUSE_FILE).write_text("", encoding="utf-8")
+        self.rss_action = "Paused"
+        self.check_now_event.set()
+        self.logger.info("Watcher paused.")
+
+    def resume_monitoring(self):
+        """Resume RSS monitoring and wake the monitor so it re-checks promptly."""
+        try:
+            os.remove(self.PAUSE_FILE)
+        except FileNotFoundError:
+            pass
+        self.rss_action = "Resume requested"
+        self.check_now_event.set()
+        self.logger.info("Watcher resumed.")
+
+    def queue_websocket_test_command(self, command: str):
+        """Queue a diagnostic command for the websocket monitor task."""
+        with self._test_command_lock:
+            self._test_command = command
+        self.logger.info("WebSocket %s test queued.", command)
 
     def restart(self):
         self.handle_exit()
@@ -2048,7 +2531,10 @@ class GengoWatcher:
         if not isinstance(config_dict, dict):
             fallback_config = getattr(self.config, "config", None)
             config_dict = fallback_config if isinstance(fallback_config, dict) else {}
-        self.logger.debug(f"Listing all config values: {config_dict}")
+        self.logger.debug(
+            "Listing all config values: %s",
+            _redact_config_for_log(config_dict),
+        )
         return config_dict
 
     def get_cancellation_stats(self):

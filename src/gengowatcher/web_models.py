@@ -40,6 +40,29 @@ class JobEntry(BaseModel):
     url: str
     timestamp: float
     source: str
+    accepted: bool = False
+    accepted_at: float | None = None
+    workbench_url: str | None = None
+    accepted_seconds_left: int | None = None
+    accepted_time_left: str | None = None
+    accepted_expired: bool | None = None
+    accepted_workbench: dict[str, Any] | None = None
+    accepted_job_ids: list[str] | None = None
+    accepted_workbench_job_count: int | None = None
+    accepted_segments: list[dict[str, Any]] | None = None
+    accepted_segment_count: int | None = None
+    accepted_source_text: str | None = None
+    accepted_source_char_count: int | None = None
+    accepted_target_text: str | None = None
+    accepted_target_char_count: int | None = None
+    lifecycle_state: str | None = None
+    acceptance_state: str | None = None
+    accept_path: str | None = None
+    file_state: str | None = None
+    workflow_state: str | None = None
+    workflow_file_mode: str | None = None
+    workflow_file: dict[str, Any] | None = None
+    translation_workflow: dict[str, Any] | None = None
 
     @field_validator("id", "title", "url", "source")
     @classmethod

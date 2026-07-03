@@ -561,15 +561,17 @@ class TestWebAPICommands:
 
     def test_execute_command_pause(self, web_api):
         """Test pause command."""
-        with patch("builtins.open", MagicMock()):
-            result = web_api.execute_command("pause")
-            assert result["status"] == "success"
+        result = web_api.execute_command("pause")
+
+        assert result["status"] == "success"
+        web_api.watcher.pause_monitoring.assert_called_once()
 
     def test_execute_command_resume(self, web_api):
         """Test resume command."""
-        with patch("os.remove"):
-            result = web_api.execute_command("resume")
-            assert result["status"] == "success"
+        result = web_api.execute_command("resume")
+
+        assert result["status"] == "success"
+        web_api.watcher.resume_monitoring.assert_called_once()
 
     def test_execute_command_cancel(self, web_api):
         """Test cancel command."""
@@ -591,7 +593,7 @@ class TestWebAPICommands:
             result = web_api.execute_command(command)
 
             assert result["status"] == "success"
-            assert web_api.watcher._test_command == command
+            web_api.watcher.queue_websocket_test_command.assert_called_with(command)
 
     def test_execute_command_unknown(self, web_api):
         """Test unknown command."""
@@ -606,6 +608,15 @@ class TestWebAPIShutdown:
         """Test shutdown."""
         web_api.shutdown()
         web_api.watcher.handle_exit.assert_called_once()
+
+    def test_shutdown_restores_previous_api_event_callback(self, web_api):
+        previous = MagicMock()
+        web_api._previous_api_event_callback = previous
+        web_api.watcher.on_api_event_callback = web_api._api_event_callback
+
+        web_api.shutdown()
+
+        assert web_api.watcher.on_api_event_callback is previous
 
 
 class TestBroadcastStatusUpdate:
@@ -642,6 +653,50 @@ class TestBroadcastStatusUpdate:
 
         assert mock_ws_bad not in web_api._active_connections
         assert mock_ws_good in web_api._active_connections
+
+    @pytest.mark.asyncio
+    async def test_publish_api_event_records_and_broadcasts(self, web_api):
+        """Lifecycle events should be stored and sent to websocket clients."""
+        mock_ws = AsyncMock()
+        web_api._active_connections = [mock_ws]
+        web_api._event_loop = asyncio.get_running_loop()
+
+        event = web_api.publish_api_event(
+            "job.discovered",
+            {"id": "123", "title": "JA > EN", "reward": 10.5},
+        )
+        await asyncio.sleep(0)
+
+        assert event["type"] == "job.discovered"
+        assert web_api.get_recent_events()[-1]["event_id"] == event["event_id"]
+        mock_ws.send_json.assert_called()
+
+    def test_watcher_api_event_acceptance_starts_user_file_wait(self, web_api):
+        """Accepted jobs without a user file should move to waiting_for_file."""
+        web_api.state.get_job.return_value = {
+            "id": "123",
+            "title": "JA > EN",
+            "reward": 10.5,
+            "url": "https://gengo.com/t/workbench/123",
+            "timestamp": 1234567890.0,
+            "source": "browser_worker",
+            "accepted": True,
+            "accepted_source_text": "Source from workbench JSON",
+        }
+
+        web_api._handle_watcher_api_event("job.accepted", {"id": "123"})
+
+        event_types = [event["type"] for event in web_api.get_recent_events()]
+        assert "job.accepted" in event_types
+        assert "job.file_pending" in event_types
+        web_api.state.update_job.assert_any_call(
+            "123",
+            {
+                "file_state": "pending",
+                "workflow_state": "waiting_for_file",
+                "workflow_file_mode": "user",
+            },
+        )
 
 
 class TestEdgeCases:

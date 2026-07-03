@@ -96,6 +96,16 @@ def start_watcher_metrics_server(*, host: str, port: int, watcher: Any, logger: 
         gauge_factory=Gauge,
         watcher_provider=lambda: watcher,
     )
-    server, thread = start_http_server(port=port, addr=host)
+    try:
+        server, thread = start_http_server(port=port, addr=host)
+    except OSError as error:
+        logger.warning(
+            "Prometheus metrics disabled: could not bind http://%s:%s/metrics (%s)",
+            host,
+            port,
+            error,
+        )
+        return None
+
     logger.info("Prometheus metrics listening on http://%s:%s/metrics", host, port)
     return server, thread

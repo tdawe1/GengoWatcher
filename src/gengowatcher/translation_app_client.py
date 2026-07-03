@@ -35,6 +35,15 @@ class TranslationAppClient:
             "lang_pair": str(job_data.get("lang_pair", "") or ""),
             "word_count": int(job_data.get("word_count", 0) or 0),
         }
+        for key in (
+            "accepted_source_text",
+            "accepted_segments",
+            "accepted_workbench",
+            "workflow_file",
+            "translation_workflow",
+        ):
+            if key in job_data:
+                payload[key] = job_data[key]
         endpoint = f"{self.base_url}/api/v1/watcher/jobs"
         headers = {
             "Authorization": f"Bearer {self.auth_token}",
