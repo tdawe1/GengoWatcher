@@ -5,7 +5,7 @@ global:
     scope: personal
 
 rule_files:
-  - /home/user/GengoWatcher/ops/prometheus/rules/*.yml
+  - rules/*.yml
   - /etc/prometheus/rules/*.yml
 
 scrape_configs:

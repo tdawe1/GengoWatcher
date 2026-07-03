@@ -30,6 +30,7 @@ from gengowatcher.ui_textual import (
     TELEMETRY_TAB_COLUMNS,
     Icons,
     _derive_display_word_count,
+    _api_socket_open,
     _data_table_column_labels,
 )
 
@@ -374,6 +375,15 @@ class TestStatusRow:
                 assert (
                     app.query_one("#ind-api", StatusIndicator).current_state == "live"
                 )
+
+    def test_api_socket_open_connects_to_loopback_for_wildcard_bind(self):
+        """Wildcard bind addresses should be probed through loopback."""
+        with patch("gengowatcher.ui_textual.socket.create_connection") as connect:
+            connect.return_value.__enter__.return_value = object()
+
+            assert _api_socket_open("0.0.0.0", 8000) is True
+
+        connect.assert_called_once_with(("127.0.0.1", 8000), timeout=0.05)
 
     @pytest.mark.asyncio
     async def test_telemetry_panel_renders_health_snapshot(self, mock_watcher):

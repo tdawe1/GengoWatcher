@@ -226,9 +226,21 @@ def _config_bool(
     return fallback
 
 
+def _connectable_host_for_bind(host: str) -> str:
+    normalized = str(host or "").strip()
+    if normalized in {"0.0.0.0", ""}:
+        return "127.0.0.1"
+    if normalized == "::":
+        return "::1"
+    return normalized
+
+
 def _api_socket_open(host: str, port: int, timeout: float = 0.05) -> bool:
     try:
-        with socket.create_connection((host, port), timeout=timeout):
+        with socket.create_connection(
+            (_connectable_host_for_bind(host), port),
+            timeout=timeout,
+        ):
             return True
     except OSError:
         return False
@@ -1607,7 +1619,9 @@ class TelemetryTab(Static):
             for field, value in entry.items():
                 if field in {"state", "detail"} or value is None:
                     continue
-                metrics.append(f"{field}={TelemetryPanel._format_detail_field(field, value)}")
+                metrics.append(
+                    f"{field}={TelemetryPanel._format_detail_field(field, value)}"
+                )
             table.add_row(
                 group,
                 f"{icon} {label}",
@@ -2646,11 +2660,7 @@ class GengoWatcherApp(App):
         return host, port
 
     def _api_port_open(self, host: str, port: int) -> bool:
-        try:
-            with socket.create_connection((host, port), timeout=0.2):
-                return True
-        except OSError:
-            return False
+        return _api_socket_open(host, port, timeout=0.2)
 
     def _api_is_running(self) -> bool:
         host, port = self._refresh_api_bind_from_config()

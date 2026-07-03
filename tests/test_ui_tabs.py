@@ -305,6 +305,26 @@ async def test_jobs_tab_contains_datatable():
 
 
 @pytest.mark.asyncio
+async def test_telemetry_tab_contains_visible_table():
+    """Verify Telemetry tab table mounts with usable height."""
+    app = create_mock_app()
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        from gengowatcher.ui_textual import TelemetryTab
+        from textual.widgets import TabbedContent, DataTable
+
+        tabbed = pilot.app.query_one(TabbedContent)
+        tabbed.active = "telemetry"
+        await pilot.pause(0.2)
+
+        tab = pilot.app.query_one(TelemetryTab)
+        table = pilot.app.query_one("#telemetry-tab-table", DataTable)
+        assert tab.size.height > 0
+        assert table.size.height > 0
+        assert table.row_count > 0
+
+
+@pytest.mark.asyncio
 async def test_jobs_tab_renders_accepted_workbench_job():
     """Accepted workbench data should render in the full Jobs table."""
     app = create_mock_app()
@@ -469,9 +489,7 @@ async def test_tab_count():
         from textual.widgets import TabPane
 
         tabs = pilot.app.query(TabPane)
-        assert (
-            len(tabs) == 6
-        )  # dashboard, jobs, output, charts, telemetry, api
+        assert len(tabs) == 6  # dashboard, jobs, output, charts, telemetry, api
 
 
 @pytest.mark.asyncio

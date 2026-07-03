@@ -126,6 +126,8 @@ class _RdpConnection:
             url = str(tab.get("url", ""))
             if WORKBENCH_PATH_PREFIX in url:
                 resolved_tab = await _firefox_rdp_resolve_tab(self.client, tab)
+                if resolved_tab is None:
+                    continue
                 actor = str(resolved_tab.get("consoleActor") or "").strip()
                 if actor:
                     return resolved_tab, actor

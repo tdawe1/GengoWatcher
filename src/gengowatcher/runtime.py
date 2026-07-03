@@ -196,12 +196,23 @@ def _web_server_startup_error(web_thread: threading.Thread) -> BaseException | N
 
 def _is_tcp_port_available(host: str, port: int) -> bool:
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind((host, port))
+        addr_infos = socket.getaddrinfo(
+            host,
+            port,
+            socket.AF_UNSPEC,
+            socket.SOCK_STREAM,
+        )
     except OSError:
         return False
-    return True
+    for family, socktype, proto, _canonname, sockaddr in addr_infos:
+        try:
+            with socket.socket(family, socktype, proto) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(sockaddr)
+            return True
+        except OSError:
+            continue
+    return False
 
 
 def _run_web_only(console: Console, web_thread: threading.Thread | None) -> None:

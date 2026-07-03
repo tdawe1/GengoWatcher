@@ -1,12 +1,17 @@
 """Tests for runtime-owned watcher sharing."""
 
 from argparse import Namespace
+import socket
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gengowatcher.runtime import _run_tui, _start_web_server_if_requested
+from gengowatcher.runtime import (
+    _is_tcp_port_available,
+    _run_tui,
+    _start_web_server_if_requested,
+)
 
 
 class _DeadWebThread:
@@ -206,6 +211,32 @@ def test_start_web_server_prints_port_conflict_for_web_only_mode():
     mock_start_web_server.assert_not_called()
     logger.warning.assert_called_once()
     console.print.assert_called_once()
+
+
+def test_is_tcp_port_available_uses_resolved_address_family():
+    sockaddr = ("::1", 48222, 0, 0)
+    with (
+        patch(
+            "gengowatcher.runtime.socket.getaddrinfo",
+            return_value=[
+                (
+                    socket.AF_INET6,
+                    socket.SOCK_STREAM,
+                    0,
+                    "",
+                    sockaddr,
+                )
+            ],
+        ),
+        patch("gengowatcher.runtime.socket.socket") as mock_socket,
+    ):
+        available = _is_tcp_port_available("::1", 48222)
+
+    assert available is True
+    mock_socket.assert_called_once_with(socket.AF_INET6, socket.SOCK_STREAM, 0)
+    mock_socket.return_value.__enter__.return_value.bind.assert_called_once_with(
+        sockaddr
+    )
 
 
 def test_run_tui_passes_buffered_ui_log_handler_to_app():

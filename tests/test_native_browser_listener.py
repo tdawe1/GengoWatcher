@@ -218,6 +218,54 @@ def test_run_once_ignores_workbench_tab_without_console_actor(caplog):
     assert "Poll iteration failed" not in caplog.text
 
 
+def test_run_once_ignores_workbench_tab_that_disappears_during_resolve(caplog):
+    loop_ids: list[int] = []
+    evaluate_json = AsyncMock()
+
+    async def open_client(debug_url):
+        loop_ids.append(id(asyncio.get_running_loop()))
+        return _FakeRdpClient(loop_ids)
+
+    async def list_tabs(client):
+        loop_ids.append(id(asyncio.get_running_loop()))
+        return {
+            "tabs": [
+                {
+                    "actor": "tab-descriptor-1",
+                    "url": "https://gengo.com/t/workbench/123#!/",
+                    "title": "Workbench",
+                }
+            ]
+        }
+
+    listener = NativeBrowserListener(debug_url="ws://127.0.0.1:6000")
+
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch(
+            "gengowatcher.native_browser_listener._open_firefox_rdp_client",
+            side_effect=open_client,
+        ),
+        patch(
+            "gengowatcher.native_browser_listener._firefox_rdp_list_tabs",
+            side_effect=list_tabs,
+        ),
+        patch(
+            "gengowatcher.native_browser_listener._firefox_rdp_resolve_tab",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "gengowatcher.native_browser_listener._firefox_rdp_evaluate_json",
+            evaluate_json,
+        ),
+    ):
+        listener.run_once()
+
+    evaluate_json.assert_not_awaited()
+    assert listener._last_collection_id is None
+    assert "Poll iteration failed" not in caplog.text
+
+
 def test_run_once_normalizes_inner_workbench_payload():
     loop_ids: list[int] = []
     events = []
