@@ -121,3 +121,6 @@ scripts/run_codex_exec_cycle.sh
 COMMIT_LOG.md
 UI_FIXES_SUMMARY.md
 scripts/index_gengo_scrape.py
+
+AGENTS.md
+.gitignore
