@@ -16,7 +16,7 @@ class AppState:
     def __init__(
         self,
         logger: logging.Logger,
-        state_file_path: Union[str, pathlib.Path, None] = None,
+        state_file_path: str | pathlib.Path | None = None,
     ):
         self.logger = logger
         self._lock = threading.RLock()  # Reentrant lock for better safety

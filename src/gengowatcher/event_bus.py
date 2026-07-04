@@ -26,6 +26,7 @@ MAX_QUEUE_SIZE = 1000
 # Consumer registry
 _CONSUMERS: dict[str, queue.Queue] = {}
 _CONSUMER_LOCK = threading.Lock()
+_coalesce_last_seen: dict[str, dict[str, Any]] = {}
 
 
 def publish_event(event: EventEnvelope, coalesce: bool = False) -> None:

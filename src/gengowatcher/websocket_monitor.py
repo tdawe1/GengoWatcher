@@ -95,7 +95,7 @@ class GengoWebSocketMonitor:
         self._shutdown_event = threading.Event()
         self._raw_ws_messages: list[dict] = []
         self._capture_max = 100
-        self._next_quiet_socket_sync_ts: Optional[float] = None
+        self._next_quiet_socket_sync_ts: float = 0.0
         self._websocket_session_refresh_requested = False
         self._websocket_sync_failed = False
         self._websocket_sync_failure_reason = ""
@@ -285,7 +285,8 @@ class GengoWebSocketMonitor:
                         now = time.time()
                         if now >= self._next_quiet_socket_sync_ts:
                             sync_ok = await asyncio.to_thread(self._sync_session_from_browser)
-                            if not sync_ok and self.session_sync_fail_hard:
+                            self._next_quiet_socket_sync_ts = now + self.defaults.session_sync_interval_sec
+                            if not sync_ok and self.defaults.session_sync_fail_hard:
                                 self._websocket_sync_failed = True
                                 break
 

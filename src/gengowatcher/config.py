@@ -151,7 +151,7 @@ class AppConfig:
             "require_signature": True,
             "signature_tolerance_sec": 300.0,
             "max_seen_event_ids": 1000,
-            "debug_enabled": True,
+            "debug_enabled": False,
             "debug_payload_preview_bytes": 4096,
             "audit_enabled": True,
             "audit_log_path": "logs/webhooks.jsonl",
