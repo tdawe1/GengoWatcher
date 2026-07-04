@@ -101,15 +101,16 @@ def test_verify_webhook_signature_accepts_timestamped_body():
 def test_verify_webhook_signature_rejects_missing_timestamp():
     """Replay attack: signed body but no timestamp header should be rejected."""
     raw_body = b'{"id":"123"}'
-    timestamp = str(int(time.time()))
     signature = build_webhook_signature(
         "secret",
         raw_body,
-        timestamp=timestamp,
+        timestamp=None,
     )
 
-    # No X-GengoWatcher-Timestamp header - should reject even with valid signature
+    # No X-GengoWatcher-Timestamp header - should reject even when the
+    # signature was generated over the raw body without a timestamp.
     from gengowatcher.webhooks import WebhookSignatureError
+
     with pytest.raises(WebhookSignatureError):
         verify_webhook_signature(
             raw_body=raw_body,

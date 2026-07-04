@@ -36,6 +36,7 @@ class TuiStore:
         self._recent_jobs: list[dict] = []
         self._active_jobs: dict[str, dict] = {}  # job_id -> job
         self._countdowns: dict[str, int] = {}  # job_id -> seconds_left
+        self._countdown_updated_at: dict[str, float] = {}
         self._workflow_state: dict[str, Any] = {}
         self._file_state: dict[str, Any] = {}
         self._browser_health: dict[str, Any] = {"last_seen": None, "status": "unknown"}
@@ -58,7 +59,9 @@ class TuiStore:
             self._active_jobs[job_id] = payload
             # Prune stale active jobs (keep max 50)
             if len(self._active_jobs) > 50:
-                oldest = sorted(self._active_jobs.items(), key=lambda x: x[1].get("timestamp", 0))
+                oldest = sorted(
+                    self._active_jobs.items(), key=lambda x: x[1].get("timestamp", 0)
+                )
                 self._active_jobs = dict(oldest[-50:])
         elif event_type == "browser.workbench.visible":
             # Update browser health
@@ -70,12 +73,11 @@ class TuiStore:
                     "status": "visible",
                 }
         elif event_type == "browser.workbench.status":
-            coll_id = payload.get("collection_id")
+            coll_id = str(payload.get("collection_id") or "")
             if coll_id and "seconds_left" in payload:
                 self._countdowns[coll_id] = payload["seconds_left"]
-                # Prune stale countdowns (keep max 50)
-                if len(self._countdowns) > 50:
-                    self._countdowns = dict(sorted(self._countdowns.items())[-50:])
+                self._countdown_updated_at[coll_id] = time.time()
+                self._prune_countdowns()
         elif event_type == "job.file_pending" or event_type == "job.file_ready":
             coll_id = str(payload.get("collection_id") or payload.get("job_id") or "")
             if coll_id:
@@ -91,14 +93,38 @@ class TuiStore:
         # Remove existing entry with same id (dedup)
         if job_id is not None:
             self._recent_jobs = [j for j in self._recent_jobs if j.get("id") != job_id]
-        self._recent_jobs.insert(0, {
-            "id": job_id,
-            "title": job.get("title", ""),
-            "reward": job.get("reward", 0),
-            "source": job.get("source", ""),
-            "timestamp": job.get("timestamp", time.time()),
-        })
+        self._recent_jobs.insert(
+            0,
+            {
+                "id": job_id,
+                "title": job.get("title", ""),
+                "reward": job.get("reward", 0),
+                "source": job.get("source", ""),
+                "timestamp": job.get("timestamp", time.time()),
+            },
+        )
         self._recent_jobs = self._recent_jobs[:50]  # Keep only 50
+
+    def _prune_countdowns(self, limit: int = 50) -> None:
+        if len(self._countdowns) <= limit:
+            return
+        newest_ids = {
+            coll_id
+            for coll_id, _updated_at in sorted(
+                self._countdown_updated_at.items(),
+                key=lambda item: item[1],
+            )[-limit:]
+        }
+        self._countdowns = {
+            coll_id: seconds
+            for coll_id, seconds in self._countdowns.items()
+            if coll_id in newest_ids
+        }
+        self._countdown_updated_at = {
+            coll_id: updated_at
+            for coll_id, updated_at in self._countdown_updated_at.items()
+            if coll_id in newest_ids
+        }
 
     def get_recent_jobs(self, limit: int = 50) -> list[dict]:
         return self._recent_jobs[:limit]

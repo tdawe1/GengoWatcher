@@ -50,6 +50,12 @@ class _FakeWebSocket:
         return future
 
 
+class _SlowClosingWebSocket(_FakeWebSocket):
+    async def __anext__(self):
+        await asyncio.sleep(0.05)
+        raise StopAsyncIteration
+
+
 @pytest.mark.asyncio
 async def test_websocket_monitor_receives_messages_and_dispatches_job():
     job_events = []
@@ -95,3 +101,58 @@ async def test_websocket_monitor_receives_messages_and_dispatches_job():
     assert job_events == [{"id": "123", "lc_src": "ja", "lc_tgt": "en", "rewards": 8.5}]
     assert all_events[0]["type"] == "available_collection"
     assert monitor.metrics.last_message_ts is not None
+
+
+@pytest.mark.asyncio
+async def test_websocket_monitor_noop_session_sync_is_not_failure():
+    websocket = _SlowClosingWebSocket([])
+    monitor = GengoWebSocketMonitor(
+        _FakeConfig(
+            {
+                ("WebSocket", "wss_url"): "ws://example.test/socket",
+                ("WebSocket", "user_id"): "user-1",
+                ("WebSocket", "user_session"): "session-token",
+            }
+        ),
+        MagicMock(),
+        logging.getLogger("test.websocket_monitor"),
+    )
+    monitor.HEARTBEAT_INTERVAL = 0
+    monitor._connect = lambda *_args, **_kwargs: websocket
+
+    await monitor._websocket_session()
+
+    assert monitor._websocket_sync_failed is False
+
+
+@pytest.mark.asyncio
+async def test_websocket_monitor_failed_session_sync_sets_hard_failure(monkeypatch):
+    websocket = _SlowClosingWebSocket([])
+    monitor = GengoWebSocketMonitor(
+        _FakeConfig(
+            {
+                ("WebSocket", "wss_url"): "ws://example.test/socket",
+                ("WebSocket", "user_id"): "user-1",
+                ("WebSocket", "user_session"): "session-token",
+                ("WebSocket", "browser_debug_url"): "ws://127.0.0.1:6000",
+                ("WebSocket", "session_sync_fail_hard"): True,
+            }
+        ),
+        MagicMock(),
+        logging.getLogger("test.websocket_monitor"),
+    )
+    monitor.HEARTBEAT_INTERVAL = 0
+    monitor._connect = lambda *_args, **_kwargs: websocket
+
+    def fail_snapshot(_debug_url):
+        raise RuntimeError("browser unavailable")
+
+    monkeypatch.setattr(
+        "gengowatcher.websocket_monitor.fetch_browser_session_snapshot_sync",
+        fail_snapshot,
+    )
+
+    await monitor._websocket_session()
+
+    assert monitor._websocket_sync_failed is True
+    assert monitor._websocket_sync_failure_reason == "browser unavailable"

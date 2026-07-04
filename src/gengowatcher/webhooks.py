@@ -314,14 +314,15 @@ def verify_webhook_signature(
         or normalized.get("x-webhook-timestamp")
         or ""
     ).strip()
-    if timestamp:
-        try:
-            timestamp_value = float(timestamp)
-        except ValueError as exc:
-            raise WebhookSignatureError("Invalid webhook timestamp") from exc
-        current_time = time.time() if now is None else now
-        if tolerance_sec > 0 and abs(current_time - timestamp_value) > tolerance_sec:
-            raise WebhookSignatureError("Webhook timestamp is outside tolerance")
+    if not timestamp:
+        raise WebhookSignatureError("Missing webhook timestamp header")
+    try:
+        timestamp_value = float(timestamp)
+    except ValueError as exc:
+        raise WebhookSignatureError("Invalid webhook timestamp") from exc
+    current_time = time.time() if now is None else now
+    if tolerance_sec > 0 and abs(current_time - timestamp_value) > tolerance_sec:
+        raise WebhookSignatureError("Webhook timestamp is outside tolerance")
 
     expected = build_webhook_signature(secret, raw_body, timestamp=timestamp or None)
     if signature.startswith("sha256="):

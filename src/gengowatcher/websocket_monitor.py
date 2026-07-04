@@ -107,8 +107,12 @@ class GengoWebSocketMonitor:
             and session_token not in {None, "", "REPLACE_WITH_YOUR_SESSION_TOKEN"}
         )
 
-    def _sync_session_from_browser(self) -> bool:
-        """Sync session token from live browser, return True if changed."""
+    def _sync_session_from_browser(self) -> bool | None:
+        """Sync session token from live browser.
+
+        Returns True when the configured token changed, False when it was
+        unchanged/skipped, and None when the sync attempt failed.
+        """
         debug_url = self.config.get("WebSocket", "browser_debug_url")
         if not debug_url:
             return False
@@ -123,9 +127,34 @@ class GengoWebSocketMonitor:
                 )
                 self.config.set("WebSocket", "user_session", browser_token)
                 return True
+            return False
         except Exception as exc:
-            self.logger.warning(f"Browser session sync skipped: {exc}")
-        return False
+            self._websocket_sync_failure_reason = str(exc)
+            self.metrics.sync_failed = True
+            self.metrics.sync_failure_reason = str(exc)
+            self.logger.warning(f"Browser session sync failed: {exc}")
+            return None
+
+    def _config_bool(self, section: str, key: str, fallback: bool) -> bool:
+        getter = getattr(self.config, "getboolean", None)
+        if callable(getter):
+            try:
+                return bool(getter(section, key, fallback=fallback))
+            except Exception:
+                pass
+        try:
+            value = self.config.get(section, key, fallback)
+        except Exception:
+            return fallback
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "enabled"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "disabled", ""}:
+                return False
+        return bool(value)
 
     def _build_headers(self) -> dict[str, str]:
         session_token = self.config.get("WebSocket", "user_session", "")
@@ -284,10 +313,24 @@ class GengoWebSocketMonitor:
                         # Throttle session sync
                         now = time.time()
                         if now >= self._next_quiet_socket_sync_ts:
-                            sync_ok = await asyncio.to_thread(self._sync_session_from_browser)
-                            self._next_quiet_socket_sync_ts = now + self.defaults.session_sync_interval_sec
-                            if not sync_ok and self.defaults.session_sync_fail_hard:
+                            sync_result = await asyncio.to_thread(
+                                self._sync_session_from_browser
+                            )
+                            interval = self._config_int(
+                                "WebSocket",
+                                "session_sync_interval_sec",
+                                self.defaults.session_sync_interval_sec,
+                            )
+                            self._next_quiet_socket_sync_ts = now + max(1, interval)
+                            if sync_result is None and self._config_bool(
+                                "WebSocket",
+                                "session_sync_fail_hard",
+                                self.defaults.session_sync_fail_hard,
+                            ):
                                 self._websocket_sync_failed = True
+                                break
+                            if sync_result is True:
+                                self._websocket_session_refresh_requested = True
                                 break
 
                 receive_task = asyncio.create_task(receive_loop())
@@ -322,9 +365,13 @@ class GengoWebSocketMonitor:
         backoff = self.BASE_BACKOFF
         while not self._shutdown_event.is_set():
             try:
+                self._websocket_session_refresh_requested = False
                 asyncio.run(self._websocket_session())
                 if self._websocket_sync_failed:
                     break
+                if self._websocket_session_refresh_requested:
+                    backoff = self.BASE_BACKOFF
+                    continue
                 backoff = min(
                     self.MAX_BACKOFF,
                     backoff + random.uniform(0, self.RECONNECT_JITTER_MAX),

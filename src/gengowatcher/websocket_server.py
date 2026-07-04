@@ -7,6 +7,7 @@ Architecture:
 - TUI process: Connects via HTTP polling or Redis pub/sub
 - Separation ensures UI never blocks on WebSocket I/O
 """
+
 import asyncio
 import json
 import logging
@@ -29,8 +30,7 @@ from .browser_session import (
 from .config import AppConfig
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class GengoRealtimeGateway:
     def _build_headers(self) -> dict:
         debug_url = self.config.get("WebSocket", "browser_debug_url")
         session_token = ""
-        
+
         if debug_url:
             try:
                 token = fetch_browser_session_token_sync(str(debug_url))
@@ -62,16 +62,20 @@ class GengoRealtimeGateway:
                     logger.info("Fetched live session from browser")
             except Exception as e:
                 logger.warning(f"Browser extract failed: {e}")
-        
+
         if not session_token:
             session_token = str(self.config.get("WebSocket", "user_session") or "")
             if session_token:
                 logger.info("Using configured session token")
 
-        user_agent = self.config.get("Network", "browser_user_agent") or \
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
-        accept_language = self.config.get("Network", "browser_accept_language") or \
-            "en-GB,en-US;q=0.9,en;q=0.8"
+        user_agent = (
+            self.config.get("Network", "browser_user_agent")
+            or "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+        )
+        accept_language = (
+            self.config.get("Network", "browser_accept_language")
+            or "en-GB,en-US;q=0.9,en;q=0.8"
+        )
 
         return build_browser_aligned_websocket_headers(
             session_token=session_token,
@@ -92,14 +96,16 @@ class GengoRealtimeGateway:
         # Write to file for TUI polling (with size cap)
         try:
             event_file = self._get_event_file()
-            with event_file.open("a") as f:
+            with event_file.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(event) + "\n")
             # Cap file size: keep last N lines if file is too large
             if event_file.stat().st_size > 1_000_000:  # 1MB cap
-                with event_file.open("r") as f:
+                with event_file.open("r", encoding="utf-8") as f:
                     lines = f.readlines()
-                with event_file.open("w") as f:
-                    f.writelines(lines[-self._MAX_EVENT_LOG_LINES:])
+                temp_file = event_file.with_name(f".{event_file.name}.tmp")
+                with temp_file.open("w", encoding="utf-8") as f:
+                    f.writelines(lines[-self._MAX_EVENT_LOG_LINES :])
+                temp_file.replace(event_file)
         except Exception as e:
             logger.warning(f"File emit failed: {e}")
 
@@ -107,14 +113,13 @@ class GengoRealtimeGateway:
         self.running = True
         logger.info("Gengo Realtime Gateway started")
 
-        if not self._build_headers().get("Cookie"):
-            logger.warning("No session token - authentication will fail")
-
         backoff = 5.0
         while not self._shutdown_event.is_set():
             try:
                 # Build fresh headers each iteration for fresh session token
-                headers = self._build_headers()
+                headers = await asyncio.to_thread(self._build_headers)
+                if not headers.get("Cookie"):
+                    logger.warning("No session token - authentication will fail")
                 ws_url = self.config.get("WebSocket", "wss_url") or GENGO_REALTIME_URL
                 async with websockets.connect(
                     ws_url,
@@ -142,7 +147,7 @@ class GengoRealtimeGateway:
                             data = json.loads(msg)
                             if data.get("type") == "available_collection":
                                 for job in data.get("data", []):
-                                    self._emit("job", job)
+                                    await asyncio.to_thread(self._emit, "job", job)
                             self._last_event = data
                         except json.JSONDecodeError:
                             pass
@@ -159,9 +164,12 @@ class GengoRealtimeGateway:
 
 # FastAPI for TUI to poll
 api = FastAPI()
-api.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
+api.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"]
+)
 
 _gateway: Optional[GengoRealtimeGateway] = None
+
 
 @api.get("/events/latest")
 async def latest():
@@ -169,6 +177,7 @@ async def latest():
     if _gateway is None or _gateway._last_event is None:
         raise HTTPException(503, "Gateway not connected")
     return _gateway._last_event
+
 
 @api.get("/health")
 async def health():
@@ -179,7 +188,7 @@ async def run_gateway(config_path: Optional[str] = None):
     global _gateway
 
     config = AppConfig() if config_path is None else AppConfig(str(config_path))
-    
+
     _gateway = GengoRealtimeGateway(config)
 
     loop = asyncio.get_running_loop()
@@ -188,14 +197,16 @@ async def run_gateway(config_path: Optional[str] = None):
 
     # Start both WebSocket client AND HTTP API server concurrently
     import uvicorn
-    
-    server = uvicorn.Server(uvicorn.Config(
-        api,
-        host="127.0.0.1",
-        port=8000,
-        log_level="info",
-    ))
-    
+
+    server = uvicorn.Server(
+        uvicorn.Config(
+            api,
+            host="127.0.0.1",
+            port=8000,
+            log_level="info",
+        )
+    )
+
     # Run both tasks
     await asyncio.gather(
         _gateway.run(),
