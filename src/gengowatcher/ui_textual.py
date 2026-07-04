@@ -4,6 +4,7 @@ Textual-based TUI for GengoWatcher.
 Strict implementation of the v2.0 Design Doc.
 """
 
+import asyncio
 import datetime
 import logging
 import re
@@ -236,6 +237,7 @@ def _connectable_host_for_bind(host: str) -> str:
 
 
 def _api_socket_open(host: str, port: int, timeout: float = 0.05) -> bool:
+    """Blocking socket probe - call via asyncio.to_thread from event loop."""
     try:
         with socket.create_connection(
             (_connectable_host_for_bind(host), port),
@@ -244,6 +246,11 @@ def _api_socket_open(host: str, port: int, timeout: float = 0.05) -> bool:
             return True
     except OSError:
         return False
+
+
+async def _api_socket_open_async(host: str, port: int) -> bool:
+    """Non-blocking wrapper for the socket probe."""
+    return await asyncio.to_thread(_api_socket_open, host, port)
 
 
 def _api_health_entry(widget: object, watcher: object) -> dict[str, object]:
@@ -723,6 +730,7 @@ class StatusRow(Horizontal):
             "ingress ready": "in",
             "no outgoing targets": "in",
             "off": "off",
+            "not reachable": "down",
         }
         compact = compact_details.get(detail, detail[:8])
         return mapping.get(state, "idle"), compact
@@ -2562,17 +2570,18 @@ class GengoWatcherApp(App):
     def _run_config_command(self, command: str, args: list[str]) -> None:
         action = command
         if command == "config":
-            action = args[0].lower() if args else "help"
+            raw_action = args[0] if args else "help"
+            action = raw_action.lower()  # normalize only for action check
             args = args[1:] if args else []
             if action not in {"help", "list", "get", "set"}:
                 if len(args) == 0:
-                    args = [action]
+                    args = [raw_action]  # preserve original casing
                     action = "list"
                 elif len(args) == 1:
-                    args = [action, *args]
+                    args = [raw_action, *args]  # preserve original casing
                     action = "get"
                 else:
-                    args = [action, *args]
+                    args = [raw_action, *args]  # preserve original casing
                     action = "set"
 
         if action in {"help", "?"}:
@@ -2732,6 +2741,7 @@ class GengoWatcherApp(App):
         return stopped
 
     def _run_api_command(self, args: list[str]) -> None:
+        """Run API command - uses threading for blocking operations."""
         action = args[0].lower() if args else "status"
         host, port = self._refresh_api_bind_from_config()
         if action in {"help", "?"}:

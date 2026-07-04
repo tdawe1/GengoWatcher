@@ -56,6 +56,10 @@ class TuiStore:
         elif event_type == "job.accepted":
             job_id = str(payload.get("id") or payload.get("order_id", ""))
             self._active_jobs[job_id] = payload
+            # Prune stale active jobs (keep max 50)
+            if len(self._active_jobs) > 50:
+                oldest = sorted(self._active_jobs.items(), key=lambda x: x[1].get("timestamp", 0))
+                self._active_jobs = dict(oldest[-50:])
         elif event_type == "browser.workbench.visible":
             # Update browser health
             coll_id = payload.get("collection_id")
@@ -69,11 +73,26 @@ class TuiStore:
             coll_id = payload.get("collection_id")
             if coll_id and "seconds_left" in payload:
                 self._countdowns[coll_id] = payload["seconds_left"]
+                # Prune stale countdowns (keep max 50)
+                if len(self._countdowns) > 50:
+                    self._countdowns = dict(sorted(self._countdowns.items())[-50:])
+        elif event_type == "job.file_pending" or event_type == "job.file_ready":
+            coll_id = str(payload.get("collection_id") or payload.get("job_id") or "")
+            if coll_id:
+                self._file_state[coll_id] = payload
+        elif event_type == "job.status":
+            coll_id = str(payload.get("collection_id") or "")
+            if coll_id:
+                self._workflow_state[coll_id] = payload
 
     def _add_recent_job(self, job: dict) -> None:
-        """Add job to recent list - maintains 50 most recent."""
+        """Add job to recent list - maintains 50 most recent, deduplicated by id."""
+        job_id = job.get("id")
+        # Remove existing entry with same id (dedup)
+        if job_id is not None:
+            self._recent_jobs = [j for j in self._recent_jobs if j.get("id") != job_id]
         self._recent_jobs.insert(0, {
-            "id": job.get("id"),
+            "id": job_id,
             "title": job.get("title", ""),
             "reward": job.get("reward", 0),
             "source": job.get("source", ""),
@@ -124,6 +143,6 @@ class TuiStore:
             except Empty:
                 break
             except Exception as e:
-                logger.debug(f"TUI store drain error: {e}")
+                logger.warning(f"TUI store drain error: {e}")
 
         return count

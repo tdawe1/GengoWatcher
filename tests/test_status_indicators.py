@@ -74,7 +74,7 @@ async def test_status_indicator_updates_detail_when_state_is_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_status_row_renders_seven_indicators():
+async def test_status_row_renders_eight_indicators():
     """StatusRow should contain 8 status indicators."""
     watcher = MagicMock()
     watcher.websocket_connected = False

@@ -1,7 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-SOURCE_PATH=$0
+SOURCE_PATH=$(command -v -- "$0" 2>/dev/null || echo -- "$0")
+# If command -v returned a PATH-resolved path, use it; otherwise fall back to $0
+case "$SOURCE_PATH" in
+    --*) SOURCE_PATH=$0 ;;
+esac
 while [ -L "$SOURCE_PATH" ]; do
     LINK_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE_PATH")" && pwd)
     LINK_TARGET=$(readlink "$SOURCE_PATH")

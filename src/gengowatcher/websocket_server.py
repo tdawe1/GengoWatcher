@@ -80,6 +80,8 @@ class GengoRealtimeGateway:
             accept_language=accept_language,
         )
 
+    _MAX_EVENT_LOG_LINES = 5000
+
     def _emit(self, event_type: str, data: dict) -> None:
         event = {
             "type": event_type,
@@ -87,10 +89,17 @@ class GengoRealtimeGateway:
             "timestamp": time.time(),
         }
         self._last_event = event
-        # Write to file for TUI polling
+        # Write to file for TUI polling (with size cap)
         try:
-            with self._get_event_file().open("a") as f:
+            event_file = self._get_event_file()
+            with event_file.open("a") as f:
                 f.write(json.dumps(event) + "\n")
+            # Cap file size: keep last N lines if file is too large
+            if event_file.stat().st_size > 1_000_000:  # 1MB cap
+                with event_file.open("r") as f:
+                    lines = f.readlines()
+                with event_file.open("w") as f:
+                    f.writelines(lines[-self._MAX_EVENT_LOG_LINES:])
         except Exception as e:
             logger.warning(f"File emit failed: {e}")
 
@@ -98,13 +107,14 @@ class GengoRealtimeGateway:
         self.running = True
         logger.info("Gengo Realtime Gateway started")
 
-        headers = self._build_headers()
-        if not headers.get("Cookie"):
+        if not self._build_headers().get("Cookie"):
             logger.warning("No session token - authentication will fail")
 
         backoff = 5.0
         while not self._shutdown_event.is_set():
             try:
+                # Build fresh headers each iteration for fresh session token
+                headers = self._build_headers()
                 ws_url = self.config.get("WebSocket", "wss_url") or GENGO_REALTIME_URL
                 async with websockets.connect(
                     ws_url,

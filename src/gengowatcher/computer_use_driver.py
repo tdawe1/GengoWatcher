@@ -37,8 +37,10 @@ class ComputerUseDriver:
         logger.info("Computer-use driver started")
 
     def stop(self) -> None:
-        """Stop consuming."""
+        """Stop consuming and wait for the consumer thread to exit."""
         self.running = False
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
 
     def _consume_loop(self) -> None:
         """Main consumer loop."""
@@ -49,7 +51,7 @@ class ComputerUseDriver:
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"Command consumer error: {e}")
+                logger.error(f"Command consumer error: {e}", exc_info=True)
 
     def _process_command(self, event_data: dict) -> None:
         """Process a browser action command."""

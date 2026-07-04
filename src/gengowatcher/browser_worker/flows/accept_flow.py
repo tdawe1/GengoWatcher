@@ -173,7 +173,7 @@ WORKBENCH_PAYLOAD_EXTRACTOR = r"""
 """
 
 
-def normalize_workbench_payload(value: Any) -> dict[str, Any] | None:
+def normalize_workbench_envelope(value: Any) -> dict[str, Any] | None:
     """Return a stable workbench payload envelope from page-extracted data."""
     if not isinstance(value, dict):
         return None
@@ -199,7 +199,7 @@ def normalize_workbench_payload(value: Any) -> dict[str, Any] | None:
 async def extract_workbench_payload(page) -> dict[str, Any] | None:
     """Extract accepted-job workbench data from JavaScript visible on the page."""
     value = await page.evaluate(WORKBENCH_PAYLOAD_EXTRACTOR)
-    return normalize_workbench_payload(value)
+    return normalize_workbench_envelope(value)
 
 
 def dumps_workbench_payload(envelope: dict[str, Any]) -> str:

@@ -281,7 +281,13 @@ class GengoWebSocketMonitor:
                         await asyncio.wait_for(pong_waiter, timeout=5)
                         self.metrics.last_pong_ts = time.time()
                         self.metrics.ping_latency_ms = (time.perf_counter() - t0) * 1000
-                        await asyncio.to_thread(self._sync_session_from_browser)
+                        # Throttle session sync
+                        now = time.time()
+                        if now >= self._next_quiet_socket_sync_ts:
+                            sync_ok = await asyncio.to_thread(self._sync_session_from_browser)
+                            if not sync_ok and self.session_sync_fail_hard:
+                                self._websocket_sync_failed = True
+                                break
 
                 receive_task = asyncio.create_task(receive_loop())
                 heartbeat_task = asyncio.create_task(heartbeat_loop())

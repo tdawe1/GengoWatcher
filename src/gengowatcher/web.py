@@ -957,13 +957,16 @@ class WebAPI:
             deduped.append(url)
         return deduped
 
-    def _download_headers(self) -> dict[str, str]:
+    def _download_headers(self, *, url: str = "") -> dict[str, str]:
         headers: dict[str, str] = {}
         user_session = str(
             config_get(self.config, "WebSocket", "user_session", "") or ""
         ).strip()
         if user_session and not user_session.startswith("REPLACE_WITH"):
-            headers["Cookie"] = f"my_gengo_session={user_session}"
+            # Only attach session cookie to gengo.com hosts
+            host = urlparse(url).hostname or "" if url else ""
+            if host == "gengo.com" or host.endswith(".gengo.com"):
+                headers["Cookie"] = f"my_gengo_session={user_session}"
         user_agent = str(
             config_get(self.config, "Network", "browser_user_agent", "") or ""
         ).strip()
@@ -992,7 +995,7 @@ class WebAPI:
             )
             response = requests.get(
                 url,
-                headers=self._download_headers(),
+                headers=self._download_headers(url=url),
                 timeout=timeout_sec,
             )
             response.raise_for_status()
@@ -1510,7 +1513,7 @@ async def _receive_job_discovered_api_event(request: Request):
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     except Exception as e:
         api_instance.logger.exception(f"Error processing job discovery event: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @app.post("/api/jobs/discovered")
@@ -1534,7 +1537,7 @@ async def _get_api_event_audit(limit: int) -> dict[str, Any]:
         }
     except Exception as e:
         api_instance.logger.exception(f"Error reading API event audit log: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @app.get("/api/events/audit")
@@ -1879,9 +1882,9 @@ def run_web_server(
     host: str = "127.0.0.1",
     port: int = 8000,
     *,
-    config: Optional[AppConfig] = None,
-    state: Optional[AppState] = None,
-    logger: Optional[logging.Logger] = None,
+    config: AppConfig | None = None,
+    state: AppState | None = None,
+    logger: logging.Logger | None = None,
     watcher: Optional[GengoWatcher] = None,
     start_watcher_thread: bool = True,
 ):
@@ -1931,10 +1934,10 @@ class ManagedWebServer:
         *,
         host: str = "127.0.0.1",
         port: int = 8000,
-        config: Optional[AppConfig] = None,
-        state: Optional[AppState] = None,
-        logger: Optional[logging.Logger] = None,
-        watcher: Optional[GengoWatcher] = None,
+        config: AppConfig | None = None,
+        state: AppState | None = None,
+        logger: logging.Logger | None = None,
+        watcher: GengoWatcher | None = None,
         start_watcher_thread: bool = True,
     ):
         if (config is None) != (state is None):

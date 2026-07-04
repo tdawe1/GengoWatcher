@@ -42,28 +42,21 @@ def publish_event(event: EventEnvelope, coalesce: bool = False) -> None:
 
     for name, q in consumers:
         if coalesce and event.type == "job.status" and event.collection_id:
-            # Check if recent event with same collection_id exists in THIS queue
+            # Use bus-owned state to check for recent duplicate
+            # instead of peeking at queue internals
             should_skip = False
-            try:
-                # Peek at queue tail for recent duplicate events
-                for i in range(min(10, q.qsize())):
-                    try:
-                        existing = q.queue[-(i + 1)]  # type: ignore
-                        if (existing.get("type") == event.type and
-                            existing.get("collection_id") == event.collection_id):
-                            # Skip this consumer, but continue to others
-                            should_skip = True
-                            break
-                    except (IndexError, AttributeError, KeyError):
-                        continue
-            except Exception:
-                should_skip = False
+            with _CONSUMER_LOCK:
+                last_seen = _coalesce_last_seen.get(name)
+                if last_seen and last_seen.get("type") == event.type and last_seen.get("collection_id") == event.collection_id:
+                    should_skip = True
 
             if should_skip:
                 continue
 
         try:
             q.put_nowait(event_dict)
+            with _CONSUMER_LOCK:
+                _coalesce_last_seen[name] = {"type": event.type, "collection_id": event.collection_id}
         except queue.Full:
             logger.warning(f"Event queue full for consumer '{name}' - dropping event")
 

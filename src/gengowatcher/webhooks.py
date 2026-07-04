@@ -70,7 +70,7 @@ class IncomingJobWebhookPayload(BaseModel):
     word_count: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("event_id", "event_type", "id", "job_id", "title", "url", "source")
+    @field_validator("event_id", "event_type", "id", "job_id")
     @classmethod
     def _strip_optional_strings(cls, value):
         if value is None:
@@ -79,6 +79,18 @@ class IncomingJobWebhookPayload(BaseModel):
             raise ValueError("Field must be a string")
         value = value.strip()
         return value or None
+
+    @field_validator("title", "url", "source")
+    @classmethod
+    def _strip_required_strings(cls, value):
+        if value is None:
+            raise ValueError("Required field cannot be None")
+        if not isinstance(value, str):
+            raise ValueError("Field must be a string")
+        value = value.strip()
+        if not value:
+            raise ValueError("Required field cannot be blank or whitespace-only")
+        return value
 
     @field_validator("reward")
     @classmethod

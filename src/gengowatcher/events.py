@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
+from dataclasses import fields as dataclass_fields
 import uuid
 
 
@@ -43,8 +44,8 @@ class EventEnvelope:
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     observed_at: float = field(default_factory=time.time)
     payload: dict[str, Any] = field(default_factory=dict)
-    collection_id: Optional[str] = None
-    order_id: Optional[str] = None
+    collection_id: str | None = None
+    order_id: str | None = None
     job_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,4 +53,5 @@ class EventEnvelope:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EventEnvelope:
-        return cls(**data)
+        field_names = {f.name for f in dataclass_fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in field_names})

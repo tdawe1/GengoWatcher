@@ -1206,19 +1206,16 @@ class GengoWatcher:
                         source,
                         metadata=job_data,
                     )
-                    self._emit_webhook_event(
-                        "job.accept_requested",
-                        {
-                            **job_data,
-                            "accept_path": "browser_worker",
-                        },
-                    )
                     accept_requested_payload = {
                         **job_data,
                         "accept_path": "browser_worker",
                         "acceptance_state": "requested",
                         "lifecycle_state": "accept_requested",
                     }
+                    self._emit_webhook_event(
+                        "job.accept_requested",
+                        accept_requested_payload,
+                    )
                     self.state.update_job(
                         str(job_id),
                         {
@@ -1294,19 +1291,16 @@ class GengoWatcher:
             self.logger.info(
                 f"Job {job_id} meets auto-accept criteria, queuing for acceptance"
             )
-            self._emit_webhook_event(
-                "job.accept_requested",
-                {
-                    **job_data,
-                    "accept_path": "standard",
-                },
-            )
             accept_requested_payload = {
                 **job_data,
                 "accept_path": "standard",
                 "acceptance_state": "requested",
                 "lifecycle_state": "accept_requested",
             }
+            self._emit_webhook_event(
+                "job.accept_requested",
+                accept_requested_payload,
+            )
             self.state.update_job(
                 str(job_id),
                 {
@@ -2689,7 +2683,12 @@ class GengoWatcher:
 
             except Exception as e:
                 self.logger.debug(f"Native browser listener error: {e}")
-            time.sleep(0.75)  # Capture interval
+            capture_interval = (
+                getattr(self, "_native_listener", None).capture_interval
+                if hasattr(self, "_native_listener") and hasattr(getattr(self, "_native_listener", None), "capture_interval")
+                else 0.75
+            )
+            time.sleep(capture_interval)
 
     def run_notify_test(self):
         self.logger.info("Sending a test notification...")

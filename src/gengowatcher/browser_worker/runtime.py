@@ -262,7 +262,7 @@ class BrowserRuntime:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # pragma: no cover - defensive runtime logging
-                self.logger.debug("browser page observer failed: %s", exc)
+                self.logger.warning("browser page observer failed: %s", exc)
             await asyncio.sleep(0.75)
 
     async def _observe_browser_pages_once(self) -> None:
@@ -295,6 +295,11 @@ class BrowserRuntime:
         if job_id in self._captured_workbench_ids:
             return
         self._captured_workbench_ids.add(job_id)
+        # Prune stale entries to prevent unbounded growth
+        if len(self._captured_workbench_ids) > 200:
+            self._captured_workbench_ids = set(list(self._captured_workbench_ids)[-100:])
+        if job_id in self._workbench_payload_attempts:
+            del self._workbench_payload_attempts[job_id]
         self._record_event(
             "accepted_workbench_payload",
             0.0,
@@ -325,6 +330,8 @@ class BrowserRuntime:
         except Exception as exc:
             if exc.__class__.__name__ != "TimeoutError":
                 raise
+            # Note: Would use PlaywrightTimeoutError directly, but keeping
+            # class name check for compatibility without playwright import dependency
             self._record_event(
                 "manual_accept_timeout",
                 0.0,

@@ -184,7 +184,7 @@ def _notify_countdown_alert(
             url=job.get("workbench_url") or job.get("url"),
         )
     except Exception:
-        logger.debug("Countdown alert notification failed", exc_info=True)
+        logger.warning("Countdown alert notification failed", exc_info=True)
 
 
 class StateProjector:
@@ -239,7 +239,7 @@ def workbench_visible(event: EventEnvelope, state: "AppState") -> None:
         "workbench_visible": True,
         "workbench_url": payload.get("url"),
     }
-    if current.get("acceptance_state") != "accepted":
+    if current.get("acceptance_state") not in ("accepted", "details_visible", "requested"):
         updates["acceptance_state"] = "visible"
     changed = state.upsert_browser_observation(collection_id, _clean_updates(updates))
     if not changed:
@@ -276,7 +276,7 @@ def workbench_details(event: EventEnvelope, state: "AppState") -> None:
 
     current = state.get_job(collection_id) or {}
     updates = _browser_details_updates(normalized)
-    if current.get("acceptance_state") != "accepted":
+    if current.get("acceptance_state") not in ("accepted", "details_visible", "requested"):
         updates["acceptance_state"] = "details_visible"
     changed = state.upsert_browser_observation(collection_id, updates)
     if not changed:
@@ -399,7 +399,8 @@ def workbench_status(
             collection_id,
             {
                 "acceptance_state": (
-                    "accepted" if current.get("accepted") else "visible"
+                    "accepted" if current.get("accepted") else
+                    current.get("acceptance_state") or "visible"
                 ),
                 "seconds_left": seconds_left,
                 "accepted_seconds_left": seconds_left,
@@ -452,13 +453,23 @@ def workbench_file(event: EventEnvelope, state: "AppState") -> None:
         return
 
     downloaded = payload.get("downloaded", False)
-    changed = state.update_job(
+    # Use upsert_browser_observation to create job if missing (create-on-miss flow)
+    changed = state.upsert_browser_observation(
         collection_id,
         {
             "file_pending": True,
             "file_ready": downloaded,
         },
     )
+    if not changed:
+        # Try update_job in case the job exists but nothing changed
+        changed = state.update_job(
+            collection_id,
+            {
+                "file_pending": True,
+                "file_ready": downloaded,
+            },
+        )
     if not changed:
         return
 

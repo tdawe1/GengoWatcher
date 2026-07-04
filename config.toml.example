@@ -14,7 +14,7 @@ use_custom_user_agent = false
 
 [WebSocket]
 enable_websocket = true
-use_gateway = true
+use_gateway = false
 gateway_url = "http://127.0.0.1:8000"
 wss_url = "wss://live-dashboard.gengo.com/"
 # Set via GENGO_USER_ID env var or here
@@ -112,7 +112,7 @@ incoming_secret = ""
 require_signature = true
 signature_tolerance_sec = 300.0
 max_seen_event_ids = 1000
-debug_enabled = true
+debug_enabled = false
 debug_payload_preview_bytes = 4096
 audit_enabled = true
 audit_log_path = "logs/webhooks.jsonl"

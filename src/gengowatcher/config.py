@@ -47,7 +47,7 @@ class AppConfig:
         },
         "WebSocket": {
             "enable_websocket": True,
-            "use_gateway": True,
+            "use_gateway": False,
             "gateway_url": "http://127.0.0.1:8000",
             "wss_url": "wss://live-dashboard.gengo.com/",
             "user_id": 0,
@@ -447,8 +447,8 @@ class AppConfig:
                 self._backfill_from_legacy_config()
                 # Validate auto-accept configuration after backfill
                 self._validate_auto_accept_config()
-                self._validate_native_browser_config()
                 self._backfill_from_legacy_config()
+                self._validate_native_browser_config()
 
             except (tomllib.TOMLDecodeError, ValueError) as e:
                 print(

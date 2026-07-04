@@ -93,7 +93,7 @@ _WORKBENCH_STATUS_EXPRESSION = """
     if (isNaN(secondsLeft)) secondsLeft = null;
   }
   const m = url.match(/\\/workbench\\/(\\d+)/);
-  return JSON.stringify({ url, collectionId: m ? m[1] : null, secondsLeft });
+  return JSON.stringify({ url, collection_id: m ? m[1] : null, seconds_left: secondsLeft });
 })()
 """
 
@@ -113,8 +113,8 @@ class _RdpConnection:
         if self.client is not None:
             try:
                 await self.client.websocket.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing RDP websocket: {e}")
 
     async def list_tabs(self) -> list[dict[str, Any]]:
         response = await _firefox_rdp_list_tabs(self.client)
@@ -176,6 +176,8 @@ class NativeBrowserListener:
         self.last_workbench_url: str = ""
         self.detected_collection_id: str | None = None
         self.workbench_detected_count = 0
+        self._last_visible_payload: dict[str, Any] | None = None
+        self._last_status_seconds: int | None = None
 
     def start(self) -> None:
         self.running = True
@@ -194,7 +196,7 @@ class NativeBrowserListener:
             self.last_error = ""
         except Exception as e:
             self.last_error = str(e)
-            logger.debug(f"Poll iteration failed: {e}")
+            logger.exception("Poll iteration failed")
             self._last_collection_id = None
             self.detected_collection_id = None
             self.last_workbench_url = ""
@@ -264,14 +266,16 @@ class NativeBrowserListener:
                 "raw": raw_envelope,
                 "seconds_left": status_info.get("seconds_left"),
             }
-            publish_native_event(
-                EventEnvelope(
-                    type=EventType.BROWSER_WORKBENCH_VISIBLE,
-                    source="native_browser_listener",
-                    payload=visible_payload,
-                    collection_id=collection_id,
+            if visible_payload != self._last_visible_payload:
+                self._last_visible_payload = visible_payload
+                publish_native_event(
+                    EventEnvelope(
+                        type=EventType.BROWSER_WORKBENCH_VISIBLE,
+                        source="native_browser_listener",
+                        payload=visible_payload,
+                        collection_id=collection_id,
+                    )
                 )
-            )
 
             # Normalize from page-object scan if available
             if isinstance(raw_envelope, dict):
@@ -296,14 +300,16 @@ class NativeBrowserListener:
                     )
 
             # Emit countdown status
-            if status_info.get("seconds_left") is not None:
+            current_seconds = status_info.get("seconds_left")
+            if current_seconds is not None and current_seconds != self._last_status_seconds:
+                self._last_status_seconds = current_seconds
                 publish_native_event(
                     EventEnvelope(
                         type=EventType.BROWSER_WORKBENCH_STATUS,
                         source="native_browser_listener",
                         payload={
                             "collection_id": collection_id,
-                            "seconds_left": status_info["seconds_left"],
+                            "seconds_left": current_seconds,
                         },
                         collection_id=collection_id,
                     )

@@ -3,7 +3,7 @@ import os
 import tempfile
 import threading
 import pathlib
-from typing import Union, List, Dict, Any
+from typing import Any, List
 import logging
 import collections
 import time
@@ -29,7 +29,7 @@ class AppState:
         self._sparkline_data = []
 
         # Job storage for web API
-        self._jobs: List[Dict[str, Any]] = []
+        self._jobs: List[dict[str, Any]] = []
         self._jobs_lock = threading.RLock()
 
         self._load_state()
@@ -173,7 +173,7 @@ class AppState:
         except IOError as e:
             self.logger.exception(f"Error saving state to {self.STATE_FILE}: {e}")
 
-    def get_recent_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_recent_jobs(self, limit: int = 50) -> List[dict[str, Any]]:
         """Get recent jobs from storage."""
         with self._jobs_lock:
             now = time.time()
@@ -182,7 +182,7 @@ class AppState:
                 for job in self._jobs[:limit]
             ]
 
-    def get_job(self, job_id: str) -> Dict[str, Any] | None:
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Return a copy of a stored job by id or accepted workbench ids."""
         with self._jobs_lock:
             now = time.time()
@@ -191,7 +191,7 @@ class AppState:
                     return self._with_dynamic_accepted_fields(job.copy(), now=now)
         return None
 
-    def update_job(self, job_id: str, updates: Dict[str, Any]) -> bool:
+    def update_job(self, job_id: str, updates: dict[str, Any]) -> bool:
         """Merge changed fields into a stored job by id.
 
         Returns True only when at least one stored value actually changed.
@@ -212,13 +212,13 @@ class AppState:
 
     @staticmethod
     def _changed_fields(
-        job: Dict[str, Any],
-        updates: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        job: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> dict[str, Any]:
         return {key: value for key, value in updates.items() if job.get(key) != value}
 
     @staticmethod
-    def _job_matches_id(job: Dict[str, Any], job_id: str) -> bool:
+    def _job_matches_id(job: dict[str, Any], job_id: str) -> bool:
         candidate = str(job_id)
         if str(job.get("id")) == candidate:
             return True
@@ -239,7 +239,7 @@ class AppState:
         self,
         job_id: str,
         *,
-        accepted_workbench: Dict[str, Any] | None = None,
+        accepted_workbench: dict[str, Any] | None = None,
         workbench_url: str | None = None,
     ) -> bool:
         """Mark a stored job accepted and attach optional workbench metadata."""
@@ -291,8 +291,8 @@ class AppState:
 
     @staticmethod
     def _extract_workbench_payload(
-        accepted_workbench: Dict[str, Any] | None,
-    ) -> Dict[str, Any]:
+        accepted_workbench: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         if not isinstance(accepted_workbench, dict):
             return {}
         payload = accepted_workbench.get("payload")
@@ -335,7 +335,7 @@ class AppState:
         return {}
 
     @staticmethod
-    def _workbench_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _workbench_summary(payload: dict[str, Any]) -> dict[str, Any]:
         summary = payload.get("summary")
         if isinstance(summary, dict):
             return summary
@@ -345,7 +345,7 @@ class AppState:
         return payload if isinstance(payload, dict) else {}
 
     @staticmethod
-    def _first_present(source: Dict[str, Any], *keys: str) -> Any:
+    def _first_present(source: dict[str, Any], *keys: str) -> Any:
         if not isinstance(source, dict):
             return None
         for key in keys:
@@ -374,8 +374,8 @@ class AppState:
 
     def _apply_workbench_summary(
         self,
-        job: Dict[str, Any],
-        summary: Dict[str, Any],
+        job: dict[str, Any],
+        summary: dict[str, Any],
         accepted_at: float,
     ) -> None:
         job["accepted_payload_captured_at"] = accepted_at
@@ -417,14 +417,14 @@ class AppState:
 
     def _apply_workbench_jobs(
         self,
-        job: Dict[str, Any],
-        payload: Dict[str, Any],
+        job: dict[str, Any],
+        payload: dict[str, Any],
     ) -> None:
         raw_jobs = payload.get("jobs")
         workbench_jobs = raw_jobs if isinstance(raw_jobs, list) else []
 
         accepted_job_ids: list[str] = []
-        segments: list[Dict[str, Any]] = []
+        segments: list[dict[str, Any]] = []
         source_parts: list[str] = []
         target_parts: list[str] = []
 
@@ -457,7 +457,7 @@ class AppState:
                     )
                     or ""
                 )
-                normalized_segment: Dict[str, Any] = {
+                normalized_segment: dict[str, Any] = {
                     "job_id": normalized_job_id,
                     "segment_id": str(segment.get("segment_id") or ""),
                     "source_content": source_content,
@@ -497,8 +497,8 @@ class AppState:
         job["accepted_target_char_count"] = len(target_text)
 
     def _with_dynamic_accepted_fields(
-        self, job: Dict[str, Any], *, now: float
-    ) -> Dict[str, Any]:
+        self, job: dict[str, Any], *, now: float
+    ) -> dict[str, Any]:
         seconds_left = self._calculate_accepted_seconds_left(job, now=now)
         if seconds_left is not None:
             job["accepted_seconds_left"] = seconds_left
@@ -507,7 +507,7 @@ class AppState:
         return job
 
     def _calculate_accepted_seconds_left(
-        self, job: Dict[str, Any], *, now: float
+        self, job: dict[str, Any], *, now: float
     ) -> int | None:
         raw_expire = job.get("accepted_expire_time_ms")
         if raw_expire is None:
@@ -536,7 +536,7 @@ class AppState:
             return f"{hours}h {minutes:02d}m"
         return f"{minutes}m {secs:02d}s"
 
-    def add_job(self, job_data: Dict[str, Any]) -> bool:
+    def add_job(self, job_data: dict[str, Any]) -> bool:
         """Add a new job to storage.
 
         Returns:
@@ -562,7 +562,7 @@ class AppState:
     def upsert_browser_observation(
         self,
         collection_id: str | None,
-        updates: Dict[str, Any],
+        updates: dict[str, Any],
     ) -> bool:
         """Insert or update a browser-observed job without marking it accepted.
 
@@ -710,13 +710,13 @@ class AppState:
     def _browser_acceptance_updates(
         self,
         *,
-        job: Dict[str, Any],
+        job: dict[str, Any],
         accepted_at: float,
         workbench_payload: dict[str, Any] | None,
         workbench_url: str | None,
         order_id: str | None,
         job_ids: list[str] | None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         updates: dict[str, Any] = {
             "accepted": True,
             "acceptance_state": "accepted",

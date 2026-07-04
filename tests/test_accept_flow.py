@@ -3,7 +3,7 @@ import pytest
 from gengowatcher.browser_worker.flows.accept_flow import (
     extract_workbench_payload,
     is_workbench_url,
-    normalize_workbench_payload,
+    normalize_workbench_envelope,
     parse_workbench_job_id,
 )
 
@@ -20,7 +20,7 @@ def test_parse_workbench_job_id_extracts_expected_identifier():
     )
 
 
-def test_normalize_workbench_payload_accepts_gengo_shape():
+def test_normalize_workbench_envelope_accepts_gengo_shape():
     payload = {
         "source": "window.__GENGO_WORKBENCH_DATA__",
         "payload": {
@@ -33,7 +33,7 @@ def test_normalize_workbench_payload_accepts_gengo_shape():
         },
     }
 
-    assert normalize_workbench_payload(payload) == payload
+    assert normalize_workbench_envelope(payload) == payload
 
 
 @pytest.mark.asyncio

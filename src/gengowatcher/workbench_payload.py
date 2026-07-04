@@ -44,7 +44,7 @@ def normalize_workbench_payload(raw: dict[str, Any] | None) -> dict[str, Any]:
 
     # URL extraction
     url = raw.get("url") or raw.get("workbench_url") or ""
-    match = re.search(r"/workbench/([^/?]+)", url) if url else None
+    match = re.search(r"/workbench/([^/?#]+)", url) if url else None
     if match:
         payload["collection_id"] = match.group(1)
 
@@ -78,7 +78,8 @@ def normalize_workbench_payload(raw: dict[str, Any] | None) -> dict[str, Any]:
 
     # Reward and units
     payload["reward"] = _first_present(summary, "reward", "rewards_total") or 0
-    payload["unit_count"] = _first_present(summary, "unit_count", "units") or len(
+    unit_count = _first_present(summary, "unit_count", "units")
+    payload["unit_count"] = unit_count if unit_count is not None else len(
         payload.get("job_ids", [])
     )
 

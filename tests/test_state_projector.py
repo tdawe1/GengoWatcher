@@ -110,6 +110,8 @@ def test_workbench_status_updates_countdown_and_notifies_thresholds_once(tmp_pat
     assert job["seconds_left"] == 3600
     assert job["countdown_elapsed_seconds"] == 3600
     assert job["countdown_alerts"] == ["half_complete", "one_hour_elapsed"]
+    # Regression: workbench_status should not downgrade acceptance_state
+    assert job["acceptance_state"] == "details_visible"
 
     low_status = EventEnvelope(
         type="browser.workbench.status",

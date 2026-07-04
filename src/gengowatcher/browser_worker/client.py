@@ -70,6 +70,20 @@ class BrowserWorkerClient:
 
         return decode_message(response)
 
+    def _prepare_acceptance_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        track_acceptance: bool,
+        acceptance_timeout_sec: float,
+    ) -> float | None:
+        """Set acceptance tracking fields and return adjusted timeout."""
+        if track_acceptance and acceptance_timeout_sec > 0:
+            payload["track_acceptance"] = True
+            payload["acceptance_timeout_ms"] = int(acceptance_timeout_sec * 1000)
+            return max(self.response_timeout, acceptance_timeout_sec + 5.0)
+        return None
+
     async def submit_job_async(
         self,
         url: str,
@@ -80,11 +94,9 @@ class BrowserWorkerClient:
         acceptance_timeout_sec: float = 0.0,
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
-        response_timeout = None
-        if track_acceptance and acceptance_timeout_sec > 0:
-            payload["track_acceptance"] = True
-            payload["acceptance_timeout_ms"] = int(acceptance_timeout_sec * 1000)
-            response_timeout = max(self.response_timeout, acceptance_timeout_sec + 5.0)
+        response_timeout = self._prepare_acceptance_payload(
+            payload, track_acceptance=track_acceptance, acceptance_timeout_sec=acceptance_timeout_sec
+        )
         if response_timeout is None:
             return await self.send_command(payload)
         return await self.send_command(payload, response_timeout=response_timeout)
@@ -99,11 +111,9 @@ class BrowserWorkerClient:
         acceptance_timeout_sec: float = 0.0,
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
-        response_timeout = None
-        if track_acceptance and acceptance_timeout_sec > 0:
-            payload["track_acceptance"] = True
-            payload["acceptance_timeout_ms"] = int(acceptance_timeout_sec * 1000)
-            response_timeout = max(self.response_timeout, acceptance_timeout_sec + 5.0)
+        response_timeout = self._prepare_acceptance_payload(
+            payload, track_acceptance=track_acceptance, acceptance_timeout_sec=acceptance_timeout_sec
+        )
         if response_timeout is None:
             return run_coroutine_sync(self.send_command, payload)
         return run_coroutine_sync(
