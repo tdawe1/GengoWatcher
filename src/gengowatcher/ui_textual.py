@@ -2174,6 +2174,11 @@ class GengoWatcherApp(App):
         self._api_host = api_host or getattr(api_thread, "gengowatcher_api_host", None)
         self._api_port = api_port or getattr(api_thread, "gengowatcher_api_port", None)
         self._api_server = getattr(api_thread, "gengowatcher_api_server", None)
+        self._api_probe_lock = threading.Lock()
+        self._api_probe_target: tuple[str, int] | None = None
+        self._api_probe_reachable = False
+        self._api_probe_in_flight = False
+        self._api_probe_next_ts = 0.0
 
         # Register callback for when new jobs are detected
         self.watcher.on_job_added_callback = self._job_added_callback
@@ -2671,10 +2676,54 @@ class GengoWatcherApp(App):
     def _api_port_open(self, host: str, port: int) -> bool:
         return _api_socket_open(host, port, timeout=0.2)
 
+    def _remember_api_probe_result(
+        self,
+        host: str,
+        port: int,
+        reachable: bool,
+    ) -> None:
+        with self._api_probe_lock:
+            if self._api_probe_target == (host, port):
+                self._api_probe_reachable = reachable
+                self._api_probe_in_flight = False
+
+    def _run_api_probe(self, host: str, port: int) -> None:
+        reachable = self._api_port_open(host, port)
+        self._remember_api_probe_result(host, port, reachable)
+
+    def _schedule_api_probe(self, host: str, port: int) -> bool:
+        now = time.monotonic()
+        target = (host, port)
+        with self._api_probe_lock:
+            if self._api_probe_target != target:
+                self._api_probe_target = target
+                self._api_probe_reachable = False
+                self._api_probe_in_flight = False
+                self._api_probe_next_ts = 0.0
+
+            reachable = self._api_probe_reachable
+            if self._api_probe_in_flight or now < self._api_probe_next_ts:
+                return reachable
+
+            self._api_probe_in_flight = True
+            self._api_probe_next_ts = now + 2.0
+
+        threading.Thread(
+            target=self._run_api_probe,
+            args=(host, port),
+            daemon=True,
+            name="TUIApiProbe",
+        ).start()
+        return reachable
+
     def _api_is_running(self, *, probe_port: bool = False) -> bool:
         host, port = self._refresh_api_bind_from_config()
         thread_running = bool(self._api_thread and self._api_thread.is_alive())
-        return thread_running or (probe_port and self._api_port_open(host, port))
+        if thread_running:
+            return True
+        if probe_port:
+            return self._api_port_open(host, port)
+        return self._schedule_api_probe(host, port)
 
     def _set_web_server_enabled(self, enabled: bool) -> None:
         self._save_config_value("WebServer", "enabled", enabled)

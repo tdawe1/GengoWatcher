@@ -3,6 +3,7 @@
 import datetime
 import logging
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -410,17 +411,49 @@ def test_run_command_api_status_reports_url():
     )
 
 
-def test_api_health_entry_does_not_probe_port_from_refresh_path():
+def test_api_health_entry_uses_cached_probe_without_inline_port_probe():
     values = {"WebServer": {"enabled": True, "host": "127.0.0.1", "port": 8765}}
     app = _make_command_app(values)
     app.watcher.config = app.config
     app._api_port_open = MagicMock(return_value=False)
+    app._schedule_api_probe = MagicMock(return_value=True)
 
     health = _api_health_entry(app, app.watcher)
 
     app._api_port_open.assert_not_called()
-    assert health["running"] is False
-    assert health["state"] == "error"
+    app._schedule_api_probe.assert_called_once_with("127.0.0.1", 8765)
+    assert health["running"] is True
+    assert health["state"] == "healthy"
+
+
+def test_api_health_refresh_schedules_nonblocking_probe():
+    values = {"WebServer": {"enabled": True, "host": "127.0.0.1", "port": 8765}}
+    app = _make_command_app(values)
+    app._api_port_open = MagicMock(return_value=True)
+
+    with patch("gengowatcher.ui_textual.threading.Thread") as thread_class:
+        running = app._api_is_running()
+
+    assert running is False
+    app._api_port_open.assert_not_called()
+    thread_class.assert_called_once()
+    thread_class.return_value.start.assert_called_once()
+
+
+def test_api_health_refresh_uses_cached_probe_result():
+    values = {"WebServer": {"enabled": True, "host": "127.0.0.1", "port": 8765}}
+    app = _make_command_app(values)
+    app._api_probe_target = ("127.0.0.1", 8765)
+    app._api_probe_reachable = True
+    app._api_probe_next_ts = time.monotonic() + 60.0
+    app._api_port_open = MagicMock(return_value=False)
+
+    with patch("gengowatcher.ui_textual.threading.Thread") as thread_class:
+        running = app._api_is_running()
+
+    assert running is True
+    app._api_port_open.assert_not_called()
+    thread_class.assert_not_called()
 
 
 def test_run_command_api_start_saves_config_and_starts_server():
