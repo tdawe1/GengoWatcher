@@ -3,14 +3,13 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-
 from gengowatcher.browser_worker.runtime import (
     BrowserRuntime,
     BrowserRuntimeConfig,
     default_browser_worker_socket_dir,
 )
-from gengowatcher.browser_worker.telemetry import BrowserWorkerTelemetry
 from gengowatcher.browser_worker.tabs import TabRoles
+from gengowatcher.browser_worker.telemetry import BrowserWorkerTelemetry
 
 
 def test_runtime_defaults_to_headed_mode():
@@ -203,3 +202,24 @@ async def test_runtime_page_observer_captures_workbench_payload(tmp_path):
     log_text = (tmp_path / "worker.jsonl").read_text(encoding="utf-8")
     assert log_text.count("accepted_workbench_payload") == 1
     assert (tmp_path / "accepted-workbench-123.json").is_file()
+
+
+def test_runtime_prunes_captured_workbench_ids_by_insertion_order(tmp_path):
+    telemetry = BrowserWorkerTelemetry(tmp_path / "worker.jsonl")
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile"),
+        telemetry=telemetry,
+    )
+
+    for index in range(201):
+        runtime._record_accepted_workbench_payload(
+            f"job-{index}",
+            f"https://gengo.com/t/workbench/job-{index}",
+            {"source": "test", "payload": {}},
+        )
+
+    assert len(runtime._captured_workbench_ids) == 100
+    assert "job-0" not in runtime._captured_workbench_ids
+    assert "job-100" not in runtime._captured_workbench_ids
+    assert "job-101" in runtime._captured_workbench_ids
+    assert "job-200" in runtime._captured_workbench_ids

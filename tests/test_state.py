@@ -1,9 +1,9 @@
+import collections
+import logging
+import time
+
 import pytest
 from gengowatcher import state
-import logging
-import os
-import collections
-import time
 
 
 def pytest_configure(config):
@@ -282,3 +282,23 @@ def test_upsert_browser_observation_creates_visible_job(temp_state_file):
     assert job["source"] == "Browser"
     assert job["workbench_visible"] is True
     assert job["acceptance_state"] == "visible"
+
+
+def test_add_job_uses_index_and_prunes_old_entries(temp_state_file, monkeypatch):
+    monkeypatch.setattr(state.AppState, "MAX_STORED_JOBS", 3)
+    logger = logging.getLogger("test")
+    app_state = state.AppState(logger=logger, state_file_path=temp_state_file)
+
+    for index in range(5):
+        assert app_state.add_job(
+            {
+                "id": f"job-{index}",
+                "title": f"Job {index}",
+                "timestamp": index,
+            }
+        )
+
+    assert app_state.get_job_count() == 3
+    recent_ids = [job["id"] for job in app_state.get_recent_jobs(limit=10)]
+    assert recent_ids == ["job-4", "job-3", "job-2"]
+    assert app_state.add_job({"id": "job-4", "title": "Duplicate"}) is False

@@ -66,3 +66,25 @@ def test_canonical_job_events_update_browser_health_and_countdown(monkeypatch):
     assert store.get_countdown("123") == 42
     assert store.get_workflow_state()["123"]["status"] == "timed"
     assert store.get_recent_jobs() == []
+
+
+def test_accepted_jobs_use_collection_id_when_order_id_missing():
+    store = TuiStore()
+
+    store.update_from_event(
+        {
+            "type": "job.accepted",
+            "collection_id": "collection-1",
+            "payload": {"collection_id": "collection-1", "accepted": True},
+        }
+    )
+    store.update_from_event(
+        {
+            "type": "job.accepted",
+            "collection_id": "collection-2",
+            "payload": {"collection_id": "collection-2", "accepted": True},
+        }
+    )
+
+    active = {job["collection_id"] for job in store.get_active_jobs()}
+    assert active == {"collection-1", "collection-2"}

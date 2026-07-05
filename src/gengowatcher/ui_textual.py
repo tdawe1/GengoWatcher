@@ -2671,17 +2671,17 @@ class GengoWatcherApp(App):
     def _api_port_open(self, host: str, port: int) -> bool:
         return _api_socket_open(host, port, timeout=0.2)
 
-    def _api_is_running(self) -> bool:
+    def _api_is_running(self, *, probe_port: bool = False) -> bool:
         host, port = self._refresh_api_bind_from_config()
         thread_running = bool(self._api_thread and self._api_thread.is_alive())
-        return thread_running or self._api_port_open(host, port)
+        return thread_running or (probe_port and self._api_port_open(host, port))
 
     def _set_web_server_enabled(self, enabled: bool) -> None:
         self._save_config_value("WebServer", "enabled", enabled)
 
     def _start_api_server(self) -> None:
         host, port = self._refresh_api_bind_from_config()
-        if self._api_is_running():
+        if self._api_is_running(probe_port=True):
             self._write_command_output(f"API already reachable at http://{host}:{port}")
             return
 
@@ -2752,7 +2752,7 @@ class GengoWatcherApp(App):
             return
         if action == "status":
             enabled = self.config.getboolean("WebServer", "enabled", fallback=False)
-            state = "running" if self._api_is_running() else "stopped"
+            state = "running" if self._api_is_running(probe_port=True) else "stopped"
             self._write_command_output(
                 f"API {state}; enabled={enabled}; url=http://{host}:{port}"
             )
@@ -2777,7 +2777,7 @@ class GengoWatcherApp(App):
                 return
             if self._stop_api_server():
                 self._write_command_output("API stopped and disabled.")
-            elif self._api_is_running():
+            elif self._api_is_running(probe_port=True):
                 self._write_command_output(
                     "API disabled for next launch; the live server was not started by this TUI.",
                     logging.WARNING,

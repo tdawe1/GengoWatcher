@@ -57,7 +57,15 @@ class TuiStore:
             if self._is_recent_job_payload(payload):
                 self._add_recent_job(payload)
         elif event_type == "job.accepted":
-            job_id = str(payload.get("id") or payload.get("order_id", ""))
+            job_id = str(
+                payload.get("id")
+                or payload.get("order_id")
+                or payload.get("collection_id")
+                or event.get("collection_id")
+                or ""
+            )
+            if not job_id:
+                return
             self._active_jobs[job_id] = payload
             # Prune stale active jobs (keep max 50)
             if len(self._active_jobs) > 50:

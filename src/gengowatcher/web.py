@@ -5,6 +5,7 @@ for web UI integration while maintaining compatibility with existing TUI.
 
 import asyncio
 import csv
+import ipaddress
 import json
 import logging
 import os
@@ -72,6 +73,10 @@ from .web_models import (
 )
 
 authenticator = APIAuthenticator()
+
+DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1_048_576
+DEFAULT_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024
+DEFAULT_DOWNLOAD_ALLOWED_HOSTS = ("gengo.com", ".gengo.com")
 
 
 class WebAPI:
@@ -974,6 +979,71 @@ class WebAPI:
             headers["User-Agent"] = user_agent
         return headers
 
+    def _download_allowed_hosts(self) -> tuple[str, ...]:
+        configured = config_get(
+            self.config,
+            "TranslationWorkflow",
+            "download_allowed_hosts",
+            list(DEFAULT_DOWNLOAD_ALLOWED_HOSTS),
+        )
+        if isinstance(configured, str):
+            hosts = re.split(r"[,\s]+", configured)
+        elif isinstance(configured, (list, tuple, set)):
+            hosts = [str(host) for host in configured]
+        else:
+            hosts = list(DEFAULT_DOWNLOAD_ALLOWED_HOSTS)
+        normalized = tuple(host.strip().lower() for host in hosts if str(host).strip())
+        return normalized or DEFAULT_DOWNLOAD_ALLOWED_HOSTS
+
+    def _validate_download_url(self, url: str) -> str:
+        parsed = urlparse(str(url or "").strip())
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("Download URL must use http or https")
+        host = (parsed.hostname or "").strip().lower()
+        if not host:
+            raise ValueError("Download URL must include a host")
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                raise ValueError("Download URL host is not allowed")
+        allowed_hosts = self._download_allowed_hosts()
+        if not any(
+            host == allowed.lstrip(".")
+            or (allowed.startswith(".") and host.endswith(allowed))
+            for allowed in allowed_hosts
+        ):
+            raise ValueError("Download URL host is not allowed")
+        return parsed.geturl()
+
+    @staticmethod
+    def _download_response_content(
+        response: requests.Response,
+        *,
+        max_bytes: int,
+    ) -> bytes:
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(
+                    f"Downloaded file is too large. Maximum size is {max_bytes} bytes"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     @staticmethod
     def _filename_from_download_response(url: str, response: requests.Response) -> str:
         disposition = response.headers.get("content-disposition", "")
@@ -985,6 +1055,7 @@ class WebAPI:
 
     def _download_job_file(self, job_id: str, url: str) -> None:
         try:
+            download_url = self._validate_download_url(url)
             timeout_sec = float(
                 config_float(
                     self.config,
@@ -993,21 +1064,45 @@ class WebAPI:
                     30.0,
                 )
             )
-            response = requests.get(
-                url,
-                headers=self._download_headers(url=url),
-                timeout=timeout_sec,
+            max_bytes = max(
+                1,
+                config_int(
+                    self.config,
+                    "TranslationWorkflow",
+                    "download_max_bytes",
+                    DEFAULT_DOWNLOAD_MAX_BYTES,
+                ),
             )
-            response.raise_for_status()
+            response = requests.get(
+                download_url,
+                headers=self._download_headers(url=download_url),
+                timeout=timeout_sec,
+                stream=True,
+                allow_redirects=False,
+            )
+            try:
+                if 300 <= getattr(response, "status_code", 200) < 400:
+                    raise ValueError("Download redirects are not allowed")
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > max_bytes:
+                    raise ValueError(
+                        f"Downloaded file is too large. Maximum size is {max_bytes} bytes"
+                    )
+                response.raise_for_status()
+                content = self._download_response_content(response, max_bytes=max_bytes)
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
             entry = self.save_uploaded_file(
-                self._filename_from_download_response(url, response),
-                response.content,
+                self._filename_from_download_response(download_url, response),
+                content,
                 content_type=response.headers.get("content-type"),
                 job_id=job_id,
             )
             self._handle_stored_file_for_job(
                 entry,
-                content=response.content,
+                content=content,
                 mode="auto",
             )
         except Exception as exc:
@@ -1501,14 +1596,53 @@ async def cancel_current_job(authenticated: bool = Depends(verify_auth)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+async def _read_limited_request_body(request: Request, *, max_bytes: int) -> bytes:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Request body too large. Maximum size is {max_bytes} bytes",
+                )
+        except ValueError:
+            pass
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Request body too large. Maximum size is {max_bytes} bytes",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def _receive_job_discovered_api_event(request: Request):
     """Receive a signed external job-discovery API event."""
     if not api_instance:
         raise HTTPException(status_code=503, detail="API not initialized")
 
-    raw_body = await request.body()
+    max_body_bytes = max(
+        1,
+        config_int(
+            api_instance.config,
+            "Webhooks",
+            "max_body_bytes",
+            DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+        ),
+    )
+    raw_body = await _read_limited_request_body(request, max_bytes=max_body_bytes)
+    headers = dict(request.headers)
     try:
-        return api_instance.process_incoming_job_webhook(raw_body, request.headers)
+        return await asyncio.to_thread(
+            api_instance.process_incoming_job_webhook,
+            raw_body,
+            headers,
+        )
     except WebhookError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     except Exception as e:
@@ -1722,7 +1856,8 @@ async def websocket_status(websocket: WebSocket):
         return
 
     await websocket.accept()
-    api_instance._event_loop = asyncio.get_running_loop()
+    current_loop = asyncio.get_running_loop()
+    api_instance._event_loop = current_loop
 
     # Add to active connections
     with api_instance._connections_lock:
@@ -1776,6 +1911,8 @@ async def websocket_status(websocket: WebSocket):
                     api_instance._active_connections.remove(websocket)
             except ValueError:
                 pass  # Already removed
+            if api_instance._event_loop is current_loop:
+                api_instance._event_loop = None
 
 
 @app.get("/")

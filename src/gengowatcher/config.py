@@ -143,6 +143,8 @@ class AppConfig:
         "TranslationWorkflow": {
             "file_mode": "user",
             "download_timeout_sec": 30.0,
+            "download_max_bytes": 52428800,
+            "download_allowed_hosts": ["gengo.com", ".gengo.com"],
             "file_text_max_chars": 250000,
         },
         "Webhooks": {
@@ -150,11 +152,14 @@ class AppConfig:
             "incoming_secret": "",
             "require_signature": True,
             "signature_tolerance_sec": 300.0,
+            "max_body_bytes": 1048576,
             "max_seen_event_ids": 1000,
             "debug_enabled": False,
             "debug_payload_preview_bytes": 4096,
             "audit_enabled": True,
             "audit_log_path": "logs/webhooks.jsonl",
+            "audit_max_bytes": 1048576,
+            "audit_max_lines": 5000,
             "outbound_enabled": False,
             "outbound_urls": [],
             "outbound_secret": "",
@@ -724,7 +729,9 @@ class AppConfig:
             return
 
         if browser.get("headless"):
-            print("Warning: Browser.headless is not allowed in native mode. Disabling it.")
+            print(
+                "Warning: Browser.headless is not allowed in native mode. Disabling it."
+            )
             self.config["Browser"]["headless"] = False
 
         if self.config.get("BrowserWorker", {}).get("enabled") and not browser.get(

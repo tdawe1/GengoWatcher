@@ -1,24 +1,22 @@
 """Comprehensive tests for the web API module."""
 
-import pytest
 import asyncio
-import json
-import tempfile
 import pathlib
-import time
 import tempfile as tf
-from unittest.mock import MagicMock, patch, AsyncMock
-from fastapi.testclient import TestClient
+import time
+from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi.testclient import TestClient
 from gengowatcher.web import (
     APIAuthenticator,
-    WebAPI,
+    CommandRequest,
+    ConfigSection,
     JobEntry,
+    PaginationParams,
     StoredFileUploadResponse,
     WatcherStatus,
-    ConfigSection,
-    CommandRequest,
-    PaginationParams,
+    WebAPI,
     app,
     download_file,
     list_uploaded_files,
@@ -437,6 +435,72 @@ class TestWebAPI:
             call_args = mock_state.add_job.call_args[0][0]
             assert call_args["id"] == "12345"
             assert call_args["reward"] == 25.0
+
+    def test_download_job_file_rejects_non_gengo_hosts(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Auto-download should not fetch arbitrary internal URLs server-side."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        with patch("gengowatcher.web.requests.get") as mock_get:
+            api._download_job_file(
+                "job-1",
+                "http://169.254.169.254/latest/meta-data/",
+            )
+
+        mock_get.assert_not_called()
+        mock_state.update_job.assert_called_once()
+        assert (
+            "not allowed"
+            in mock_state.update_job.call_args.args[1]["file_download_error"]
+        )
+
+    def test_download_job_file_rejects_oversized_response(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Auto-download should stream with a configured size cap."""
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("TranslationWorkflow", "download_max_bytes"): 4,
+            ("TranslationWorkflow", "download_allowed_hosts"): [
+                "gengo.com",
+                ".gengo.com",
+            ],
+        }.get((s, k), kw.get("fallback", ""))
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        class FakeResponse:
+            status_code = 200
+            headers = {
+                "content-type": "text/plain",
+                "content-length": "5",
+            }
+
+            def iter_content(self, chunk_size):
+                yield b"hello"
+
+            def raise_for_status(self):
+                return None
+
+            def close(self):
+                return None
+
+        with patch("gengowatcher.web.requests.get", return_value=FakeResponse()) as get:
+            api._download_job_file(
+                "job-1",
+                "https://gengo.com/t/jobs/files/source.txt",
+            )
+
+        assert get.call_args.kwargs["stream"] is True
+        assert get.call_args.kwargs["allow_redirects"] is False
+        mock_state.update_job.assert_called_once()
+        assert (
+            "too large"
+            in mock_state.update_job.call_args.args[1]["file_download_error"]
+        )
 
     @pytest.mark.asyncio
     async def test_accept_job(self, mock_config, mock_state, mock_logger, mock_watcher):

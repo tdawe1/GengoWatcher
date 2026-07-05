@@ -342,6 +342,8 @@ class WebhookAuditLogger:
     enabled: bool = True
     debug_enabled: bool = True
     max_payload_preview_bytes: int = 4096
+    max_log_bytes: int = 1_048_576
+    max_log_lines: int = 5000
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _counters: dict[str, int] = field(default_factory=dict)
     _last_entry: dict[str, Any] | None = None
@@ -368,6 +370,18 @@ class WebhookAuditLogger:
                 "Webhooks",
                 "debug_payload_preview_bytes",
                 4096,
+            ),
+            max_log_bytes=_config_int(
+                config,
+                "Webhooks",
+                "audit_max_bytes",
+                1_048_576,
+            ),
+            max_log_lines=_config_int(
+                config,
+                "Webhooks",
+                "audit_max_lines",
+                5000,
             ),
         )
 
@@ -421,6 +435,7 @@ class WebhookAuditLogger:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 with self.path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(compact, sort_keys=True) + "\n")
+                self._trim_log_unlocked()
                 self._remember_entry(compact)
         else:
             with self._lock:
@@ -435,6 +450,29 @@ class WebhookAuditLogger:
                 error,
             )
         return compact
+
+    def _trim_log_unlocked(self) -> None:
+        if self.max_log_bytes <= 0:
+            return
+        try:
+            if self.path.stat().st_size <= self.max_log_bytes:
+                return
+        except OSError:
+            return
+
+        recent_lines: deque[str] = deque(maxlen=max(1, self.max_log_lines))
+        try:
+            with self.path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    recent_lines.append(line)
+            temp_path = self.path.with_name(f".{self.path.name}.tmp")
+            with temp_path.open("w", encoding="utf-8") as handle:
+                handle.writelines(recent_lines)
+            temp_path.replace(self.path)
+        except OSError as exc:
+            self.logger.warning(
+                "Failed trimming webhook audit log %s: %s", self.path, exc
+            )
 
     def _remember_entry(self, entry: dict[str, Any]) -> None:
         self._last_entry = dict(entry)

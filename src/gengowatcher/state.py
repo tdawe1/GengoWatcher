@@ -12,6 +12,7 @@ import datetime
 
 class AppState:
     STATE_FILE = "state.json"
+    MAX_STORED_JOBS = 5000
 
     def __init__(
         self,
@@ -30,6 +31,7 @@ class AppState:
 
         # Job storage for web API
         self._jobs: List[dict[str, Any]] = []
+        self._job_ids: set[str] = set()
         self._jobs_lock = threading.RLock()
 
         self._load_state()
@@ -64,11 +66,15 @@ class AppState:
                         # Load stored jobs
                         stored_jobs = state_data.get("jobs", [])
                         with self._jobs_lock:
-                            self._jobs = stored_jobs
+                            self._jobs = (
+                                stored_jobs if isinstance(stored_jobs, list) else []
+                            )
                             # Sort by timestamp descending (newest first)
                             self._jobs.sort(
                                 key=lambda x: x.get("timestamp", 0), reverse=True
                             )
+                            self._prune_jobs_unlocked()
+                            self._rebuild_job_ids_unlocked()
         except (json.JSONDecodeError, IOError) as e:
             self.logger.exception(
                 f"Could not load state file. Starting fresh. Error: {e}"
@@ -181,6 +187,29 @@ class AppState:
                 self._with_dynamic_accepted_fields(job.copy(), now=now)
                 for job in self._jobs[:limit]
             ]
+
+    @staticmethod
+    def _primary_job_id(job: dict[str, Any]) -> str:
+        return str(job.get("id") or "").strip()
+
+    def _rebuild_job_ids_unlocked(self) -> None:
+        self._job_ids = {
+            job_id
+            for job_id in (self._primary_job_id(job) for job in self._jobs)
+            if job_id
+        }
+
+    def _track_job_unlocked(self, job: dict[str, Any]) -> None:
+        job_id = self._primary_job_id(job)
+        if job_id:
+            self._job_ids.add(job_id)
+
+    def _prune_jobs_unlocked(self) -> None:
+        limit = max(1, int(self.MAX_STORED_JOBS))
+        if len(self._jobs) <= limit:
+            return
+        del self._jobs[limit:]
+        self._rebuild_job_ids_unlocked()
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Return a copy of a stored job by id or accepted workbench ids."""
@@ -543,13 +572,14 @@ class AppState:
             bool: True if the job was inserted, False if it already existed.
         """
         with self._jobs_lock:
-            # Check if job already exists
-            existing_job_ids = {job.get("id") for job in self._jobs}
-            if job_data.get("id") in existing_job_ids:
+            job_id = self._primary_job_id(job_data)
+            if job_id and job_id in self._job_ids:
                 return False  # Job already exists
 
             # Add new job
             self._jobs.insert(0, job_data)  # Add to beginning for newest first
+            self._track_job_unlocked(job_data)
+            self._prune_jobs_unlocked()
 
             self.logger.debug(f"Added job {job_data.get('id')} to storage")
             return True
@@ -600,6 +630,8 @@ class AppState:
                 {key: value for key, value in updates.items() if value is not None}
             )
             self._jobs.insert(0, job_data)
+            self._track_job_unlocked(job_data)
+            self._prune_jobs_unlocked()
             self.logger.debug("Added browser-observed job %s to storage", normalized_id)
             return True
 
@@ -705,6 +737,8 @@ class AppState:
                 self._apply_workbench_jobs(job_data, payload)
 
             self._jobs.insert(0, job_data)
+            self._track_job_unlocked(job_data)
+            self._prune_jobs_unlocked()
             return True
 
     def _browser_acceptance_updates(

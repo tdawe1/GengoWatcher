@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 import asyncio
 import os
@@ -23,6 +24,11 @@ from .protocol import decode_message, encode_message
 from .registry import JobRegistry
 from .tabs import TabRoles
 from .telemetry import BrowserWorkerTelemetry, TimingEvent
+
+try:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+except ImportError:  # pragma: no cover - playwright is an optional runtime dep
+    PlaywrightTimeoutError = TimeoutError
 
 
 def default_browser_worker_socket_dir() -> Path:
@@ -68,7 +74,7 @@ class BrowserRuntime:
         self._playwright: Any = None
         self._server: asyncio.AbstractServer | None = None
         self._page_observer_task: asyncio.Task | None = None
-        self._captured_workbench_ids: set[str] = set()
+        self._captured_workbench_ids: OrderedDict[str, None] = OrderedDict()
         self._workbench_payload_attempts: dict[str, int] = {}
 
     async def start(self) -> "BrowserRuntime":
@@ -294,10 +300,11 @@ class BrowserRuntime:
     ) -> None:
         if job_id in self._captured_workbench_ids:
             return
-        self._captured_workbench_ids.add(job_id)
+        self._captured_workbench_ids[job_id] = None
         # Prune stale entries to prevent unbounded growth
         if len(self._captured_workbench_ids) > 200:
-            self._captured_workbench_ids = set(list(self._captured_workbench_ids)[-100:])
+            while len(self._captured_workbench_ids) > 100:
+                self._captured_workbench_ids.popitem(last=False)
         if job_id in self._workbench_payload_attempts:
             del self._workbench_payload_attempts[job_id]
         self._record_event(
@@ -327,11 +334,7 @@ class BrowserRuntime:
                 job_id,
                 timeout_ms=timeout_ms,
             )
-        except Exception as exc:
-            if exc.__class__.__name__ != "TimeoutError":
-                raise
-            # Note: Would use PlaywrightTimeoutError directly, but keeping
-            # class name check for compatibility without playwright import dependency
+        except PlaywrightTimeoutError:
             self._record_event(
                 "manual_accept_timeout",
                 0.0,

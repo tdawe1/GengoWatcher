@@ -6,6 +6,7 @@ from gengowatcher.state import AppState
 from gengowatcher.state_projector import (
     StateProjector,
     workbench_details,
+    workbench_start,
     workbench_status,
     workbench_visible,
 )
@@ -122,3 +123,20 @@ def test_workbench_status_updates_countdown_and_notifies_thresholds_once(tmp_pat
     workbench_status(low_status, app_state, notifier=notifier)
     assert notifier.show_notification.call_count == 3
     assert "running_low" in app_state.get_job("123")["countdown_alerts"]
+
+
+def test_workbench_start_event_uses_persisted_accepted_at(tmp_path):
+    app_state = _state(tmp_path)
+    event = EventEnvelope(
+        type="browser.workbench.start_response",
+        source="native_browser_listener",
+        payload={"order_id": "123"},
+        collection_id="123",
+    )
+
+    with patch("gengowatcher.state_projector.publish_event") as publish:
+        workbench_start(event, app_state)
+
+    stored = app_state.get_job("123")
+    published = publish.call_args.args[0]
+    assert published.payload["accepted_at"] == stored["accepted_at"]

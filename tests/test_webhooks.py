@@ -1,11 +1,10 @@
-import pytest
 import json
 import logging
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
-
 from gengowatcher.web import WebAPI, app, authenticator
 from gengowatcher.webhooks import (
     OutboundWebhookTarget,
@@ -24,11 +23,14 @@ def _config(tmp_path, **overrides):
         ("Webhooks", "incoming_secret"): "incoming-secret",
         ("Webhooks", "require_signature"): True,
         ("Webhooks", "signature_tolerance_sec"): 300.0,
+        ("Webhooks", "max_body_bytes"): 1024 * 1024,
         ("Webhooks", "max_seen_event_ids"): 1000,
         ("Webhooks", "debug_enabled"): True,
         ("Webhooks", "debug_payload_preview_bytes"): 4096,
         ("Webhooks", "audit_enabled"): True,
         ("Webhooks", "audit_log_path"): str(tmp_path / "webhooks.jsonl"),
+        ("Webhooks", "audit_max_bytes"): 1024 * 1024,
+        ("Webhooks", "audit_max_lines"): 5000,
         ("Webhooks", "outbound_enabled"): False,
         ("Webhooks", "outbound_urls"): [],
         ("Webhooks", "outbound_secret"): "",
@@ -39,7 +41,11 @@ def _config(tmp_path, **overrides):
         ("Webhooks", "outbound_max_delay_sec"): 0.0,
         ("Webhooks", "outbound_verify_tls"): True,
     }
-    values.update(overrides)
+    for key, value in overrides.items():
+        if isinstance(key, tuple):
+            values[key] = value
+        else:
+            values[("Webhooks", key)] = value
     config = MagicMock()
     config.get.side_effect = lambda section, key, **kwargs: values.get(
         (section, key),
@@ -223,6 +229,52 @@ def test_incoming_job_webhook_rejects_bad_signature_with_audit(tmp_path):
     api.watcher._process_new_job.assert_not_called()
 
 
+def test_incoming_job_webhook_rejects_oversized_body(tmp_path):
+    api = _api(tmp_path, max_body_bytes=8)
+
+    client = TestClient(app)
+    with patch("gengowatcher.web.api_instance", api):
+        response = client.post(
+            "/api/jobs/discovered",
+            content=b"x" * 9,
+            headers={"Content-Length": "9"},
+        )
+
+    assert response.status_code == 413
+    api.watcher._process_new_job.assert_not_called()
+
+
+def test_incoming_job_webhook_processing_runs_off_event_loop(tmp_path):
+    api = _api(tmp_path)
+    payload = {
+        "id": "123",
+        "title": "JA > EN | Short translation",
+        "reward": 12.5,
+        "url": "https://gengo.com/t/jobs/details/123",
+    }
+    raw_body = json.dumps(payload).encode("utf-8")
+    calls = []
+
+    async def fake_to_thread(func, *args, **kwargs):
+        calls.append(func.__name__)
+        return func(*args, **kwargs)
+
+    client = TestClient(app)
+    with (
+        patch("gengowatcher.web.api_instance", api),
+        patch("gengowatcher.web.asyncio.to_thread", side_effect=fake_to_thread),
+    ):
+        response = client.post(
+            "/api/jobs/discovered",
+            content=raw_body,
+            headers=_signed_headers(raw_body),
+        )
+
+    assert response.status_code == 200
+    assert calls == ["process_incoming_job_webhook"]
+    api.watcher._process_new_job.assert_called_once()
+
+
 def test_api_event_audit_endpoint_returns_recent_records(tmp_path):
     api = _api(tmp_path)
     api.webhook_audit_logger.record(
@@ -243,6 +295,29 @@ def test_api_event_audit_endpoint_returns_recent_records(tmp_path):
     data = response.json()
     assert data["entries"][-1]["event_id"] == "evt-audit"
     assert data["audit_log_path"].endswith("webhooks.jsonl")
+
+
+def test_webhook_audit_log_rotates_by_size(tmp_path):
+    audit = WebhookAuditLogger(
+        path=tmp_path / "webhooks.jsonl",
+        logger=logging.getLogger("test.webhooks.audit"),
+        enabled=True,
+        debug_enabled=True,
+        max_log_bytes=120,
+        max_log_lines=2,
+    )
+
+    for index in range(5):
+        audit.record(
+            direction="incoming",
+            stage="received",
+            event_id=f"evt-{index}",
+            status="received",
+            raw_body=b"x" * 80,
+        )
+
+    lines = audit.path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) <= 2
 
 
 def test_outbound_dispatcher_signs_delivers_and_audits_response(tmp_path):

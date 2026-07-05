@@ -6,9 +6,6 @@ import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from textual.css.query import NoMatches
-
 from gengowatcher.ui_textual import (
     ChartsPanel,
     CommandInput,
@@ -18,11 +15,13 @@ from gengowatcher.ui_textual import (
     MetricsRow,
     TelemetryPanel,
     TextualLogHandler,
+    _api_health_entry,
     _format_job_row,
     _format_job_time_left,
     _format_timestamp,
     _normalize_source,
 )
+from textual.css.query import NoMatches
 
 
 class DummyState:
@@ -409,6 +408,19 @@ def test_run_command_api_status_reports_url():
         "API stopped; enabled=False; url=http://127.0.0.1:8765",
         logging.INFO,
     )
+
+
+def test_api_health_entry_does_not_probe_port_from_refresh_path():
+    values = {"WebServer": {"enabled": True, "host": "127.0.0.1", "port": 8765}}
+    app = _make_command_app(values)
+    app.watcher.config = app.config
+    app._api_port_open = MagicMock(return_value=False)
+
+    health = _api_health_entry(app, app.watcher)
+
+    app._api_port_open.assert_not_called()
+    assert health["running"] is False
+    assert health["state"] == "error"
 
 
 def test_run_command_api_start_saves_config_and_starts_server():

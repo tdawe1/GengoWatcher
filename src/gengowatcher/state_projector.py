@@ -239,7 +239,11 @@ def workbench_visible(event: EventEnvelope, state: "AppState") -> None:
         "workbench_visible": True,
         "workbench_url": payload.get("url"),
     }
-    if current.get("acceptance_state") not in ("accepted", "details_visible", "requested"):
+    if current.get("acceptance_state") not in (
+        "accepted",
+        "details_visible",
+        "requested",
+    ):
         updates["acceptance_state"] = "visible"
     changed = state.upsert_browser_observation(collection_id, _clean_updates(updates))
     if not changed:
@@ -276,7 +280,11 @@ def workbench_details(event: EventEnvelope, state: "AppState") -> None:
 
     current = state.get_job(collection_id) or {}
     updates = _browser_details_updates(normalized)
-    if current.get("acceptance_state") not in ("accepted", "details_visible", "requested"):
+    if current.get("acceptance_state") not in (
+        "accepted",
+        "details_visible",
+        "requested",
+    ):
         updates["acceptance_state"] = "details_visible"
     changed = state.upsert_browser_observation(collection_id, updates)
     if not changed:
@@ -335,6 +343,8 @@ def workbench_start(event: EventEnvelope, state: "AppState") -> None:
     )
     if not changed and not upserted:
         return
+    refreshed = state.get_job(collection_id) or current
+    accepted_at = refreshed.get("accepted_at") or accepted_at
 
     # Emit canonical job.accepted event to bus
     publish_event(
@@ -399,8 +409,9 @@ def workbench_status(
             collection_id,
             {
                 "acceptance_state": (
-                    "accepted" if current.get("accepted") else
-                    current.get("acceptance_state") or "visible"
+                    "accepted"
+                    if current.get("accepted")
+                    else current.get("acceptance_state") or "visible"
                 ),
                 "seconds_left": seconds_left,
                 "accepted_seconds_left": seconds_left,
