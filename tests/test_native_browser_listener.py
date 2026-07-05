@@ -351,3 +351,42 @@ def test_run_once_normalizes_inner_workbench_payload():
     assert details["reward"] == 8.13
     assert details["unit_count"] == 263
     assert details["source_text"] == "Source text"
+
+
+def test_run_once_clears_visibility_and_status_cache_when_tab_missing():
+    loop_ids: list[int] = []
+
+    async def open_client(debug_url):
+        loop_ids.append(id(asyncio.get_running_loop()))
+        return _FakeRdpClient(loop_ids)
+
+    async def list_tabs(client):
+        loop_ids.append(id(asyncio.get_running_loop()))
+        return {"tabs": []}
+
+    listener = NativeBrowserListener(debug_url="ws://127.0.0.1:6000")
+    listener._last_collection_id = "123"
+    listener.detected_collection_id = "123"
+    listener.last_workbench_url = "https://gengo.com/t/workbench/123"
+    listener._last_visible_payload = {"collection_id": "123"}
+    listener._last_status_collection_id = "123"
+    listener._last_status_seconds = 42
+
+    with (
+        patch(
+            "gengowatcher.native_browser_listener._open_firefox_rdp_client",
+            side_effect=open_client,
+        ),
+        patch(
+            "gengowatcher.native_browser_listener._firefox_rdp_list_tabs",
+            side_effect=list_tabs,
+        ),
+    ):
+        listener.run_once()
+
+    assert listener._last_collection_id is None
+    assert listener.detected_collection_id is None
+    assert listener.last_workbench_url == ""
+    assert listener._last_visible_payload is None
+    assert listener._last_status_collection_id is None
+    assert listener._last_status_seconds is None

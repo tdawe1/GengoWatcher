@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from fastapi.testclient import TestClient
 
 import gengowatcher.websocket_server as websocket_server
 from gengowatcher.websocket_server import GengoRealtimeGateway
@@ -85,3 +86,53 @@ async def test_gateway_run_offloads_header_build_and_event_emit(
     ]
     assert event_file.is_file()
     assert json.loads(event_file.read_text().splitlines()[0])["type"] == "job"
+
+
+def test_latest_event_requires_api_token(monkeypatch):
+    gateway = GengoRealtimeGateway(
+        _FakeConfig({("WebServer", "auth_token"): "token-123"})
+    )
+    gateway._last_event = {"type": "job", "data": {"id": "123"}}
+    monkeypatch.setattr(websocket_server, "_gateway", gateway)
+
+    client = TestClient(websocket_server.api)
+
+    unauthorized = client.get("/events/latest")
+    assert unauthorized.status_code == 404
+    assert unauthorized.content == b""
+
+    authorized = client.get(
+        "/events/latest",
+        headers={"Authorization": "Bearer token-123"},
+    )
+    assert authorized.status_code == 200
+    assert authorized.json() == {"type": "job", "data": {"id": "123"}}
+
+
+def test_latest_event_rejects_placeholder_api_token(monkeypatch):
+    gateway = GengoRealtimeGateway(
+        _FakeConfig({("WebServer", "auth_token"): "REPLACE_WITH_YOUR_WEB_API_TOKEN"})
+    )
+    gateway._last_event = {"type": "job"}
+    monkeypatch.setattr(websocket_server, "_gateway", gateway)
+
+    response = TestClient(websocket_server.api).get(
+        "/events/latest",
+        headers={"Authorization": "Bearer REPLACE_WITH_YOUR_WEB_API_TOKEN"},
+    )
+
+    assert response.status_code == 404
+    assert response.content == b""
+
+
+def test_gateway_cors_does_not_allow_arbitrary_origin():
+    response = TestClient(websocket_server.api).options(
+        "/events/latest",
+        headers={
+            "Origin": "http://evil.test",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization",
+        },
+    )
+
+    assert "access-control-allow-origin" not in response.headers

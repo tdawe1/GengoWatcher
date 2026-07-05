@@ -10,14 +10,14 @@ def test_countdown_pruning_keeps_most_recent_entries(monkeypatch):
 
     store.update_from_event(
         {
-            "type": "browser.workbench.status",
+            "type": "job.status",
             "payload": {"collection_id": "z-old", "seconds_left": 999},
         }
     )
     for index in range(50):
         store.update_from_event(
             {
-                "type": "browser.workbench.status",
+                "type": "job.status",
                 "payload": {
                     "collection_id": f"a-new-{index:02d}",
                     "seconds_left": index,
@@ -29,3 +29,40 @@ def test_countdown_pruning_keeps_most_recent_entries(monkeypatch):
     assert store.get_countdown("a-new-00") == 0
     assert store.get_countdown("a-new-49") == 49
     assert len(store._countdowns) == 50
+
+
+def test_canonical_job_events_update_browser_health_and_countdown(monkeypatch):
+    ticks = iter([2000, 2001])
+    monkeypatch.setattr(tui_store.time, "time", lambda: next(ticks))
+
+    store = TuiStore()
+
+    store.update_from_event(
+        {
+            "type": "job.visible",
+            "payload": {
+                "collection_id": "123",
+                "url": "https://gengo.com/t/workbench/123",
+                "status": "visible",
+            },
+        }
+    )
+    store.update_from_event(
+        {
+            "type": "job.status",
+            "payload": {
+                "collection_id": "123",
+                "seconds_left": 42,
+                "status": "timed",
+            },
+        }
+    )
+
+    assert store.get_browser_health() == {
+        "last_seen": 2000,
+        "collection_id": "123",
+        "status": "visible",
+    }
+    assert store.get_countdown("123") == 42
+    assert store.get_workflow_state()["123"]["status"] == "timed"
+    assert store.get_recent_jobs() == []

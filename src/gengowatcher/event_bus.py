@@ -4,7 +4,7 @@ Consumers: state, api, tui, workflow, audit
 Rules:
 - publish() never blocks browser listening
 - Queues are bounded
-- Noisy job.status events coalesced by collection_id
+- Noisy job.status events coalesced by collection_id/status payload
 - Slow API/TUI consumers cannot stall watcher/browser threads
 """
 
@@ -26,7 +26,23 @@ MAX_QUEUE_SIZE = 1000
 # Consumer registry
 _CONSUMERS: dict[str, queue.Queue] = {}
 _CONSUMER_LOCK = threading.Lock()
-_coalesce_last_seen: dict[str, dict[str, Any]] = {}
+_coalesce_last_seen: dict[str, tuple[Any, ...]] = {}
+
+
+def _coalesce_identity(event: EventEnvelope) -> tuple[Any, ...]:
+    payload = event.payload or {}
+    identity: list[Any] = [event.type, event.collection_id]
+    if event.type == "job.status":
+        identity.extend(
+            [
+                payload.get("seconds_left"),
+                payload.get("elapsed_seconds"),
+                payload.get("total_seconds"),
+                tuple(payload.get("alerts") or ()),
+                payload.get("status"),
+            ]
+        )
+    return tuple(identity)
 
 
 def publish_event(event: EventEnvelope, coalesce: bool = False) -> None:
@@ -34,12 +50,14 @@ def publish_event(event: EventEnvelope, coalesce: bool = False) -> None:
 
     Args:
         event: The event envelope to publish
-        coalesce: If True, drop duplicate events by collection_id for status events
+        coalesce: If True, drop duplicate status events by collection/status payload
     """
     with _CONSUMER_LOCK:
         consumers = list(_CONSUMERS.items())
 
     event_dict = event.to_dict()
+
+    coalesce_identity = _coalesce_identity(event)
 
     for name, q in consumers:
         if coalesce and event.type == "job.status" and event.collection_id:
@@ -48,7 +66,7 @@ def publish_event(event: EventEnvelope, coalesce: bool = False) -> None:
             should_skip = False
             with _CONSUMER_LOCK:
                 last_seen = _coalesce_last_seen.get(name)
-                if last_seen and last_seen.get("type") == event.type and last_seen.get("collection_id") == event.collection_id:
+                if last_seen == coalesce_identity:
                     should_skip = True
 
             if should_skip:
@@ -57,7 +75,7 @@ def publish_event(event: EventEnvelope, coalesce: bool = False) -> None:
         try:
             q.put_nowait(event_dict)
             with _CONSUMER_LOCK:
-                _coalesce_last_seen[name] = {"type": event.type, "collection_id": event.collection_id}
+                _coalesce_last_seen[name] = coalesce_identity
         except queue.Full:
             logger.warning(f"Event queue full for consumer '{name}' - dropping event")
 
@@ -76,6 +94,7 @@ def unregister_consumer(name: str) -> None:
     with _CONSUMER_LOCK:
         if name in _CONSUMERS:
             del _CONSUMERS[name]
+            _coalesce_last_seen.pop(name, None)
             logger.info(f"Unregistered event consumer: {name}")
 
 

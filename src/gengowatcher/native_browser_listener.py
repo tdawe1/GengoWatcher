@@ -180,6 +180,14 @@ class NativeBrowserListener:
         self._last_status_seconds: int | None = None
         self._last_status_collection_id: str | None = None
 
+    def _reset_workbench_state(self) -> None:
+        self._last_collection_id = None
+        self.detected_collection_id = None
+        self.last_workbench_url = ""
+        self._last_visible_payload = None
+        self._last_status_collection_id = None
+        self._last_status_seconds = None
+
     def start(self) -> None:
         self.running = True
         logger.info(f"Native browser listener starting on {self.debug_url}")
@@ -198,20 +206,13 @@ class NativeBrowserListener:
         except Exception as e:
             self.last_error = str(e)
             logger.exception("Poll iteration failed")
-            self._last_collection_id = None
-            self.detected_collection_id = None
-            self.last_workbench_url = ""
-            self._last_visible_payload = None
-            self._last_status_collection_id = None
-            self._last_status_seconds = None
+            self._reset_workbench_state()
 
     async def _poll_async(self) -> None:
         async with _RdpConnection(self.debug_url) as conn:
             tab, actor = await conn.find_workbench_tab()
             if not tab or not actor:
-                self._last_collection_id = None
-                self.detected_collection_id = None
-                self.last_workbench_url = ""
+                self._reset_workbench_state()
                 return
 
             url = tab.get("url", "")
@@ -219,6 +220,7 @@ class NativeBrowserListener:
                 urllib.parse.urlparse(url).path.split("/workbench/")[-1].split("/")[0]
             )
             if not collection_id:
+                self._reset_workbench_state()
                 return
 
             inner_window_id = tab.get("innerWindowId")
@@ -305,7 +307,10 @@ class NativeBrowserListener:
 
             # Emit countdown status
             current_seconds = status_info.get("seconds_left")
-            if current_seconds is not None and (collection_id != self._last_status_collection_id or current_seconds != self._last_status_seconds):
+            if current_seconds is not None and (
+                collection_id != self._last_status_collection_id
+                or current_seconds != self._last_status_seconds
+            ):
                 self._last_status_collection_id = collection_id
                 self._last_status_seconds = current_seconds
                 publish_native_event(

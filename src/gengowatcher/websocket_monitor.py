@@ -140,21 +140,16 @@ class GengoWebSocketMonitor:
         if callable(getter):
             try:
                 return bool(getter(section, key, fallback=fallback))
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 pass
         try:
             value = self.config.get(section, key, fallback)
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             return fallback
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"1", "true", "yes", "on", "enabled"}:
-                return True
-            if normalized in {"0", "false", "no", "off", "disabled", ""}:
-                return False
-        return bool(value)
+        try:
+            return AppConfig.coerce_bool(value, fallback=fallback)
+        except ValueError:
+            return fallback
 
     def _build_headers(self) -> dict[str, str]:
         session_token = self.config.get("WebSocket", "user_session", "")

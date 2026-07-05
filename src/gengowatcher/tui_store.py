@@ -53,7 +53,9 @@ class TuiStore:
         payload = event.get("payload", {})
 
         if event_type == "job.visible":
-            self._add_recent_job(payload)
+            self._update_browser_visible(payload)
+            if self._is_recent_job_payload(payload):
+                self._add_recent_job(payload)
         elif event_type == "job.accepted":
             job_id = str(payload.get("id") or payload.get("order_id", ""))
             self._active_jobs[job_id] = payload
@@ -64,20 +66,9 @@ class TuiStore:
                 )
                 self._active_jobs = dict(oldest[-50:])
         elif event_type == "browser.workbench.visible":
-            # Update browser health
-            coll_id = payload.get("collection_id")
-            if coll_id:
-                self._browser_health = {
-                    "last_seen": time.time(),
-                    "collection_id": coll_id,
-                    "status": "visible",
-                }
+            self._update_browser_visible(payload)
         elif event_type == "browser.workbench.status":
-            coll_id = str(payload.get("collection_id") or "")
-            if coll_id and "seconds_left" in payload:
-                self._countdowns[coll_id] = payload["seconds_left"]
-                self._countdown_updated_at[coll_id] = time.time()
-                self._prune_countdowns()
+            self._update_countdown(payload)
         elif event_type == "job.file_pending" or event_type == "job.file_ready":
             coll_id = str(payload.get("collection_id") or payload.get("job_id") or "")
             if coll_id:
@@ -86,6 +77,26 @@ class TuiStore:
             coll_id = str(payload.get("collection_id") or "")
             if coll_id:
                 self._workflow_state[coll_id] = payload
+            self._update_countdown(payload)
+
+    def _is_recent_job_payload(self, payload: dict) -> bool:
+        return any(key in payload for key in ("id", "title", "reward", "source"))
+
+    def _update_browser_visible(self, payload: dict) -> None:
+        coll_id = payload.get("collection_id")
+        if coll_id:
+            self._browser_health = {
+                "last_seen": time.time(),
+                "collection_id": coll_id,
+                "status": "visible",
+            }
+
+    def _update_countdown(self, payload: dict) -> None:
+        coll_id = str(payload.get("collection_id") or "")
+        if coll_id and "seconds_left" in payload:
+            self._countdowns[coll_id] = payload["seconds_left"]
+            self._countdown_updated_at[coll_id] = time.time()
+            self._prune_countdowns()
 
     def _add_recent_job(self, job: dict) -> None:
         """Add job to recent list - maintains 50 most recent, deduplicated by id."""

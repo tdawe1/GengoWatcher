@@ -12,13 +12,13 @@ import asyncio
 import json
 import logging
 import signal
+import secrets
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 import websockets
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .browser_session import (
@@ -27,7 +27,7 @@ from .browser_session import (
     build_browser_aligned_websocket_headers,
     fetch_browser_session_token_sync,
 )
-from .config import AppConfig
+from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -42,8 +42,8 @@ class GengoRealtimeGateway:
         self.config = config
         self.running = False
         self._shutdown_event = asyncio.Event()
-        self._last_event: Optional[dict] = None
-        self._event_file: Optional[Path] = None
+        self._last_event: dict | None = None
+        self._event_file: Path | None = None
 
     def _get_event_file(self) -> Path:
         cache_dir = Path.home() / ".cache" / "gengowatcher"
@@ -165,15 +165,44 @@ class GengoRealtimeGateway:
 # FastAPI for TUI to poll
 api = FastAPI()
 api.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
+    allow_methods=["GET"],
+    allow_headers=["Authorization"],
 )
 
-_gateway: Optional[GengoRealtimeGateway] = None
+_gateway: GengoRealtimeGateway | None = None
+
+
+def _extract_bearer_token(authorization: str | None) -> str:
+    scheme, _, value = str(authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not value:
+        return ""
+    return value.strip()
+
+
+def _events_latest_authorized(request: Request) -> bool:
+    if _gateway is None:
+        return False
+    expected = str(_gateway.config.get("WebServer", "auth_token", fallback="") or "")
+    if not expected or expected in PLACEHOLDER_CONFIG_VALUES:
+        return False
+    supplied = _extract_bearer_token(request.headers.get("authorization"))
+    return bool(supplied and secrets.compare_digest(supplied, expected))
 
 
 @api.get("/events/latest")
-async def latest():
+async def latest(request: Request):
     global _gateway
+    if not _events_latest_authorized(request):
+        return Response(status_code=404)
     if _gateway is None or _gateway._last_event is None:
         raise HTTPException(503, "Gateway not connected")
     return _gateway._last_event
@@ -184,7 +213,7 @@ async def health():
     return {"status": "ok", "running": _gateway.running if _gateway else False}
 
 
-async def run_gateway(config_path: Optional[str] = None):
+async def run_gateway(config_path: str | None = None):
     global _gateway
 
     config = AppConfig() if config_path is None else AppConfig(str(config_path))

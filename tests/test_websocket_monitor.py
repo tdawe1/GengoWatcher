@@ -51,8 +51,12 @@ class _FakeWebSocket:
 
 
 class _SlowClosingWebSocket(_FakeWebSocket):
+    def __init__(self, messages):
+        super().__init__(messages)
+        self.close_event = asyncio.Event()
+
     async def __anext__(self):
-        await asyncio.sleep(0.05)
+        await self.close_event.wait()
         raise StopAsyncIteration
 
 
@@ -119,8 +123,19 @@ async def test_websocket_monitor_noop_session_sync_is_not_failure():
     )
     monitor.HEARTBEAT_INTERVAL = 0
     monitor._connect = lambda *_args, **_kwargs: websocket
+    sync_attempted = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
-    await monitor._websocket_session()
+    def noop_sync():
+        loop.call_soon_threadsafe(sync_attempted.set)
+        return False
+
+    monitor._sync_session_from_browser = noop_sync
+
+    session_task = asyncio.create_task(monitor._websocket_session())
+    await asyncio.wait_for(sync_attempted.wait(), timeout=1)
+    websocket.close_event.set()
+    await session_task
 
     assert monitor._websocket_sync_failed is False
 
@@ -143,6 +158,8 @@ async def test_websocket_monitor_failed_session_sync_sets_hard_failure(monkeypat
     )
     monitor.HEARTBEAT_INTERVAL = 0
     monitor._connect = lambda *_args, **_kwargs: websocket
+    sync_attempted = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     def fail_snapshot(_debug_url):
         raise RuntimeError("browser unavailable")
@@ -151,8 +168,18 @@ async def test_websocket_monitor_failed_session_sync_sets_hard_failure(monkeypat
         "gengowatcher.websocket_monitor.fetch_browser_session_snapshot_sync",
         fail_snapshot,
     )
+    original_sync = monitor._sync_session_from_browser
 
-    await monitor._websocket_session()
+    def sync_and_signal():
+        result = original_sync()
+        loop.call_soon_threadsafe(sync_attempted.set)
+        return result
+
+    monitor._sync_session_from_browser = sync_and_signal
+
+    session_task = asyncio.create_task(monitor._websocket_session())
+    await asyncio.wait_for(sync_attempted.wait(), timeout=1)
+    await session_task
 
     assert monitor._websocket_sync_failed is True
     assert monitor._websocket_sync_failure_reason == "browser unavailable"
