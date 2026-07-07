@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -39,6 +39,7 @@ class BrowserSessionSnapshot:
     origin: str = DEFAULT_GENGO_ORIGIN
     target_url: str = ""
     target_title: str = ""
+    cookies: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

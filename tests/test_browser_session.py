@@ -1220,13 +1220,18 @@ def test_build_browser_aligned_websocket_headers_uses_browser_profile():
     )
 
     assert headers == {
-        "Origin": "https://gengo.com",
-        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
-        "Pragma": "no-cache",
-        "Cache-Control": "no-cache",
+        "Host": "live-dashboard.gengo.com",
         "User-Agent": "Helium Browser",
+        "Accept": "*/*",
         "Accept-Language": "en-GB,en-US;q=0.9",
         "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Sec-WebSocket-Version": "13",
+        "Origin": "https://gengo.com",
+        "Sec-WebSocket-Extensions": "permessage-deflate",
+        "Sec-GPC": "1",
+        "Connection": "Upgrade",
+        "Upgrade": "websocket",
+        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
     }
 
 

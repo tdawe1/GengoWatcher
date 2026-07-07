@@ -22,11 +22,10 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .browser_session import (
-    GENGO_REALTIME_URL,
-    BrowserSessionError,
     build_browser_aligned_websocket_headers,
     fetch_browser_session_token_sync,
 )
+from .browser_session_core import GENGO_REALTIME_URL
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
 
 logging.basicConfig(
@@ -70,11 +69,11 @@ class GengoRealtimeGateway:
 
         user_agent = (
             self.config.get("Network", "browser_user_agent")
-            or "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+            or "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
         )
         accept_language = (
             self.config.get("Network", "browser_accept_language")
-            or "en-GB,en-US;q=0.9,en;q=0.8"
+            or "en-US,en;q=0.9"
         )
 
         return build_browser_aligned_websocket_headers(
@@ -82,6 +81,8 @@ class GengoRealtimeGateway:
             user_agent=user_agent,
             origin="https://gengo.com",
             accept_language=accept_language,
+            sec_websocket_extensions="permessage-deflate",
+            sec_gpc="1",
         )
 
     _MAX_EVENT_LOG_LINES = 5000
