@@ -27,7 +27,6 @@ from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidSta
 
 from .browser_session import (
     GENGO_AVAILABLE_JOBS_URL,
-    GENGO_BROWSER_BROWSE_URLS,
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     fetch_browser_session_snapshot_sync,
@@ -53,7 +52,6 @@ from .watcher_debug import (
     redact_raw_ws_value as _redact_raw_ws_value,
 )
 from .watcher_job_metadata import (
-    TIER_UNIT_RATES,
     coerce_positive_float,
     coerce_positive_int,
     derive_lang_pair,
@@ -1445,6 +1443,7 @@ class GengoWatcher:
         telemetry_path = self._browser_worker_telemetry_path()
         self.logger.info("Browser worker event listener watching %s", telemetry_path)
         initialized = False
+        skip_existing_on_open = True
         while not self.shutdown_event.is_set():
             if not telemetry_path.exists():
                 self.shutdown_event.wait(1.0)
@@ -1846,7 +1845,6 @@ class GengoWatcher:
                 )
 
             session_token = self.config.get("WebSocket", "user_session")
-            user_key = self.config.get("WebSocket", "user_key")
             masked_token = (
                 f"{session_token[:4]}...{session_token[-4:]}"
                 if session_token and len(session_token) > 8
@@ -2635,7 +2633,6 @@ class GengoWatcher:
         allow_navigation: bool,
         is_keepalive: bool,
     ) -> None:
-        error_count = 0
         try:
             snapshot = inspect_available_jobs_page_sync(
                 debug_url,
@@ -2644,7 +2641,6 @@ class GengoWatcher:
                 interact=interact,
                 allow_navigation=allow_navigation,
             )
-            error_count = 0
             self.browser_jobs_last_check_time = time.time()
             self.browser_jobs_last_action = snapshot.action
             if snapshot.action == "manual_browse":
