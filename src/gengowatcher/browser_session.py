@@ -14,10 +14,7 @@ import websockets
 
 from ._async_utils import run_coroutine_sync
 from .browser_session_core import (
-    DEFAULT_ACCEPT_LANGUAGE,
-    DEFAULT_BROWSER_DEBUG_URL,
     DEFAULT_CDP_RECEIVE_TIMEOUT_SEC,
-    DEFAULT_FIREFOX_BIDI_PATH,
     DEFAULT_GENGO_ORIGIN,
     GENGO_ACTIVITY_MARKER_STORAGE_KEY,
     GENGO_AVAILABLE_JOBS_DETECTED_STORAGE_KEY,
@@ -25,26 +22,21 @@ from .browser_session_core import (
     GENGO_AVAILABLE_JOBS_URL,
     GENGO_LOCAL_STORAGE_USER_KEY,
     GENGO_REALTIME_PATH,
-    GENGO_REALTIME_URL,
     GENGO_SUMMARY_PATH,
     GENGO_SUMMARY_URL,
     PRIMARY_GENGO_COOKIE_NAMES,
     BrowserAvailableJob,
     BrowserAvailableJobsSnapshot,
     BrowserDebugEndpoint,
-    BrowserDebugTarget,
     BrowserSessionError,
     BrowserSessionSnapshot,
-    coerce_cookie_value as _coerce_cookie_value,
+    coerce_cookie_value,
     extract_cookie_value,
     firefox_bidi_url as _firefox_bidi_url,
     looks_like_firefox_bidi_url as _looks_like_firefox_bidi_url,
     looks_like_firefox_rdp_url as _looks_like_firefox_rdp_url,
     normalize_debug_url as _normalize_debug_url,
     select_gengo_target,
-    summarize_cdp_targets as _summarize_cdp_targets,
-    summarize_firefox_contexts as _summarize_firefox_contexts,
-    summarize_firefox_tabs as _summarize_firefox_tabs,
 )
 
 logger = logging.getLogger(__name__)
@@ -731,7 +723,7 @@ def _extract_cookie_value_or_empty(
                 continue
             if cookie.get("name") != expected_name:
                 continue
-            value = _coerce_cookie_value(cookie.get("value", ""))
+            value = coerce_cookie_value(cookie.get("value", ""))
             if value:
                 return value
     return ""
@@ -1194,6 +1186,7 @@ async def _fetch_browser_session_snapshot_firefox_bidi(
         target_url=str(page_state.get("url", "") or context.get("url", "")).strip(),
         target_title=str(page_state.get("title", "") or "").strip(),
         rd_session_id=rd_session_id,
+        cookies=cookies,
     )
 
 
@@ -2230,51 +2223,57 @@ def refresh_browser_page_activity_sync(
 
 def build_browser_aligned_websocket_headers(
     *,
-    session_token: str,
+    session_token: str = "",
     user_agent: str = "",
     origin: str = DEFAULT_GENGO_ORIGIN,
     accept_language: str = "",
     rd_session_id: str = "",
-    include_client_hints: bool = True,
+    sec_websocket_extensions: str = "permessage-deflate",
+    sec_gpc: str = "1",
+    cookie_header: str = "",
 ) -> dict[str, str]:
-    """Construct headers that mirror a real browser's WebSocket upgrade request.
+    """Build WebSocket headers matching the live Firefox browser profile.
 
-    Chrome does not send Pragma, Cache-Control, or Accept-Encoding on a
-    WebSocket upgrade — including them is a positive fingerprint for the
-    Python `websockets` library / Playwright HTTP route. We also omit
-    Client Hints when the configured UA is not a modern Chrome to avoid
-    sending sec-ch-ua for a Firefox or unknown UA.
+    Prefer the full cookie jar captured from the real browser. If that is not
+    available, fall back to explicit session cookies while keeping rd-session-id
+    distinct when the browser supplied it.
     """
-    headers: dict[str, str] = {"Origin": origin or DEFAULT_GENGO_ORIGIN}
-    if session_token:
-        # Real browsers obtain distinct values for the auth session cookie
-        # and the rd-session-id; sending identical values is detectable.
+    headers = {
+        "Host": "live-dashboard.gengo.com",
+        "User-Agent": user_agent
+        or "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0",
+        "Accept": "*/*",
+        "Accept-Language": accept_language or "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Sec-WebSocket-Version": "13",
+        "Origin": origin or DEFAULT_GENGO_ORIGIN,
+        "Sec-WebSocket-Extensions": sec_websocket_extensions,
+        "Sec-GPC": sec_gpc,
+        "Connection": "Upgrade",
+        "Upgrade": "websocket",
+    }
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+    elif session_token:
         rd_value = rd_session_id or session_token
         headers["Cookie"] = (
             f"myG_myGSession_={session_token}; myG_rdsessID={rd_value}"
         )
-    if user_agent:
-        headers["User-Agent"] = user_agent
-    if accept_language:
-        headers["Accept-Language"] = accept_language
-    if include_client_hints and user_agent and "Chrome/" in user_agent:
-        # Client Hints on the WS upgrade — Chrome 110+ sends these. Best-effort
-        # extraction from a recent UA string so we don't pin to a single version.
-        try:
-            chrome_version = user_agent.split("Chrome/", 1)[1].split(".", 1)[0]
-            major = int(chrome_version)
-        except (IndexError, ValueError):
-            major = 0
-        if major >= 110:
-            sec_ch_ua = (
-                f'"Chromium";v="{major}", "Not_A Brand";v="8", "Google Chrome";v="{major}"'
-            )
-            headers["Sec-CH-UA"] = sec_ch_ua
-            headers["Sec-CH-UA-Mobile"] = "?0"
-            headers["Sec-CH-UA-Platform"] = '"Linux"'
-            headers["Sec-Fetch-Mode"] = "websocket"
-            headers["Sec-Fetch-Site"] = "cross-site"
     return headers
+
+
+def format_cookies_as_header(cookies: list[dict[str, str]]) -> str:
+    """Format a list of cookie dicts into a Cookie header string.
+
+    Matches Firefox's cookie header format order.
+    """
+    parts = []
+    for cookie in cookies:
+        name = cookie.get("name", "")
+        value = cookie.get("value", "")
+        if name and value is not None:
+            parts.append(f"{name}={value}")
+    return "; ".join(parts)
 
 
 def build_websocket_auth_payload(

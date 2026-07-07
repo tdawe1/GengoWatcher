@@ -15,9 +15,9 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from .browser_session import (
-    BrowserSessionError,
     build_browser_aligned_websocket_headers,
     fetch_browser_session_snapshot_sync,
+    format_cookies_as_header,
 )
 from .config import AppConfig
 from .state import AppState
@@ -53,9 +53,9 @@ class WebSocketConfig:
     session_sync_alert_on_failure: bool = True
     browser_debug_url: str = ""
     user_agent: str = (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
     )
-    accept_language: str = "en-GB,en-US;q=0.9,en;q=0.8"
+    accept_language: str = "en-US,en;q=0.9"
 
 
 def _build_auth_payload(user_id: str, session_token: str, user_key: str = "") -> dict:
@@ -100,6 +100,7 @@ class GengoWebSocketMonitor:
         self._websocket_session_refresh_requested = False
         self._websocket_sync_failed = False
         self._websocket_sync_failure_reason = ""
+        self._browser_cookies: list[dict[str, str]] = []
 
     def is_configured(self) -> bool:
         session_token = self.config.get("WebSocket", "user_session")
@@ -109,7 +110,7 @@ class GengoWebSocketMonitor:
         )
 
     def _sync_session_from_browser(self) -> bool | None:
-        """Sync session token from live browser.
+        """Sync session token, user agent, accept-language, and full cookie jar from live browser.
 
         Returns True when the configured token changed, False when it was
         unchanged/skipped, and None when the sync attempt failed.
@@ -132,11 +133,28 @@ class GengoWebSocketMonitor:
                 self.config.set("WebSocket", "user_session", browser_token)
                 changed = True
             if browser_rd_id and browser_rd_id != configured_rd_id:
-                self.logger.info(
-                    "WebSocket: Synced browser rd_session_id cookie"
-                )
+                self.logger.info("WebSocket: Synced browser rd_session_id cookie")
                 self.config.set("WebSocket", "rd_session_id", browser_rd_id)
                 changed = True
+            # Also sync UA and accept-language from real browser.
+            if snapshot.user_agent:
+                current_ua = self.config.get("Network", "browser_user_agent", "")
+                if snapshot.user_agent != current_ua:
+                    self.config.set("Network", "browser_user_agent", snapshot.user_agent)
+                    self.logger.debug("WebSocket: Synced browser User-Agent")
+                    changed = True
+            if snapshot.accept_language:
+                current_al = self.config.get("Network", "browser_accept_language", "")
+                if snapshot.accept_language != current_al:
+                    self.config.set("Network", "browser_accept_language", snapshot.accept_language)
+                    self.logger.debug("WebSocket: Synced browser Accept-Language")
+                    changed = True
+            # Store full cookie jar for fingerprint matching.
+            if snapshot.cookies:
+                self._browser_cookies = snapshot.cookies
+                self.logger.debug(
+                    f"WebSocket: Synced {len(snapshot.cookies)} browser cookies"
+                )
             return changed
         except Exception as exc:
             self._websocket_sync_failure_reason = str(exc)
@@ -172,12 +190,16 @@ class GengoWebSocketMonitor:
             self.config.get("Network", "browser_accept_language", "")
             or self.defaults.accept_language
         )
+        cookie_header = format_cookies_as_header(self._browser_cookies) if self._browser_cookies else ""
         return build_browser_aligned_websocket_headers(
             session_token=session_token,
             rd_session_id=rd_session_id,
             user_agent=user_agent,
             origin="https://gengo.com",
             accept_language=accept_language,
+            sec_websocket_extensions="permessage-deflate",
+            sec_gpc="1",
+            cookie_header=cookie_header,
         )
 
     def _capture_raw_ws_message(self, message: str, *, direction: str = "recv") -> None:

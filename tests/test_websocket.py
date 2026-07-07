@@ -1,7 +1,6 @@
 import pytest
-import asyncio
 import json
-from unittest.mock import patch, MagicMock, AsyncMock, ANY
+from unittest.mock import patch, MagicMock, AsyncMock
 import collections
 from builtins import TimeoutError
 

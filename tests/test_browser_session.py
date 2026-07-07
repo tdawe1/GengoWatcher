@@ -1219,13 +1219,19 @@ def test_build_browser_aligned_websocket_headers_uses_browser_profile():
         accept_language="en-GB,en-US;q=0.9",
     )
 
-    # Chrome does NOT send Pragma / Cache-Control / Accept-Encoding on a
-    # WebSocket upgrade — including them is a Python `websockets` fingerprint.
     assert headers == {
-        "Origin": "https://gengo.com",
-        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
+        "Host": "live-dashboard.gengo.com",
         "User-Agent": "Helium Browser",
+        "Accept": "*/*",
         "Accept-Language": "en-GB,en-US;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Sec-WebSocket-Version": "13",
+        "Origin": "https://gengo.com",
+        "Sec-WebSocket-Extensions": "permessage-deflate",
+        "Sec-GPC": "1",
+        "Connection": "Upgrade",
+        "Upgrade": "websocket",
+        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
     }
 
 
@@ -1243,7 +1249,7 @@ def test_build_browser_aligned_websocket_headers_separate_rd_session_id():
     )
 
 
-def test_build_browser_aligned_websocket_headers_emits_client_hints_for_chrome():
+def test_build_browser_aligned_websocket_headers_avoids_synthetic_client_hints():
     headers = build_browser_aligned_websocket_headers(
         session_token="token",
         user_agent=(
@@ -1252,10 +1258,8 @@ def test_build_browser_aligned_websocket_headers_emits_client_hints_for_chrome()
         ),
     )
 
-    assert "Sec-CH-UA" in headers
-    assert "Chromium" in headers["Sec-CH-UA"]
-    assert headers["Sec-Fetch-Mode"] == "websocket"
-    assert headers["Sec-CH-UA-Mobile"] == "?0"
+    assert "Sec-CH-UA" not in headers
+    assert "Sec-Fetch-Mode" not in headers
 
 
 def test_build_browser_aligned_websocket_headers_skips_client_hints_for_non_chrome():
