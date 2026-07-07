@@ -1,4 +1,4 @@
-__version__ = "2.1.5"
+__version__ = "2.9.2"
 __release_date__ = "2025-06-22"
 
 import asyncio
