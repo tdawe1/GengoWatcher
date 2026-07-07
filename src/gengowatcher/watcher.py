@@ -1,5 +1,5 @@
-__version__ = "2.1.5"
-__release_date__ = "2025-06-22"
+__version__ = "2.9.2"
+__release_date__ = "2026-07-07"
 
 import asyncio
 import concurrent.futures
@@ -2685,7 +2685,8 @@ class GengoWatcher:
                 self.logger.debug(f"Native browser listener error: {e}")
             capture_interval = (
                 getattr(self, "_native_listener", None).capture_interval
-                if hasattr(self, "_native_listener") and hasattr(getattr(self, "_native_listener", None), "capture_interval")
+                if hasattr(self, "_native_listener")
+                and hasattr(getattr(self, "_native_listener", None), "capture_interval")
                 else 0.75
             )
             time.sleep(capture_interval)
