@@ -157,6 +157,17 @@ enabled = false
 capture_interval_ms = 750
 status_poll_seconds = 5
 
+[BrowserJobs]
+# BrowserJobs monitor is now event-driven by default. It wakes when:
+#   - The native browser listener publishes a workbench-visible event, OR
+#   - A job.discovered / job.details event lands from any source, OR
+#   - An explicit TUI / CLI command calls trigger_browser_jobs_refresh().
+# No fixed polling cadence is used. The idle_cap_sec below bounds how often
+# the monitor runs a passive keepalive eval when nothing has happened.
+enabled = true
+allow_navigation = false
+idle_cap_sec = 1800
+
 [BrowserWorker]
 enabled = false
 socket_path = ""

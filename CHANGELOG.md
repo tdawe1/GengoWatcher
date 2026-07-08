@@ -3,6 +3,34 @@
 All notable changes to GengoWatcher are documented in this file.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.9.4] - 2026-07-08
+
+### Changed
+- **BrowserJobs monitor is now event-driven** (`src/gengowatcher/watcher.py`).
+  The old 1.5s fixed polling loop and the random `GENGO_BROWSER_BROWSE_URLS`
+  navigation have been removed. The monitor now wakes from
+  `_browser_jobs_refresh_event` on:
+  - `job.visible` / `job.details` / `job.discovered` API events
+    (emitted by the native browser listener and the WS / RSS / webhook paths);
+  - explicit `trigger_browser_jobs_refresh()` calls from TUI commands or
+    the WS monitor's sync-fallback path;
+  - a long idle-cap keepalive (default 30 min, configurable via
+    `[BrowserJobs].idle_cap_sec`) that runs a passive eval only — no
+    navigation, no interaction.
+- `config.toml.example` adds a `[BrowserJobs]` block with
+  `allow_navigation = false` and `idle_cap_sec = 1800`. The random browse
+  feature is still reachable for operators who explicitly set
+  `allow_navigation = true`, but they no longer get unsolicited
+  navigation of the live Firefox tab.
+- New public API: `GengoWatcher.trigger_browser_jobs_refresh(reason=...)`
+  for external producers that want to request a refresh.
+
+### Tests
+- `tests/test_browser_jobs_event_driven.py` — 4 new regression tests:
+  no scrape without trigger inside idle_cap window, scrape after explicit
+  trigger, keepalive scrape is passive (no browse_url, no force_refresh),
+  triggered refresh respects `allow_navigation=false`.
+
 ## [2.9.3] - 2026-07-08
 
 ### Fixed
