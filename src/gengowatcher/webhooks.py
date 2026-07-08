@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import concurrent.futures
 import hashlib
 import hmac
@@ -542,7 +543,19 @@ def get_webhook_executor() -> concurrent.futures.ThreadPoolExecutor:
                 max_workers=WEBHOOK_SUBMISSION_MAX_WORKERS,
                 thread_name_prefix="WebhookDeliver",
             )
+            atexit.register(_shutdown_webhook_executor)
         return _webhook_executor
+
+
+def _shutdown_webhook_executor() -> None:
+    global _webhook_executor
+    with _webhook_executor_lock:
+        executor = _webhook_executor
+        _webhook_executor = None
+    if executor is not None:
+        # Don't block interpreter shutdown; any in-flight deliveries are
+        # allowed to finish in the background.
+        executor.shutdown(wait=False)
 
 
 def submit_webhook_task(task: Callable[[], None]) -> concurrent.futures.Future:

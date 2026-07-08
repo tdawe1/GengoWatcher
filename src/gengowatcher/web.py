@@ -136,7 +136,10 @@ class WebAPI:
         self._event_history: deque[dict[str, Any]] = deque(
             maxlen=max(1, config_int(config, "WebServer", "event_history_size", 200))
         )
+        # Broadcast loop is refcounted so concurrent WS connections don't
+        # accidentally clear each other's loop pointer on teardown.
         self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._event_loop_refcount: int = 0
         self._previous_api_event_callback = getattr(
             self.watcher, "on_api_event_callback", None
         )
@@ -1891,10 +1894,14 @@ async def websocket_status(websocket: WebSocket):
 
     await websocket.accept()
     current_loop = asyncio.get_running_loop()
-    api_instance._event_loop = current_loop
-
-    # Add to active connections
+    # Record the broadcast loop with a refcount so concurrent WS connections
+    # don't accidentally clear each other's loop pointer on teardown.
     with api_instance._connections_lock:
+        if api_instance._event_loop is None:
+            api_instance._event_loop = current_loop
+            api_instance._event_loop_refcount = 0
+        api_instance._event_loop_refcount += 1
+        # Add to active connections
         api_instance._active_connections.append(websocket)
 
     try:
@@ -1945,8 +1952,14 @@ async def websocket_status(websocket: WebSocket):
                     api_instance._active_connections.remove(websocket)
             except ValueError:
                 pass  # Already removed
+            # Decrement the loop refcount; only clear when the last
+            # connection on this loop tears down.
             if api_instance._event_loop is current_loop:
-                api_instance._event_loop = None
+                api_instance._event_loop_refcount = max(
+                    0, api_instance._event_loop_refcount - 1
+                )
+                if api_instance._event_loop_refcount == 0:
+                    api_instance._event_loop = None
 
 
 @app.get("/")

@@ -38,6 +38,12 @@ _WORKBENCH_SCAN_EXPRESSION = """
   const MAX_DEPTH = 4;
   const MAX_KEYS = 40;
   const MAX_VISITED = 1000;
+  // Cap on the serialized size of the cloned workbench payload. BiDi/RDP
+  // evaluation has a hard result-size limit (typically ~1MB on Firefox); a
+  // payload above this would be truncated on the wire and result in a
+  // silently-incomplete normalized object. Skip and let the next poll
+  // retry — the workbench is large, not malformed.
+  const MAX_SERIALIZED_BYTES = 768 * 1024;
   let visited = 0;
   function isObject(v) { return v !== null && typeof v === "object"; }
   function looksLikeWorkbench(v) {
@@ -52,7 +58,13 @@ _WORKBENCH_SCAN_EXPRESSION = """
     seen.add(value); visited++;
     if (looksLikeWorkbench(value)) {
       try {
-        return { source: path, payload: clone(value) };
+        const payload = clone(value);
+        const serialized = JSON.stringify({ source: path, payload: payload });
+        if (serialized.length > MAX_SERIALIZED_BYTES) {
+          // Too large to safely return through the eval channel.
+          return { source: path, payload: null, oversized: true };
+        }
+        return { source: path, payload: payload };
       } catch (_e) {
         return null;
       }

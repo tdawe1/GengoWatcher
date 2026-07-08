@@ -1442,11 +1442,6 @@ class GengoWatcher:
 
             try:
                 with telemetry_path.open("r", encoding="utf-8") as handle:
-        self.logger.info("Browser worker event listener watching %s", telemetry_path)
-        initialized = False
-        skip_existing_on_open = True
-        while not self.shutdown_event.is_set():
-            ...
                     opened_stat = os.fstat(handle.fileno())
                     if not initialized:
                         if skip_existing_on_open:
