@@ -1,5 +1,5 @@
-__version__ = "2.9.2"
-__release_date__ = "2026-07-07"
+__version__ = "2.9.3"
+__release_date__ = "2026-07-08"
 
 import asyncio
 import concurrent.futures
