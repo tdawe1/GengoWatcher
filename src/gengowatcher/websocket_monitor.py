@@ -121,14 +121,23 @@ class GengoWebSocketMonitor:
         try:
             snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
             browser_token = snapshot.session_token
+            browser_rd_id = snapshot.rd_session_id
             configured_token = self.config.get("WebSocket", "user_session")
+            configured_rd_id = self.config.get("WebSocket", "rd_session_id", "")
+            changed = False
             if browser_token and browser_token != configured_token:
                 self.logger.info(
                     f"WebSocket: Synced browser session token (masked: {configured_token[:4] if configured_token else ''}...{configured_token[-4:] if configured_token and len(configured_token) > 4 else ''})"
                 )
                 self.config.set("WebSocket", "user_session", browser_token)
-                return True
-            return False
+                changed = True
+            if browser_rd_id and browser_rd_id != configured_rd_id:
+                self.logger.info(
+                    "WebSocket: Synced browser rd_session_id cookie"
+                )
+                self.config.set("WebSocket", "rd_session_id", browser_rd_id)
+                changed = True
+            return changed
         except Exception as exc:
             self._websocket_sync_failure_reason = str(exc)
             self.metrics.sync_failed = True
@@ -154,6 +163,7 @@ class GengoWebSocketMonitor:
 
     def _build_headers(self) -> dict[str, str]:
         session_token = self.config.get("WebSocket", "user_session", "")
+        rd_session_id = self.config.get("WebSocket", "rd_session_id", "")
         user_agent = (
             self.config.get("Network", "browser_user_agent", "")
             or self.defaults.user_agent
@@ -164,6 +174,7 @@ class GengoWebSocketMonitor:
         )
         return build_browser_aligned_websocket_headers(
             session_token=session_token,
+            rd_session_id=rd_session_id,
             user_agent=user_agent,
             origin="https://gengo.com",
             accept_language=accept_language,
@@ -271,6 +282,23 @@ class GengoWebSocketMonitor:
         user_id = self.config.get("WebSocket", "user_id")
         session_token = self.config.get("WebSocket", "user_session")
         user_key = self.config.get("WebSocket", "user_key", "")
+        user_key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
+
+        # Fail-closed: Gengo's realtime endpoint rejects auth payloads missing
+        # userKey. Previously the monitor silently looped with bad auth.
+        if not user_key or user_key == user_key_placeholder:
+            self._websocket_sync_failed = True
+            self._websocket_sync_failure_reason = (
+                "user_key missing or placeholder; refusing to connect"
+            )
+            self.metrics.sync_failed = True
+            self.metrics.sync_failure_reason = self._websocket_sync_failure_reason
+            self.logger.error(
+                "WebSocket: user_key missing or placeholder; "
+                "Gengo realtime handshake requires userKey. "
+                "Set [WebSocket].user_key in config.toml to a real value."
+            )
+            return
 
         headers = self._build_headers()
 
@@ -300,8 +328,22 @@ class GengoWebSocketMonitor:
                         )
 
                 async def heartbeat_loop() -> None:
+                    # The very first iteration is allowed to fire the sync
+                    # immediately (the throttling below gates subsequent ones)
+                    # so callers don't have to wait a full interval before the
+                    # session-sync handshake can succeed.
+                    first_iteration = True
                     while True:
-                        await asyncio.sleep(self.HEARTBEAT_INTERVAL)
+                        if not first_iteration:
+                            # Jitter the heartbeat interval ±5s so the cadence
+                            # isn't perfectly periodic (real Chrome pings on
+                            # variable browser-internal intervals; a constant
+                            # 25s loop is trivially distinguishable in server
+                            # logs).
+                            jitter = random.uniform(-5.0, 5.0)
+                            interval = max(1.0, self.HEARTBEAT_INTERVAL + jitter)
+                            await asyncio.sleep(interval)
+                        first_iteration = False
                         t0 = time.perf_counter()
                         pong_waiter = await ws.ping()
                         await asyncio.wait_for(pong_waiter, timeout=5)

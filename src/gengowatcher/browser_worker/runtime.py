@@ -83,9 +83,40 @@ class BrowserRuntime:
         self.profile_manager.ensure_ready()
         self.config.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = await async_playwright().start()
+        # Launch with anti-automation flags so navigator.webdriver and CDP
+        # surface less obvious. --disable-blink-features=AutomationControlled
+        # is the well-known incognito-mode mitigation; we pair it with an
+        # init script that actively overwrites the property on every new
+        # document (some page-side detectors re-check after navigation).
         self.context = await self._playwright.chromium.launch_persistent_context(
             str(self.config.profile_path),
             headless=self.config.headless,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=AutomationControlled",
+            ],
+        )
+        await self.context.add_init_script(
+            """
+            (() => {
+              const strip = () => {
+                try {
+                  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                } catch (_) {}
+                try {
+                  delete navigator.__webdriver_evaluate;
+                  delete navigator.__webdriver_unwrap;
+                  delete navigator.__webdriver_script_function;
+                } catch (_) {}
+                try {
+                  window.chrome = window.chrome || {};
+                  window.chrome.runtime = window.chrome.runtime || { id: undefined };
+                } catch (_) {}
+              };
+              strip();
+              document.addEventListener('DOMContentLoaded', strip, { once: true });
+            })();
+            """
         )
         await self.ensure_tabs()
         self._page_observer_task = asyncio.create_task(

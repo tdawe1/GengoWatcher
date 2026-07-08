@@ -116,6 +116,7 @@ async def test_websocket_monitor_noop_session_sync_is_not_failure():
                 ("WebSocket", "wss_url"): "ws://example.test/socket",
                 ("WebSocket", "user_id"): "user-1",
                 ("WebSocket", "user_session"): "session-token",
+                ("WebSocket", "user_key"): "real-user-key",
             }
         ),
         MagicMock(),
@@ -149,6 +150,7 @@ async def test_websocket_monitor_failed_session_sync_sets_hard_failure(monkeypat
                 ("WebSocket", "wss_url"): "ws://example.test/socket",
                 ("WebSocket", "user_id"): "user-1",
                 ("WebSocket", "user_session"): "session-token",
+                ("WebSocket", "user_key"): "real-user-key",
                 ("WebSocket", "browser_debug_url"): "ws://127.0.0.1:6000",
                 ("WebSocket", "session_sync_fail_hard"): True,
             }

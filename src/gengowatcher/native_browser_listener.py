@@ -331,6 +331,7 @@ class NativeBrowserListener:
     def run_forever(self) -> None:
         """Main listener loop."""
         self.start()
+        import random
         import time
 
         while self.running:
@@ -338,7 +339,11 @@ class NativeBrowserListener:
                 self._poll()
             except Exception as e:
                 logger.error(f"Native browser listener error: {e}", exc_info=True)
-            time.sleep(self.capture_interval)
+            # Jitter the poll interval ±150ms around the configured value so a
+            # fixed 750ms cadence isn't observable from page-side timing.
+            base = self.capture_interval
+            jitter = random.uniform(-0.15, 0.15)
+            time.sleep(max(0.2, base + jitter))
 
     def run_once(self) -> None:
         """Single poll - for testing."""

@@ -53,12 +53,15 @@ class GengoRealtimeGateway:
     def _build_headers(self) -> dict:
         debug_url = self.config.get("WebSocket", "browser_debug_url")
         session_token = ""
+        rd_session_id = ""
 
         if debug_url:
             try:
-                token = fetch_browser_session_token_sync(str(debug_url))
-                if token:
-                    session_token = token
+                from .browser_session import fetch_browser_session_snapshot_sync
+                snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
+                if snapshot.session_token:
+                    session_token = snapshot.session_token
+                    rd_session_id = snapshot.rd_session_id
                     logger.info("Fetched live session from browser")
             except Exception as e:
                 logger.warning(f"Browser extract failed: {e}")
@@ -67,6 +70,10 @@ class GengoRealtimeGateway:
             session_token = str(self.config.get("WebSocket", "user_session") or "")
             if session_token:
                 logger.info("Using configured session token")
+        if not rd_session_id:
+            rd_session_id = str(
+                self.config.get("WebSocket", "rd_session_id") or ""
+            )
 
         user_agent = (
             self.config.get("Network", "browser_user_agent")
@@ -79,6 +86,7 @@ class GengoRealtimeGateway:
 
         return build_browser_aligned_websocket_headers(
             session_token=session_token,
+            rd_session_id=rd_session_id,
             user_agent=user_agent,
             origin="https://gengo.com",
             accept_language=accept_language,
@@ -137,12 +145,22 @@ class GengoRealtimeGateway:
                     backoff = 5.0
 
                     user_id = self.config.get("WebSocket", "user_id", "")
+                    user_key = self.config.get("WebSocket", "user_key", "")
                     # Extract session token from Cookie header (format: myG_myGSession_=TOKEN; myG_rdsessID=TOKEN)
                     cookie = headers.get("Cookie", "")
                     session = ""
                     if "myG_myGSession_=" in cookie:
                         session = cookie.split("myG_myGSession_=")[1].split(";")[0]
-                    auth = {"user_id": user_id, "user_session": session}
+                    # Gengo's realtime WS expects the same field shape as the
+                    # browser-aligned in-process monitor: userId / sessionToken /
+                    # userKey. Sending user_id / user_session (snake_case) silently
+                    # fails the handshake.
+                    auth: dict[str, str] = {
+                        "userId": str(user_id or ""),
+                        "sessionToken": session,
+                    }
+                    if user_key:
+                        auth["userKey"] = str(user_key)
                     await ws.send(json.dumps(auth))
 
                     async for msg in ws:

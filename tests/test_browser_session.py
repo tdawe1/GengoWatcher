@@ -1219,15 +1219,54 @@ def test_build_browser_aligned_websocket_headers_uses_browser_profile():
         accept_language="en-GB,en-US;q=0.9",
     )
 
+    # Chrome does NOT send Pragma / Cache-Control / Accept-Encoding on a
+    # WebSocket upgrade — including them is a Python `websockets` fingerprint.
     assert headers == {
         "Origin": "https://gengo.com",
         "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
-        "Pragma": "no-cache",
-        "Cache-Control": "no-cache",
         "User-Agent": "Helium Browser",
         "Accept-Language": "en-GB,en-US;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
     }
+
+
+def test_build_browser_aligned_websocket_headers_separate_rd_session_id():
+    headers = build_browser_aligned_websocket_headers(
+        session_token="auth-token",
+        rd_session_id="distinct-rd-token",
+        user_agent="Helium Browser",
+    )
+
+    # Real browsers obtain distinct values for myG_myGSession_ and
+    # myG_rdsessID; sending identical values is detectable.
+    assert headers["Cookie"] == (
+        "myG_myGSession_=auth-token; myG_rdsessID=distinct-rd-token"
+    )
+
+
+def test_build_browser_aligned_websocket_headers_emits_client_hints_for_chrome():
+    headers = build_browser_aligned_websocket_headers(
+        session_token="token",
+        user_agent=(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+        ),
+    )
+
+    assert "Sec-CH-UA" in headers
+    assert "Chromium" in headers["Sec-CH-UA"]
+    assert headers["Sec-Fetch-Mode"] == "websocket"
+    assert headers["Sec-CH-UA-Mobile"] == "?0"
+
+
+def test_build_browser_aligned_websocket_headers_skips_client_hints_for_non_chrome():
+    headers = build_browser_aligned_websocket_headers(
+        session_token="token",
+        user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
+    )
+
+    # Don't emit Sec-CH-UA for non-Chrome UAs — that would be a tell.
+    assert "Sec-CH-UA" not in headers
+    assert "Sec-Fetch-Mode" not in headers
 
 
 def test_build_websocket_auth_payload_uses_session_only():

@@ -208,7 +208,7 @@ class AppState:
         if job_id:
             self._job_ids.add(job_id)
         for identifier in self._job_identifier_keys(job):
-            self._job_lookup.setdefault(identifier, job)
+            self._job_lookup[identifier] = job
 
     def _refresh_job_index_unlocked(
         self,
@@ -654,8 +654,7 @@ class AppState:
             if expire_value > 10_000_000_000:
                 expire_epoch = expire_value / 1000.0
                 return max(0, int(expire_epoch - now))
-            if expire_value > 1_000_000_000:
-                return max(0, int(expire_value - now))
+            return max(0, int(expire_value - now))
 
         captured_left = self._coerce_float(job.get("accepted_seconds_left_at_capture"))
         captured_at = self._coerce_float(job.get("accepted_payload_captured_at"))

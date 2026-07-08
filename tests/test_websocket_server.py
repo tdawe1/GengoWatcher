@@ -81,8 +81,11 @@ async def test_gateway_run_offloads_header_build_and_event_emit(
 
     assert "_build_headers" in to_thread_calls
     assert "_emit" in to_thread_calls
+    # Auth payload now matches the in-process monitor's camelCase shape
+    # (userId / sessionToken / userKey); the standalone gateway previously
+    # sent snake_case keys that Gengo silently rejected.
     assert fake_ws.sent == [
-        json.dumps({"user_id": "user-1", "user_session": "session-token"})
+        json.dumps({"userId": "user-1", "sessionToken": "session-token"})
     ]
     assert event_file.is_file()
     assert json.loads(event_file.read_text().splitlines()[0])["type"] == "job"
