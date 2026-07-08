@@ -1,16 +1,29 @@
 # GengoWatcher
-A terminal-based monitor for Gengo translation jobs with real-time notifications.
+
+> **Latest release: v2.9.3** — see [CHANGELOG.md](CHANGELOG.md) for what changed.
+
+A terminal-based monitor for Gengo translation jobs with real-time notifications,
+browser-collected workbench observation, and an optional local web API for
+handoff and integration.
+
 ## Features
+
 - **Real-time monitoring** via WebSocket and RSS feed
 - **Desktop notifications** with sound alerts
 - **Auto-accept jobs** matching your criteria
-- **Multiple sources** - WebSocket, RSS, email, and website scraping
+- **Multiple sources** — WebSocket, RSS, email, native browser (Firefox RDP), and website scraping
+- **Native browser workbench observation** — watches your real Firefox session via DevTools, projects order/text/time-left/segment counts into state, and fires countdown alerts at 50% / 1h / low-time
+- **Webhook-backed API events** — signed inbound job discovery, signed outbound delivery with retry/backoff, JSONL audit log
 - **CAPTCHA solving** integration (2Captcha, Anti-Captcha)
-- **Modern TUI** built with Textual
+- **Modern TUI** built with Textual, with browser / audit / telemetry tabs
+- **Local web API** with bearer auth for file transfer, status, and webhook ingest
+
 ## Installation
+
 ```bash
 git clone https://github.com/tdawe1/GengoWatcher.git
 cd GengoWatcher
+git checkout v2.9.3  # or stay on main for the latest unreleased changes
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e .
@@ -29,29 +42,46 @@ That symlinks `bin/gengowatcher`,
 `bin/gengo-watcher`, and
 `bin/gengowatcher-browser-worker`
 into `~/.local/bin/` and runs them through this repo's `venv` from any directory.
+
 ## Quick Start
+
 ```bash
 gengowatcher
 ```
+
 Alias:
+
 ```bash
 gengo-watcher
 ```
+
 Or directly:
+
 ```bash
 ./bin/gengowatcher
 ```
+
 On the first run, you'll be guided through configuration setup.
 
 Interactive setup entrypoints:
+
 ```bash
 gengowatcher --configure
 gengowatcher --setup-email
 gengowatcher --setup-website
 ```
 
+Web-only mode (no TUI):
+
+```bash
+gengowatcher --web-only
+gengowatcher --web   # TUI + web side-by-side
+```
+
 ## Configuration
+
 Settings are stored in `config.toml`. Key sections:
+
 ```toml
 [Watcher]
 feed_url = "https://your-rss-feed-url"
@@ -64,13 +94,17 @@ user_id = 12345
 user_session = "YOUR_SESSION_TOKEN"
 user_key = "YOUR_USER_KEY"
 ```
+
 Get WebSocket credentials from your browser's DevTools:
+
 - **user_id** and **user_session**: Application → Cookies → gengo.com
 - **user_key**: Application → Local Storage → gengo.com → userKey
 
 ### Browser Worker
 
-The browser worker is an optional local Playwright sidecar that keeps a long-lived headed browser with a dedicated persistent profile. Configure the `BrowserWorker` section in `config.ini`, then start it separately with:
+The browser worker is an optional local Playwright sidecar that keeps a long-lived headed browser with a dedicated persistent profile. It launches with anti-automation flags (`--disable-blink-features=AutomationControlled`) and an init script that strips `navigator.webdriver`, so the browser session presents a clean fingerprint to Gengo's web tier.
+
+Configure the `BrowserWorker` section in `config.toml`, then start it separately with:
 
 ```bash
 PYTHONPATH=src python -m gengowatcher.browser_worker.main \
@@ -79,6 +113,35 @@ PYTHONPATH=src python -m gengowatcher.browser_worker.main \
 ```
 
 The operator procedure for black-box validation is documented in `docs/browser-worker-black-box-test-procedure.md`.
+
+### Native Browser Listener
+
+The native listener attaches to your real Firefox session via DevTools Protocol and observes workbench pages without injecting scripts or running a separate browser. Configure under `[NativeBrowserListener]`:
+
+```toml
+[NativeBrowserListener]
+enabled = true
+capture_interval_ms = 750
+
+[Browser]
+backend = "native"
+debug_url = "ws://127.0.0.1:6000"
+```
+
+Observed events are projected into state by `state_projector.py` and surface in the **Jobs** tab as browser-collected rows with order ID, time-left, source text, and segment counts.
+
+### Webhooks and API Events
+
+Inbound and outbound webhooks live under `[Webhooks]` in `config.toml`. Inbound is HMAC-SHA256 signed with a per-request timestamp (clock-skew tolerance configurable); outbound supports multiple targets with exponential backoff retry and a JSONL audit log.
+
+Public API event routes:
+
+```text
+POST /api/jobs/discovered      # requires bearer auth
+POST /api/webhooks/jobs/discovered  # HMAC-required alias
+GET  /api/events               # recent lifecycle events
+GET  /api/events/audit         # webhook audit log
+```
 
 ## Commands
 
@@ -93,10 +156,28 @@ The operator procedure for black-box validation is documented in `docs/browser-w
 | `help` | Show all commands |
 | `exit` | Save state and quit |
 
-## File Transfer API
+## Web API
 
-The built-in web API now includes a local file store for release artifacts, exports,
-or handoff documents. It is rooted at `[Paths].file_storage_dir` and exposed as:
+The built-in web API exposes status, jobs, events, file transfer, and webhook ingest. Endpoints live under `/api/...` and require a bearer token (auto-generated on first run; see `[WebServer].auth_token`).
+
+```text
+GET  /api/status
+GET  /api/jobs
+GET  /api/events
+POST /api/jobs/{id}/accept
+POST /api/jobs/cancel
+POST /api/commands
+GET  /api/config
+PUT  /api/config/{section}/{option}
+GET  /api/files
+POST /api/files/upload
+GET  /api/files/{stored_name}
+WS   /ws/status            # real-time status stream
+```
+
+### File Transfer
+
+The file store is rooted at `[Paths].file_storage_dir` and exposed as:
 
 ```text
 GET  /api/files
@@ -118,5 +199,29 @@ Example:
 ```
 
 All three endpoints require the normal web API bearer token.
+
+## Development
+
+```bash
+# Run tests
+python -m pytest
+
+# Run a single test file
+python -m pytest tests/test_state.py -q
+
+# Type-check / syntax check
+python -m py_compile src/gengowatcher/*.py tests/*.py scripts/*.py
+
+# Format with Black (line length 88)
+python -m black .
+
+# Lint with flake8 (line length 88, E203 ignored)
+python -m flake8 .
+
+# Build a wheel + sdist
+python -m build
+```
+
+The Makefile wraps the same commands using `.venv/bin/python` when available.
 
 ![GengoWatcher TUI Screenshot](assets/tui-screenshot.png)
