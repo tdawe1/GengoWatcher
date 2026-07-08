@@ -216,7 +216,7 @@ def test_incoming_job_webhook_rejects_bad_signature_with_audit(tmp_path):
     client = TestClient(app)
     with patch("gengowatcher.web.api_instance", api):
         response = client.post(
-            "/api/jobs/discovered",
+            "/api/webhooks/jobs/discovered",
             content=raw_body,
             headers={
                 "X-GengoWatcher-Timestamp": str(int(time.time())),
@@ -235,7 +235,7 @@ def test_incoming_job_webhook_rejects_oversized_body(tmp_path):
     client = TestClient(app)
     with patch("gengowatcher.web.api_instance", api):
         response = client.post(
-            "/api/jobs/discovered",
+            "/api/webhooks/jobs/discovered",
             content=b"x" * 9,
             headers={"Content-Length": "9"},
         )
@@ -265,7 +265,7 @@ def test_incoming_job_webhook_processing_runs_off_event_loop(tmp_path):
         patch("gengowatcher.web.asyncio.to_thread", side_effect=fake_to_thread),
     ):
         response = client.post(
-            "/api/jobs/discovered",
+            "/api/webhooks/jobs/discovered",
             content=raw_body,
             headers=_signed_headers(raw_body),
         )
@@ -368,6 +368,42 @@ def test_outbound_dispatcher_signs_delivers_and_audits_response(tmp_path):
     )
     stages = [entry["stage"] for entry in audit.tail(10)]
     assert stages == ["queued", "attempt", "delivered"]
+
+
+def test_outbound_dispatcher_retries_with_minimum_delay_when_configured_zero(tmp_path):
+    audit = WebhookAuditLogger(
+        path=tmp_path / "outbound-retry.jsonl",
+        logger=logging.getLogger("test.webhooks.outbound.retry"),
+        enabled=True,
+        debug_enabled=True,
+    )
+    dispatcher = WebhookDispatcher(
+        targets=[
+            OutboundWebhookTarget(
+                name="retry-target",
+                url="https://translation-app.test/webhooks",
+            )
+        ],
+        logger=logging.getLogger("test.webhooks.dispatcher.retry"),
+        audit_logger=audit,
+        timeout_sec=1.0,
+        max_attempts=3,
+        initial_delay_sec=0.0,
+        max_delay_sec=0.0,
+    )
+    response = MagicMock(status_code=503, text="retry later")
+
+    with patch("gengowatcher.webhooks.requests.post", return_value=response) as post:
+        with patch("gengowatcher.webhooks.time.sleep") as sleep:
+            dispatcher.emit(
+                "job.discovered",
+                {"id": "123", "title": "Outbound"},
+                event_id="evt-outbound-retry",
+                background=False,
+            )
+
+    assert post.call_count == 3
+    assert [call.args[0] for call in sleep.call_args_list] == [1.0, 1.0]
 
 
 def test_outbound_dispatcher_emits_console_log_messages(tmp_path, caplog):

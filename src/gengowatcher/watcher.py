@@ -1276,15 +1276,25 @@ class GengoWatcher:
                     "Job %s meets auto-accept criteria, but standard HTTP acceptance is disabled",
                     job_id,
                 )
+                failed_payload = {
+                    **job_data,
+                    "acceptance_state": "failed",
+                    "lifecycle_state": "accept_failed",
+                    "accept_path": "native_browser",
+                    "reason": "http fallback disabled",
+                }
                 self.state.update_job(
                     str(job_id),
                     {
-                        "acceptance_state": "http_fallback_disabled",
-                        "lifecycle_state": "detected",
+                        "acceptance_state": "failed",
+                        "lifecycle_state": "accept_failed",
                         "accept_path": "native_browser",
+                        "accept_failure_reason": "http fallback disabled",
                     },
                 )
                 self.state.save_state()
+                self._emit_webhook_event("job.accept_failed", failed_payload)
+                self._emit_api_event("job.accept_failed", failed_payload)
                 self._submit_job_to_translation_app_async(job_data)
                 return
 
@@ -1432,6 +1442,7 @@ class GengoWatcher:
 
             try:
                 with telemetry_path.open("r", encoding="utf-8") as handle:
+                    opened_stat = os.fstat(handle.fileno())
                     if not initialized:
                         handle.seek(0, os.SEEK_END)
                         initialized = True
@@ -1439,7 +1450,12 @@ class GengoWatcher:
                         line = handle.readline()
                         if not line:
                             try:
-                                if telemetry_path.stat().st_size < handle.tell():
+                                current_stat = telemetry_path.stat()
+                                if (
+                                    current_stat.st_size < handle.tell()
+                                    or current_stat.st_ino != opened_stat.st_ino
+                                    or current_stat.st_dev != opened_stat.st_dev
+                                ):
                                     initialized = False
                                     break
                             except OSError:

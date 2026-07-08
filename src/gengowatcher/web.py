@@ -144,7 +144,7 @@ class WebAPI:
         self.watcher.on_api_event_callback = self._api_event_callback
         self.watcher_thread: Optional[threading.Thread] = None
 
-        if start_watcher_thread:
+        if self._manage_watcher_lifecycle:
             self.watcher_thread = threading.Thread(
                 target=self.watcher.run, daemon=True, name="WebWatcherThread"
             )
@@ -211,6 +211,8 @@ class WebAPI:
         self,
         raw_body: bytes,
         headers: Mapping[str, Any],
+        *,
+        require_signature: bool | None = None,
     ) -> dict[str, Any]:
         """Validate an incoming job webhook and route it into the watcher pipeline."""
         start = time.monotonic()
@@ -260,11 +262,15 @@ class WebAPI:
                 secret=str(
                     config_get(self.config, "Webhooks", "incoming_secret", "") or ""
                 ),
-                require_signature=config_bool(
-                    self.config,
-                    "Webhooks",
-                    "require_signature",
-                    True,
+                require_signature=(
+                    config_bool(
+                        self.config,
+                        "Webhooks",
+                        "require_signature",
+                        True,
+                    )
+                    if require_signature is None
+                    else require_signature
                 ),
                 tolerance_sec=config_float(
                     self.config,
@@ -968,9 +974,8 @@ class WebAPI:
             config_get(self.config, "WebSocket", "user_session", "") or ""
         ).strip()
         if user_session and not user_session.startswith("REPLACE_WITH"):
-            # Only attach session cookie to gengo.com hosts
             host = urlparse(url).hostname or "" if url else ""
-            if host == "gengo.com" or host.endswith(".gengo.com"):
+            if self._download_host_allowed(host):
                 headers["Cookie"] = f"my_gengo_session={user_session}"
         user_agent = str(
             config_get(self.config, "Network", "browser_user_agent", "") or ""
@@ -995,6 +1000,16 @@ class WebAPI:
         normalized = tuple(host.strip().lower() for host in hosts if str(host).strip())
         return normalized or DEFAULT_DOWNLOAD_ALLOWED_HOSTS
 
+    def _download_host_allowed(self, host: str) -> bool:
+        normalized_host = str(host or "").strip().lower()
+        if not normalized_host:
+            return False
+        return any(
+            normalized_host == allowed.lstrip(".")
+            or (allowed.startswith(".") and normalized_host.endswith(allowed))
+            for allowed in self._download_allowed_hosts()
+        )
+
     def _validate_download_url(self, url: str) -> str:
         parsed = urlparse(str(url or "").strip())
         if parsed.scheme not in {"http", "https"}:
@@ -1016,12 +1031,7 @@ class WebAPI:
                 or ip.is_unspecified
             ):
                 raise ValueError("Download URL host is not allowed")
-        allowed_hosts = self._download_allowed_hosts()
-        if not any(
-            host == allowed.lstrip(".")
-            or (allowed.startswith(".") and host.endswith(allowed))
-            for allowed in allowed_hosts
-        ):
+        if not self._download_host_allowed(host):
             raise ValueError("Download URL host is not allowed")
         return parsed.geturl()
 
@@ -1387,7 +1397,7 @@ async def lifespan(app: FastAPI):
             logger = runtime_context.get("logger") or logger
             shared_watcher = runtime_context.get("watcher")
             start_watcher_thread = bool(
-                runtime_context.get("start_watcher_thread", True)
+                runtime_context.get("start_watcher_thread", shared_watcher is None)
             )
         else:
             # Check if config exists, create it if needed
@@ -1610,18 +1620,38 @@ async def _read_limited_request_body(request: Request, *, max_bytes: int) -> byt
 
     chunks: list[bytes] = []
     total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Request body too large. Maximum size is {max_bytes} bytes",
-            )
-        chunks.append(chunk)
+    max_chunks = max(1, (max_bytes // 1024) + 2)
+    try:
+        async with asyncio.timeout(10.0):
+            async for chunk in request.stream():
+                if len(chunks) >= max_chunks:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Request body has too many chunks",
+                    )
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            "Request body too large. "
+                            f"Maximum size is {max_bytes} bytes"
+                        ),
+                    )
+                chunks.append(chunk)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=408,
+            detail="Request body read timed out",
+        ) from exc
     return b"".join(chunks)
 
 
-async def _receive_job_discovered_api_event(request: Request):
+async def _receive_job_discovered_api_event(
+    request: Request,
+    *,
+    require_signature: bool | None = None,
+):
     """Receive a signed external job-discovery API event."""
     if not api_instance:
         raise HTTPException(status_code=503, detail="API not initialized")
@@ -1642,6 +1672,7 @@ async def _receive_job_discovered_api_event(request: Request):
             api_instance.process_incoming_job_webhook,
             raw_body,
             headers,
+            require_signature=require_signature,
         )
     except WebhookError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -1651,13 +1682,16 @@ async def _receive_job_discovered_api_event(request: Request):
 
 
 @app.post("/api/jobs/discovered")
-async def receive_job_discovered_api_event(request: Request):
+async def receive_job_discovered_api_event(
+    request: Request,
+    authenticated: bool = Depends(verify_auth),
+):
     return await _receive_job_discovered_api_event(request)
 
 
 @app.post("/api/webhooks/jobs/discovered", include_in_schema=False)
 async def receive_job_discovered_webhook(request: Request):
-    return await _receive_job_discovered_api_event(request)
+    return await _receive_job_discovered_api_event(request, require_signature=True)
 
 
 async def _get_api_event_audit(limit: int) -> dict[str, Any]:

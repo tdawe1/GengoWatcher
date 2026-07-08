@@ -502,6 +502,25 @@ class TestWebAPI:
             in mock_state.update_job.call_args.args[1]["file_download_error"]
         )
 
+    def test_download_headers_attach_cookie_for_allowed_subdomain(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("WebSocket", "user_session"): "session-token",
+            ("TranslationWorkflow", "download_allowed_hosts"): [
+                "gengo.com",
+                ".gengo.com",
+            ],
+        }.get((s, k), kw.get("fallback", ""))
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        headers = api._download_headers(url="https://cdn.gengo.com/source.txt")
+
+        assert headers["Cookie"] == "my_gengo_session=session-token"
+
     @pytest.mark.asyncio
     async def test_accept_job(self, mock_config, mock_state, mock_logger, mock_watcher):
         """Test accepting a job via API."""

@@ -32,6 +32,7 @@ class AppState:
         # Job storage for web API
         self._jobs: List[dict[str, Any]] = []
         self._job_ids: set[str] = set()
+        self._job_lookup: dict[tuple[str, str], dict[str, Any]] = {}
         self._jobs_lock = threading.RLock()
 
         self._load_state()
@@ -198,11 +199,120 @@ class AppState:
             for job_id in (self._primary_job_id(job) for job in self._jobs)
             if job_id
         }
+        self._job_lookup = {}
+        for job in self._jobs:
+            self._track_job_unlocked(job)
 
     def _track_job_unlocked(self, job: dict[str, Any]) -> None:
         job_id = self._primary_job_id(job)
         if job_id:
             self._job_ids.add(job_id)
+        for identifier in self._job_identifier_keys(job):
+            self._job_lookup.setdefault(identifier, job)
+
+    def _refresh_job_index_unlocked(
+        self,
+        job: dict[str, Any],
+        old_identifiers: set[tuple[str, str]] | None = None,
+    ) -> None:
+        for identifier in old_identifiers or self._job_identifier_keys(job):
+            if self._job_lookup.get(identifier) is job:
+                del self._job_lookup[identifier]
+        self._track_job_unlocked(job)
+
+    @classmethod
+    def _job_identifier_keys(cls, job: dict[str, Any]) -> set[tuple[str, str]]:
+        identifiers: set[tuple[str, str]] = set()
+        for key in ("id", "order_id", "accepted_order_id"):
+            value = job.get(key)
+            if value is not None and value != "":
+                identifiers.add((key, str(value)))
+        for key in ("job_ids", "accepted_job_ids"):
+            values = job.get(key)
+            if not isinstance(values, list):
+                continue
+            identifiers.update(
+                (key, str(value)) for value in values if value not in (None, "")
+            )
+        return identifiers
+
+    def _find_job_unlocked(self, job_id: str) -> dict[str, Any] | None:
+        return self._find_by_identifier_keys_unlocked(
+            self._any_identifier_lookup_keys(job_id)
+        )
+
+    @staticmethod
+    def _any_identifier_lookup_keys(job_id: str) -> list[tuple[str, str]]:
+        candidate = str(job_id)
+        return [
+            ("id", candidate),
+            ("order_id", candidate),
+            ("accepted_order_id", candidate),
+            ("job_ids", candidate),
+            ("accepted_job_ids", candidate),
+        ]
+
+    def _find_by_identifier_keys_unlocked(
+        self,
+        keys: list[tuple[str, str]],
+    ) -> dict[str, Any] | None:
+        for key in keys:
+            job = self._job_lookup.get(key)
+            if job is not None:
+                return job
+        return None
+
+    @staticmethod
+    def _order_identifier_lookup_keys(order_id: str) -> list[tuple[str, str]]:
+        candidate = str(order_id)
+        return [
+            ("order_id", candidate),
+            ("accepted_order_id", candidate),
+        ]
+
+    @staticmethod
+    def _subjob_identifier_lookup_keys(job_id: str) -> list[tuple[str, str]]:
+        candidate = str(job_id)
+        return [
+            ("job_ids", candidate),
+            ("accepted_job_ids", candidate),
+        ]
+
+    def _find_by_workbench_ids_unlocked(
+        self,
+        *,
+        collection_id: str | None = None,
+        order_id: str | None = None,
+        job_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        lookup_keys: list[tuple[str, str]] = []
+        if collection_id:
+            lookup_keys.extend(self._any_identifier_lookup_keys(str(collection_id)))
+        if order_id:
+            lookup_keys.extend(self._order_identifier_lookup_keys(str(order_id)))
+        if job_ids:
+            for job_id in job_ids:
+                if job_id:
+                    lookup_keys.extend(self._subjob_identifier_lookup_keys(str(job_id)))
+        return self._find_by_identifier_keys_unlocked(lookup_keys)
+
+    def _find_mark_accepted_job_unlocked(
+        self,
+        *,
+        job_id: str,
+        order_id: str | None = None,
+        payload_job_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        lookup_keys = self._any_identifier_lookup_keys(str(job_id))
+        if order_id:
+            lookup_keys.extend(self._order_identifier_lookup_keys(str(order_id)))
+        if payload_job_ids:
+            for payload_job_id in payload_job_ids:
+                if payload_job_id:
+                    lookup_keys.extend(
+                        self._subjob_identifier_lookup_keys(str(payload_job_id))
+                    )
+        return self._find_by_identifier_keys_unlocked(lookup_keys)
 
     def _prune_jobs_unlocked(self) -> None:
         limit = max(1, int(self.MAX_STORED_JOBS))
@@ -215,28 +325,30 @@ class AppState:
         """Return a copy of a stored job by id or accepted workbench ids."""
         with self._jobs_lock:
             now = time.time()
-            for job in self._jobs:
-                if self._job_matches_id(job, job_id):
-                    return self._with_dynamic_accepted_fields(job.copy(), now=now)
+            job = self._find_job_unlocked(job_id)
+            if job is not None:
+                return self._with_dynamic_accepted_fields(job.copy(), now=now)
         return None
 
     def update_job(self, job_id: str, updates: dict[str, Any]) -> bool:
         """Merge changed fields into a stored job by id.
 
-        Returns True only when at least one stored value actually changed.
+        Returns True when the job exists, including no-op duplicate updates.
         """
         if not isinstance(updates, dict):
             return False
         with self._jobs_lock:
-            for job in self._jobs:
-                if not self._job_matches_id(job, job_id):
-                    continue
-                changed = self._changed_fields(job, updates)
-                if not changed:
-                    return False
-                job.update(changed)
-                self.logger.debug("Updated job %s fields: %s", job.get("id"), changed)
+            job = self._find_job_unlocked(job_id)
+            if job is None:
+                return False
+            changed = self._changed_fields(job, updates)
+            if not changed:
                 return True
+            old_identifiers = self._job_identifier_keys(job)
+            job.update(changed)
+            self._refresh_job_index_unlocked(job, old_identifiers)
+            self.logger.debug("Updated job %s fields: %s", job.get("id"), changed)
+            return True
         return False
 
     @staticmethod
@@ -249,20 +361,9 @@ class AppState:
     @staticmethod
     def _job_matches_id(job: dict[str, Any], job_id: str) -> bool:
         candidate = str(job_id)
-        if str(job.get("id")) == candidate:
-            return True
-        if str(job.get("order_id") or "") == candidate:
-            return True
-        if str(job.get("accepted_order_id") or "") == candidate:
-            return True
-        job_ids = job.get("job_ids")
-        if isinstance(job_ids, list):
-            if candidate in {str(value) for value in job_ids}:
-                return True
-        accepted_job_ids = job.get("accepted_job_ids")
-        if isinstance(accepted_job_ids, list):
-            return candidate in {str(value) for value in accepted_job_ids}
-        return False
+        return any(
+            value == candidate for _key, value in AppState._job_identifier_keys(job)
+        )
 
     def mark_job_accepted(
         self,
@@ -273,26 +374,30 @@ class AppState:
     ) -> bool:
         """Mark a stored job accepted and attach optional workbench metadata."""
         accepted_at = time.time()
-        candidate_ids = {str(job_id)}
         payload = self._extract_workbench_payload(accepted_workbench)
         summary = self._workbench_summary(payload) if payload else {}
         summary_order_id = self._first_present(summary, "order_id", "id", "order")
+        summary_order_id_text = None
         if summary_order_id is not None:
-            candidate_ids.add(str(summary_order_id))
+            summary_order_id_text = str(summary_order_id)
+        payload_job_ids: list[str] = []
         if payload:
             for item in payload.get("jobs", []):
                 if not isinstance(item, dict):
                     continue
                 workbench_job_id = self._first_present(item, "id", "job_id")
                 if workbench_job_id is not None:
-                    candidate_ids.add(str(workbench_job_id))
+                    payload_job_id = str(workbench_job_id)
+                    payload_job_ids.append(payload_job_id)
 
         with self._jobs_lock:
-            for job in self._jobs:
-                if not any(
-                    self._job_matches_id(job, candidate) for candidate in candidate_ids
-                ):
-                    continue
+            job = self._find_mark_accepted_job_unlocked(
+                job_id=str(job_id),
+                order_id=summary_order_id_text,
+                payload_job_ids=payload_job_ids,
+            )
+            if job is not None:
+                old_identifiers = self._job_identifier_keys(job)
                 job["accepted"] = True
                 job["accepted_at"] = accepted_at
                 job["acceptance_state"] = "accepted"
@@ -315,6 +420,7 @@ class AppState:
                         job.get("accepted_source_char_count", 0),
                     )
                 self.logger.debug("Marked job %s as accepted", job.get("id"))
+                self._refresh_job_index_unlocked(job, old_identifiers)
                 return True
         return False
 
@@ -545,10 +651,11 @@ class AppState:
             raw_expire = self._first_present(summary, "expire_time", "deadline")
         expire_value = self._coerce_float(raw_expire)
         if expire_value is not None and expire_value > 0:
-            expire_epoch = (
-                expire_value / 1000.0 if expire_value > 10_000_000_000 else expire_value
-            )
-            return max(0, int(expire_epoch - now))
+            if expire_value > 10_000_000_000:
+                expire_epoch = expire_value / 1000.0
+                return max(0, int(expire_epoch - now))
+            if expire_value > 1_000_000_000:
+                return max(0, int(expire_value - now))
 
         captured_left = self._coerce_float(job.get("accepted_seconds_left_at_capture"))
         captured_at = self._coerce_float(job.get("accepted_payload_captured_at"))
@@ -603,13 +710,14 @@ class AppState:
 
         normalized_id = str(collection_id)
         with self._jobs_lock:
-            for job in self._jobs:
-                if not self._job_matches_id(job, normalized_id):
-                    continue
+            job = self._find_job_unlocked(normalized_id)
+            if job is not None:
                 changed = self._changed_fields(job, updates)
                 if not changed:
                     return False
+                old_identifiers = self._job_identifier_keys(job)
                 job.update(changed)
+                self._refresh_job_index_unlocked(job, old_identifiers)
                 self.logger.debug("Updated job %s fields: %s", job.get("id"), changed)
                 return True
 
@@ -659,12 +767,6 @@ class AppState:
         if order_id is None and summary_order_id is not None:
             order_id = str(summary_order_id)
 
-        # Build candidate match IDs
-        candidate_ids = {str(collection_id)}
-        if order_id:
-            candidate_ids.add(str(order_id))
-        if job_ids:
-            candidate_ids.update(str(j) for j in job_ids if j)
         if payload:
             raw_jobs = payload.get("jobs")
             workbench_jobs = raw_jobs if isinstance(raw_jobs, list) else []
@@ -676,18 +778,18 @@ class AppState:
                 if workbench_job_id is not None:
                     payload_job_ids.append(str(workbench_job_id))
             if payload_job_ids:
-                candidate_ids.update(payload_job_ids)
                 if job_ids is None:
                     job_ids = payload_job_ids
 
         with self._jobs_lock:
             # Try to find existing job
-            for job in self._jobs:
-                if not any(
-                    self._job_matches_id(job, candidate) for candidate in candidate_ids
-                ):
-                    continue
-
+            job = self._find_by_workbench_ids_unlocked(
+                collection_id=collection_id,
+                order_id=order_id,
+                job_ids=job_ids,
+            )
+            if job is not None:
+                old_identifiers = self._job_identifier_keys(job)
                 updates = self._browser_acceptance_updates(
                     job=job,
                     accepted_at=accepted_at,
@@ -707,6 +809,7 @@ class AppState:
                     metadata_changed = any(
                         before.get(key) != value for key, value in job.items()
                     )
+                self._refresh_job_index_unlocked(job, old_identifiers)
                 return bool(changed or metadata_changed)
 
             # Create new job

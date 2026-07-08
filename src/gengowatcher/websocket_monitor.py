@@ -94,6 +94,7 @@ class GengoWebSocketMonitor:
         self.metrics = WebSocketMetrics()
         self._shutdown_event = threading.Event()
         self._raw_ws_messages: list[dict] = []
+        self._raw_ws_lock = threading.RLock()
         self._capture_max = 100
         self._next_quiet_socket_sync_ts: float = 0.0
         self._websocket_session_refresh_requested = False
@@ -169,18 +170,19 @@ class GengoWebSocketMonitor:
         )
 
     def _capture_raw_ws_message(self, message: str, *, direction: str = "recv") -> None:
-        if len(self._raw_ws_messages) >= self._capture_max:
-            self._raw_ws_messages.pop(0)
-        self._raw_ws_messages.append(
-            {
-                "direction": direction,
-                "payload": _redact_raw_ws_text(message)[:2000],
-                "ts": time.time(),
-            }
-        )
+        entry = {
+            "direction": direction,
+            "payload": _redact_raw_ws_text(message)[:2000],
+            "ts": time.time(),
+        }
+        with self._raw_ws_lock:
+            if len(self._raw_ws_messages) >= self._capture_max:
+                self._raw_ws_messages.pop(0)
+            self._raw_ws_messages.append(entry)
 
     def get_raw_ws_messages(self) -> list[dict]:
-        return list(self._raw_ws_messages)
+        with self._raw_ws_lock:
+            return list(self._raw_ws_messages)
 
     def _config_int(self, section: str, key: str, fallback: int) -> int:
         getter = getattr(self.config, "getint", None)

@@ -200,6 +200,32 @@ def test_upsert_browser_job_details_merges_by_order_or_job_id(temp_state_file):
     assert app_state.get_job("989")["id"] == "api-row"
 
 
+def test_primary_job_id_wins_over_order_id_collision(temp_state_file):
+    logger = logging.getLogger("test")
+    app_state = state.AppState(logger=logger, state_file_path=temp_state_file)
+    app_state.add_job(
+        {
+            "id": "job-a",
+            "order_id": "42",
+            "title": "Original accepted job",
+            "timestamp": time.time(),
+        }
+    )
+    app_state.add_job(
+        {
+            "id": "42",
+            "title": "Distinct job whose primary id collides with order id",
+            "timestamp": time.time(),
+        }
+    )
+
+    assert app_state.update_job("42", {"acceptance_state": "visible"})
+    assert app_state.get_job("42")["title"] == (
+        "Distinct job whose primary id collides with order id"
+    )
+    assert app_state.get_job("job-a").get("acceptance_state") is None
+
+
 def test_upsert_browser_job_details_creates_accepted_row_with_metadata(
     temp_state_file,
 ):
@@ -238,7 +264,7 @@ def test_upsert_browser_job_details_creates_accepted_row_with_metadata(
     assert job["accepted_source_char_count"] == len("hello")
 
 
-def test_update_job_returns_false_when_fields_are_unchanged(temp_state_file):
+def test_update_job_returns_true_when_existing_fields_are_unchanged(temp_state_file):
     logger = logging.getLogger("test")
     app_state = state.AppState(logger=logger, state_file_path=temp_state_file)
     app_state.add_job(
@@ -253,7 +279,7 @@ def test_update_job_returns_false_when_fields_are_unchanged(temp_state_file):
         }
     )
 
-    assert app_state.update_job("8012055", {"acceptance_state": "visible"}) is False
+    assert app_state.update_job("8012055", {"acceptance_state": "visible"}) is True
     assert app_state.update_job("8012055", {"acceptance_state": "accepted"}) is True
 
 

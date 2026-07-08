@@ -324,7 +324,7 @@ def verify_webhook_signature(
     if tolerance_sec > 0 and abs(current_time - timestamp_value) > tolerance_sec:
         raise WebhookSignatureError("Webhook timestamp is outside tolerance")
 
-    expected = build_webhook_signature(secret, raw_body, timestamp=timestamp or None)
+    expected = build_webhook_signature(secret, raw_body, timestamp=timestamp)
     if signature.startswith("sha256="):
         supplied = signature
     else:
@@ -843,9 +843,13 @@ class WebhookDispatcher:
                     self.max_attempts,
                     last_error,
                 )
-            if attempt < self.max_attempts and delay > 0:
-                time.sleep(delay)
-                delay = min(self.max_delay_sec, delay * 2 if delay else 0)
+            if attempt < self.max_attempts:
+                effective_max_delay = (
+                    self.max_delay_sec if self.max_delay_sec > 0 else 1.0
+                )
+                sleep_delay = delay if delay > 0 else min(effective_max_delay, 1.0)
+                time.sleep(sleep_delay)
+                delay = min(effective_max_delay, sleep_delay * 2)
 
         self.audit_logger.record(
             direction="outgoing",

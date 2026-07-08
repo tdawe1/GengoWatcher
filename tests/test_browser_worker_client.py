@@ -390,8 +390,9 @@ def test_watcher_does_not_use_standard_acceptance_when_http_fallback_disabled(
     state.update_job.assert_called_with(
         "123",
         {
-            "acceptance_state": "http_fallback_disabled",
-            "lifecycle_state": "detected",
+            "acceptance_state": "failed",
+            "lifecycle_state": "accept_failed",
             "accept_path": "native_browser",
+            "accept_failure_reason": "http fallback disabled",
         },
     )

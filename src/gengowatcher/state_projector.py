@@ -376,7 +376,9 @@ def workbench_status(
         if seconds_left is None:
             return
 
-        current = state.get_job(collection_id) or {}
+        current = state.get_job(collection_id)
+        if not current:
+            return
         total_seconds = _countdown_total_seconds(current, seconds_left)
         elapsed_seconds = max(0, total_seconds - seconds_left)
         fired_alerts = {

@@ -119,7 +119,12 @@ class GengoRealtimeGateway:
                 # Build fresh headers each iteration for fresh session token
                 headers = await asyncio.to_thread(self._build_headers)
                 if not headers.get("Cookie"):
-                    logger.warning("No session token - authentication will fail")
+                    logger.warning(
+                        "No session token - skipping Gengo realtime gateway connect"
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 1.5, 60.0)
+                    continue
                 ws_url = self.config.get("WebSocket", "wss_url") or GENGO_REALTIME_URL
                 async with websockets.connect(
                     ws_url,
