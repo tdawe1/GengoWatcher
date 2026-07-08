@@ -47,6 +47,8 @@ class AppConfig:
         },
         "WebSocket": {
             "enable_websocket": True,
+            "use_gateway": False,
+            "gateway_url": "http://127.0.0.1:8000",
             "wss_url": "wss://live-dashboard.gengo.com/",
             "user_id": 0,
             "user_session": "REPLACE_WITH_YOUR_SESSION_TOKEN",
@@ -138,6 +140,36 @@ class AppConfig:
             "timeout_sec": 5.0,
             "verify_tls": True,
         },
+        "TranslationWorkflow": {
+            "file_mode": "user",
+            "download_timeout_sec": 30.0,
+            "download_max_bytes": 52428800,
+            "download_allowed_hosts": ["gengo.com", ".gengo.com"],
+            "file_text_max_chars": 250000,
+        },
+        "Webhooks": {
+            "incoming_enabled": False,
+            "incoming_secret": "",
+            "require_signature": True,
+            "signature_tolerance_sec": 300.0,
+            "max_body_bytes": 1048576,
+            "max_seen_event_ids": 1000,
+            "debug_enabled": False,
+            "debug_payload_preview_bytes": 4096,
+            "audit_enabled": True,
+            "audit_log_path": "logs/webhooks.jsonl",
+            "audit_max_bytes": 1048576,
+            "audit_max_lines": 5000,
+            "outbound_enabled": False,
+            "outbound_urls": [],
+            "outbound_secret": "",
+            "outbound_auth_token": "",
+            "outbound_timeout_sec": 5.0,
+            "outbound_max_attempts": 3,
+            "outbound_initial_delay_sec": 0.5,
+            "outbound_max_delay_sec": 10.0,
+            "outbound_verify_tls": True,
+        },
         "AutoAccept": {
             "enabled": False,
             "min_reward": 0.0,
@@ -152,6 +184,7 @@ class AppConfig:
             "accept_click_probe_ms": 75,
             "attempt_timeout_sec": 12,
             "selenium_attempt_timeout_sec": 8,
+            "allow_http_fallback": False,  # HARD DISABLE for native browser mode
         },
         "BrowserWorker": {
             "enabled": False,
@@ -161,6 +194,18 @@ class AppConfig:
             "seed_profile_path": "",
             "headless": False,
             "artifacts_dir": "logs/browser-worker-artifacts",
+        },
+        "Browser": {
+            "backend": "native",
+            "require_visible_browser": True,
+            "allow_playwright": False,
+            "headless": False,
+            "debug_url": "ws://127.0.0.1:6000",
+        },
+        "NativeBrowserListener": {
+            "enabled": False,  # Opt-in for now
+            "capture_interval_ms": 750,
+            "status_poll_seconds": 5,
         },
         "HighValue": {
             "threshold": 500.0,
@@ -211,6 +256,9 @@ class AppConfig:
         ("WebServer", "auth_token"): "GENGOWATCHER_API_TOKEN",
         ("TranslationApp", "base_url"): "TRANSLATION_APP_BASE_URL",
         ("TranslationApp", "auth_token"): "TRANSLATION_APP_AUTH_TOKEN",
+        ("Webhooks", "incoming_secret"): "GENGOWATCHER_WEBHOOK_SECRET",
+        ("Webhooks", "outbound_secret"): "GENGOWATCHER_WEBHOOK_OUTBOUND_SECRET",
+        ("Webhooks", "outbound_auth_token"): "GENGOWATCHER_WEBHOOK_OUTBOUND_AUTH_TOKEN",
         ("EmailMonitor", "client_id"): "GMAIL_CLIENT_ID",
         ("EmailMonitor", "client_secret"): "GMAIL_CLIENT_SECRET",
         ("EmailMonitor", "refresh_token"): "GMAIL_REFRESH_TOKEN",
@@ -405,6 +453,7 @@ class AppConfig:
                 # Validate auto-accept configuration after backfill
                 self._validate_auto_accept_config()
                 self._backfill_from_legacy_config()
+                self._validate_native_browser_config()
 
             except (tomllib.TOMLDecodeError, ValueError) as e:
                 print(
@@ -672,3 +721,31 @@ class AppConfig:
             self.config["AutoAccept"]["accept_delay_min"] = 0
         if auto_accept["accept_delay_max"] > 300:  # 5 minutes max
             self.config["AutoAccept"]["accept_delay_max"] = 300
+
+    def _validate_native_browser_config(self):
+        browser = self.config.get("Browser", {})
+        backend = str(browser.get("backend", "native") or "").strip().lower()
+        if backend != "native":
+            return
+
+        if browser.get("headless"):
+            print(
+                "Warning: Browser.headless is not allowed in native mode. Disabling it."
+            )
+            self.config["Browser"]["headless"] = False
+
+        if self.config.get("BrowserWorker", {}).get("enabled") and not browser.get(
+            "allow_playwright", False
+        ):
+            print(
+                "Warning: BrowserWorker.enabled is not allowed in native browser mode "
+                "unless Browser.allow_playwright is true. Disabling BrowserWorker."
+            )
+            self.config["BrowserWorker"]["enabled"] = False
+
+        if self.config.get("WebsiteMonitor", {}).get("enabled"):
+            print(
+                "Warning: WebsiteMonitor.enabled is deprecated and disabled in native "
+                "browser mode. Use NativeBrowserListener instead."
+            )
+            self.config["WebsiteMonitor"]["enabled"] = False

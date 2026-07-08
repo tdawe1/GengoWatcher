@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 import asyncio
 import os
@@ -11,13 +12,23 @@ import tempfile
 from typing import Any
 
 from .coordinator import AcceptanceCoordinator
-from .flows.accept_flow import wait_for_workbench
+from .flows.accept_flow import (
+    dumps_workbench_payload,
+    extract_workbench_payload,
+    parse_workbench_job_id,
+    wait_for_workbench,
+)
 from .models import JobIntent, JobSignal
 from .profile import BrowserProfileManager
 from .protocol import decode_message, encode_message
 from .registry import JobRegistry
 from .tabs import TabRoles
 from .telemetry import BrowserWorkerTelemetry, TimingEvent
+
+try:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+except ImportError:  # pragma: no cover - playwright is an optional runtime dep
+    PlaywrightTimeoutError = TimeoutError
 
 
 def default_browser_worker_socket_dir() -> Path:
@@ -62,6 +73,9 @@ class BrowserRuntime:
         self.context: Any = None
         self._playwright: Any = None
         self._server: asyncio.AbstractServer | None = None
+        self._page_observer_task: asyncio.Task | None = None
+        self._captured_workbench_ids: OrderedDict[str, None] = OrderedDict()
+        self._workbench_payload_attempts: dict[str, int] = {}
 
     async def start(self) -> "BrowserRuntime":
         from playwright.async_api import async_playwright
@@ -69,12 +83,49 @@ class BrowserRuntime:
         self.profile_manager.ensure_ready()
         self.config.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = await async_playwright().start()
+        # Launch with anti-automation flags so navigator.webdriver and CDP
+        # surface less obvious. --disable-blink-features=AutomationControlled
+        # is the well-known incognito-mode mitigation; we pair it with an
+        # init script that actively overwrites the property on every new
+        # document (some page-side detectors re-check after navigation).
         self.context = await self._playwright.chromium.launch_persistent_context(
             str(self.config.profile_path),
             headless=self.config.headless,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=AutomationControlled",
+            ],
+        )
+        await self.context.add_init_script(
+            """
+            (() => {
+              const strip = () => {
+                try {
+                  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                } catch (_) {}
+                try {
+                  delete navigator.__webdriver_evaluate;
+                  delete navigator.__webdriver_unwrap;
+                  delete navigator.__webdriver_script_function;
+                } catch (_) {}
+                try {
+                  window.chrome = window.chrome || {};
+                  window.chrome.runtime = window.chrome.runtime || { id: undefined };
+                } catch (_) {}
+              };
+              strip();
+              document.addEventListener('DOMContentLoaded', strip, { once: true });
+            })();
+            """
         )
         await self.ensure_tabs()
-        self._record_event("runtime_started", 0.0, profile=str(self.config.profile_path))
+        self._page_observer_task = asyncio.create_task(
+            self._observe_browser_pages(),
+            name="gengowatcher-browser-page-observer",
+        )
+        self._record_event(
+            "runtime_started", 0.0, profile=str(self.config.profile_path)
+        )
         return self
 
     async def ensure_tabs(self) -> TabRoles:
@@ -90,7 +141,9 @@ class BrowserRuntime:
     async def prepare_candidate(self, intent) -> str:
         roles = await self.ensure_tabs()
         self.registry.register(intent)
-        await roles.candidate_page.goto(intent.canonical_url, wait_until="domcontentloaded")
+        await roles.candidate_page.goto(
+            intent.canonical_url, wait_until="domcontentloaded"
+        )
         self._record_event("candidate_ready", 0.0, job_id=intent.job_id)
         return roles.candidate_page.url
 
@@ -108,7 +161,39 @@ class BrowserRuntime:
             )
         )
         candidate_url = await self.prepare_candidate(intent)
-        return {"ok": True, "job_id": intent.job_id, "url": candidate_url}
+        response: dict[str, Any] = {
+            "ok": True,
+            "job_id": intent.job_id,
+            "url": candidate_url,
+        }
+
+        if not payload.get("track_acceptance"):
+            return response
+
+        timeout_ms = self._coerce_acceptance_timeout_ms(
+            payload.get("acceptance_timeout_ms")
+        )
+        if timeout_ms <= 0:
+            response["accepted"] = False
+            response["acceptance_tracking"] = {
+                "status": "disabled",
+                "reason": "acceptance_timeout_ms is not positive",
+            }
+            return response
+
+        tracking = await self.wait_for_manual_acceptance_capture(
+            intent.job_id,
+            timeout_ms=timeout_ms,
+        )
+        response.update(tracking)
+        return response
+
+    @staticmethod
+    def _coerce_acceptance_timeout_ms(value: object) -> int:
+        try:
+            return max(0, int(float(value or 0)))
+        except (TypeError, ValueError):
+            return 0
 
     def _authorize_payload(self, payload: dict[str, Any]) -> None:
         expected_token = str(self.config.auth_token or "")
@@ -158,7 +243,9 @@ class BrowserRuntime:
         socket_dir = socket_path.parent
         if socket_dir.exists():
             if not socket_dir.is_dir():
-                raise ValueError(f"browser worker socket parent is not a directory: {socket_dir}")
+                raise ValueError(
+                    f"browser worker socket parent is not a directory: {socket_dir}"
+                )
             mode = stat.S_IMODE(socket_dir.stat().st_mode)
             if socket_dir == default_browser_worker_socket_dir() and mode != 0o700:
                 os.chmod(socket_dir, 0o700)
@@ -185,7 +272,9 @@ class BrowserRuntime:
                 exc,
             )
 
-    async def commit_accept(self, job_id: str, *, accept_selector: str = "text=Accept") -> str:
+    async def commit_accept(
+        self, job_id: str, *, accept_selector: str = "text=Accept"
+    ) -> str:
         if not self.coordinator.acquire():
             raise RuntimeError("another acceptance routine is already running")
         try:
@@ -196,12 +285,130 @@ class BrowserRuntime:
                 job_id,
                 timeout_ms=self.config.accept_timeout_ms,
             )
-            self._record_event("accept_succeeded", 0.0, job_id=job_id, url=workbench_url)
+            self._record_event(
+                "accept_succeeded", 0.0, job_id=job_id, url=workbench_url
+            )
             return workbench_url
         finally:
             self.coordinator.release()
 
+    async def _observe_browser_pages(self) -> None:
+        while self.context is not None:
+            try:
+                await self._observe_browser_pages_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive runtime logging
+                self.logger.warning("browser page observer failed: %s", exc)
+            await asyncio.sleep(0.75)
+
+    async def _observe_browser_pages_once(self) -> None:
+        if self.context is None:
+            return
+        pages = list(getattr(self.context, "pages", []) or [])
+        for page in pages:
+            await self._capture_workbench_page_if_ready(page)
+
+    async def _capture_workbench_page_if_ready(self, page) -> None:
+        url = str(getattr(page, "url", "") or "")
+        job_id = parse_workbench_job_id(url)
+        if not job_id or job_id in self._captured_workbench_ids:
+            return
+
+        attempts = self._workbench_payload_attempts.get(job_id, 0)
+        self._workbench_payload_attempts[job_id] = attempts + 1
+
+        payload = await extract_workbench_payload(page)
+        if payload:
+            self._record_accepted_workbench_payload(job_id, url, payload)
+            return
+
+        if attempts == 0:
+            self._record_event("workbench_detected", 0.0, job_id=job_id, url=url)
+
+    def _record_accepted_workbench_payload(
+        self, job_id: str, url: str, payload: dict[str, Any]
+    ) -> None:
+        if job_id in self._captured_workbench_ids:
+            return
+        self._captured_workbench_ids[job_id] = None
+        # Prune stale entries to prevent unbounded growth
+        if len(self._captured_workbench_ids) > 200:
+            while len(self._captured_workbench_ids) > 100:
+                self._captured_workbench_ids.popitem(last=False)
+        if job_id in self._workbench_payload_attempts:
+            del self._workbench_payload_attempts[job_id]
+        self._record_event(
+            "accepted_workbench_payload",
+            0.0,
+            job_id=job_id,
+            url=url,
+            source=payload.get("source"),
+            payload=payload.get("payload"),
+        )
+        if self.telemetry is not None:
+            self.telemetry.write_text_artifact(
+                f"accepted-workbench-{job_id}.json",
+                dumps_workbench_payload(payload) + "\n",
+            )
+
+    async def wait_for_manual_acceptance_capture(
+        self,
+        job_id: str,
+        *,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        roles = await self.ensure_tabs()
+        try:
+            workbench_url = await wait_for_workbench(
+                roles.candidate_page,
+                job_id,
+                timeout_ms=timeout_ms,
+            )
+        except PlaywrightTimeoutError:
+            self._record_event(
+                "manual_accept_timeout",
+                0.0,
+                job_id=job_id,
+                timeout_ms=timeout_ms,
+            )
+            return {
+                "accepted": False,
+                "acceptance_tracking": {
+                    "status": "timeout",
+                    "timeout_ms": timeout_ms,
+                },
+            }
+
+        payload = await extract_workbench_payload(roles.candidate_page)
+        response: dict[str, Any] = {
+            "accepted": True,
+            "workbench_url": workbench_url,
+            "acceptance_tracking": {
+                "status": "captured" if payload else "accepted_no_payload",
+                "timeout_ms": timeout_ms,
+            },
+        }
+        if payload:
+            response["accepted_workbench"] = payload
+            self._record_accepted_workbench_payload(job_id, workbench_url, payload)
+        else:
+            self._record_event(
+                "manual_accept_no_payload",
+                0.0,
+                job_id=job_id,
+                url=workbench_url,
+            )
+        return response
+
     async def stop(self) -> None:
+        if self._page_observer_task is not None:
+            self._page_observer_task.cancel()
+            try:
+                await self._page_observer_task
+            except asyncio.CancelledError:
+                pass
+            self._page_observer_task = None
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -217,4 +424,6 @@ class BrowserRuntime:
     def _record_event(self, name: str, monotonic_ms: float, **extra: object) -> None:
         if self.telemetry is None:
             return
-        self.telemetry.record(TimingEvent(name=name, monotonic_ms=monotonic_ms), **extra)
+        self.telemetry.record(
+            TimingEvent(name=name, monotonic_ms=monotonic_ms), **extra
+        )

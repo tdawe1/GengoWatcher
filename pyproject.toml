@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gengowatcher"
-version = "2.1.5"
+version = "2.9.3"
 description = "Terminal monitor for Gengo translation jobs"
 readme = "README.md"
 requires-python = ">=3.11"

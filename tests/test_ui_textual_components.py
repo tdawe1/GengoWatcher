@@ -15,6 +15,11 @@ from gengowatcher.ui_textual import (
     StatusRow,
     TelemetryPanel,
     TelemetryTab,
+    ApiTab,
+    API_AUDIT_COLUMNS,
+    API_BROWSER_JOB_COLUMNS,
+    API_EVENT_COLUMNS,
+    API_STATUS_COLUMNS,
     ActivityPreview,
     JobsPreview,
     HourlyActivity,
@@ -22,8 +27,11 @@ from gengowatcher.ui_textual import (
     SessionStats,
     StatsPanel,
     TextualLogHandler,
+    TELEMETRY_TAB_COLUMNS,
     Icons,
     _derive_display_word_count,
+    _api_socket_open,
+    _data_table_column_labels,
 )
 
 
@@ -116,6 +124,7 @@ class TestWordCountDerivation:
 
     def test_prefers_explicit_count_fields(self):
         assert _derive_display_word_count({"word_count": "320", "reward": 10.0}) == 320
+        assert _derive_display_word_count({"accepted_unit_count": "263"}) == 263
         assert _derive_display_word_count({"unit_count": "480", "reward": 10.0}) == 480
 
     def test_estimates_from_reward_and_tier(self):
@@ -282,7 +291,9 @@ class TestStatusRow:
         async with app.run_test() as pilot:
             status_row = app.query_one(StatusRow)
             indicators = status_row.query(StatusIndicator)
-            assert len(indicators) == 7  # WS, RSS, Mail, Web, Captcha, Workflow, Auto
+            assert (
+                len(indicators) == 8
+            )  # WS, RSS, HTTP, Mail, Web, Captcha, Workflow, Auto
 
     @pytest.mark.asyncio
     async def test_status_row_refresh_websocket_live(self, mock_watcher):
@@ -333,6 +344,48 @@ class TestStatusRow:
             assert app.query_one("#ind-work", StatusIndicator).current_state == "error"
 
     @pytest.mark.asyncio
+    async def test_status_row_api_indicator_uses_web_server_status(self, mock_watcher):
+        """API indicator should reflect WebServer reachability, not API events."""
+        from textual.app import App
+
+        mock_watcher.get_health_snapshot.return_value = {
+            "api_events": {"state": "disabled", "detail": "off"},
+        }
+        mock_watcher.config.get.side_effect = lambda section, key, fallback=None: {
+            ("WebServer", "enabled"): True,
+            ("WebServer", "host"): "127.0.0.1",
+            ("WebServer", "port"): 8765,
+        }.get((section, key), fallback)
+        mock_watcher.config.getboolean.side_effect = (
+            lambda section, key, fallback=False: bool(
+                mock_watcher.config.get(section, key, fallback)
+            )
+        )
+
+        class TestApp(App):
+            def compose(self):
+                yield StatusRow(watcher=mock_watcher)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            with patch("gengowatcher.ui_textual._api_socket_open", return_value=True):
+                status_row = app.query_one(StatusRow)
+                status_row.refresh_status()
+                await pilot.pause(0.1)
+                assert (
+                    app.query_one("#ind-api", StatusIndicator).current_state == "live"
+                )
+
+    def test_api_socket_open_connects_to_loopback_for_wildcard_bind(self):
+        """Wildcard bind addresses should be probed through loopback."""
+        with patch("gengowatcher.ui_textual.socket.create_connection") as connect:
+            connect.return_value.__enter__.return_value = object()
+
+            assert _api_socket_open("0.0.0.0", 8000) is True
+
+        connect.assert_called_once_with(("127.0.0.1", 8000), timeout=0.05)
+
+    @pytest.mark.asyncio
     async def test_telemetry_panel_renders_health_snapshot(self, mock_watcher):
         """Telemetry panel should group enabled/disabled modules with details."""
         from textual.app import App
@@ -350,6 +403,13 @@ class TestStatusRow:
                 "detail": "ok",
                 "last_success_age_sec": 4,
                 "failure_count": 0,
+            },
+            "api_events": {
+                "state": "healthy",
+                "detail": "in 1 out 2",
+                "incoming_total": 1,
+                "outgoing_total": 2,
+                "failed_total": 0,
             },
             "session": {
                 "state": "error",
@@ -387,6 +447,7 @@ class TestStatusRow:
             assert "Enabled" in rendered
             assert "Disabled" in rendered
             assert "WS" in rendered
+            assert "API" in rendered
             assert "Browser" in rendered
             assert "Email" in rendered
             assert "RSS" in rendered
@@ -400,7 +461,7 @@ class TestStatusRow:
     async def test_telemetry_tab_renders_detailed_sections(self, mock_watcher):
         """Telemetry tab should render enabled/disabled sections and details."""
         from textual.app import App
-        from textual.widgets import Static
+        from textual.widgets import DataTable
 
         mock_watcher.get_health_snapshot.return_value = {
             "websocket": {
@@ -417,6 +478,13 @@ class TestStatusRow:
                 "status": "Waiting",
                 "last_success_age_sec": 4,
                 "failure_count": 0,
+            },
+            "api_events": {
+                "state": "healthy",
+                "detail": "ready",
+                "incoming_total": 0,
+                "outgoing_total": 0,
+                "failed_total": 0,
             },
             "email": {
                 "state": "disabled",
@@ -438,16 +506,80 @@ class TestStatusRow:
             tab = app.query_one(TelemetryTab)
             tab.refresh_telemetry()
             await pilot.pause(0.1)
-            content = tab.query_one("#telemetry-tab-content", Static)
-            rendered = str(content.render())
-            assert "ENABLED MODULES" in rendered
-            assert "DISABLED MODULES" in rendered
-            assert "WEBSOCKET" in rendered
-            assert "BROWSER" in rendered
-            assert "EMAIL" in rendered
-            assert "last_pong_age_sec" in rendered
-            assert "ping_latency_ms" in rendered
-            assert "RSS" in rendered
+            table = tab.query_one("#telemetry-tab-table", DataTable)
+            assert _data_table_column_labels(table) == TELEMETRY_TAB_COLUMNS
+            assert table.row_count >= 4
+
+    @pytest.mark.asyncio
+    async def test_api_tab_renders_audit_summary(self, mock_watcher):
+        """API tab should expose audit counters and recent entries."""
+        from textual.app import App
+        from textual.widgets import DataTable
+
+        mock_watcher.get_health_snapshot.return_value = {
+            "api_events": {
+                "state": "disabled",
+                "detail": "off",
+                "incoming_enabled": True,
+                "outbound_enabled": True,
+                "target_count": 1,
+                "audit_enabled": True,
+                "debug_enabled": True,
+                "audit_log_path": "logs/webhooks.jsonl",
+                "incoming_total": 1,
+                "outgoing_total": 1,
+                "processed_total": 1,
+                "delivered_total": 1,
+                "failed_total": 0,
+                "duplicate_total": 0,
+            }
+        }
+        mock_watcher.config.get.side_effect = lambda section, key, fallback=None: {
+            ("WebServer", "enabled"): True,
+            ("WebServer", "host"): "127.0.0.1",
+            ("WebServer", "port"): 8765,
+        }.get((section, key), fallback)
+        mock_watcher.config.getboolean.side_effect = (
+            lambda section, key, fallback=False: bool(
+                mock_watcher.config.get(section, key, fallback)
+            )
+        )
+        audit_logger = MagicMock()
+        audit_logger.summary.return_value = {
+            "recent": [
+                {
+                    "ts": time.time(),
+                    "direction": "incoming",
+                    "stage": "processed",
+                    "status": "processed",
+                    "event_type": "job.discovered",
+                    "event_id": "evt-1",
+                }
+            ]
+        }
+        mock_watcher.webhook_audit_logger = audit_logger
+
+        class TestApp(App):
+            def compose(self):
+                yield ApiTab(watcher=mock_watcher)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            with patch("gengowatcher.ui_textual._api_socket_open", return_value=True):
+                tab = app.query_one(ApiTab)
+                tab.refresh_api()
+                await pilot.pause(0.1)
+            status_table = tab.query_one("#api-status-table", DataTable)
+            jobs_table = tab.query_one("#api-browser-jobs-table", DataTable)
+            events_table = tab.query_one("#api-events-table", DataTable)
+            audit_table = tab.query_one("#api-audit-table", DataTable)
+            assert _data_table_column_labels(status_table) == API_STATUS_COLUMNS
+            assert _data_table_column_labels(jobs_table) == API_BROWSER_JOB_COLUMNS
+            assert _data_table_column_labels(events_table) == API_EVENT_COLUMNS
+            assert _data_table_column_labels(audit_table) == API_AUDIT_COLUMNS
+            assert status_table.row_count >= 3
+            assert events_table.row_count >= 8
+            assert audit_table.row_count == 1
 
     def test_status_indicator_uses_distinct_pulse_cadence_by_state(self):
         """Critical states should pulse faster than non-critical ones."""

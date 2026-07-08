@@ -3,12 +3,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-
 from gengowatcher.browser_worker.runtime import (
     BrowserRuntime,
     BrowserRuntimeConfig,
     default_browser_worker_socket_dir,
 )
+from gengowatcher.browser_worker.tabs import TabRoles
 from gengowatcher.browser_worker.telemetry import BrowserWorkerTelemetry
 
 
@@ -112,3 +112,114 @@ async def test_runtime_accepts_command_with_valid_auth_token(tmp_path):
     )
 
     assert response["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_tracks_manual_acceptance_when_requested(tmp_path):
+    accepted_payload = {
+        "source": "window.__GENGO_WORKBENCH_DATA__",
+        "payload": {
+            "summary": {
+                "order_id": 123,
+                "expire_time": 1782760306560,
+                "seconds_left": 6344,
+            },
+            "jobs": [{"id": 98936958}],
+        },
+    }
+
+    class FakePage:
+        url = "https://gengo.com/t/workbench/123"
+
+        async def wait_for_url(self, predicate, timeout):
+            assert timeout == 180000
+            assert predicate(self.url) is True
+
+        async def evaluate(self, _script):
+            return accepted_payload
+
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile"),
+        telemetry=BrowserWorkerTelemetry(tmp_path / "worker.jsonl"),
+    )
+    runtime.prepare_candidate = AsyncMock(
+        return_value="https://gengo.com/t/jobs/details/123"
+    )
+    runtime.ensure_tabs = AsyncMock(
+        return_value=TabRoles(hold_page=object(), candidate_page=FakePage())
+    )
+
+    response = await runtime.handle_command(
+        {
+            "type": "job_url",
+            "url": "https://gengo.com/t/jobs/details/123",
+            "source": "rss",
+            "track_acceptance": True,
+            "acceptance_timeout_ms": 180000,
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["accepted"] is True
+    assert response["workbench_url"] == "https://gengo.com/t/workbench/123"
+    assert response["accepted_workbench"] == accepted_payload
+    assert (tmp_path / "accepted-workbench-123.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_runtime_page_observer_captures_workbench_payload(tmp_path):
+    accepted_payload = {
+        "source": "window.__GENGO_WORKBENCH_DATA__",
+        "payload": {
+            "summary": {
+                "order_id": 123,
+                "expire_time": 1782760306560,
+                "seconds_left": 6344,
+            },
+            "jobs": [{"id": 98936958}],
+        },
+    }
+
+    class FakePage:
+        url = "https://gengo.com/t/workbench/123"
+
+        async def evaluate(self, _script):
+            return accepted_payload
+
+    class FakeContext:
+        pages = [FakePage()]
+
+    telemetry = BrowserWorkerTelemetry(tmp_path / "worker.jsonl")
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile"),
+        telemetry=telemetry,
+    )
+    runtime.context = FakeContext()
+
+    await runtime._observe_browser_pages_once()
+    await runtime._observe_browser_pages_once()
+
+    log_text = (tmp_path / "worker.jsonl").read_text(encoding="utf-8")
+    assert log_text.count("accepted_workbench_payload") == 1
+    assert (tmp_path / "accepted-workbench-123.json").is_file()
+
+
+def test_runtime_prunes_captured_workbench_ids_by_insertion_order(tmp_path):
+    telemetry = BrowserWorkerTelemetry(tmp_path / "worker.jsonl")
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile"),
+        telemetry=telemetry,
+    )
+
+    for index in range(201):
+        runtime._record_accepted_workbench_payload(
+            f"job-{index}",
+            f"https://gengo.com/t/workbench/job-{index}",
+            {"source": "test", "payload": {}},
+        )
+
+    assert len(runtime._captured_workbench_ids) == 100
+    assert "job-0" not in runtime._captured_workbench_ids
+    assert "job-100" not in runtime._captured_workbench_ids
+    assert "job-101" in runtime._captured_workbench_ids
+    assert "job-200" in runtime._captured_workbench_ids

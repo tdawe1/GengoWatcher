@@ -834,7 +834,7 @@ class TestGengoWatcherApp:
             replay_calls = app._textual_log_handler.append_log.call_args_list
             assert len(replay_calls) == 2
             assert replay_calls[0].args[0] == "#activity-log"
-            assert replay_calls[1].args[0] == "#activity-log-full"
+            assert replay_calls[1].args[0] == "#output-log"
             assert "WebSocket: Connection established and authenticated." in str(
                 replay_calls[0].args[1]
             )

@@ -1,24 +1,22 @@
 """Comprehensive tests for the web API module."""
 
-import pytest
 import asyncio
-import json
-import tempfile
 import pathlib
-import time
 import tempfile as tf
-from unittest.mock import MagicMock, patch, AsyncMock
-from fastapi.testclient import TestClient
+import time
+from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi.testclient import TestClient
 from gengowatcher.web import (
     APIAuthenticator,
-    WebAPI,
+    CommandRequest,
+    ConfigSection,
     JobEntry,
+    PaginationParams,
     StoredFileUploadResponse,
     WatcherStatus,
-    ConfigSection,
-    CommandRequest,
-    PaginationParams,
+    WebAPI,
     app,
     download_file,
     list_uploaded_files,
@@ -438,6 +436,91 @@ class TestWebAPI:
             assert call_args["id"] == "12345"
             assert call_args["reward"] == 25.0
 
+    def test_download_job_file_rejects_non_gengo_hosts(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Auto-download should not fetch arbitrary internal URLs server-side."""
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        with patch("gengowatcher.web.requests.get") as mock_get:
+            api._download_job_file(
+                "job-1",
+                "http://169.254.169.254/latest/meta-data/",
+            )
+
+        mock_get.assert_not_called()
+        mock_state.update_job.assert_called_once()
+        assert (
+            "not allowed"
+            in mock_state.update_job.call_args.args[1]["file_download_error"]
+        )
+
+    def test_download_job_file_rejects_oversized_response(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        """Auto-download should stream with a configured size cap."""
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("TranslationWorkflow", "download_max_bytes"): 4,
+            ("TranslationWorkflow", "download_allowed_hosts"): [
+                "gengo.com",
+                ".gengo.com",
+            ],
+        }.get((s, k), kw.get("fallback", ""))
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        class FakeResponse:
+            status_code = 200
+            headers = {
+                "content-type": "text/plain",
+                "content-length": "5",
+            }
+
+            def iter_content(self, chunk_size):
+                yield b"hello"
+
+            def raise_for_status(self):
+                return None
+
+            def close(self):
+                return None
+
+        with patch("gengowatcher.web.requests.get", return_value=FakeResponse()) as get:
+            api._download_job_file(
+                "job-1",
+                "https://gengo.com/t/jobs/files/source.txt",
+            )
+
+        assert get.call_args.kwargs["stream"] is True
+        assert get.call_args.kwargs["allow_redirects"] is False
+        mock_state.update_job.assert_called_once()
+        assert (
+            "too large"
+            in mock_state.update_job.call_args.args[1]["file_download_error"]
+        )
+
+    def test_download_headers_attach_cookie_for_allowed_subdomain(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("WebSocket", "user_session"): "session-token",
+            ("TranslationWorkflow", "download_allowed_hosts"): [
+                "gengo.com",
+                ".gengo.com",
+            ],
+        }.get((s, k), kw.get("fallback", ""))
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        headers = api._download_headers(url="https://cdn.gengo.com/source.txt")
+
+        assert headers["Cookie"] == "my_gengo_session=session-token"
+
     @pytest.mark.asyncio
     async def test_accept_job(self, mock_config, mock_state, mock_logger, mock_watcher):
         """Test accepting a job via API."""
@@ -510,12 +593,9 @@ class TestWebAPI:
             mock_watcher.check_now_event.set.assert_called_once()
 
     def test_execute_command_pause(
-        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+        self, mock_config, mock_state, mock_logger, mock_watcher
     ):
         """Test executing pause command."""
-        pause_file = tmp_path / "pause"
-        mock_watcher.PAUSE_FILE = str(pause_file)
-
         with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
             api = WebAPI(mock_config, mock_state, mock_logger)
             api.watcher = mock_watcher
@@ -523,16 +603,12 @@ class TestWebAPI:
             result = api.execute_command("pause")
 
             assert result["status"] == "success"
-            assert pause_file.exists()
+            mock_watcher.pause_monitoring.assert_called_once()
 
     def test_execute_command_resume(
-        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+        self, mock_config, mock_state, mock_logger, mock_watcher
     ):
         """Test executing resume command."""
-        pause_file = tmp_path / "pause"
-        pause_file.write_text("")
-        mock_watcher.PAUSE_FILE = str(pause_file)
-
         with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
             api = WebAPI(mock_config, mock_state, mock_logger)
             api.watcher = mock_watcher
@@ -540,7 +616,7 @@ class TestWebAPI:
             result = api.execute_command("resume")
 
             assert result["status"] == "success"
-            assert not pause_file.exists()
+            mock_watcher.resume_monitoring.assert_called_once()
 
     def test_execute_command_cancel(
         self, mock_config, mock_state, mock_logger, mock_watcher
@@ -681,6 +757,76 @@ class TestFastAPIEndpoints:
             )
             assert pathlib.Path(response.path) == storage_dir / upload_data.stored_name
             assert response.filename == "Release Notes.txt"
+
+    @pytest.mark.asyncio
+    async def test_file_upload_starts_translation_workflow_with_accepted_text(
+        self,
+        mock_config,
+        mock_state,
+        mock_logger,
+        mock_watcher,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Uploading a user-mode file for an accepted job should start workflow."""
+        storage_dir = tmp_path / "files"
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("Paths", "file_storage_dir"): str(storage_dir),
+            ("TranslationWorkflow", "file_mode"): "user",
+        }.get((s, k), kw.get("fallback", ""))
+        mock_state.get_job.return_value = {
+            "id": "job-12345",
+            "title": "Japanese > English",
+            "reward": 12.62,
+            "url": "https://gengo.com/t/workbench/job-12345",
+            "timestamp": time.time(),
+            "source": "browser_worker",
+            "accepted": True,
+            "accepted_source_text": "Source from accepted workbench JSON.",
+            "accepted_segments": [
+                {
+                    "segment_id": "seg-1",
+                    "source_content": "Source from accepted workbench JSON.",
+                }
+            ],
+            "accepted_workbench": {"payload": {"summary": {"order_id": "job-12345"}}},
+        }
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+            monkeypatch.setattr("gengowatcher.web.api_instance", api)
+
+            class StubUploadFile:
+                filename = "Release Notes.txt"
+                content_type = "text/plain"
+
+                async def read(self):
+                    return b"file text for translation"
+
+            uploaded = await upload_file(
+                file=StubUploadFile(),
+                job_id="job-12345",
+                tier=None,
+                word_count=None,
+                value=None,
+                authenticated=True,
+            )
+
+            assert uploaded.status == "success"
+            events = api.get_recent_events()
+            workflow_events = [
+                event
+                for event in events
+                if event["type"] == "translation.workflow.started"
+            ]
+            assert workflow_events
+            workflow = workflow_events[-1]["data"]
+            assert workflow["source_text"] == "Source from accepted workbench JSON."
+            assert workflow["file_text"] == "file text for translation"
+            assert workflow["file"]["job_id"] == "job-12345"
 
 
 class TestEdgeCases:

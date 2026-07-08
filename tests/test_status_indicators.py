@@ -56,8 +56,26 @@ async def test_status_indicator_set_state():
 
 
 @pytest.mark.asyncio
-async def test_status_row_renders_seven_indicators():
-    """StatusRow should contain 7 status indicators."""
+async def test_status_indicator_updates_detail_when_state_is_unchanged():
+    app = StatusIndicatorTestApp()
+    async with app.run_test() as pilot:
+        indicator = app.query_one(StatusIndicator)
+        label_widget = indicator.query_one(".status-label")
+
+        indicator.set_state("live", "starting")
+        await pilot.pause()
+        assert "starting" in str(label_widget.render())
+
+        indicator.set_state("live", "ready")
+        await pilot.pause()
+        rendered = str(label_widget.render())
+        assert "ready" in rendered
+        assert "starting" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_status_row_renders_eight_indicators():
+    """StatusRow should contain 8 status indicators."""
     watcher = MagicMock()
     watcher.websocket_connected = False
     watcher.websocket_status = ""
@@ -70,8 +88,8 @@ async def test_status_row_renders_seven_indicators():
     app = StatusRowTestApp(watcher)
     async with app.run_test() as pilot:
         indicators = app.query(StatusIndicator)
-        # 7 indicators: WS, Mail, Web, RSS, Cap, Flow, Auto
-        assert len(indicators) == 7
+        # 8 indicators: WS, RSS, HTTP, Mail, Web, Cap, Flow, Auto
+        assert len(indicators) == 8
 
 
 @pytest.mark.asyncio

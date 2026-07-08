@@ -708,10 +708,42 @@ async def _open_url_in_firefox_rdp(debug_url: str | None, url: str) -> str:
     return str(result.get("url") or url)
 
 
+def _extract_cookie_value_or_empty(
+    cookies: list[dict[str, Any]] | None,
+    *,
+    cookie_name: str | tuple[str, ...],
+) -> str:
+    """Like extract_cookie_value but returns "" instead of raising when missing.
+
+    Used for optional cookies (e.g. myG_rdsessID) that may not be set in every
+    session — the session cookie is the only one required for handshake.
+    """
+    if not cookies:
+        return ""
+    names = (
+        (cookie_name,)
+        if isinstance(cookie_name, str)
+        else tuple(str(name) for name in cookie_name)
+    )
+    for expected_name in names:
+        for cookie in cookies:
+            if not isinstance(cookie, dict):
+                continue
+            if cookie.get("name") != expected_name:
+                continue
+            value = _coerce_cookie_value(cookie.get("value", ""))
+            if value:
+                return value
+    return ""
+
+
 def _firefox_cookie_lookup_expression() -> str:
     return """(() => {
-const names = ["myG_myGSession_", "my_gengo_session", "myG_rdsessID"];
-for (const expectedName of names) {
+const sessionNames = ["myG_myGSession_", "my_gengo_session"];
+const rdNames = ["myG_rdsessID"];
+let sessionToken = "";
+let rdSessionId = "";
+for (const expectedName of sessionNames) {
   for (const cookie of Services.cookies.cookies) {
     const host = String(cookie.host || "");
     if (
@@ -719,13 +751,25 @@ for (const expectedName of names) {
       (host === "gengo.com" || host === ".gengo.com" || host.endsWith(".gengo.com"))
     ) {
       const value = String(cookie.value || "");
-      if (value) {
-        return JSON.stringify({ sessionToken: value });
-      }
+      if (value) { sessionToken = value; break; }
     }
   }
+  if (sessionToken) break;
 }
-return JSON.stringify({ sessionToken: "" });
+for (const expectedName of rdNames) {
+  for (const cookie of Services.cookies.cookies) {
+    const host = String(cookie.host || "");
+    if (
+      cookie.name === expectedName &&
+      (host === "gengo.com" || host === ".gengo.com" || host.endsWith(".gengo.com"))
+    ) {
+      const value = String(cookie.value || "");
+      if (value) { rdSessionId = value; break; }
+    }
+  }
+  if (rdSessionId) break;
+}
+return JSON.stringify({ sessionToken: sessionToken, rdSessionId: rdSessionId });
 })()"""
 
 
@@ -1056,6 +1100,7 @@ async def _fetch_browser_session_snapshot_firefox_rdp(
     session_token = str(cookie_state.get("sessionToken", "") or "").strip()
     if not session_token:
         raise BrowserSessionError("No Gengo session cookie found in Firefox")
+    rd_session_id = str(cookie_state.get("rdSessionId", "") or "").strip()
 
     return BrowserSessionSnapshot(
         session_token=session_token,
@@ -1065,6 +1110,7 @@ async def _fetch_browser_session_snapshot_firefox_rdp(
         origin=str(page_state.get("origin", "") or DEFAULT_GENGO_ORIGIN).strip(),
         target_url=str(page_state.get("url", "") or tab.get("url", "")).strip(),
         target_title=str(page_state.get("title", "") or tab.get("title", "")).strip(),
+        rd_session_id=rd_session_id,
     )
 
 
@@ -1135,6 +1181,10 @@ async def _fetch_browser_session_snapshot_firefox_bidi(
             page_state = {}
 
     session_token = extract_cookie_value(cookies, cookie_name=cookie_name)
+    rd_session_id = _extract_cookie_value_or_empty(
+        cookies,
+        cookie_name=("myG_rdsessID",),
+    )
     return BrowserSessionSnapshot(
         session_token=session_token,
         user_key=str(page_state.get("userKey", "") or "").strip(),
@@ -1143,6 +1193,7 @@ async def _fetch_browser_session_snapshot_firefox_bidi(
         origin=str(page_state.get("origin", "") or DEFAULT_GENGO_ORIGIN).strip(),
         target_url=str(page_state.get("url", "") or context.get("url", "")).strip(),
         target_title=str(page_state.get("title", "") or "").strip(),
+        rd_session_id=rd_session_id,
     )
 
 
@@ -1230,6 +1281,10 @@ async def fetch_browser_session_snapshot(
         raise BrowserSessionError("Browser did not return a cookie list")
 
     session_token = extract_cookie_value(cookies, cookie_name=cookie_name)
+    rd_session_id = _extract_cookie_value_or_empty(
+        cookies,
+        cookie_name=("myG_rdsessID",),
+    )
     page_state = runtime_result
     if not isinstance(page_state, dict):
         raise BrowserSessionError("Browser page state did not return an object")
@@ -1242,6 +1297,7 @@ async def fetch_browser_session_snapshot(
         origin=str(page_state.get("origin", "") or DEFAULT_GENGO_ORIGIN).strip(),
         target_url=str(page_state.get("url", "") or target.get("url", "")).strip(),
         target_title=str(page_state.get("title", "") or "").strip(),
+        rd_session_id=rd_session_id,
     )
 
 
@@ -2178,19 +2234,46 @@ def build_browser_aligned_websocket_headers(
     user_agent: str = "",
     origin: str = DEFAULT_GENGO_ORIGIN,
     accept_language: str = "",
+    rd_session_id: str = "",
+    include_client_hints: bool = True,
 ) -> dict[str, str]:
-    headers = {"Origin": origin or DEFAULT_GENGO_ORIGIN}
+    """Construct headers that mirror a real browser's WebSocket upgrade request.
+
+    Chrome does not send Pragma, Cache-Control, or Accept-Encoding on a
+    WebSocket upgrade — including them is a positive fingerprint for the
+    Python `websockets` library / Playwright HTTP route. We also omit
+    Client Hints when the configured UA is not a modern Chrome to avoid
+    sending sec-ch-ua for a Firefox or unknown UA.
+    """
+    headers: dict[str, str] = {"Origin": origin or DEFAULT_GENGO_ORIGIN}
     if session_token:
+        # Real browsers obtain distinct values for the auth session cookie
+        # and the rd-session-id; sending identical values is detectable.
+        rd_value = rd_session_id or session_token
         headers["Cookie"] = (
-            f"myG_myGSession_={session_token}; myG_rdsessID={session_token}"
+            f"myG_myGSession_={session_token}; myG_rdsessID={rd_value}"
         )
-    headers["Pragma"] = "no-cache"
-    headers["Cache-Control"] = "no-cache"
     if user_agent:
         headers["User-Agent"] = user_agent
     if accept_language:
         headers["Accept-Language"] = accept_language
-    headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
+    if include_client_hints and user_agent and "Chrome/" in user_agent:
+        # Client Hints on the WS upgrade — Chrome 110+ sends these. Best-effort
+        # extraction from a recent UA string so we don't pin to a single version.
+        try:
+            chrome_version = user_agent.split("Chrome/", 1)[1].split(".", 1)[0]
+            major = int(chrome_version)
+        except (IndexError, ValueError):
+            major = 0
+        if major >= 110:
+            sec_ch_ua = (
+                f'"Chromium";v="{major}", "Not_A Brand";v="8", "Google Chrome";v="{major}"'
+            )
+            headers["Sec-CH-UA"] = sec_ch_ua
+            headers["Sec-CH-UA-Mobile"] = "?0"
+            headers["Sec-CH-UA-Platform"] = '"Linux"'
+            headers["Sec-Fetch-Mode"] = "websocket"
+            headers["Sec-Fetch-Site"] = "cross-site"
     return headers
 
 

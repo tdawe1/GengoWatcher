@@ -39,6 +39,7 @@ class BrowserSessionSnapshot:
     origin: str = DEFAULT_GENGO_ORIGIN
     target_url: str = ""
     target_title: str = ""
+    rd_session_id: str = ""
 
 
 @dataclass(frozen=True)

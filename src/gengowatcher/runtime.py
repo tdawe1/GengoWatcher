@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 import sys
 import threading
 import time
@@ -62,7 +63,9 @@ def run_application(args: argparse.Namespace, console: Console) -> None:
     if args.web_only:
         _run_web_only(console, web_thread)
 
-    _run_tui(args, console, log, ui_handler, config, state, watcher)
+    _run_tui(
+        args, console, log, ui_handler, config, state, watcher, api_thread=web_thread
+    )
 
 
 def _start_metrics_server_if_enabled(
@@ -123,29 +126,59 @@ def _start_web_server_if_requested(
     logger: logging.Logger,
     watcher: GengoWatcher,
 ) -> threading.Thread | None:
-    if not (args.web or args.web_only):
+    cli_requested = bool(
+        getattr(args, "web", False) or getattr(args, "web_only", False)
+    )
+    config_enabled = False
+    if not cli_requested:
+        config_enabled = config.getboolean("WebServer", "enabled", fallback=False)
+
+    if not (cli_requested or config_enabled):
+        return None
+
+    if cli_requested:
+        host = "127.0.0.1"
+        port = int(getattr(args, "web_port", 8000) or 8000)
+    else:
+        host = str(config.get("WebServer", "host", fallback="127.0.0.1") or "127.0.0.1")
+        port = int(config.getint("WebServer", "port", fallback=8000) or 8000)
+
+    if not _is_tcp_port_available(host, port):
+        message = f"Web API not started because http://{host}:{port} is already in use."
+        logger.warning(message)
+        if args.web_only:
+            console.print(f"[warning]{message}[/]")
+            sys.exit(1)
         return None
 
     try:
-        from .web import run_web_server
+        from .web import start_web_server_thread
 
-        def start_web_server():
-            print(f"Starting web server on http://127.0.0.1:{args.web_port}")
-            run_web_server(
-                host="127.0.0.1",
-                port=args.web_port,
-                config=config,
-                state=state,
-                logger=logger,
-                watcher=watcher,
-                start_watcher_thread=bool(args.web_only),
-            )
-
-        web_thread = threading.Thread(
-            target=start_web_server, daemon=True, name="WebServerThread"
+        logger.info("Starting Web API on http://%s:%s", host, port)
+        web_thread = start_web_server_thread(
+            host=host,
+            port=port,
+            config=config,
+            state=state,
+            logger=logger,
+            watcher=watcher,
+            start_watcher_thread=bool(getattr(args, "web_only", False)),
         )
-        web_thread.start()
         time.sleep(1)
+        startup_error = _web_server_startup_error(web_thread)
+        is_alive = getattr(web_thread, "is_alive", None)
+        thread_dead = callable(is_alive) and not bool(is_alive())
+        if startup_error is not None or thread_dead:
+            if startup_error is not None:
+                message = f"Web API failed to start: {startup_error}"
+                logger.error(message)
+            else:
+                message = "Web API failed to start: server thread exited."
+                logger.error(message)
+            console.print(f"[error]{message}[/]")
+            if args.web_only:
+                sys.exit(1)
+            return None
         return web_thread
     except ImportError as e:
         console.print(f"[error]Could not start web server: {e}[/]")
@@ -153,6 +186,33 @@ def _start_web_server_if_requested(
         if args.web_only:
             sys.exit(1)
         return None
+
+
+def _web_server_startup_error(web_thread: threading.Thread) -> BaseException | None:
+    server = getattr(web_thread, "gengowatcher_api_server", None)
+    startup_error = getattr(server, "startup_error", None)
+    return startup_error if isinstance(startup_error, BaseException) else None
+
+
+def _is_tcp_port_available(host: str, port: int) -> bool:
+    try:
+        addr_infos = socket.getaddrinfo(
+            host,
+            port,
+            socket.AF_UNSPEC,
+            socket.SOCK_STREAM,
+        )
+    except OSError:
+        return False
+    for family, socktype, proto, _canonname, sockaddr in addr_infos:
+        try:
+            with socket.socket(family, socktype, proto) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(sockaddr)
+            return True
+        except OSError:
+            continue
+    return False
 
 
 def _run_web_only(console: Console, web_thread: threading.Thread | None) -> None:
@@ -172,15 +232,19 @@ def _run_tui(
     config: AppConfig,
     state: AppState,
     watcher: GengoWatcher,
+    api_thread: threading.Thread | None = None,
 ) -> None:
     stats_manager = StatsManager()
-    app = GengoWatcherApp(
-        watcher=watcher,
-        config=config,
-        state=state,
-        stats=stats_manager,
-        ui_log_handler=ui_handler,
-    )
+    app_kwargs = {
+        "watcher": watcher,
+        "config": config,
+        "state": state,
+        "stats": stats_manager,
+        "ui_log_handler": ui_handler,
+    }
+    if api_thread is not None:
+        app_kwargs["api_thread"] = api_thread
+    app = GengoWatcherApp(**app_kwargs)
 
     watcher_thread = threading.Thread(
         target=watcher.run, daemon=True, name="WatcherThread"

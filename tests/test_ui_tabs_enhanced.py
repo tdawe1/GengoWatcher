@@ -93,7 +93,14 @@ async def test_tab_switching_cycle():
 
         tabbed = pilot.app.query_one(TabbedContent)
 
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
+        tabs = [
+            "dashboard",
+            "jobs",
+            "output",
+            "charts",
+            "telemetry",
+            "api",
+        ]
 
         for tab_id in tabs:
             tabbed.active = tab_id
@@ -122,19 +129,17 @@ async def test_jobs_tab_contains_table():
 
 
 @pytest.mark.asyncio
-async def test_activity_tab_contains_log():
-    """Test that Activity tab contains a RichLog."""
+async def test_dashboard_contains_activity_log():
+    """Test that dashboard keeps the recent activity RichLog."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from textual.widgets import TabbedContent, RichLog
+        from textual.widgets import RichLog
 
-        tabbed = pilot.app.query_one(TabbedContent)
-        tabbed.active = "activity"
         await pilot.pause()
 
         try:
-            activity_log = pilot.app.query_one("#activity-log-full", RichLog)
+            activity_log = pilot.app.query_one("#activity-log", RichLog)
             assert activity_log is not None
         except NoMatches:
             logs = list(pilot.app.query(RichLog))
@@ -156,7 +161,7 @@ async def test_dashboard_metrics_row():
 
 @pytest.mark.asyncio
 async def test_dashboard_status_row():
-    """Test that StatusRow displays correctly with 7 indicators."""
+    """Test that StatusRow displays correctly with 8 indicators."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
@@ -164,7 +169,7 @@ async def test_dashboard_status_row():
 
         status_row = pilot.app.query_one(StatusRow)
         indicators = list(status_row.query(StatusIndicator))
-        assert len(indicators) == 7
+        assert len(indicators) == 8
 
 
 @pytest.mark.asyncio
@@ -255,7 +260,14 @@ async def test_rapid_tab_switching():
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
+        tabs = [
+            "dashboard",
+            "jobs",
+            "output",
+            "charts",
+            "telemetry",
+            "api",
+        ]
 
         for _ in range(3):
             for tab_id in tabs:

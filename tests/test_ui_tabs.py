@@ -98,10 +98,10 @@ async def test_main_tabs_exist():
         tab_ids = [pane.id for pane in pilot.app.query("TabPane")]
         assert "dashboard" in tab_ids
         assert "jobs" in tab_ids
-        assert "activity" in tab_ids
         assert "output" in tab_ids
         assert "charts" in tab_ids
         assert "telemetry" in tab_ids
+        assert "api" in tab_ids
 
 
 @pytest.mark.asyncio
@@ -122,10 +122,10 @@ async def test_tab_switching_with_keys():
         await pilot.pause()
         assert tabbed.active == "jobs"
 
-        # Switch to activity tab
-        tabbed.active = "activity"
+        # Switch to output tab
+        tabbed.active = "output"
         await pilot.pause()
-        assert tabbed.active == "activity"
+        assert tabbed.active == "output"
 
 
 @pytest.mark.asyncio
@@ -137,7 +137,14 @@ async def test_tab_switching_all_tabs():
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
+        tabs = [
+            "dashboard",
+            "jobs",
+            "output",
+            "charts",
+            "telemetry",
+            "api",
+        ]
 
         for tab in tabs:
             tabbed.active = tab
@@ -283,30 +290,100 @@ async def test_jobs_tab_contains_datatable():
 
     async with app.run_test() as pilot:
         from textual.widgets import TabbedContent, DataTable
+        from gengowatcher.ui_textual import JobsPanel
 
         tabbed = pilot.app.query_one(TabbedContent)
         tabbed.active = "jobs"
         await pilot.pause()
 
         # Check for jobs table
+        panel = pilot.app.query_one(JobsPanel)
         table = pilot.app.query_one("#jobs-table-full", DataTable)
         assert table is not None
+        assert panel.size.height > 0
+        assert table.size.height > 0
 
 
 @pytest.mark.asyncio
-async def test_activity_tab_contains_richlog():
-    """Verify Activity tab contains RichLog."""
+async def test_telemetry_tab_contains_visible_table():
+    """Verify Telemetry tab table mounts with usable height."""
+    app = create_mock_app()
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        from gengowatcher.ui_textual import TelemetryTab
+        from textual.widgets import TabbedContent, DataTable
+
+        tabbed = pilot.app.query_one(TabbedContent)
+        tabbed.active = "telemetry"
+        await pilot.pause(0.2)
+
+        tab = pilot.app.query_one(TelemetryTab)
+        table = pilot.app.query_one("#telemetry-tab-table", DataTable)
+        assert tab.size.height > 0
+        assert table.size.height > 0
+        assert table.row_count > 0
+
+
+@pytest.mark.asyncio
+async def test_jobs_tab_renders_accepted_workbench_job():
+    """Accepted workbench data should render in the full Jobs table."""
+    app = create_mock_app()
+    app.state.get_recent_jobs.return_value = [
+        {
+            "id": "8012055",
+            "title": "Japanese > English",
+            "lang_pair": "JA→EN",
+            "reward": 12.62,
+            "source": "browser_worker",
+            "timestamp": time.time(),
+            "accepted": True,
+            "accepted_expired": False,
+            "accepted_time_left": "1h 45m",
+            "accepted_unit_count": 263,
+            "accepted_source_text": "Full source text for workflow.",
+        }
+    ]
+
+    async with app.run_test() as pilot:
+        from gengowatcher.ui_textual import JOBS_FULL_COLUMNS
+        from textual.widgets import TabbedContent, DataTable
+
+        tabbed = pilot.app.query_one(TabbedContent)
+        tabbed.active = "jobs"
+        await pilot.pause()
+
+        table = pilot.app.query_one("#jobs-table-full", DataTable)
+        labels = tuple(
+            str(getattr(column.label, "plain", column.label))
+            for column in table.columns.values()
+        )
+        assert labels == JOBS_FULL_COLUMNS
+        assert table.row_count == 1
+
+        row = [str(cell) for cell in table.get_row_at(0)]
+        assert row[:7] == [
+            "8012055",
+            "JA→EN",
+            "263",
+            "$12.62",
+            "browser_worker",
+            "✓",
+            "1h 45m",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_activity_preview_contains_richlog():
+    """Verify dashboard activity preview contains RichLog."""
     app = create_mock_app()
 
     async with app.run_test() as pilot:
-        from textual.widgets import TabbedContent, RichLog
+        from textual.widgets import RichLog
 
-        tabbed = pilot.app.query_one(TabbedContent)
-        tabbed.active = "activity"
         await pilot.pause()
 
-        # Check for activity log
-        log = pilot.app.query_one("#activity-log-full", RichLog)
+        # Check for dashboard activity log
+        log = pilot.app.query_one("#activity-log", RichLog)
         assert log is not None
 
 
@@ -377,6 +454,7 @@ async def test_status_indicators_exist():
 
         assert "ind-ws" in indicator_ids
         assert "ind-rss" in indicator_ids
+        assert "ind-api" in indicator_ids
         assert "ind-email" in indicator_ids
         assert "ind-web" in indicator_ids
         assert "ind-cap" in indicator_ids
@@ -411,7 +489,7 @@ async def test_tab_count():
         from textual.widgets import TabPane
 
         tabs = pilot.app.query(TabPane)
-        assert len(tabs) == 6  # dashboard, jobs, activity, output, charts, telemetry
+        assert len(tabs) == 6  # dashboard, jobs, output, charts, telemetry, api
 
 
 @pytest.mark.asyncio
@@ -520,7 +598,14 @@ async def test_tab_switching_performance():
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
-        tabs = ["dashboard", "jobs", "activity", "output", "charts", "telemetry"]
+        tabs = [
+            "dashboard",
+            "jobs",
+            "output",
+            "charts",
+            "telemetry",
+            "api",
+        ]
 
         # Rapidly switch tabs
         for _ in range(3):
@@ -529,7 +614,7 @@ async def test_tab_switching_performance():
                 await pilot.pause(0.01)  # Small pause
 
         # Should end on last tab
-        assert tabbed.active == "telemetry"
+        assert tabbed.active == "api"
 
 
 @pytest.mark.asyncio

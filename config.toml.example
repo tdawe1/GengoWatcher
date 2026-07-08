@@ -14,6 +14,8 @@ use_custom_user_agent = false
 
 [WebSocket]
 enable_websocket = true
+use_gateway = false
+gateway_url = "http://127.0.0.1:8000"
 wss_url = "wss://live-dashboard.gengo.com/"
 # Set via GENGO_USER_ID env var or here
 user_id = "YOUR_USER_ID"
@@ -95,6 +97,37 @@ auth_token = "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN"
 timeout_sec = 5.0
 verify_tls = true
 
+[TranslationWorkflow]
+# user: wait for /api/files/upload with job_id after acceptance.
+# auto: try to download a file URL found in the accepted workbench JSON.
+# none: start the workflow from workbench JSON text only.
+file_mode = "user"
+download_timeout_sec = 30.0
+file_text_max_chars = 250000
+
+[Webhooks]
+incoming_enabled = false
+# Set via GENGOWATCHER_WEBHOOK_SECRET env var or here
+incoming_secret = ""
+require_signature = true
+signature_tolerance_sec = 300.0
+max_seen_event_ids = 1000
+debug_enabled = false
+debug_payload_preview_bytes = 4096
+audit_enabled = true
+audit_log_path = "logs/webhooks.jsonl"
+outbound_enabled = false
+outbound_urls = []
+# Set via GENGOWATCHER_WEBHOOK_OUTBOUND_SECRET env var or here
+outbound_secret = ""
+# Set via GENGOWATCHER_WEBHOOK_OUTBOUND_AUTH_TOKEN env var or here
+outbound_auth_token = ""
+outbound_timeout_sec = 5.0
+outbound_max_attempts = 3
+outbound_initial_delay_sec = 0.5
+outbound_max_delay_sec = 10.0
+outbound_verify_tls = true
+
 [AutoAccept]
 enabled = false
 min_reward = 0.0
@@ -109,6 +142,20 @@ concurrent_submission = true
 accept_click_probe_ms = 75
 attempt_timeout_sec = 12
 selenium_attempt_timeout_sec = 8
+# Keep false in native browser mode. Set true only for the legacy direct HTTP accept path.
+allow_http_fallback = false
+
+[Browser]
+backend = "native"
+require_visible_browser = true
+allow_playwright = false
+headless = false
+debug_url = "ws://127.0.0.1:6000"
+
+[NativeBrowserListener]
+enabled = false
+capture_interval_ms = 750
+status_poll_seconds = 5
 
 [BrowserWorker]
 enabled = false

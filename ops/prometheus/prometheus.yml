@@ -2,25 +2,102 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    app: gengowatcher
     scope: personal
 
 rule_files:
   - rules/*.yml
+  - /etc/prometheus/rules/*.yml
 
 scrape_configs:
+  # ── Self ──────────────────────────────────────────────────────────
   - job_name: prometheus
     static_configs:
       - targets:
-          - 127.0.0.1:9090
+          - localhost:9090
 
+  # ── System ────────────────────────────────────────────────────────
   - job_name: node-exporter
     static_configs:
       - targets:
-          - 127.0.0.1:9100
+          - localhost:9100
 
+  # ── Services ──────────────────────────────────────────────────────
   - job_name: gengowatcher
     metrics_path: /metrics
     static_configs:
       - targets:
-          - 127.0.0.1:9091
+          - localhost:9091
+
+  - job_name: redis
+    static_configs:
+      - targets:
+          - localhost:9121
+
+  - job_name: postgres
+    static_configs:
+      - targets:
+          - localhost:9187
+
+  - job_name: synapse
+    metrics_path: /metrics
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - localhost:9000
+
+  # ── Nginx ─────────────────────────────────────────────────────────
+  - job_name: nginx
+    static_configs:
+      - targets:
+          - localhost:9115
+
+  # ── Ollama ────────────────────────────────────────────────────────
+  # ── Ollama (no native /metrics yet — monitored via node_exporter process metrics) ──
+  # - job_name: ollama
+  #   metrics_path: /metrics
+  #   scrape_interval: 30s
+  #   static_configs:
+  #     - targets:
+  #         - localhost:11434
+
+  # ── Docker ────────────────────────────────────────────────────────
+  - job_name: docker
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - localhost:9323
+
+  # ── Cloudflare Tunnel ─────────────────────────────────────────────
+  - job_name: cloudflared
+    static_configs:
+      - targets:
+          - localhost:9101
+
+  # ── cAdvisor (container metrics) ──────────────────────────────────
+  - job_name: cadvisor
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - localhost:8081
+
+  # ── Mautrix Bridges (Go binaries — no native /metrics endpoint) ───
+  # Monitored via node_exporter systemd collector + textfile metrics
+  # - job_name: mautrix-whatsapp
+  #   static_configs:
+  #     - targets:
+  #         - localhost:29324
+  # - job_name: mautrix-signal
+  #   static_configs:
+  #     - targets:
+  #         - localhost:29325
+  # - job_name: mautrix-discord
+  #   static_configs:
+  #     - targets:
+  #         - localhost:29335
+
+  # ── Hermes Agent ──────────────────────────────────────────────────
+  - job_name: hermes
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - localhost:9118

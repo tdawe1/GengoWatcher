@@ -137,6 +137,44 @@ class TestWatcherInitialization:
         assert watcher.session_new_entries == 0
         assert watcher.websocket_status == "Disabled"
 
+    def test_run_launches_managed_debug_browser_for_native_listener_gateway_mode(
+        self, watcher_instance
+    ):
+        """Gateway mode still needs the native debug browser for page observation."""
+        watcher_instance.config.config["WebSocket"].update(
+            {
+                "use_gateway": True,
+                "gateway_url": "http://127.0.0.1:8000",
+                "browser_debug_auto_launch": True,
+            }
+        )
+        watcher_instance.config.config["Browser"] = {
+            "backend": "native",
+            "debug_url": "ws://127.0.0.1:6000",
+        }
+        watcher_instance.config.config["NativeBrowserListener"] = {
+            "enabled": True,
+            "capture_interval_ms": 750,
+        }
+        watcher_instance.shutdown_event.wait = MagicMock(return_value=True)
+
+        with (
+            patch(
+                "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
+                return_value=True,
+            ) as launch_debug_browser,
+            patch("threading.Thread"),
+        ):
+            watcher_instance.run()
+
+        launch_debug_browser.assert_called_once_with(
+            watcher_instance.config,
+            "ws://127.0.0.1:6000",
+            logger=watcher_instance.logger,
+        )
+        assert watcher_instance.websocket_status == "Gateway Connected"
+        assert watcher_instance.native_browser_status == "Started"
+
     def test_initialization_warns_when_browser_session_differs(
         self, mock_config, mock_state
     ):
@@ -213,6 +251,34 @@ class TestWatcherInitialization:
             "Network", "browser_accept_language", "en-GB,en-US;q=0.9"
         )
         watcher_instance.config.save_config.assert_called()
+
+    def test_sync_session_before_websocket_connect_runs_initial_sync(
+        self, watcher_instance
+    ):
+        """Websocket startup should sync once so session health is not stale."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
+        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        watcher_instance._sync_session_from_browser = MagicMock(return_value=False)
+
+        assert watcher_instance._sync_session_before_websocket_connect() is True
+
+        watcher_instance._sync_session_from_browser.assert_called_once_with(
+            fail_hard=True,
+            alert_on_failure=True,
+        )
+
+    def test_sync_session_before_websocket_connect_skips_without_debug_url(
+        self, watcher_instance
+    ):
+        """No browser debug URL means there is nothing to sync before connect."""
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("WebSocket", "browser_debug_url"): "",
+        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        watcher_instance._sync_session_from_browser = MagicMock()
+
+        assert watcher_instance._sync_session_before_websocket_connect() is True
+        watcher_instance._sync_session_from_browser.assert_not_called()
 
     def test_sync_session_from_browser_fail_hard_alerts_and_stops_without_cache(
         self, watcher_instance
@@ -515,6 +581,70 @@ class TestWatcherInitialization:
         assert health["browser"]["state"] == "healthy"
         assert health["auto"]["state"] == "disabled"
         assert health["workflow"]["state"] == "disabled"
+        assert health["api_events"]["state"] in {"disabled", "healthy"}
+        assert "webhooks" not in health
+
+    def test_get_health_snapshot_reports_native_browser_listener(
+        self, watcher_instance
+    ):
+        """Native browser mode should not show the deprecated browser scraper as off."""
+        watcher_instance.websocket_status = "Disabled"
+        watcher_instance.last_check_time = 999_996.0
+        watcher_instance.rss_action = "Waiting"
+        watcher_instance.is_processing = False
+        watcher_instance._browser_session_last_sync_ts = None
+        watcher_instance._browser_session_last_sync_state = "idle"
+        watcher_instance._browser_session_last_sync_detail = "never synced"
+        watcher_instance.native_browser_status = "Started"
+
+        class FakeThread:
+            def is_alive(self):
+                return True
+
+        class FakeNativeListener:
+            debug_url = "ws://127.0.0.1:6000"
+            last_success_ts = 999_998.0
+            last_poll_ts = 999_998.0
+            last_error = ""
+            detected_collection_id = "34178179"
+            last_workbench_url = "https://gengo.com/t/workbench/34178179#!/"
+            workbench_detected_count = 1
+
+        watcher_instance._native_listener = FakeNativeListener()
+        watcher_instance._monitor_threads = {"native_browser": FakeThread()}
+        watcher_instance.config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "check_interval"): 45,
+            ("WebSocket", "enable_websocket"): False,
+            ("WebSocket", "browser_debug_url"): "ws://127.0.0.1:6000",
+            ("EmailMonitor", "enabled"): False,
+            ("WebsiteMonitor", "enabled"): False,
+            ("NativeBrowserListener", "enabled"): True,
+            ("AutoAccept", "enabled"): False,
+            ("AutoAccept", "browser_profile_path"): "",
+            ("BrowserWorker", "enabled"): False,
+            ("Cancellation", "enabled"): False,
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
+        watcher_instance.config.getboolean.side_effect = lambda s, k, **kw: bool(
+            {
+                ("WebSocket", "enable_websocket"): False,
+                ("EmailMonitor", "enabled"): False,
+                ("WebsiteMonitor", "enabled"): False,
+                ("NativeBrowserListener", "enabled"): True,
+                ("AutoAccept", "enabled"): False,
+                ("BrowserWorker", "enabled"): False,
+                ("Cancellation", "enabled"): False,
+            }.get((s, k), kw.get("fallback", False))
+        )
+
+        health = watcher_instance.get_health_snapshot(now=1_000_000.0)
+
+        assert health["browser"]["state"] == "healthy"
+        assert health["browser"]["detail"] == "workbench 34178179"
+        assert health["browser"]["native_enabled"] is True
+        assert health["browser"]["native_thread_alive"] is True
+        assert health["browser"]["collection_id"] == "34178179"
 
     def test_sync_browser_session_for_quiet_socket_triggers_after_silence(
         self, watcher_instance
@@ -905,6 +1035,7 @@ class TestJobProcessing:
         watcher_instance.job_acceptance_engine.is_job_eligible = MagicMock(
             return_value=True
         )
+        watcher_instance.config.config["AutoAccept"]["allow_http_fallback"] = True
 
         with patch("threading.Thread") as mock_thread:
             watcher_instance._process_new_job(
