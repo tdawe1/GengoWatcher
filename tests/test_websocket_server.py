@@ -41,7 +41,7 @@ class _FakeGatewayWebSocket:
         return json.dumps(
             {
                 "type": "available_collection",
-                "data": [{"id": "123", "reward": 1.0}],
+                "collection": {"id": "123", "reward": 1.0},
             }
         )
 
@@ -88,7 +88,9 @@ async def test_gateway_run_offloads_header_build_and_event_emit(
         json.dumps({"userId": "user-1", "sessionToken": "session-token"})
     ]
     assert event_file.is_file()
-    assert json.loads(event_file.read_text().splitlines()[0])["type"] == "job"
+    event = json.loads(event_file.read_text().splitlines()[0])
+    assert event["type"] == "job"
+    assert event["data"] == {"id": "123", "reward": 1.0}
 
 
 def test_latest_event_requires_api_token(monkeypatch):

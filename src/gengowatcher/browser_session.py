@@ -733,6 +733,7 @@ def _firefox_cookie_lookup_expression() -> str:
     return """(() => {
 const sessionNames = ["myG_myGSession_", "my_gengo_session"];
 const rdNames = ["myG_rdsessID"];
+const gengoCookies = [];
 let sessionToken = "";
 let rdSessionId = "";
 for (const expectedName of sessionNames) {
@@ -761,7 +762,18 @@ for (const expectedName of rdNames) {
   }
   if (rdSessionId) break;
 }
-return JSON.stringify({ sessionToken: sessionToken, rdSessionId: rdSessionId });
+for (const cookie of Services.cookies.cookies) {
+  const host = String(cookie.host || "");
+  if (host === "gengo.com" || host === ".gengo.com" || host.endsWith(".gengo.com")) {
+    gengoCookies.push({
+      name: String(cookie.name || ""),
+      value: String(cookie.value || ""),
+      domain: host,
+      path: String(cookie.path || "/"),
+    });
+  }
+}
+return JSON.stringify({ sessionToken, rdSessionId, cookies: gengoCookies });
 })()"""
 
 
@@ -1103,6 +1115,11 @@ async def _fetch_browser_session_snapshot_firefox_rdp(
         target_url=str(page_state.get("url", "") or tab.get("url", "")).strip(),
         target_title=str(page_state.get("title", "") or tab.get("title", "")).strip(),
         rd_session_id=rd_session_id,
+        cookies=(
+            cookie_state.get("cookies", [])
+            if isinstance(cookie_state.get("cookies"), list)
+            else []
+        ),
     )
 
 
@@ -1291,6 +1308,7 @@ async def fetch_browser_session_snapshot(
         target_url=str(page_state.get("url", "") or target.get("url", "")).strip(),
         target_title=str(page_state.get("title", "") or "").strip(),
         rd_session_id=rd_session_id,
+        cookies=cookies,
     )
 
 

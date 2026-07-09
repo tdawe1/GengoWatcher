@@ -1273,6 +1273,21 @@ def test_build_browser_aligned_websocket_headers_skips_client_hints_for_non_chro
     assert "Sec-Fetch-Mode" not in headers
 
 
+def test_build_browser_aligned_websocket_headers_uses_full_browser_cookie_header():
+    headers = build_browser_aligned_websocket_headers(
+        session_token="fresh-token",
+        user_agent="Helium Browser",
+        origin="https://gengo.com",
+        accept_language="en-GB,en-US;q=0.9",
+        cookie_header="_ga=ga-token; myG_myGSession_=fresh-token; myG_rdsessID=rd-token",
+    )
+
+    assert headers["Cookie"] == (
+        "_ga=ga-token; myG_myGSession_=fresh-token; myG_rdsessID=rd-token"
+    )
+    assert "myG_rdsessID=fresh-token" not in headers["Cookie"]
+
+
 def test_build_websocket_auth_payload_uses_session_only():
     payload = build_websocket_auth_payload(
         user_id=12345,

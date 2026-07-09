@@ -1,8 +1,9 @@
-import pytest
-import json
-from unittest.mock import patch, MagicMock, AsyncMock
 import collections
+import json
 from builtins import TimeoutError
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from gengowatcher.watcher import GengoWatcher
 from gengowatcher.config import AppConfig

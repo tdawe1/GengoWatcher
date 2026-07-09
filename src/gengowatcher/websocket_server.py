@@ -21,7 +21,11 @@ import websockets
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from .browser_session import build_browser_aligned_websocket_headers
+from .browser_session import (
+    build_browser_aligned_websocket_headers,
+    fetch_browser_session_snapshot_sync,
+    format_cookies_as_header,
+)
 from .browser_session_core import GENGO_REALTIME_URL
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
 
@@ -50,14 +54,19 @@ class GengoRealtimeGateway:
         debug_url = self.config.get("WebSocket", "browser_debug_url")
         session_token = ""
         rd_session_id = ""
+        cookie_header = ""
+        user_agent = ""
+        accept_language = ""
 
         if debug_url:
             try:
-                from .browser_session import fetch_browser_session_snapshot_sync
                 snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
                 if snapshot.session_token:
                     session_token = snapshot.session_token
                     rd_session_id = snapshot.rd_session_id
+                    cookie_header = format_cookies_as_header(snapshot.cookies)
+                    user_agent = snapshot.user_agent
+                    accept_language = snapshot.accept_language
                     logger.info("Fetched live session from browser")
             except Exception as e:
                 logger.warning(f"Browser extract failed: {e}")
@@ -71,11 +80,11 @@ class GengoRealtimeGateway:
                 self.config.get("WebSocket", "rd_session_id") or ""
             )
 
-        user_agent = (
+        user_agent = user_agent or (
             self.config.get("Network", "browser_user_agent")
             or "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
         )
-        accept_language = (
+        accept_language = accept_language or (
             self.config.get("Network", "browser_accept_language")
             or "en-US,en;q=0.9"
         )
@@ -88,6 +97,7 @@ class GengoRealtimeGateway:
             accept_language=accept_language,
             sec_websocket_extensions="permessage-deflate",
             sec_gpc="1",
+            cookie_header=cookie_header,
         )
 
     _MAX_EVENT_LOG_LINES = 5000
@@ -167,7 +177,13 @@ class GengoRealtimeGateway:
                         try:
                             data = json.loads(msg)
                             if data.get("type") == "available_collection":
-                                for job in data.get("data", []):
+                                collection = data.get("collection")
+                                jobs = (
+                                    [collection]
+                                    if isinstance(collection, dict)
+                                    else data.get("data", [])
+                                )
+                                for job in jobs:
                                     await asyncio.to_thread(self._emit, "job", job)
                             self._last_event = data
                         except json.JSONDecodeError:

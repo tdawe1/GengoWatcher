@@ -30,6 +30,7 @@ from .browser_session import (
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     fetch_browser_session_snapshot_sync,
+    format_cookies_as_header,
     inspect_available_jobs_page_sync,
     open_url_in_browser_debug_sync,
     refresh_browser_page_activity_sync,
@@ -231,6 +232,7 @@ class GengoWatcher:
         self._browser_session_last_sync_ts = None
         self._browser_session_last_sync_state = "idle"
         self._browser_session_last_sync_detail = "never synced"
+        self._browser_cookies = []
         self._next_quiet_socket_sync_ts = None
         self._health_alert_states = {}
         # BrowserJobs monitor wakes from this event when a workbench becomes
@@ -541,6 +543,7 @@ class GengoWatcher:
         browser_token = snapshot.session_token
         browser_user_agent = str(snapshot.user_agent or "").strip()
         browser_accept_language = str(snapshot.accept_language or "").strip()
+        self._browser_cookies = snapshot.cookies or []
         self._browser_session_last_sync_ts = time.time()
         self._browser_session_last_sync_state = "healthy"
         changed_fields = []
@@ -1855,6 +1858,7 @@ class GengoWatcher:
                 user_agent=user_agent,
                 origin="https://gengo.com",
                 accept_language=accept_language,
+                cookie_header=format_cookies_as_header(self._browser_cookies),
             )
             ua_only_headers = {"User-Agent": user_agent} if user_agent else None
 

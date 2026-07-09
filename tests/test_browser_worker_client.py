@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -282,6 +284,38 @@ def test_browser_worker_telemetry_event_marks_job_accepted(watcher_deps):
             "accepted_source_text": "Workbench source text",
         },
     )
+
+
+def test_browser_worker_event_listener_tails_existing_telemetry_without_crashing(
+    watcher_deps, tmp_path
+):
+    logger = logging.getLogger("test_browser_worker_event_listener_existing_file")
+    config, state = watcher_deps
+    watcher = GengoWatcher(config=config, state=state, logger=logger)
+    telemetry_path = tmp_path / "browser-worker.jsonl"
+    telemetry_path.write_text('{"old": true}\n', encoding="utf-8")
+    watcher._browser_worker_telemetry_path = MagicMock(return_value=telemetry_path)
+
+    calls = []
+
+    def handle_line(line):
+        calls.append(json.loads(line))
+        watcher.shutdown_event.set()
+
+    watcher._handle_browser_worker_telemetry_line = handle_line
+
+    thread = threading.Thread(target=watcher._run_browser_worker_event_listener)
+    thread.start()
+    try:
+        time.sleep(0.05)
+        with telemetry_path.open("a", encoding="utf-8") as handle:
+            handle.write('{"new": true}\n')
+        thread.join(timeout=2.0)
+    finally:
+        watcher.shutdown_event.set()
+        thread.join(timeout=2.0)
+
+    assert calls == [{"new": True}]
 
 
 def test_watcher_falls_back_to_standard_acceptance_when_browser_worker_submit_fails():
