@@ -14,10 +14,12 @@ import websockets
 
 from ._async_utils import run_coroutine_sync
 from .browser_session_core import (
+    pick_rotating_user_agent,  # noqa: F401  -- re-export for back-compat
     DEFAULT_CDP_RECEIVE_TIMEOUT_SEC,
     DEFAULT_GENGO_ORIGIN,
     GENGO_ACTIVITY_MARKER_STORAGE_KEY,
     GENGO_AVAILABLE_JOBS_DETECTED_STORAGE_KEY,
+    derive_client_hints,
     GENGO_AVAILABLE_JOBS_PATH,
     GENGO_AVAILABLE_JOBS_URL,
     GENGO_LOCAL_STORAGE_USER_KEY,
@@ -2277,6 +2279,12 @@ def build_browser_aligned_websocket_headers(
         headers["Cookie"] = (
             f"myG_myGSession_={session_token}; myG_rdsessID={rd_value}"
         )
+
+    # Merge UA-derived Client Hints so a Chrome UA presents Chrome hints and
+    # Firefox presents nothing (Firefox does not send Sec-CH-UA today).
+    for ch_name, ch_value in derive_client_hints(headers["User-Agent"]).items():
+        headers.setdefault(ch_name, ch_value)
+
     return headers
 
 

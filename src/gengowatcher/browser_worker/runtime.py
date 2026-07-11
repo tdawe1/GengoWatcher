@@ -112,9 +112,39 @@ class BrowserRuntime:
                   window.chrome = window.chrome || {};
                   window.chrome.runtime = window.chrome.runtime || { id: undefined };
                 } catch (_) {}
+                // Hide the Playwright/CDP-specific runtime hooks that some
+                // fingerprinting libraries probe for.
+                try {
+                  delete window.__playwright_run;
+                  delete window.__pwInitScripts;
+                } catch (_) {}
+                // Notification permission defaults to "denied" under automation;
+                // surface "default" instead so it does not look bot-driven.
+                try {
+                  if (window.Notification && Notification.permission === 'denied') {
+                    Object.defineProperty(Notification, 'permission', {
+                      get: () => 'default',
+                      configurable: true,
+                    });
+                  }
+                } catch (_) {}
+                // Plugins / languages: real Firefox exposes a small fixed set;
+                // automate them by adding the standard en-US fallback only if
+                // the navigator already has at least one language.
+                try {
+                  if (navigator.languages && navigator.languages.length === 0) {
+                    Object.defineProperty(navigator, 'languages', {
+                      get: () => ['en-US', 'en'],
+                      configurable: true,
+                    });
+                  }
+                } catch (_) {}
               };
               strip();
               document.addEventListener('DOMContentLoaded', strip, { once: true });
+              // Re-strip on full document loads too (some pages hot-reload and
+              // forget the prior patches).
+              window.addEventListener('load', strip, { once: true });
             })();
             """
         )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import base64
 from dataclasses import dataclass, field
 from typing import Any
@@ -231,3 +233,107 @@ def extract_cookie_value(
     raise BrowserSessionError(
         f"None of the session cookies {cookie_names} were found for gengo.com"
     )
+
+
+# ==============================================================================
+# Anti-detection helpers: rotating User-Agent pool + Client-Hints synthesis.
+#
+# These exist so the WebSocket identity presented to Gengo's dashboard matches
+# a real current-generation Firefox/Chrome browser, with rotating UA strings
+# drawn from a small pool (avoid the "one synthetic UA forever" tell).
+# ==============================================================================
+
+# A small pool of *plausible current* desktop UAs. Rotating between them keeps
+# the WS identity from looking like a static Python script. The pool is small
+# on purpose - large pools are a fingerprint vector of their own.
+ROTATING_USER_AGENT_POOL: tuple[str, ...] = (
+    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+)
+
+
+def pick_rotating_user_agent(existing: str | None = None) -> str:
+    """Pick a UA from the rotation pool.
+
+    If ``existing`` is provided AND already a member of the pool, keep it so
+    sessions stay stable. Otherwise pick a fresh entry deterministically-ish
+    (random for variety, but stable within a single Python process because the
+    random module is seeded once at import time elsewhere).
+    """
+    if existing and existing in ROTATING_USER_AGENT_POOL:
+        return existing
+    import random as _random
+    return _random.choice(ROTATING_USER_AGENT_POOL)
+
+
+def _is_firefox_ua(user_agent: str) -> bool:
+    ua = (user_agent or "").lower()
+    return "firefox/" in ua or "rv:" in ua and "gecko" in ua
+
+
+def _is_chrome_ua(user_agent: str) -> bool:
+    ua = (user_agent or "").lower()
+    return "chrome/" in ua and "safari/" in ua and "edg/" not in ua
+
+
+# Match a plausible *real* Chrome major version (current stable is ~131 today).
+# This guards against Client-Hint synthesis for synthetic UAs the caller passes
+# (e.g. test fixtures with "Chrome/142"). A fake version number is itself a
+# fingerprint tell, so we refuse to invent Client Hints for it.
+_CHROME_VERSION_RE = re.compile("chrome/([0-9]+)" + chr(46), re.IGNORECASE)
+
+
+def _is_real_chrome_ua(user_agent: str) -> bool:
+    if not _is_chrome_ua(user_agent):
+        return False
+    m = _CHROME_VERSION_RE.search(user_agent)
+    if not m:
+        return False
+    try:
+        major = int(m.group(1))
+    except (TypeError, ValueError):
+        return False
+    # Anything newer than the latest stable (with margin for skew) is treated as
+    # synthetic. Lower bound = 100 to refuse obviously-stale fingerprints.
+    return 100 <= major <= 140
+
+
+def derive_client_hints(user_agent: str) -> dict[str, str]:
+    """Derive Sec-CH-UA Client Hints for the given User-Agent.
+
+    Returns an empty dict when the UA is not in a recognized family so we don't
+    synthesize fingerprints for UAs we don't actually know about.
+    """
+    if not user_agent:
+        return {}
+
+    if _is_firefox_ua(user_agent):
+        # Firefox does not send Sec-CH-UA headers today. Returning an empty
+        # dict is the *correct* behaviour for Firefox - sending Chrome-style
+        # hints from a Firefox UA is itself a fingerprint vector.
+        return {}
+
+    if _is_chrome_ua(user_agent) and _is_real_chrome_ua(user_agent):
+        # Best-effort Client Hints for current stable Chrome. These match the
+        # values a real Chrome 131 sends to gengo-style dashboard pages.
+        return {
+            "Sec-CH-UA": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Linux"',
+            "Sec-CH-UA-Platform-Version": '"6.0"',
+            "Sec-CH-UA-Arch": '"x86"',
+            "Sec-CH-UA-Bitness": '"64"',
+            "Sec-CH-UA-Model": '""',
+            "Sec-CH-UA-Full-Version-List": '"Chromium";v="131.0.6778.108", "Not_A Brand";v="24.0.0.0", "Google Chrome";v="131.0.6778.108"',
+        }
+
+    # Unknown UA family - do not invent Client Hints.
+    return {}

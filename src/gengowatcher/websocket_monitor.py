@@ -18,6 +18,7 @@ from .browser_session import (
     build_browser_aligned_websocket_headers,
     fetch_browser_session_snapshot_sync,
     format_cookies_as_header,
+    pick_rotating_user_agent,
 )
 from .config import AppConfig
 from .state import AppState
@@ -46,6 +47,7 @@ class WebSocketConfig:
     user_key: str = ""
     enable: bool = True
     heartbeat_sec: int = 25
+    heartbeat_jitter_sec: float = 5.0
     open_timeout: int = 20
     ping_timeout: int = 10
     session_sync_interval_sec: int = 14400
@@ -182,10 +184,14 @@ class GengoWebSocketMonitor:
     def _build_headers(self) -> dict[str, str]:
         session_token = self.config.get("WebSocket", "user_session", "")
         rd_session_id = self.config.get("WebSocket", "rd_session_id", "")
-        user_agent = (
-            self.config.get("Network", "browser_user_agent", "")
-            or self.defaults.user_agent
-        )
+        configured_ua = self.config.get("Network", "browser_user_agent", "")
+        # If the configured UA is the legacy synthetic default, substitute a
+        # rotating entry from the pool so the WS identity does not look like a
+        # static Python fingerprint.
+        if not configured_ua or configured_ua == self.defaults.user_agent:
+            user_agent = pick_rotating_user_agent(self.defaults.user_agent)
+        else:
+            user_agent = configured_ua
         accept_language = (
             self.config.get("Network", "browser_accept_language", "")
             or self.defaults.accept_language
@@ -357,12 +363,21 @@ class GengoWebSocketMonitor:
                     first_iteration = True
                     while True:
                         if not first_iteration:
-                            # Jitter the heartbeat interval ±5s so the cadence
+                            # Jitter the heartbeat interval so the cadence
                             # isn't perfectly periodic (real Chrome pings on
                             # variable browser-internal intervals; a constant
-                            # 25s loop is trivially distinguishable in server
-                            # logs).
-                            jitter = random.uniform(-5.0, 5.0)
+                            # loop is trivially distinguishable in server
+                            # logs). Magnitude is configurable; default 5s on
+                            # a 25s base keeps the cadence inside the natural
+                            # browser ping range.
+                            jitter_magnitude = float(
+                                self._config_int(
+                                    "WebSocket",
+                                    "heartbeat_jitter_sec",
+                                    int(self.defaults.heartbeat_jitter_sec),
+                                )
+                            )
+                            jitter = random.uniform(-jitter_magnitude, jitter_magnitude)
                             interval = max(1.0, self.HEARTBEAT_INTERVAL + jitter)
                             await asyncio.sleep(interval)
                         first_iteration = False
