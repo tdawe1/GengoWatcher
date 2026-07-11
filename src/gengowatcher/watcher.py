@@ -32,14 +32,15 @@ from .browser_session import (
     fetch_browser_session_snapshot_sync,
     format_cookies_as_header,
     inspect_available_jobs_page_sync,
-    open_url_in_browser_debug_sync,
+    open_url_in_browser_debug_sync,  # noqa: F401  -- still patched by tests via watcher.<name>
     refresh_browser_page_activity_sync,
 )
-from .browser_debug_launcher import (
+from .browser_debug_launcher import (  # noqa: F401  -- re-exported for tests / watcher_firefox.py
     get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
 )
+from .watcher_firefox import open_in_managed_firefox_debug_session
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
@@ -972,65 +973,7 @@ class GengoWatcher:
         return hostname == "gengo.com" or hostname.endswith(".gengo.com")
 
     def _open_in_managed_firefox_debug_session(self, url: str) -> bool:
-        if not self._is_gengo_url(url):
-            return False
-
-        debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
-        try:
-            spec = get_firefox_debug_launch_spec(self.config, str(debug_url))
-        except Exception as exc:
-            self.logger.debug(
-                "Skipping managed Firefox debug browser for %s: %s",
-                url,
-                exc,
-            )
-            return False
-        if spec is None:
-            return False
-
-        last_exc: Exception | None = None
-        try:
-            open_url_in_browser_debug_sync(spec.debug_url, url)
-            self.logger.debug(
-                "Opened URL in managed Firefox debug session at %s: %s",
-                spec.debug_url,
-                url,
-            )
-            return True
-        except Exception as exc:
-            last_exc = exc
-
-        if maybe_launch_managed_firefox_debug(
-            self.config,
-            spec.debug_url,
-            logger=self.logger,
-        ):
-            timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(
-                self.config
-            )
-            deadline = time.monotonic() + timeout_sec
-            while time.monotonic() < deadline:
-                time.sleep(retry_interval_sec)
-                try:
-                    open_url_in_browser_debug_sync(spec.debug_url, url)
-                    self.logger.debug(
-                        "Opened URL in newly launched managed Firefox debug "
-                        "session at %s: %s",
-                        spec.debug_url,
-                        url,
-                    )
-                    return True
-                except Exception as exc:
-                    last_exc = exc
-
-        self.logger.warning(
-            "Managed Firefox debug session at %s could not open %s (%s); "
-            "falling back to configured browser",
-            spec.debug_url,
-            url,
-            last_exc,
-        )
-        return False
+        return open_in_managed_firefox_debug_session(self, url)
 
     def open_in_browser(self, url):
         """
