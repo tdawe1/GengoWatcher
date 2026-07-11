@@ -1,7 +1,6 @@
 """Tests for Prometheus metrics helpers used by the CLI/TUI runtime."""
 
 import sys
-import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 

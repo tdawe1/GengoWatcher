@@ -329,7 +329,7 @@ async def test_command_input_submission_from_textual_input_runs_command():
     app.state.session_start = None
     app._run_command = MagicMock()
 
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         await pilot.pause()
         assert isinstance(app.focused, CommandInput)
         await pilot.press("h", "e", "l", "p", "enter")

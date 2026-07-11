@@ -11,9 +11,7 @@ Outcomes confirmed by passive listener events, NOT by trusting action calls.
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any
 
 from .browser_session import (
     open_url_in_browser_debug_sync,

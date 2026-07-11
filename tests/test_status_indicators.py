@@ -26,7 +26,7 @@ class StatusRowTestApp(App):
 async def test_status_indicator_displays_icon_and_state():
     """StatusIndicator should show icon and label text."""
     app = StatusIndicatorTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         indicator = app.query_one(StatusIndicator)
         # Check the label widget
         label_widget = indicator.query_one(".status-label")
@@ -40,7 +40,7 @@ async def test_status_indicator_displays_icon_and_state():
 async def test_status_indicator_set_state():
     """StatusIndicator.set_state should update CSS class and icon."""
     app = StatusIndicatorTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         indicator = app.query_one(StatusIndicator)
 
         # Set to live state
@@ -58,7 +58,7 @@ async def test_status_indicator_set_state():
 @pytest.mark.asyncio
 async def test_status_indicator_updates_detail_when_state_is_unchanged():
     app = StatusIndicatorTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         indicator = app.query_one(StatusIndicator)
         label_widget = indicator.query_one(".status-label")
 
@@ -86,7 +86,7 @@ async def test_status_row_renders_eight_indicators():
     watcher.auto_accept_enabled = False
 
     app = StatusRowTestApp(watcher)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         indicators = app.query(StatusIndicator)
         # 8 indicators: WS, RSS, HTTP, Mail, Web, Cap, Flow, Auto
         assert len(indicators) == 8
@@ -96,7 +96,7 @@ async def test_status_row_renders_eight_indicators():
 async def test_status_indicator_pulse_animation():
     """StatusIndicator should pulse when in live state."""
     app = StatusIndicatorTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         indicator = app.query_one(StatusIndicator)
         indicator.set_state("live")
 

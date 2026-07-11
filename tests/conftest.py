@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gengowatcher.config import AppConfig
+from gengowatcher.state import AppState
+
 # Add src to path for imports
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
-
-from gengowatcher.config import AppConfig
-from gengowatcher.state import AppState
 
 
 @pytest.fixture

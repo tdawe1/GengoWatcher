@@ -7,7 +7,7 @@ import threading
 import tomllib
 from configparser import ConfigParser
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 try:
     import fcntl

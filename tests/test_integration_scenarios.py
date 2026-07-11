@@ -4,9 +4,7 @@ import pytest
 import tempfile
 import pathlib
 import time
-import asyncio
-import json
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 from collections import deque
 
 

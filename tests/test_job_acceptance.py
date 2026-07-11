@@ -2,7 +2,6 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import aiohttp
 
 from gengowatcher.job_acceptance import AcceptResult, JobAcceptanceEngine
 

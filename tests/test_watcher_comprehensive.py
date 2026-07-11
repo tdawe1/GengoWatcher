@@ -3,16 +3,12 @@
 import pytest
 import logging
 import concurrent.futures
-from unittest.mock import MagicMock, patch, mock_open, call
+from unittest.mock import MagicMock, patch, mock_open
 import collections
-import time
-import json
 import asyncio
-import tempfile
-import pathlib
 import threading
 
-from gengowatcher.watcher import GengoWatcher, PLACEHOLDER_CONFIG_VALUES
+from gengowatcher.watcher import GengoWatcher
 from gengowatcher.config import AppConfig
 from gengowatcher.state import AppState
 

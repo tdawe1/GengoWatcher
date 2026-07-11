@@ -27,7 +27,6 @@ from gengowatcher.ui_textual import (
     Icons,
     _build_semantic_color_palette,
     _with_timestamp_prefix,
-    BAR_CHARS,
 )
 from gengowatcher.logging_setup import UILoggingHandler
 from gengowatcher.stats import StatsManager
@@ -486,7 +485,7 @@ class TestHourlyActivity:
                 yield HourlyActivity(stats=mock_stats)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             chart = app.query_one(HourlyActivity)
             chart.refresh_hourly()
             await pilot.pause(0.1)
@@ -501,7 +500,7 @@ class TestHourlyActivity:
                 yield HourlyActivity(stats=None)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             chart = app.query_one(HourlyActivity)
             chart.refresh_hourly()
             await pilot.pause(0.1)
@@ -525,7 +524,7 @@ class TestHourlyActivity:
                 yield HourlyActivity(stats=None, state=state)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             chart = app.query_one(HourlyActivity)
             chart.refresh_hourly()
             await pilot.pause(0.1)
@@ -569,7 +568,7 @@ class TestHourlyActivity:
                 yield HourlyActivity(stats=mock_stats)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             chart = app.query_one(HourlyActivity)
             chart.refresh_hourly()
             await pilot.pause(0.1)

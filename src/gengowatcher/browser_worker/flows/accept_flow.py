@@ -6,7 +6,7 @@ from typing import Any
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    pass
 
 
 WORKBENCH_RE = re.compile(r"/t/workbench/(?P<job_id>\d+)")

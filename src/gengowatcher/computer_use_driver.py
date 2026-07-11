@@ -9,9 +9,8 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from typing import Any
 
-from .events import EventEnvelope, EventType
+from .events import EventEnvelope
 from .event_bus import register_consumer
 from .native_browser_actions import NativeBrowserActions
 
@@ -72,7 +71,7 @@ class ComputerUseDriver:
         if not job_id:
             return
 
-        success = self.actions.open_workbench(str(job_id))
+        self.actions.open_workbench(str(job_id))
         # Outcome will be confirmed by passive listener
 
     def _handle_accept_job(self, payload: dict, collection_id: str | None) -> None:
@@ -83,7 +82,7 @@ class ComputerUseDriver:
 
         # Request user action if needed
         # Native accept if workbench visible
-        success = self.actions.accept_visible_job(str(job_id))
+        self.actions.accept_visible_job(str(job_id))
 
     def _handle_download(self, payload: dict, collection_id: str | None) -> None:
         """Download file via visible browser."""
@@ -91,5 +90,5 @@ class ComputerUseDriver:
         if not job_id:
             return
 
-        success = self.actions.download_file(str(job_id))
+        self.actions.download_file(str(job_id))
         # Outcome confirmed by listener seeing file download events

@@ -3,7 +3,6 @@
 import pytest
 import tempfile
 import pathlib
-from unittest.mock import MagicMock
 from textual.app import App, ComposeResult
 
 from gengowatcher.stats import StatsManager
@@ -27,7 +26,7 @@ async def test_stats_panel_renders_sections():
         manager = StatsManager(stats_path=path)
 
         app = StatsPanelTestApp(manager)
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             panel = app.query_one(StatsPanel)
             # Check section titles exist
             assert panel.query_one("#stats-session-content") is not None
@@ -43,7 +42,7 @@ async def test_stats_panel_refresh_updates_content():
         manager.record_job(50.0, "WebSocket", "JA→EN", accepted=True)
 
         app = StatsPanelTestApp(manager)
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             panel = app.query_one(StatsPanel)
             panel.refresh_stats()
             await pilot.pause()

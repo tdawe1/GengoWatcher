@@ -9,7 +9,6 @@ import logging
 import json
 import aiohttp
 import asyncio
-import re
 import threading
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional

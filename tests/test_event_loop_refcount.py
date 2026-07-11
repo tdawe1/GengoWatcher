@@ -10,10 +10,8 @@ from __future__ import annotations
 import asyncio
 import threading
 
-import pytest
 
 from gengowatcher.web import WebAPI
-from gengowatcher.web_models import SECURITY, APIAuthenticator
 
 
 class _FakeConfig:

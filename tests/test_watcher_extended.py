@@ -4,12 +4,10 @@ import pytest
 import asyncio
 import logging
 import time
-import json
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 from collections import deque
 
 from gengowatcher.watcher import GengoWatcher
-from gengowatcher.state import AppState
 @pytest.fixture
 def watcher_with_mocks(mock_config, mock_state, mock_logger):
     """Create a watcher instance with mocked dependencies."""
@@ -338,7 +336,6 @@ class TestPromptForConfigValues:
 
     def test_prompt_sensitive_fields_hidden(self, watcher_with_mocks, tmp_path):
         """Test that sensitive fields use hidden input."""
-        import getpass
 
         watcher_with_mocks.config.get.return_value = "REPLACE_WITH_YOUR_SESSION_TOKEN"
         config_path = tmp_path / "config.toml"

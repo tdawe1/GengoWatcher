@@ -15,7 +15,7 @@ class TitleBarTestApp(App):
 async def test_title_bar_renders():
     """TitleBar should render brand, session time, and clock."""
     app = TitleBarTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         title_bar = app.query_one(TitleBar)
         assert title_bar is not None
 
@@ -28,7 +28,7 @@ async def test_title_bar_renders():
 async def test_title_bar_session_time_updates():
     """Session time should be displayed."""
     app = TitleBarTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         await pilot.pause()  # Allow timer to tick
         # Updated: use #session-timer instead of #session-time
         session_time = app.query_one("#session-timer")

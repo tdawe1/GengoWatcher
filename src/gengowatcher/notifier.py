@@ -105,7 +105,7 @@ def send_notification(title: str, message: str, icon_path: str = ""):
         )
     except subprocess.TimeoutExpired:
         logger.warning("notify-send timed out after 10 seconds")
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         logger.exception("Failed to send notification")
 
 

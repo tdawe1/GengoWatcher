@@ -9,9 +9,8 @@ import asyncio
 import random
 import re
 import time
-import math
 import logging
-from typing import Optional, Callable, Awaitable, List, Tuple
+from typing import Optional, Callable, Awaitable
 
 from .config import AppConfig
 
