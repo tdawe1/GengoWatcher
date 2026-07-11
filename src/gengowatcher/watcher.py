@@ -43,6 +43,7 @@ from .watcher_browser_jobs import (
     run_browser_jobs_monitor,
     trigger_browser_jobs_refresh as _bj_trigger,
 )
+from .watcher_feed import extract_reward as _extract_reward_impl, log_all_entries as _log_all_entries_impl
 from .watcher_alerting import json_safe as _json_safe_impl
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
@@ -990,49 +991,10 @@ class GengoWatcher:
             self.logger.error(f"Browser Error: {e}")
 
     def _extract_reward(self, entry) -> float:
-        """
-        Extracts the numeric reward value from an RSS entry.
-
-        Searches the entry's title and summary for a "Reward:" label followed by an optional currency symbol and returns the parsed value.
-
-        Parameters:
-            entry (Mapping): RSS entry containing at least 'title' and 'summary' strings.
-
-        Returns:
-            float: Reward amount as a float, or 0.0 if no valid reward is found.
-        """
-        text = entry.get("title", "") + " | " + entry.get("summary", "")
-        self.logger.debug(f"Extracting reward from entry: {text}")
-        match = re.search(r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE)
-        try:
-            return float(match.group(1)) if match else 0.0
-        except (ValueError, IndexError):
-            return 0.0
+        return _extract_reward_impl(entry)
 
     def _log_all_entries(self, entries):
-        """Log all RSS entries to the CSV file.
-
-        Writes each entry's timestamp, title, reward, link, and summary to the
-        configured CSV log file. Only logs if CSV writer is properly initialized.
-
-        Args:
-            entries: List of RSS entry dictionaries to log.
-        """
-        self.logger.debug(f"Logging {len(entries)} entries to CSV.")
-        if not self._csv_writer:
-            return
-        timestamp = datetime.datetime.now().isoformat()
-        for entry in entries:
-            self._csv_writer.writerow(
-                [
-                    timestamp,
-                    entry.get("title", "N/A"),
-                    self._extract_reward(entry),
-                    entry.get("link", "N/A"),
-                    entry.get("summary", "N/A"),
-                ]
-            )
-        self._all_entries_log_file.flush()
+        return _log_all_entries_impl(self, entries)
 
     def _process_new_job(self, job_id, title, reward, url, source, source_meta=None):
         """Process a newly discovered job from RSS or WebSocket sources.
