@@ -4,11 +4,9 @@ __release_date__ = "2026-07-08"
 import asyncio
 import concurrent.futures
 import csv
-import datetime
 import json
 import logging
 import os
-import re
 import random
 import subprocess
 import sys
@@ -42,7 +40,12 @@ from .watcher_browser_jobs import (
     run_browser_jobs_monitor,
     trigger_browser_jobs_refresh as _bj_trigger,
 )
-from .watcher_feed import extract_reward as _extract_reward_impl, log_all_entries as _log_all_entries_impl
+from .watcher_feed import (
+    extract_reward as _extract_reward_impl,
+    log_all_entries as _log_all_entries_impl,
+    process_feed_entries as _process_feed_entries_impl,
+    run_rss_monitor as _run_rss_monitor_impl,
+)
 from .watcher_job_processor import (
     process_new_job as _process_new_job_impl,
     async_job_acceptance_wrapper as _async_job_acceptance_wrapper_impl,
@@ -1082,56 +1085,8 @@ class GengoWatcher:
         return _submit_job_to_translation_app_async_impl(self, job_data)
 
     def _process_feed_entries(self, entries):
-        """Process RSS feed entries to identify new jobs.
-
-        Filters entries to find only new ones since the last check, extracts job
-        information, and processes each new job. Updates the last seen RSS link
-        to avoid duplicate processing.
-
-        Args:
-            entries: List of RSS entry dictionaries from the feed parser.
-        """
-        self.logger.debug(f"Processing {len(entries) if entries else 0} RSS entries.")
-        if not entries:
-            return
-        self._log_all_entries(entries)
-        new_entries = []
-        for entry in entries:
-            link = entry.get("link")
-            if not link:
-                self.logger.debug(f"Skipping entry with no link: {entry}")
-                continue
-            if link == self.state.last_seen_rss_link:
-                self.logger.debug(f"Reached last seen RSS link: {link}")
-                break
-            new_entries.append(entry)
-        self.logger.debug(f"Found {len(new_entries)} new RSS entries.")
-        if not new_entries:
-            return
-        latest_link = new_entries[0].get("link")
-        self.state.last_seen_rss_link = latest_link
-        self.state.last_seen_link = latest_link
-        for entry in reversed(new_entries):
-            title = entry.get("title", "No Title")
-            url = entry.get("link")
-            self.logger.debug(f"Processing new RSS entry: {title} {url}")
-            try:
-                match = re.search(r"/jobs/details/(\d+)", url)
-                if not match:
-                    self.logger.warning(f"Could not parse job ID from RSS link: {url}")
-                    continue
-                job_id = int(match.group(1))
-                reward = self._extract_reward(entry)
-                self._process_new_job(
-                    job_id,
-                    title,
-                    reward,
-                    url,
-                    source="RSS",
-                    source_meta=entry,
-                )
-            except (ValueError, IndexError) as e:
-                self.logger.warning(f"Error processing RSS entry {url}: {e}")
+        """Process RSS feed entries to identify new jobs."""
+        return _process_feed_entries_impl(self, entries)
 
     def fetch_rss(self):
         """Fetch and parse the RSS feed from Gengo.
@@ -1992,70 +1947,8 @@ class GengoWatcher:
         )
 
     def _run_rss_monitor(self):
-        self.logger.debug("Starting RSS monitor thread.")
-        self.logger.info("RSS monitor thread started.")
-        state_updated = False
-        if not self.state.last_seen_rss_link:
-            if self.state.last_seen_link:
-                self.state.last_seen_rss_link = self.state.last_seen_link
-                self.logger.debug(
-                    "Migrated legacy last_seen_link value to last_seen_rss_link."
-                )
-                state_updated = True
-            else:
-                self.rss_action = "Priming feed"
-                initial_feed = self.fetch_rss()
-                if initial_feed and initial_feed.entries:
-                    first_link = initial_feed.entries[0].get("link")
-                    self.state.last_seen_rss_link = first_link
-                    self.state.last_seen_link = first_link
-                    self.logger.info("Initial RSS feed primed successfully.")
-                    state_updated = True
-        if state_updated:
-            self.state.save_state()
-
-        while not self.shutdown_event.is_set():
-            is_paused = os.path.exists(self.PAUSE_FILE)
-            time_to_next_check = self.next_check_time - time.time()
-            wait_duration = max(0, time_to_next_check)
-            self.logger.debug(
-                f"Waiting for next RSS check: {wait_duration:.2f}s (paused={is_paused})"
-            )
-
-            triggered = self.check_now_event.wait(timeout=wait_duration)
-            if self.shutdown_event.is_set():
-                break
-
-            if triggered or time.time() >= self.next_check_time:
-                self.logger.debug("RSS check triggered.")
-                self.check_now_event.clear()
-
-                if os.path.exists(self.PAUSE_FILE):
-                    self.rss_action = "Paused"
-                    wait_time = 5
-                else:
-                    self.rss_action = "Fetching RSS"
-                    feed = self.fetch_rss()
-                    if feed is None:
-                        self.failure_count += 1
-                        wait_time = min(
-                            self._pick_next_rss_wait_seconds()
-                            * (2**self.failure_count),
-                            self.config.get("Network", "max_backoff"),
-                        )
-                        self.rss_action = f"RSS Backoff ({int(wait_time)}s)"
-                    else:
-                        if self.failure_count > 0:
-                            self.logger.info("RSS Connection re-established.")
-                        self.failure_count = 0
-                        self.last_check_time = datetime.datetime.now()
-                        self.rss_action = "Processing RSS"
-                        self._process_feed_entries(feed.entries)
-                        wait_time = self._pick_next_rss_wait_seconds()
-                        self.rss_action = "Waiting"
-                self.next_check_time = time.time() + wait_time
-
-        self.logger.info("RSS monitor thread stopped.")
+        """RSS monitor thread - delegates to watcher_feed.run_rss_monitor."""
+        return _run_rss_monitor_impl(self)
 
     def _run_native_browser_listener(self):
         """Run native browser listener loop - drains events into state projector."""
