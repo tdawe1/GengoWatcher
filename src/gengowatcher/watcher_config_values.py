@@ -1,12 +1,10 @@
-"""Sentinel values used to detect "not configured yet" entries in
-the runtime config. Defined as a set so callers can do
-``value in PLACEHOLDER_CONFIG_VALUES`` in O(1).
+"""Sentinel values and key-name patterns used by GengoWatcher's
+runtime config checks.
 
-The set intentionally overlaps with what config.py's
-``PLACEHOLDER_CONFIG_VALUES`` (a list) catches at parse-time so a token
-written to disk before this module was introduced is still treated as
-a placeholder by the runtime checks in watcher.py /
-watcher_job_processor.py.
+This module exists so other modules (watcher.py,
+watcher_config_io.py, ...) can import the same set of placeholder
+values and sensitive-keyword markers without re-defining them at
+module scope.
 """
 
 from __future__ import annotations
@@ -23,4 +21,8 @@ PLACEHOLDER_CONFIG_VALUES: Final[FrozenSet[Any]] = frozenset(
     }
 )
 
-__all__ = ["PLACEHOLDER_CONFIG_VALUES"]
+SENSITIVE_KEYWORDS: Final[FrozenSet[str]] = frozenset(
+    {"auth", "cookie", "key", "password", "secret", "session", "token"}
+)
+
+__all__ = ["PLACEHOLDER_CONFIG_VALUES", "SENSITIVE_KEYWORDS"]

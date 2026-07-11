@@ -61,6 +61,13 @@ from .watcher_session_sync import (
     sync_session_from_browser as _sync_session_from_browser_impl,
     sync_session_before_websocket_connect as _sync_session_before_websocket_connect_impl,
 )
+
+from .watcher_config_io import (
+    set_config_value as _set_config_value_impl,
+    get_config_value as _get_config_value_impl,
+    prompt_for_config_values as _prompt_for_config_values_impl,
+    is_config_complete as _is_config_complete_impl,
+)
 from .watcher_alerting import json_safe as _json_safe_impl
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
@@ -99,9 +106,10 @@ try:
 except ImportError:  # pragma: no cover - optional integration at runtime
     TranslationAppClient = None
 
-from .watcher_config_values import PLACEHOLDER_CONFIG_VALUES  # noqa: F401
-
-SENSITIVE_KEYWORDS = {"auth", "cookie", "key", "password", "secret", "session", "token"}
+from .watcher_config_values import (
+    PLACEHOLDER_CONFIG_VALUES,  # noqa: F401
+    SENSITIVE_KEYWORDS,
+)
 
 
 def _redact_config_for_log(value: Any, key: str = "") -> Any:
@@ -1300,17 +1308,12 @@ class GengoWatcher:
         os.execv(python, [python] + sys.argv)
 
     def set_config_value(self, section, option, value):
-        self.logger.debug(f"Setting config value: [{section}] {option} = {value}")
-        self.config.set(section, option, value)
-        self.config.save_config()
-        self.logger.info(f"Config updated: [{section}] {option} = {value}")
-        if section.lower() == "cancellation":
-            self._configure_cancellation_manager()
+        """Set a config value and persist it."""
+        return _set_config_value_impl(self, section, option, value)
 
     def get_config_value(self, section, option):
-        value = self.config.get(section, option)
-        self.logger.debug(f"Getting config value: [{section}] {option} = {value}")
-        return value
+        """Get a config value."""
+        return _get_config_value_impl(self, section, option)
 
     def list_config_values(self):
         config_dict = self.config.list_all()
@@ -1365,143 +1368,12 @@ class GengoWatcher:
             self.logger.error(f"Failed to configure cancellation manager: {e}")
 
     def prompt_for_config_values(self, required_fields=None):
-        """
-        Interactively prompt the user to supply missing configuration values.
-
-        If `required_fields` is not provided, the method scans the current configuration for values that match
-        module-level placeholder markers and prompts for each missing item. For a fresh or small config file a
-        welcome message is printed. Prompts are grouped by section and sensitive fields (containing "password",
-        "session" or "key") are read without echo. Provided values are saved via set_config_value; skipped entries
-        leave existing values unchanged. Progress and completion messages are printed and the action is logged.
-
-        Parameters:
-            required_fields (iterable[(str, str)], optional): Iterable of (section, option) pairs to prompt.
-                If omitted or None, missing values are auto-detected from placeholder constants.
-        """
-        import getpass
-
-        self.logger.debug("Prompting for config values interactively.")
-
-        # Check if this is a fresh config
-        config_file = Path(self.config.CONFIG_FILE)
-        is_new_config = (
-            config_file.stat().st_size < 1000
-        )  # Rough check for new/small config
-
-        if is_new_config:
-            print("\n" + "=" * 60)
-            print("🎉 Welcome to GengoWatcher!")
-            print("=" * 60)
-            print("A default configuration file has been created.")
-            print("Let's set up the essential settings to get you started.")
-            print("=" * 60 + "\n")
-
-        if required_fields is None:
-            required_fields = [
-                field
-                for field in self._get_default_required_config_fields()
-                if self.config.get(field[0], field[1]) in PLACEHOLDER_CONFIG_VALUES
-            ]
-
-        if not required_fields:
-            print("✅ All configuration values are set!")
-            return
-
-        print(
-            f"\n📝 Please provide values for {len(required_fields)} required configuration settings:"
-        )
-        print("-" * 60)
-
-        # Group fields by section for better organization
-        fields_by_section = {}
-        for section, option in required_fields:
-            if section not in fields_by_section:
-                fields_by_section[section] = []
-            fields_by_section[section].append(option)
-
-        for section, options in fields_by_section.items():
-            print(f"\n[{section}] Section:")
-            for option in options:
-                current = self.config.get(section, option)
-                display_current = (
-                    current if current not in PLACEHOLDER_CONFIG_VALUES else "(not set)"
-                )
-
-                # Provide helpful descriptions for common fields
-                descriptions = {
-                    "user_session": "Your Gengo session token (found in browser dev tools)",
-                    "user_id": "Your Gengo user ID number",
-                    "feed_url": "RSS feed URL for job monitoring",
-                    "min_reward": "Minimum job reward to monitor (USD)",
-                    "check_interval": "How often to check for new jobs (seconds)",
-                    "api_key": "CAPTCHA service API key",
-                    "browser_path": "Path to your preferred browser executable",
-                }
-
-                desc = descriptions.get(option, "")
-                desc_text = f" - {desc}" if desc else ""
-
-                prompt = f"  {option} (current: {display_current}){desc_text}: "
-
-                is_sensitive = any(
-                    keyword in option.lower() for keyword in SENSITIVE_KEYWORDS
-                )
-
-                if is_sensitive:
-                    value = getpass.getpass(prompt)
-                else:
-                    value = input(prompt).strip()
-
-                if value:
-                    self.set_config_value(section, option, value)
-                    if is_sensitive:
-                        print(f"  ✅ Set {option} (value stored securely)")
-                    else:
-                        print(f"  ✅ Set {option} = {value}")
-                else:
-                    print(f"  ⚠️  Skipped {option} (keeping current value)")
-
-        print("\n" + "=" * 60)
-        print("✅ Configuration setup complete!")
-        print(
-            "You can always reconfigure later with: python -m gengowatcher.main --configure"
-        )
-        print("=" * 60 + "\n")
-
-        self.logger.info("Config interactive prompt complete.")
+        """Prompt the user for missing required config values."""
+        return _prompt_for_config_values_impl(self, required_fields)
 
     def is_config_complete(self, required_fields=None):
-        """
-        Determine whether required configuration fields are set to non-placeholder values.
-
-        If `required_fields` is omitted, every section/option present in the loaded config is validated against the module's placeholder sentinel values.
-
-        Parameters:
-            required_fields (list[tuple[str, str]]|None): Optional iterable of (section, option) pairs to validate. If `None`, all loaded config options are checked.
-
-        Returns:
-            bool: `True` if all specified fields are set to values other than the placeholder sentinels, `False` otherwise.
-        """
-        self.logger.debug("Checking if config is complete.")
-        if required_fields is None:
-            required_fields = self._get_default_required_config_fields()
-
-        for section, option in required_fields:
-            try:
-                val = self.config.get(section, option)
-                if val in PLACEHOLDER_CONFIG_VALUES:
-                    self.logger.debug(
-                        f"Config incomplete: [{section}] {option} is unset or placeholder."
-                    )
-                    return False
-            except KeyError:
-                # Section or option doesn't exist in loaded config
-                self.logger.debug(
-                    f"Config incomplete: [{section}] {option} is missing from loaded config."
-                )
-                return False
-
-        return True
+        """Return True when every required config field has a usable value."""
+        return _is_config_complete_impl(self, required_fields)
 
     def get_job_acceptance_stats(self):
         """Get job acceptance engine statistics"""
