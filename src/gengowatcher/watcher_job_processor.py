@@ -9,13 +9,28 @@ work unchanged.
 
 from __future__ import annotations
 
+import asyncio
+import queue
 import threading
 import time
+from typing import TYPE_CHECKING
 
+from .translation_app_queue import (
+    submit_translation_app_task as _submit_translation_app_task,
+)
+from .watcher_config_values import PLACEHOLDER_CONFIG_VALUES
 from .watcher_job_metadata import (
     derive_lang_pair,
     derive_word_count,
 )
+
+try:
+    from .translation_app_client import TranslationAppClient
+except Exception:  # pragma: no cover - translation-app optional
+    TranslationAppClient = None
+
+if TYPE_CHECKING:
+    pass
 
 def process_new_job(watcher, job_id, title, reward, url, source, source_meta=None):
     """Process a newly discovered job from RSS or WebSocket sources.
@@ -252,5 +267,145 @@ def process_new_job(watcher, job_id, title, reward, url, source, source_meta=Non
             watcher.on_job_added_callback(job_data)
         except Exception as e:
             watcher.logger.debug(f"Error in job added callback: {e}")
+def async_job_acceptance_wrapper(watcher, job_data: dict):
+    """
+    Wrapper to run async job acceptance in a separate thread.
 
-__all__ = ["process_new_job"]
+    Args:
+        job_data: Dictionary containing job information
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(
+            watcher.job_acceptance_engine.accept_job(job_data)
+        )
+        if success:
+            watcher._on_job_accepted(job_data)
+        else:
+            watcher.state.update_job(
+                str(job_data.get("id")),
+                {
+                    "acceptance_state": "failed",
+                    "lifecycle_state": "accept_failed",
+                    "accept_failure_reason": "accept_job returned false",
+                },
+            )
+            watcher.state.save_state()
+            failed_payload = {
+                **job_data,
+                "acceptance_state": "failed",
+                "lifecycle_state": "accept_failed",
+                "reason": "accept_job returned false",
+            }
+            watcher._emit_webhook_event(
+                "job.accept_failed",
+                failed_payload,
+            )
+            watcher._emit_api_event("job.accept_failed", failed_payload)
+    except Exception as e:
+        watcher.logger.error(
+            f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}"
+        )
+        watcher.state.update_job(
+            str(job_data.get("id")),
+            {
+                "acceptance_state": "failed",
+                "lifecycle_state": "accept_failed",
+                "accept_failure_reason": str(e),
+            },
+        )
+        watcher.state.save_state()
+        failed_payload = {
+            **job_data,
+            "acceptance_state": "failed",
+            "lifecycle_state": "accept_failed",
+            "reason": str(e),
+        }
+        watcher._emit_webhook_event(
+            "job.accept_failed",
+            failed_payload,
+        )
+        watcher._emit_api_event("job.accept_failed", failed_payload)
+    finally:
+        loop.close()
+
+def async_cancel_current_job_wrapper(watcher, upcoming_job: dict):
+    """Wrapper to cancel the current job without blocking the main thread."""
+    previous_job_id = watcher.cancellation_manager.current_job_id
+    try:
+        success = watcher.cancel_current_job_sync()
+        if success:
+            watcher.logger.info(
+                f"Current job {previous_job_id} cancelled. Preparing to accept {upcoming_job.get('id')}"
+            )
+        else:
+            watcher.logger.warning(
+                "Failed to cancel current job before processing new opportunity"
+            )
+    except Exception as e:
+        watcher.logger.error(f"Error during automatic job cancellation: {e}")
+
+def submit_job_to_translation_app_async(watcher, job_data: dict) -> None:
+    """Submit a discovered job to translation-app without blocking monitors."""
+    if TranslationAppClient is None:
+        watcher.logger.debug("translation-app client is unavailable")
+        return
+    if not watcher.config.getboolean("TranslationApp", "enabled", fallback=False):
+        return
+
+    base_url = str(
+        watcher.config.get("TranslationApp", "base_url", fallback="") or ""
+    ).strip()
+    auth_token = str(
+        watcher.config.get("TranslationApp", "auth_token", fallback="") or ""
+    ).strip()
+    if not base_url or auth_token in PLACEHOLDER_CONFIG_VALUES:
+        watcher.logger.warning(
+            "TranslationApp is enabled but base_url or auth_token is not configured"
+        )
+        return
+
+    timeout_sec = float(
+        watcher.config.getfloat("TranslationApp", "timeout_sec", fallback=5.0) or 5.0
+    )
+    verify_tls = watcher.config.getboolean(
+        "TranslationApp", "verify_tls", fallback=True
+    )
+
+    def submit() -> None:
+        try:
+            client = TranslationAppClient(
+                base_url=base_url,
+                auth_token=auth_token,
+                timeout_sec=timeout_sec,
+                verify_tls=verify_tls,
+                logger=watcher.logger,
+            )
+            client.submit_job(dict(job_data))
+        except Exception:
+            watcher.logger.exception(
+                "Failed to submit job %s to translation-app",
+                job_data.get("id", "unknown"),
+            )
+
+    try:
+        _submit_translation_app_task(submit)
+    except queue.Full:
+        watcher.logger.warning(
+            "Translation-app submission queue is full; dropping job %s",
+            job_data.get("id", "unknown"),
+        )
+    except Exception:
+        watcher.logger.exception(
+            "Failed to queue job %s for translation-app submission",
+            job_data.get("id", "unknown"),
+        )
+
+
+__all__ = [
+    "process_new_job",
+    "async_job_acceptance_wrapper",
+    "async_cancel_current_job_wrapper",
+    "submit_job_to_translation_app_async",
+]

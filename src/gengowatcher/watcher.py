@@ -8,7 +8,6 @@ import datetime
 import json
 import logging
 import os
-import queue
 import re
 import random
 import subprocess
@@ -44,7 +43,12 @@ from .watcher_browser_jobs import (
     trigger_browser_jobs_refresh as _bj_trigger,
 )
 from .watcher_feed import extract_reward as _extract_reward_impl, log_all_entries as _log_all_entries_impl
-from .watcher_job_processor import process_new_job as _process_new_job_impl
+from .watcher_job_processor import (
+    process_new_job as _process_new_job_impl,
+    async_job_acceptance_wrapper as _async_job_acceptance_wrapper_impl,
+    async_cancel_current_job_wrapper as _async_cancel_current_job_wrapper_impl,
+    submit_job_to_translation_app_async as _submit_job_to_translation_app_async_impl,
+)
 from .watcher_ws_debug import (
     capture_raw_ws_message as _capture_raw_ws_message_impl,
     get_raw_ws_messages as _get_raw_ws_messages_impl,
@@ -58,9 +62,6 @@ from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
-from .translation_app_queue import (
-    submit_translation_app_task as _submit_translation_app_task,
-)
 
 from .watcher_health import (
     alert_on_health_snapshot as _alert_on_health_snapshot,
@@ -93,13 +94,7 @@ try:
 except ImportError:  # pragma: no cover - optional integration at runtime
     TranslationAppClient = None
 
-PLACEHOLDER_CONFIG_VALUES = {
-    None,
-    "",
-    "REPLACE_WITH_YOUR_SESSION_TOKEN",
-    "REPLACE_WITH_YOUR_USER_KEY",
-    "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN",
-}
+from .watcher_config_values import PLACEHOLDER_CONFIG_VALUES  # noqa: F401
 
 SENSITIVE_KEYWORDS = {"auth", "cookie", "key", "password", "secret", "session", "token"}
 
@@ -980,67 +975,8 @@ class GengoWatcher:
         return _process_new_job_impl(self, job_id, title, reward, url, source, source_meta)
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
-        """
-        Wrapper to run async job acceptance in a separate thread.
-
-        Args:
-            job_data: Dictionary containing job information
-        """
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            success = loop.run_until_complete(
-                self.job_acceptance_engine.accept_job(job_data)
-            )
-            if success:
-                self._on_job_accepted(job_data)
-            else:
-                self.state.update_job(
-                    str(job_data.get("id")),
-                    {
-                        "acceptance_state": "failed",
-                        "lifecycle_state": "accept_failed",
-                        "accept_failure_reason": "accept_job returned false",
-                    },
-                )
-                self.state.save_state()
-                failed_payload = {
-                    **job_data,
-                    "acceptance_state": "failed",
-                    "lifecycle_state": "accept_failed",
-                    "reason": "accept_job returned false",
-                }
-                self._emit_webhook_event(
-                    "job.accept_failed",
-                    failed_payload,
-                )
-                self._emit_api_event("job.accept_failed", failed_payload)
-        except Exception as e:
-            self.logger.error(
-                f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}"
-            )
-            self.state.update_job(
-                str(job_data.get("id")),
-                {
-                    "acceptance_state": "failed",
-                    "lifecycle_state": "accept_failed",
-                    "accept_failure_reason": str(e),
-                },
-            )
-            self.state.save_state()
-            failed_payload = {
-                **job_data,
-                "acceptance_state": "failed",
-                "lifecycle_state": "accept_failed",
-                "reason": str(e),
-            }
-            self._emit_webhook_event(
-                "job.accept_failed",
-                failed_payload,
-            )
-            self._emit_api_event("job.accept_failed", failed_payload)
-        finally:
-            loop.close()
+        """Wrapper to run async job acceptance in a separate thread."""
+        return _async_job_acceptance_wrapper_impl(self, job_data)
 
     def _run_browser_worker_event_listener(self) -> None:
         telemetry_path = self._browser_worker_telemetry_path()
@@ -1100,19 +1036,7 @@ class GengoWatcher:
 
     def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
         """Wrapper to cancel the current job without blocking the main thread."""
-        previous_job_id = self.cancellation_manager.current_job_id
-        try:
-            success = self.cancel_current_job_sync()
-            if success:
-                self.logger.info(
-                    f"Current job {previous_job_id} cancelled. Preparing to accept {upcoming_job.get('id')}"
-                )
-            else:
-                self.logger.warning(
-                    "Failed to cancel current job before processing new opportunity"
-                )
-        except Exception as e:
-            self.logger.error(f"Error during automatic job cancellation: {e}")
+        return _async_cancel_current_job_wrapper_impl(self, upcoming_job)
 
     def _on_job_accepted(self, job_data: dict):
         """Record that a job has been accepted for future cancellation decisions."""
@@ -1155,59 +1079,7 @@ class GengoWatcher:
 
     def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
         """Submit a discovered job to translation-app without blocking monitors."""
-        if TranslationAppClient is None:
-            self.logger.debug("translation-app client is unavailable")
-            return
-        if not self.config.getboolean("TranslationApp", "enabled", fallback=False):
-            return
-
-        base_url = str(
-            self.config.get("TranslationApp", "base_url", fallback="") or ""
-        ).strip()
-        auth_token = str(
-            self.config.get("TranslationApp", "auth_token", fallback="") or ""
-        ).strip()
-        if not base_url or auth_token in PLACEHOLDER_CONFIG_VALUES:
-            self.logger.warning(
-                "TranslationApp is enabled but base_url or auth_token is not configured"
-            )
-            return
-
-        timeout_sec = float(
-            self.config.getfloat("TranslationApp", "timeout_sec", fallback=5.0) or 5.0
-        )
-        verify_tls = self.config.getboolean(
-            "TranslationApp", "verify_tls", fallback=True
-        )
-
-        def submit() -> None:
-            try:
-                client = TranslationAppClient(
-                    base_url=base_url,
-                    auth_token=auth_token,
-                    timeout_sec=timeout_sec,
-                    verify_tls=verify_tls,
-                    logger=self.logger,
-                )
-                client.submit_job(dict(job_data))
-            except Exception:
-                self.logger.exception(
-                    "Failed to submit job %s to translation-app",
-                    job_data.get("id", "unknown"),
-                )
-
-        try:
-            _submit_translation_app_task(submit)
-        except queue.Full:
-            self.logger.warning(
-                "Translation-app submission queue is full; dropping job %s",
-                job_data.get("id", "unknown"),
-            )
-        except Exception:
-            self.logger.exception(
-                "Failed to queue job %s for translation-app submission",
-                job_data.get("id", "unknown"),
-            )
+        return _submit_job_to_translation_app_async_impl(self, job_data)
 
     def _process_feed_entries(self, entries):
         """Process RSS feed entries to identify new jobs.
