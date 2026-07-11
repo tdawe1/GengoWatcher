@@ -90,6 +90,13 @@ from .watcher_user_feedback import (
     open_in_browser as _open_in_browser_impl,
 )
 
+from .watcher_monitor_status import (
+    get_monitor_status as _get_monitor_status_impl,
+    sync_monitor_metrics as _sync_monitor_metrics_impl,
+    process_browser_jobs_snapshot as _process_browser_jobs_snapshot_impl,
+)
+
+
 from .watcher_alerting import json_safe as _json_safe_impl
 import concurrent.futures  # noqa: F401  -- still patched by tests via watcher.concurrent.futures
 
@@ -681,83 +688,19 @@ class GengoWatcher:
         return random.random() < min(1.0, max(0.0, probability))
 
     def _process_browser_jobs_snapshot(self, snapshot) -> int:
-        processed = 0
-        candidates = list(snapshot.detected_jobs) + list(snapshot.jobs)
-        seen_candidate_ids: set[int] = set()
-        for job in candidates:
-            if job.job_id in seen_candidate_ids:
-                continue
-            seen_candidate_ids.add(job.job_id)
-            self._process_new_job(
-                job.job_id,
-                job.title,
-                job.reward,
-                job.url,
-                source="BrowserJobs",
-                source_meta={
-                    "title": job.title,
-                    "reward": job.reward,
-                    "url": job.url,
-                    "text": job.text,
-                    "browser_action": snapshot.action,
-                    "browser_page_url": snapshot.url,
-                },
-            )
-            processed += 1
-        return processed
+        """Dispatch newly-detected browser-jobs through process_new_job."""
+        return _process_browser_jobs_snapshot_impl(self, snapshot)
+
 
     def get_monitor_status(self) -> dict:
-        """
-        Check health of all monitor threads.
+        """Check health of all monitor threads."""
+        return _get_monitor_status_impl(self)
 
-        Returns:
-            dict: Mapping of monitor name to status ("alive", "dead", "disabled")
-        """
-        status = {}
-        for name in [
-            "rss",
-            "websocket",
-            "email",
-            "website",
-            "browser_worker",
-            "native_browser",
-            "browser_jobs",
-        ]:
-            thread = self._monitor_threads.get(name)
-            if thread is None:
-                status[name] = "disabled"
-            elif thread.is_alive():
-                status[name] = "alive"
-            else:
-                status[name] = "dead"
-        status["email_detail"] = self.email_monitor_status
-        status["website_detail"] = self.website_monitor_status
-        status["browser_jobs_detail"] = self.browser_jobs_monitor_status
-        return status
 
     def _sync_monitor_metrics(self):
         """Sync metrics from email and website monitors."""
-        if hasattr(self, "_email_monitor") and self._email_monitor:
-            self.email_monitor_status = getattr(
-                self._email_monitor, "status", "Disabled"
-            )
-            self.email_last_check_time = getattr(
-                self._email_monitor, "last_check_time", None
-            )
-            self.email_jobs_found_session = getattr(
-                self._email_monitor, "jobs_found_session", 0
-            )
+        return _sync_monitor_metrics_impl(self)
 
-        if hasattr(self, "_website_monitor") and self._website_monitor:
-            self.website_monitor_status = getattr(
-                self._website_monitor, "status", "Disabled"
-            )
-            self.website_last_check_time = getattr(
-                self._website_monitor, "last_check_time", None
-            )
-            self.website_jobs_found_session = getattr(
-                self._website_monitor, "jobs_found_session", 0
-            )
 
     def _capture_raw_ws_message(self, message: str, direction: str = "recv"):
         """Capture raw WebSocket message for debug output when raw debug is enabled."""
