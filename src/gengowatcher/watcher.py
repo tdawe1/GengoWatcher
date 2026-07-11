@@ -44,6 +44,13 @@ from .watcher_browser_jobs import (
     trigger_browser_jobs_refresh as _bj_trigger,
 )
 from .watcher_feed import extract_reward as _extract_reward_impl, log_all_entries as _log_all_entries_impl
+from .watcher_ws_debug import (
+    capture_raw_ws_message as _capture_raw_ws_message_impl,
+    get_raw_ws_messages as _get_raw_ws_messages_impl,
+    clear_raw_ws_messages as _clear_raw_ws_messages_impl,
+    handle_browser_worker_telemetry_line as _handle_telemetry_line_impl,
+    handle_browser_worker_telemetry_payload as _handle_telemetry_payload_impl,
+)
 from .watcher_alerting import json_safe as _json_safe_impl
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
@@ -52,10 +59,6 @@ from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
 from .translation_app_queue import (
     submit_translation_app_task as _submit_translation_app_task,
-)
-from .watcher_debug import (
-    redact_raw_ws_text as _redact_raw_ws_text,
-    redact_raw_ws_value as _redact_raw_ws_value,
 )
 from .watcher_job_metadata import (
     derive_lang_pair,
@@ -859,44 +862,16 @@ class GengoWatcher:
             )
 
     def _capture_raw_ws_message(self, message: str, direction: str = "recv"):
-        """Capture raw WebSocket message for debug output when raw debug is enabled.
-
-        Args:
-            message: The raw message string (JSON or otherwise)
-            direction: "recv" for received, "send" for sent
-        """
-        if not self.config.get("DebugCategories", "raw"):
-            return
-
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        prefix = "→" if direction == "send" else "←"
-
-        # Try to pretty-format JSON
-        try:
-            parsed = json.loads(message)
-            parsed = _redact_raw_ws_value(parsed)
-            formatted = json.dumps(parsed, indent=2)
-        except (json.JSONDecodeError, TypeError):
-            formatted = _redact_raw_ws_text(str(message))
-
-        entry = f"[{timestamp}] {prefix} {formatted}"
-
-        with self._raw_ws_lock:
-            self._raw_ws_messages.append(entry)
+        """Capture raw WebSocket message for debug output when raw debug is enabled."""
+        return _capture_raw_ws_message_impl(self, message, direction)
 
     def get_raw_ws_messages(self) -> list:
-        """Get a copy of the raw WebSocket message buffer.
-
-        Returns:
-            List of raw message entries with timestamps
-        """
-        with self._raw_ws_lock:
-            return list(self._raw_ws_messages)
+        """Get a copy of the raw WebSocket message buffer."""
+        return _get_raw_ws_messages_impl(self)
 
     def clear_raw_ws_messages(self):
         """Clear the raw WebSocket message buffer."""
-        with self._raw_ws_lock:
-            self._raw_ws_messages.clear()
+        return _clear_raw_ws_messages_impl(self)
 
     def _setup_csv_logging(self):
         """
@@ -1345,75 +1320,11 @@ class GengoWatcher:
         self.logger.info("Browser worker event listener stopped.")
 
     def _handle_browser_worker_telemetry_line(self, line: str) -> None:
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            self.logger.debug("Ignoring malformed browser worker telemetry line")
-            return
-        if isinstance(payload, dict):
-            self._handle_browser_worker_telemetry_payload(payload)
+        return _handle_telemetry_line_impl(self, line)
 
     def _handle_browser_worker_telemetry_payload(self, event_payload: dict) -> None:
-        event = event_payload.get("event")
-        if not isinstance(event, dict):
-            return
-        if event.get("name") != "accepted_workbench_payload":
-            return
+        return _handle_telemetry_payload_impl(self, event_payload)
 
-        payload = event_payload.get("payload")
-        if not isinstance(payload, dict):
-            return
-
-        summary = payload.get("summary")
-        if not isinstance(summary, dict):
-            summary = {}
-        job_id = str(
-            event_payload.get("job_id") or summary.get("order_id") or ""
-        ).strip()
-        if not job_id:
-            return
-
-        accepted_workbench = {
-            "source": str(event_payload.get("source") or "browser_worker"),
-            "payload": payload,
-        }
-        updated = self.state.mark_job_accepted(
-            job_id,
-            accepted_workbench=accepted_workbench,
-            workbench_url=event_payload.get("url"),
-        )
-        if updated:
-            self.state.save_state()
-            current_job = self.state.get_job(job_id)
-            accepted_job = (
-                current_job
-                if isinstance(current_job, dict)
-                else {
-                    "id": job_id,
-                    "workbench_url": event_payload.get("url"),
-                    "accepted_workbench": accepted_workbench,
-                    "source": "browser_worker",
-                }
-            )
-            self.logger.info(
-                "Browser worker captured accepted job %s; countdown tracking updated",
-                job_id,
-            )
-            self._emit_webhook_event(
-                "job.accepted",
-                {
-                    "id": job_id,
-                    "workbench_url": event_payload.get("url"),
-                    "accepted_workbench": accepted_workbench,
-                    "source": "browser_worker",
-                },
-            )
-            self._emit_api_event("job.accepted", accepted_job)
-        else:
-            self.logger.debug(
-                "Browser worker captured accepted job %s but no stored job matched",
-                job_id,
-            )
 
     def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
         """Wrapper to cancel the current job without blocking the main thread."""
