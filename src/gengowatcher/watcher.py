@@ -79,6 +79,11 @@ from .watcher_io import (
     fetch_rss as _fetch_rss_impl,
     handle_exit as _handle_exit_impl,
 )
+
+from .watcher_worker_events import (
+    run_browser_worker_event_listener as _run_browser_worker_event_listener_impl,
+    on_job_accepted as _on_job_accepted_impl,
+)
 from .watcher_alerting import json_safe as _json_safe_impl
 import concurrent.futures  # noqa: F401  -- still patched by tests via watcher.concurrent.futures
 
@@ -874,53 +879,8 @@ class GengoWatcher:
         return _async_job_acceptance_wrapper_impl(self, job_data)
 
     def _run_browser_worker_event_listener(self) -> None:
-        telemetry_path = self._browser_worker_telemetry_path()
-        self.logger.info("Browser worker event listener watching %s", telemetry_path)
-        initialized = False
-        skip_existing_on_open = True
-        while not self.shutdown_event.is_set():
-            if not telemetry_path.exists():
-                self.shutdown_event.wait(1.0)
-                continue
-
-            try:
-                with telemetry_path.open("r", encoding="utf-8") as handle:
-                    opened_stat = os.fstat(handle.fileno())
-                    if not initialized:
-                        if skip_existing_on_open:
-                            handle.seek(0, os.SEEK_END)
-                        initialized = True
-                        skip_existing_on_open = False
-                    while not self.shutdown_event.is_set():
-                        line = handle.readline()
-                        if not line:
-                            try:
-                                current_stat = telemetry_path.stat()
-                                if (
-                                    current_stat.st_size < handle.tell()
-                                    or current_stat.st_ino != opened_stat.st_ino
-                                    or current_stat.st_dev != opened_stat.st_dev
-                                ):
-                                    initialized = False
-                                    skip_existing_on_open = False
-                                    break
-                            except OSError:
-                                initialized = False
-                                break
-                            self.shutdown_event.wait(0.5)
-                            continue
-                        self._handle_browser_worker_telemetry_line(line)
-            except OSError as exc:
-                self.logger.debug(
-                    "Browser worker telemetry listener could not read %s: %s",
-                    telemetry_path,
-                    exc,
-                )
-                self.shutdown_event.wait(1.0)
-            except Exception:
-                self.logger.exception("Browser worker telemetry listener failed")
-                self.shutdown_event.wait(1.0)
-        self.logger.info("Browser worker event listener stopped.")
+        """Tails the browser-worker telemetry JSONL file and forwards each line to the handler."""
+        return _run_browser_worker_event_listener_impl(self)
 
     def _handle_browser_worker_telemetry_line(self, line: str) -> None:
         return _handle_telemetry_line_impl(self, line)
@@ -935,42 +895,7 @@ class GengoWatcher:
 
     def _on_job_accepted(self, job_data: dict):
         """Record that a job has been accepted for future cancellation decisions."""
-        try:
-            job_id = str(job_data.get("id"))
-            reward = float(job_data.get("reward", 0.0))
-            try:
-                self.state.mark_job_accepted(
-                    job_id,
-                    accepted_workbench=job_data.get("accepted_workbench"),
-                    workbench_url=job_data.get("workbench_url"),
-                )
-                self.state.save_state()
-            except Exception:
-                self.logger.exception(
-                    "Failed to persist accepted job metadata for job %s",
-                    job_id,
-                )
-            self.cancellation_manager.set_current_job(job_id, reward)
-            self.logger.debug(
-                f"Tracking job {job_id} (${reward:.2f}) as current engagement"
-            )
-            current_job = self.state.get_job(job_id)
-            accepted_job = (
-                current_job
-                if isinstance(current_job, dict)
-                else {
-                    **job_data,
-                    "accepted": True,
-                    "acceptance_state": "accepted",
-                    "lifecycle_state": "accepted",
-                }
-            )
-            self._emit_webhook_event("job.accepted", accepted_job)
-            self._emit_api_event("job.accepted", accepted_job)
-        except Exception as e:
-            self.logger.error(
-                f"Failed to record accepted job for cancellation tracking: {e}"
-            )
+        return _on_job_accepted_impl(self, job_data)
 
     def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
         """Submit a discovered job to translation-app without blocking monitors."""
