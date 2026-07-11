@@ -2,7 +2,6 @@ __version__ = "2.9.3"
 __release_date__ = "2026-07-08"
 
 import asyncio
-import concurrent.futures
 import csv
 import logging
 import os
@@ -17,8 +16,9 @@ from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
 
-import feedparser
 import websockets
+
+import feedparser  # noqa: F401  -- still patched by tests via watcher.feedparser
 
 from .browser_session import (
     fetch_browser_session_snapshot_sync,
@@ -74,8 +74,14 @@ from .watcher_monitors import (
     run_website_monitor as _run_website_monitor_impl,
     run_native_browser_listener as _run_native_browser_listener_impl,
 )
+
+from .watcher_io import (
+    fetch_rss as _fetch_rss_impl,
+    handle_exit as _handle_exit_impl,
+)
 from .watcher_alerting import json_safe as _json_safe_impl
-from .browser_detector import get_preferred_browser_user_agent
+import concurrent.futures  # noqa: F401  -- still patched by tests via watcher.concurrent.futures
+
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
@@ -975,94 +981,8 @@ class GengoWatcher:
         return _process_feed_entries_impl(self, entries)
 
     def fetch_rss(self):
-        """Fetch and parse the RSS feed from Gengo.
-
-        Retrieves the RSS feed using feedparser with an optional browser-like user agent.
-        Handles various error conditions and logs appropriate messages.
-
-        Returns:
-            feedparser.FeedParserDict: Parsed RSS feed object, or None if fetch failed.
-
-        Raises:
-            Exception: For network or parsing errors (logged internally).
-        """
-        headers = {}
-        if self.config.get("Watcher", "use_custom_user_agent"):
-            headers["User-Agent"] = get_preferred_browser_user_agent(
-                self.config, self.logger
-            )
-        self.logger.debug(
-            f"Fetching RSS feed: {self.config.get('Watcher', 'feed_url')} with headers: {headers}"
-        )
-        try:
-            feed_url = self.config.get("Watcher", "feed_url")
-            # Wrap feedparser in thread with timeout to prevent blocking
-            if self._rss_executor is None:
-                self._rss_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=1
-                )
-            if self._rss_future is not None:
-                if not self._rss_future.done():
-                    elapsed = (
-                        time.monotonic() - self._rss_future_started_at
-                        if self._rss_future_started_at is not None
-                        else 0.0
-                    )
-                    self.logger.warning(
-                        f"Skipping RSS fetch: previous fetch still running ({elapsed:.1f}s elapsed)"
-                    )
-                    return None
-                self._rss_future = None
-                self._rss_future_started_at = None
-            future = self._rss_executor.submit(
-                feedparser.parse,
-                feed_url,
-                request_headers=headers,
-            )
-            self._rss_future = future
-            self._rss_future_started_at = time.monotonic()
-            try:
-                feed = future.result(timeout=30)
-            except concurrent.futures.TimeoutError:
-                cancel_success = future.cancel()
-                self.logger.warning("RSS feed fetch timed out after 30 seconds")
-                self.logger.info(f"RSS fetch future cancelled: {cancel_success}")
-                return None
-            finally:
-                if future.done():
-                    self._rss_future = None
-                    self._rss_future_started_at = None
-            # Check HTTP status first (feedparser stores it in feed.status)
-            http_status = getattr(feed, "status", None)
-            if http_status == 429:
-                self.logger.warning(
-                    "RSS rate limited (HTTP 429). Gengo limits requests to once per 60s. "
-                    "Consider increasing check_interval in config."
-                )
-                return None
-            if http_status and http_status >= 400:
-                self.logger.error(f"RSS HTTP Error: {http_status}")
-                return None
-
-            if feed.bozo:
-                # Check if it's a parsing error due to HTML response (rate limit page)
-                exc_str = str(feed.bozo_exception).lower()
-                if "mismatched tag" in exc_str or "not well-formed" in exc_str:
-                    # Likely an HTML error page instead of RSS/XML
-                    self.logger.warning(
-                        "RSS feed returned invalid XML (likely rate-limited or error page). "
-                        "Will retry after backoff."
-                    )
-                else:
-                    self.logger.error(f"Feed Parse Error: {feed.bozo_exception}")
-                return None
-            self.logger.debug(
-                f"RSS feed fetched successfully. Entries: {len(feed.entries)}"
-            )
-            return feed
-        except Exception as e:
-            self.logger.error(f"RSS Error: {e}")
-            return None
+        """Fetch and parse the RSS feed from Gengo."""
+        return _fetch_rss_impl(self)
 
     async def _websocket_logic(self):
         """Single WebSocket connection lifecycle - delegates to watcher_ws_logic.websocket_logic."""
@@ -1373,69 +1293,8 @@ class GengoWatcher:
         )
 
     def handle_exit(self):
-        """Handle application exit"""
-        if getattr(self, "_shutdown_initiated", False):
-            return
-
-        self._shutdown_initiated = True
-        self.logger.info("GengoWatcher shutting down...")
-        self.shutdown_event.set()
-        self.check_now_event.set()
-
-        def _run_coro_safely(coro, description):
-            try:
-                loop = asyncio.new_event_loop()
-                try:
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(coro)
-                finally:
-                    asyncio.set_event_loop(None)
-                    loop.close()
-            except Exception as error:
-                self.logger.exception(
-                    "Failed to %s during shutdown: %s", description, error
-                )
-
-        if getattr(self, "job_acceptance_engine", None) and hasattr(
-            self.job_acceptance_engine, "close_session"
-        ):
-            _run_coro_safely(
-                self.job_acceptance_engine.close_session(),
-                "close job acceptance session",
-            )
-
-        if getattr(self, "cancellation_manager", None) and hasattr(
-            self.cancellation_manager, "close_session"
-        ):
-            _run_coro_safely(
-                self.cancellation_manager.close_session(),
-                "close cancellation session",
-            )
-
-        if self._all_entries_log_file:
-            try:
-                self._all_entries_log_file.flush()
-                self._all_entries_log_file.close()
-            except Exception as error:
-                self.logger.exception("Failed to close CSV log file: %s", error)
-            finally:
-                self._all_entries_log_file = None
-                self._csv_writer = None
-        if self._rss_executor is not None:
-            try:
-                self._rss_executor.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                self._rss_executor.shutdown(wait=False)
-            self._rss_executor = None
-        self._rss_future = None
-        self._rss_future_started_at = None
-
-        try:
-            self.state.save_state()
-        except Exception as error:
-            self.logger.exception("Failed to save state during shutdown: %s", error)
-
-        self.logger.info("GengoWatcher shutdown complete")
+        """Run the shutdown sequence for the watcher."""
+        return _handle_exit_impl(self)
 
     def _run_email_monitor(self):
         """Optional side-channel monitor thread - delegates to watcher_monitors.run_email_monitor."""
