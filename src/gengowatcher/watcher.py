@@ -53,17 +53,8 @@ from .watcher_debug import (
     redact_raw_ws_value as _redact_raw_ws_value,
 )
 from .watcher_job_metadata import (
-    coerce_positive_float,
-    coerce_positive_int,
     derive_lang_pair,
     derive_word_count,
-    estimate_word_count_from_reward,
-    format_lang_token,
-    normalize_lang_pair_string,
-    normalize_meta,
-    parse_lang_pair_from_title,
-    pick_meta_value,
-    resolve_tier_rate,
 )
 from .watcher_health import (
     alert_on_health_snapshot as _alert_on_health_snapshot,
@@ -1137,8 +1128,8 @@ class GengoWatcher:
                 )
                 return
 
-            lang_pair = self._derive_lang_pair(title, source_meta)
-            word_count = self._derive_word_count(title, source_meta, reward=reward)
+            lang_pair = derive_lang_pair(title, source_meta)
+            word_count = derive_word_count(title, source_meta, reward=reward)
 
             # Prepare job data for storage, callbacks, and acceptance checks
             job_data = {
@@ -1345,39 +1336,6 @@ class GengoWatcher:
                 self.on_job_added_callback(job_data)
             except Exception as e:
                 self.logger.debug(f"Error in job added callback: {e}")
-
-    def _normalize_meta(self, meta) -> dict:
-        return normalize_meta(meta)
-
-    def _pick_meta_value(self, meta: dict, keys: list[str]):
-        return pick_meta_value(meta, keys)
-
-    def _format_lang_token(self, token: str) -> str:
-        return format_lang_token(token)
-
-    def _normalize_lang_pair_string(self, value) -> str:
-        return normalize_lang_pair_string(value)
-
-    def _parse_lang_pair_from_title(self, title) -> str:
-        return parse_lang_pair_from_title(title)
-
-    def _derive_lang_pair(self, title, source_meta) -> str:
-        return derive_lang_pair(title, source_meta)
-
-    def _coerce_positive_int(self, value) -> int:
-        return coerce_positive_int(value)
-
-    def _coerce_positive_float(self, value) -> float:
-        return coerce_positive_float(value)
-
-    def _resolve_tier_rate(self, tier_value) -> float:
-        return resolve_tier_rate(tier_value)
-
-    def _estimate_word_count_from_reward(self, reward, title, source_meta) -> int:
-        return estimate_word_count_from_reward(reward, title, source_meta)
-
-    def _derive_word_count(self, title, source_meta, reward=0.0) -> int:
-        return derive_word_count(title, source_meta, reward)
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
