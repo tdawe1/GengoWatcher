@@ -43,6 +43,7 @@ from .watcher_browser_jobs import (
     run_browser_jobs_monitor,
     trigger_browser_jobs_refresh as _bj_trigger,
 )
+from .watcher_alerting import json_safe as _json_safe_impl
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
@@ -290,31 +291,18 @@ class GengoWatcher:
             )
 
     def _emit_api_event(self, event_type: str, payload: dict) -> None:
-        """Emit an in-process API websocket event without blocking monitors."""
-        # Trigger an event-driven BrowserJobs refresh when a workbench becomes
-        # visible or job details land. Keeps the monitor passive by default.
-        if event_type in {"job.visible", "job.details", "job.discovered"}:
-            trigger = getattr(self, "_browser_jobs_refresh_event", None)
-            if trigger is not None:
-                trigger.set()
-        callback = getattr(self, "on_api_event_callback", None)
-        if not callable(callback):
-            return
-        try:
-            callback(event_type, dict(payload))
-        except Exception:
-            self.logger.exception(
-                "Failed to publish API event %s for job %s",
-                event_type,
-                payload.get("id", payload.get("job_id", "unknown")),
-            )
+        """Emit an in-process API websocket event without blocking monitors.
+
+        Delegates to watcher_alerting.emit_api_event for the actual
+        implementation, while keeping the method on the class so existing
+        call sites and tests continue to work.
+        """
+        from .watcher_alerting import emit_api_event
+        emit_api_event(self, event_type, payload)
 
     @staticmethod
     def _json_safe(value):
-        try:
-            return json.loads(json.dumps(value, default=str))
-        except Exception:
-            return str(value)
+        return _json_safe_impl(value)
 
     def _build_browser_worker_client(self):
         if BrowserWorkerClient is None:
