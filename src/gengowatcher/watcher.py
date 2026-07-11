@@ -68,6 +68,12 @@ from .watcher_config_io import (
     prompt_for_config_values as _prompt_for_config_values_impl,
     is_config_complete as _is_config_complete_impl,
 )
+
+from .watcher_monitors import (
+    run_email_monitor as _run_email_monitor_impl,
+    run_website_monitor as _run_website_monitor_impl,
+    run_native_browser_listener as _run_native_browser_listener_impl,
+)
 from .watcher_alerting import json_safe as _json_safe_impl
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
@@ -1230,44 +1236,8 @@ class GengoWatcher:
         return _run_rss_monitor_impl(self)
 
     def _run_native_browser_listener(self):
-        """Run native browser listener loop - drains events into state projector."""
-        from queue import Empty
-
-        self.logger.info("Native browser listener starting...")
-        while not self.shutdown_event.is_set():
-            try:
-                # Poll native listener (publishes events)
-                if hasattr(self, "_native_listener"):
-                    self._native_listener.run_once()
-
-                # Drain events into state projector
-                if hasattr(self, "_state_projector"):
-                    try:
-                        from .event_bus import get_native_events_queue
-                        from .events import EventEnvelope
-
-                        q = get_native_events_queue()
-                        while True:
-                            try:
-                                event_dict = q.get_nowait()
-                                event = EventEnvelope.from_dict(event_dict)
-                                self._state_projector.project(event)
-                            except Empty:
-                                break
-                            except Exception as e:
-                                self.logger.debug(f"Event projection error: {e}")
-                    except Exception as e:
-                        self.logger.debug(f"Event bus drain error: {e}")
-
-            except Exception as e:
-                self.logger.debug(f"Native browser listener error: {e}")
-            capture_interval = (
-                getattr(self, "_native_listener", None).capture_interval
-                if hasattr(self, "_native_listener")
-                and hasattr(getattr(self, "_native_listener", None), "capture_interval")
-                else 0.75
-            )
-            time.sleep(capture_interval)
+        """Optional side-channel monitor thread - delegates to watcher_monitors.run_native_browser_listener."""
+        return _run_native_browser_listener_impl(self)
 
     def run_notify_test(self):
         self.logger.info("Sending a test notification...")
@@ -1468,75 +1438,10 @@ class GengoWatcher:
         self.logger.info("GengoWatcher shutdown complete")
 
     def _run_email_monitor(self):
-        """Run email monitor in a dedicated thread with its own event loop."""
-        if EmailMonitor is None:
-            self.logger.error("Email monitor dependencies not installed")
-            return
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def job_callback(job_id, title, reward, url, source):
-            await asyncio.to_thread(
-                self._process_new_job, job_id, title, reward, url, source
-            )
-
-        self.email_monitor = EmailMonitor(
-            config=self.config,
-            logger=self.logger,
-            job_callback=job_callback,
-            shutdown_event=asyncio.Event(),
-        )
-
-        def check_shutdown():
-            while not self.shutdown_event.is_set():
-                time.sleep(1)
-            if self.email_monitor:
-                loop.call_soon_threadsafe(self.email_monitor.shutdown_event.set)
-
-        shutdown_thread = threading.Thread(target=check_shutdown, daemon=True)
-        shutdown_thread.start()
-
-        try:
-            loop.run_until_complete(self.email_monitor.start())
-        except Exception as e:
-            self.logger.error(f"Email monitor error: {e}")
-        finally:
-            loop.close()
+        """Optional side-channel monitor thread - delegates to watcher_monitors.run_email_monitor."""
+        return _run_email_monitor_impl(self)
 
     def _run_website_monitor(self):
-        """Run website monitor in a dedicated thread with its own event loop."""
-        if WebsiteMonitor is None:
-            self.logger.error("Website monitor dependencies not installed (playwright)")
-            return
+        """Optional side-channel monitor thread - delegates to watcher_monitors.run_website_monitor."""
+        return _run_website_monitor_impl(self)
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def job_callback(job_id, title, reward, url, source):
-            await asyncio.to_thread(
-                self._process_new_job, job_id, title, reward, url, source
-            )
-
-        self.website_monitor = WebsiteMonitor(
-            config=self.config,
-            logger=self.logger,
-            job_callback=job_callback,
-            shutdown_event=asyncio.Event(),
-        )
-
-        def check_shutdown():
-            while not self.shutdown_event.is_set():
-                time.sleep(1)
-            if self.website_monitor:
-                loop.call_soon_threadsafe(self.website_monitor.shutdown_event.set)
-
-        shutdown_thread = threading.Thread(target=check_shutdown, daemon=True)
-        shutdown_thread.start()
-
-        try:
-            loop.run_until_complete(self.website_monitor.start())
-        except Exception as e:
-            self.logger.error(f"Website monitor error: {e}")
-        finally:
-            loop.close()
