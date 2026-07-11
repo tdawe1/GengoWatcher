@@ -44,6 +44,7 @@ from .watcher_browser_jobs import (
     trigger_browser_jobs_refresh as _bj_trigger,
 )
 from .watcher_feed import extract_reward as _extract_reward_impl, log_all_entries as _log_all_entries_impl
+from .watcher_job_processor import process_new_job as _process_new_job_impl
 from .watcher_ws_debug import (
     capture_raw_ws_message as _capture_raw_ws_message_impl,
     get_raw_ws_messages as _get_raw_ws_messages_impl,
@@ -60,10 +61,7 @@ from .state import AppState
 from .translation_app_queue import (
     submit_translation_app_task as _submit_translation_app_task,
 )
-from .watcher_job_metadata import (
-    derive_lang_pair,
-    derive_word_count,
-)
+
 from .watcher_health import (
     alert_on_health_snapshot as _alert_on_health_snapshot,
     build_health_snapshot,
@@ -974,238 +972,12 @@ class GengoWatcher:
     def _process_new_job(self, job_id, title, reward, url, source, source_meta=None):
         """Process a newly discovered job from RSS or WebSocket sources.
 
-        Handles job filtering, notification, storage, and auto-acceptance logic.
-        Updates session statistics and ensures thread-safe access to shared state.
-
-        Args:
-            job_id: Unique identifier for the job.
-            title: Job title/description.
-            reward: Job reward amount in USD.
-            url: URL to access the job.
-            source: Source of the job discovery ("RSS" or "WebSocket").
-            source_meta: Optional metadata from the source (entry dict, websocket payload, etc.).
+        Delegates to watcher_job_processor.process_new_job for the actual
+        implementation, while keeping the method on the class so call
+        sites and tests (web.py:410, watcher.py:793/1481/1922/2718,
+        tests/test_watcher_enhanced.py:173) continue to work unchanged.
         """
-        self.logger.debug(
-            f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
-        )
-        with self._seen_jobs_lock:
-            if job_id in self._seen_jobs_session:
-                return
-            min_reward = self.config.get("Watcher", "min_reward")
-            if min_reward > 0.0 and reward < min_reward:
-                self.logger.warning(
-                    f"Job '{title}' (US$ {reward:.2f}) ignored due to [yellow]min_reward filter[/]."
-                )
-                return
-
-            lang_pair = derive_lang_pair(title, source_meta)
-            word_count = derive_word_count(title, source_meta, reward=reward)
-
-            # Prepare job data for storage, callbacks, and acceptance checks
-            job_data = {
-                "id": str(job_id),
-                "title": title,
-                "reward": float(reward),
-                "currency": "USD",
-                "url": url,
-                "timestamp": time.time(),
-                "source": source,
-                "lang_pair": lang_pair,
-                "word_count": word_count,
-                "source_meta": self._json_safe(source_meta or {}),
-                "lifecycle_state": "detected",
-                "acceptance_state": "not_requested",
-                "workflow_state": "new",
-            }
-
-            try:
-                inserted = self.state.add_job(job_data)
-                if inserted is False:
-                    # Job is a duplicate, bail out immediately
-                    return
-
-                # Job was successfully inserted, proceed with all side effects
-                self.logger.info(
-                    f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
-                )
-                self.show_notification(
-                    message=title,
-                    title="New Gengo Job Available!",
-                    play_sound=True,
-                    open_link=True,
-                    url=url,
-                )
-
-                # Update bookkeeping after successful add_job
-                self._seen_jobs_session.add(job_id)
-                self.state.seen_job_ids.append(job_id)
-                self.state.total_new_entries_found += 1
-                self.session_new_entries += 1
-                self.session_total_value += reward
-            except Exception as e:
-                self.logger.warning(f"Failed to store job in state: {e}")
-                return
-
-        eligible_for_auto_accept = self.job_acceptance_engine.is_job_eligible(job_data)
-        allow_http_fallback = self.config.getboolean(
-            "AutoAccept", "allow_http_fallback", fallback=False
-        )
-        self._emit_webhook_event("job.discovered", job_data)
-        self._emit_api_event("job.discovered", job_data)
-        self._emit_api_event("job.details", job_data)
-
-        if self.browser_worker_enabled and eligible_for_auto_accept:
-            self.logger.info(
-                "Routing job %s to browser worker via local client", job_id
-            )
-            if not self.browser_worker_client:
-                if allow_http_fallback:
-                    self.logger.error(
-                        "Browser worker is enabled for job %s but the local client is unavailable;"
-                        " falling back to standard acceptance path",
-                        job_id,
-                    )
-                else:
-                    self.logger.error(
-                        "Browser worker is enabled for job %s but the local client is unavailable;"
-                        " HTTP fallback is disabled",
-                        job_id,
-                    )
-            else:
-                try:
-                    self.browser_worker_client.submit_job(
-                        url,
-                        source,
-                        metadata=job_data,
-                    )
-                    accept_requested_payload = {
-                        **job_data,
-                        "accept_path": "browser_worker",
-                        "acceptance_state": "requested",
-                        "lifecycle_state": "accept_requested",
-                    }
-                    self._emit_webhook_event(
-                        "job.accept_requested",
-                        accept_requested_payload,
-                    )
-                    self.state.update_job(
-                        str(job_id),
-                        {
-                            "acceptance_state": "requested",
-                            "lifecycle_state": "accept_requested",
-                            "accept_path": "browser_worker",
-                        },
-                    )
-                    self._emit_api_event(
-                        "job.accept_requested",
-                        accept_requested_payload,
-                    )
-                    self.state.save_state()
-                    if self.on_job_added_callback:
-                        try:
-                            self.on_job_added_callback(job_data)
-                        except Exception as e:
-                            self.logger.debug(f"Error in job added callback: {e}")
-                    return
-                except Exception as e:
-                    if allow_http_fallback:
-                        self.logger.error(
-                            "Failed to submit job %s to browser worker: %s; falling back to"
-                            " standard acceptance path",
-                            job_id,
-                            e,
-                        )
-                    else:
-                        self.logger.error(
-                            "Failed to submit job %s to browser worker: %s; HTTP fallback is disabled",
-                            job_id,
-                            e,
-                        )
-
-        # Consider cancelling a current job if this one is better
-        try:
-            if (
-                self.cancellation_manager.cancellation_enabled
-                and self.cancellation_manager.should_cancel_for_job(
-                    float(job_data.get("reward", 0.0)), str(job_data.get("id"))
-                )
-            ):
-                self.logger.info(
-                    "Better opportunity detected - scheduling cancellation of current job before accepting new job"
-                )
-                threading.Thread(
-                    target=self._async_cancel_current_job_wrapper,
-                    args=(job_data,),
-                    daemon=True,
-                ).start()
-        except Exception as e:
-            self.logger.error(f"Error while evaluating job cancellation: {e}")
-
-        # Check if job should be auto-accepted
-        if eligible_for_auto_accept:
-            if not allow_http_fallback:
-                self.logger.info(
-                    "Job %s meets auto-accept criteria, but standard HTTP acceptance is disabled",
-                    job_id,
-                )
-                failed_payload = {
-                    **job_data,
-                    "acceptance_state": "failed",
-                    "lifecycle_state": "accept_failed",
-                    "accept_path": "native_browser",
-                    "reason": "http fallback disabled",
-                }
-                self.state.update_job(
-                    str(job_id),
-                    {
-                        "acceptance_state": "failed",
-                        "lifecycle_state": "accept_failed",
-                        "accept_path": "native_browser",
-                        "accept_failure_reason": "http fallback disabled",
-                    },
-                )
-                self.state.save_state()
-                self._emit_webhook_event("job.accept_failed", failed_payload)
-                self._emit_api_event("job.accept_failed", failed_payload)
-                self._submit_job_to_translation_app_async(job_data)
-                return
-
-            self.logger.info(
-                f"Job {job_id} meets auto-accept criteria, queuing for acceptance"
-            )
-            accept_requested_payload = {
-                **job_data,
-                "accept_path": "standard",
-                "acceptance_state": "requested",
-                "lifecycle_state": "accept_requested",
-            }
-            self._emit_webhook_event(
-                "job.accept_requested",
-                accept_requested_payload,
-            )
-            self.state.update_job(
-                str(job_id),
-                {
-                    "acceptance_state": "requested",
-                    "lifecycle_state": "accept_requested",
-                    "accept_path": "standard",
-                },
-            )
-            self._emit_api_event("job.accept_requested", accept_requested_payload)
-            threading.Thread(
-                target=self._async_job_acceptance_wrapper, args=(job_data,), daemon=True
-            ).start()
-        else:
-            self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
-
-        self._submit_job_to_translation_app_async(job_data)
-        self.state.save_state()
-
-        if self.on_job_added_callback:
-            try:
-                self.on_job_added_callback(job_data)
-            except Exception as e:
-                self.logger.debug(f"Error in job added callback: {e}")
+        return _process_new_job_impl(self, job_id, title, reward, url, source, source_meta)
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
         """
