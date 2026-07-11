@@ -26,12 +26,10 @@ import websockets
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatusCode
 
 from .browser_session import (
-    GENGO_AVAILABLE_JOBS_URL,
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     fetch_browser_session_snapshot_sync,
     format_cookies_as_header,
-    inspect_available_jobs_page_sync,
     open_url_in_browser_debug_sync,  # noqa: F401  -- still patched by tests via watcher.<name>
     refresh_browser_page_activity_sync,
 )
@@ -41,6 +39,10 @@ from .browser_debug_launcher import (  # noqa: F401  -- re-exported for tests / 
     maybe_launch_managed_firefox_debug,
 )
 from .watcher_firefox import open_in_managed_firefox_debug_session
+from .watcher_browser_jobs import (
+    run_browser_jobs_monitor,
+    trigger_browser_jobs_refresh as _bj_trigger,
+)
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
@@ -2438,39 +2440,7 @@ class GengoWatcher:
         self.logger.info("Watcher parent thread shutting down.")
 
     def _run_browser_jobs_monitor(self):
-        self.logger.info(
-            "Browser available-jobs monitor thread started (event-driven, idle by default)."
-        )
-        debug_url = str(self.config.get("WebSocket", "browser_debug_url", fallback=""))
-        if not debug_url:
-            self.browser_jobs_monitor_status = "Disabled"
-            return
-
-        allow_navigation = self._browser_jobs_navigation_enabled()
-        if allow_navigation:
-            self._open_in_managed_firefox_debug_session(GENGO_AVAILABLE_JOBS_URL)
-        self.browser_jobs_monitor_status = "Idle (event-driven)"
-        # No fixed timer. The monitor wakes when:
-        #   1. The native browser listener publishes a workbench-visible event
-        #      (handled by watcher._emit_api_event setting the refresh event),
-        #   2. The WS monitor or HTTP monitor surfaces a job.discovered,
-        #   3. An explicit refresh is requested via trigger_browser_jobs_refresh().
-        idle_cap_seconds = self._get_browser_jobs_idle_cap_seconds()
-        while not self.shutdown_event.is_set():
-            triggered = self._browser_jobs_refresh_event.wait(timeout=idle_cap_seconds)
-            if self.shutdown_event.is_set():
-                break
-            if not triggered:
-                # Idle cap elapsed without a trigger; perform a passive scrape
-                # only to validate the connection is still healthy. No
-                # navigation, no interaction.
-                self._run_browser_jobs_passive_keepalive(debug_url)
-                continue
-            self._browser_jobs_refresh_event.clear()
-            self._run_browser_jobs_triggered_refresh(debug_url, allow_navigation)
-
-        self.browser_jobs_monitor_status = "Stopped"
-        self.logger.info("Browser available-jobs monitor thread stopped.")
+        return run_browser_jobs_monitor(self)
 
     def _get_browser_jobs_idle_cap_seconds(self) -> float:
         """Long sleep between idle-cap keepalive pings. Default 30 minutes."""
@@ -2480,53 +2450,20 @@ class GengoWatcher:
         )
 
     def trigger_browser_jobs_refresh(self, *, reason: str = "manual") -> None:
-        """Public hook to wake the BrowserJobs monitor from external triggers.
-
-        Called from TUI commands, the WS monitor's sync-fallback path, and any
-        other producer that wants an immediate refresh.
-        """
-        trigger = getattr(self, "_browser_jobs_refresh_event", None)
-        if trigger is None:
-            return
-        self.logger.debug("BrowserJobs refresh triggered (%s)", reason)
-        trigger.set()
+        """Public hook to wake the BrowserJobs monitor from external triggers."""
+        return _bj_trigger(self, reason=reason)
 
     def _run_browser_jobs_triggered_refresh(
         self,
         debug_url: str,
         allow_navigation: bool,
     ) -> None:
-        """One-shot refresh triggered by a workbench-visible / discovered event.
-
-        Always runs in passive mode (no random browse navigation). When
-        allow_navigation is true and a refresh is due, the page is force-
-        refreshed — but the monitor never drives the tab to a different page.
-        """
-        force_refresh = allow_navigation
-        browse_url = None
-        self._run_browser_jobs_scrape(
-            debug_url,
-            force_refresh=force_refresh,
-            browse_url=browse_url,
-            interact=False,
-            allow_navigation=allow_navigation,
-            is_keepalive=False,
-        )
+        from .watcher_browser_jobs import run_browser_jobs_triggered_refresh
+        return run_browser_jobs_triggered_refresh(self, debug_url, allow_navigation)
 
     def _run_browser_jobs_passive_keepalive(self, debug_url: str) -> None:
-        """Idle-cap keepalive: lightweight passive eval, no interaction.
-
-        This exists only to detect that the workbench tab still exists and is
-        responsive. No navigation, no DOM interaction, no mouse activity.
-        """
-        self._run_browser_jobs_scrape(
-            debug_url,
-            force_refresh=False,
-            browse_url=None,
-            interact=False,
-            allow_navigation=False,
-            is_keepalive=True,
-        )
+        from .watcher_browser_jobs import run_browser_jobs_passive_keepalive
+        return run_browser_jobs_passive_keepalive(self, debug_url)
 
     def _run_browser_jobs_scrape(
         self,
@@ -2538,40 +2475,16 @@ class GengoWatcher:
         allow_navigation: bool,
         is_keepalive: bool,
     ) -> None:
-        try:
-            snapshot = inspect_available_jobs_page_sync(
-                debug_url,
-                force_refresh=force_refresh,
-                browse_url=browse_url,
-                interact=interact,
-                allow_navigation=allow_navigation,
-            )
-            self.browser_jobs_last_check_time = time.time()
-            self.browser_jobs_last_action = snapshot.action
-            if snapshot.action == "manual_browse":
-                self.browser_jobs_monitor_status = "Paused: browser in manual use"
-            elif is_keepalive:
-                self.browser_jobs_monitor_status = "Idle (keepalive ok)"
-            else:
-                self.browser_jobs_monitor_status = "Refreshed (triggered)"
-
-            if is_keepalive or snapshot.action == "manual_browse":
-                return
-
-            processed = self._process_browser_jobs_snapshot(snapshot)
-            if processed:
-                self.browser_jobs_found_session += processed
-                self.logger.info(
-                    "Browser available-jobs page reported %d candidate job(s).",
-                    processed,
-                )
-        except Exception as exc:
-            self.browser_jobs_monitor_status = f"Error: {exc}"
-            log_method = self.logger.warning
-            log_method(
-                "Browser available-jobs monitor scrape failed: %s",
-                exc,
-            )
+        from .watcher_browser_jobs import _run_browser_jobs_scrape as _bj_scrape
+        return _bj_scrape(
+            self,
+            debug_url,
+            force_refresh=force_refresh,
+            browse_url=browse_url,
+            interact=interact,
+            allow_navigation=allow_navigation,
+            is_keepalive=is_keepalive,
+        )
 
     def _run_rss_monitor(self):
         self.logger.debug("Starting RSS monitor thread.")
