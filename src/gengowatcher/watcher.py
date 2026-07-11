@@ -2,15 +2,12 @@ __version__ = "2.9.3"
 __release_date__ = "2026-07-08"
 
 import asyncio
-import csv
 import logging
 import os
 import random
-import subprocess
 import sys
 import threading
 import time
-import webbrowser
 from typing import Any, Callable, Optional
 from collections import deque
 from pathlib import Path
@@ -18,6 +15,8 @@ from urllib.parse import urlparse
 
 import websockets
 
+import subprocess  # noqa: F401  -- still patched by tests via watcher.subprocess
+import webbrowser  # noqa: F401  -- still patched by tests via watcher.webbrowser
 import feedparser  # noqa: F401  -- still patched by tests via watcher.feedparser
 
 from .browser_session import (
@@ -84,6 +83,13 @@ from .watcher_worker_events import (
     run_browser_worker_event_listener as _run_browser_worker_event_listener_impl,
     on_job_accepted as _on_job_accepted_impl,
 )
+
+from .watcher_user_feedback import (
+    _setup_csv_logging as _setup_csv_logging_impl,
+    show_notification as _show_notification_impl,
+    open_in_browser as _open_in_browser_impl,
+)
+
 from .watcher_alerting import json_safe as _json_safe_impl
 import concurrent.futures  # noqa: F401  -- still patched by tests via watcher.concurrent.futures
 
@@ -101,7 +107,6 @@ from .watcher_health import (
 )
 from .webhooks import WebhookAuditLogger, WebhookDispatcher
 
-from . import notifier
 
 try:
     from .browser_worker.client import BrowserWorkerClient
@@ -765,34 +770,9 @@ class GengoWatcher:
     def clear_raw_ws_messages(self):
         """Clear the raw WebSocket message buffer."""
         return _clear_raw_ws_messages_impl(self)
-
     def _setup_csv_logging(self):
-        """
-        Initialise CSV logging for recording RSS feed entries.
-
-        Creates the configured log directory if missing, opens the log file for appending and initialises a CSV writer. If the file is empty a header row ("timestamp", "title", "reward", "link", "summary") is written. If the file cannot be opened, CSV logging is disabled and an error is logged.
-        """
-        self.logger.debug("Setting up CSV logging.")
-        try:
-            log_path_str = self.config.get("Paths", "all_entries_log")
-            if not log_path_str or not isinstance(log_path_str, (str, Path)):
-                self.logger.error("all_entries_log path not configured or invalid")
-                return
-            log_path = Path(str(log_path_str))
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            self._all_entries_log_file = open(
-                log_path, "a", newline="", encoding="utf-8"
-            )
-            self._csv_writer = csv.writer(self._all_entries_log_file)
-            if log_path.stat().st_size == 0:
-                self._csv_writer.writerow(
-                    ["timestamp", "title", "reward", "link", "summary"]
-                )
-            self.logger.debug(f"CSV logging enabled at {log_path}")
-        except IOError as e:
-            self.logger.error(f"Could not open all_entries_log file: {e}")
-            self._all_entries_log_file = None
-            self._csv_writer = None
+        """Initialise CSV logging for RSS feed entries."""
+        return _setup_csv_logging_impl(self)
 
     def show_notification(
         self,
@@ -803,27 +783,9 @@ class GengoWatcher:
         url=None,
         sound_file=None,
     ):
-        """
-        Send a desktop notification and optionally play a sound or open a URL.
+        """Send a desktop notification + optional sound + browser open."""
+        return _show_notification_impl(self, message, title=title, play_sound=play_sound, open_link=open_link, url=url, sound_file=sound_file)
 
-        Parameters:
-            message (str): Notification message body.
-            title (str): Notification title; defaults to "GengoWatcher".
-            play_sound (bool): If True and sound is enabled in configuration, play the configured sound.
-            open_link (bool): If True and `url` is provided, open the URL in the configured browser.
-            url (str | None): URL to open when `open_link` is True; ignored if not provided.
-            sound_file (str | None): Optional override sound path; defaults to Paths.sound_file.
-        """
-        if self.config.get("Watcher", "enable_notifications"):
-            icon_path = self.config.get("Paths", "notification_icon_path")
-            notifier.send_notification(title, message, icon_path)
-
-        if play_sound and self.config.get("Watcher", "enable_sound"):
-            chosen_sound = sound_file or self.config.get("Paths", "sound_file")
-            notifier.play_sound(chosen_sound)
-
-        if open_link and url:
-            self.open_in_browser(url)
 
     @staticmethod
     def _is_gengo_url(url: str) -> bool:
@@ -833,30 +795,10 @@ class GengoWatcher:
 
     def _open_in_managed_firefox_debug_session(self, url: str) -> bool:
         return open_in_managed_firefox_debug_session(self, url)
-
     def open_in_browser(self, url):
-        """
-        Open the given URL using the configured browser if available, otherwise use the system default browser.
+        """Open the given URL using the configured browser if available."""
+        return _open_in_browser_impl(self, url)
 
-        Parameters:
-            url (str): The URL to open. If the configured `browser_args` include formatting placeholders (for example `{url}`), they will be formatted with this URL.
-        """
-        self.logger.debug(f"Opening URL in browser: {url}")
-        try:
-            if self._open_in_managed_firefox_debug_session(str(url)):
-                return
-
-            browser_path_str = self.config.get("Paths", "browser_path")
-            if not browser_path_str or not Path(browser_path_str).is_file():
-                webbrowser.open(url)
-            else:
-                args = [
-                    arg.format(url=url)
-                    for arg in self.config.get("Paths", "browser_args").split()
-                ]
-                subprocess.Popen([str(browser_path_str)] + args)
-        except Exception as e:
-            self.logger.error(f"Browser Error: {e}")
 
     def _extract_reward(self, entry) -> float:
         return _extract_reward_impl(entry)
