@@ -59,6 +59,8 @@ from .watcher_ws_debug import (
     handle_browser_worker_telemetry_line as _handle_telemetry_line_impl,
     handle_browser_worker_telemetry_payload as _handle_telemetry_payload_impl,
 )
+
+from .watcher_ws_monitor import run_websocket_monitor as _run_websocket_monitor_impl
 from .watcher_alerting import json_safe as _json_safe_impl
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
@@ -1641,151 +1643,8 @@ class GengoWatcher:
             self.websocket_status = "Offline"
 
     def _run_websocket_monitor(self):
-        """
-        Manage the persistent WebSocket connection lifecycle, including configuration validation, connection attempts, reconnection with exponential backoff, and orderly shutdown.
-
-        On each loop iteration this method:
-        - Verifies required WebSocket credentials are configured; if missing, marks the WebSocket as disabled and waits for shutdown.
-        - Runs the asynchronous connection logic and records the last close code and reason.
-        - Distinguishes clean closes (codes 1000/1001) from abnormal closes and applies exponential backoff (bounded by the configured `Network.max_backoff`) before reconnecting.
-        - Observes `shutdown_event` to exit promptly and updates `websocket_status` to reflect current state.
-
-        This method does not return a value.
-        """
-        self.logger.debug("Starting WebSocket monitor thread.")
-        # Exponential backoff on reconnect to avoid hammering server
-        base_backoff = 5
-        backoff = base_backoff
-        max_backoff = int(self.config.get("Network", "max_backoff"))
-        clean_close_backoff_min = self.config.getint(
-            "Network", "clean_close_backoff_min", fallback=20
-        )
-        clean_close_backoff_max = self.config.getint(
-            "Network", "clean_close_backoff_max", fallback=45
-        )
-        reconnect_jitter_max = self.config.getint(
-            "Network", "reconnect_jitter_max", fallback=5
-        )
-        session_placeholder = "REPLACE_WITH_YOUR_SESSION_TOKEN"
-        key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
-        while not self.shutdown_event.is_set():
-            self._websocket_session_refresh_requested = False
-            self._websocket_sync_failed = False
-            self._websocket_sync_failure_reason = None
-
-            debug_url = self.config.get("WebSocket", "browser_debug_url")
-            if debug_url:
-                self._sync_session_from_browser(
-                    fail_hard=self.config.getboolean(
-                        "WebSocket", "session_sync_fail_hard", fallback=True
-                    ),
-                    alert_on_failure=self.config.getboolean(
-                        "WebSocket",
-                        "session_sync_alert_on_failure",
-                        fallback=True,
-                    ),
-                )
-                if self._websocket_sync_failed:
-                    self.logger.error(
-                        "WebSocket monitor stopped after browser session sync failure: %s",
-                        self._websocket_sync_failure_reason,
-                    )
-                    self.websocket_status = "Session Sync Failed"
-                    break
-
-            session_token = self.config.get("WebSocket", "user_session")
-            user_key = self.config.get("WebSocket", "user_key")
-
-            # Validate session token (required)
-            if not session_token or session_token == session_placeholder:
-                self.logger.warning(
-                    "WebSocket disabled: Please set 'user_session' in config.toml."
-                )
-                self.websocket_status = "Disabled"
-                self.shutdown_event.wait()
-                break
-
-            # Validate user_key (optional but recommended)
-            if user_key == key_placeholder:
-                self.logger.info(
-                    "WebSocket: user_key is set to placeholder value. "
-                    "Authentication will rely only on session token."
-                )
-
-            try:
-                self.logger.debug("Running websocket logic (asyncio.run)")
-                self.websocket_last_close_code = None
-                self.websocket_last_close_reason = None
-                session_started_at = time.time()
-                asyncio.run(self._websocket_logic())
-                session_duration = time.time() - session_started_at
-                if self.shutdown_event.is_set():
-                    break
-                if self.websocket_status != "Disabled":
-                    self.websocket_reconnect_count += 1
-                if self._websocket_sync_failed:
-                    self.logger.error(
-                        "WebSocket monitor stopped after browser session sync failure: %s",
-                        self._websocket_sync_failure_reason,
-                    )
-                    self.websocket_status = "Session Sync Failed"
-                    break
-                if self._websocket_session_refresh_requested:
-                    self.logger.info(
-                        "WebSocket: Reconnecting immediately after browser session refresh."
-                    )
-                    backoff = base_backoff
-                    continue
-                self.websocket_status = "Offline"
-                close_code = self.websocket_last_close_code
-                close_reason = self.websocket_last_close_reason
-                normal_close = close_code in (1000, 1001)
-                if normal_close:
-                    wait_time = min(
-                        max_backoff,
-                        random.uniform(
-                            clean_close_backoff_min, clean_close_backoff_max
-                        ),
-                    )
-                    # If we churn quickly, extend the delay to avoid hammering the endpoint.
-                    if session_duration < 10:
-                        wait_time = max(wait_time, clean_close_backoff_max)
-                        self.logger.warning(
-                            "WebSocket connection closed cleanly after %.1fs. "
-                            "Backing off to %.1fs before reconnecting.",
-                            session_duration,
-                            wait_time,
-                        )
-                    else:
-                        self.logger.info(
-                            "WebSocket connection closed cleanly (code=%s, reason=%s). "
-                            "Reconnecting in %.1f seconds...",
-                            close_code,
-                            close_reason,
-                            wait_time,
-                        )
-                    backoff = base_backoff
-                else:
-                    wait_time = min(
-                        max_backoff, backoff + random.uniform(0, reconnect_jitter_max)
-                    )
-                    self.logger.info(
-                        f"WebSocket connection closed. Reconnecting in {wait_time:.1f} seconds..."
-                    )
-                    backoff = min(backoff * 2, max_backoff)
-                if self.shutdown_event.wait(wait_time):
-                    break
-            except Exception as e:
-                self.logger.error(f"Critical error in WebSocket runner: {e}")
-                wait_time = min(
-                    max_backoff, backoff + random.uniform(0, reconnect_jitter_max)
-                )
-                if self.shutdown_event.wait(wait_time):
-                    break
-                backoff = min(backoff * 2, max_backoff)
-        self.logger.info("WebSocket monitor thread stopped.")
-        if not self._websocket_sync_failed:
-            self.websocket_status = "Stopped"
+        """Persistent WebSocket connection lifecycle - delegates to watcher_ws_monitor.run_websocket_monitor."""
+        return _run_websocket_monitor_impl(self)
 
     def run(self):
         self.logger.debug("Starting watcher parent thread.")
