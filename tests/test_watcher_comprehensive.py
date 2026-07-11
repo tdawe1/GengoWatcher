@@ -199,7 +199,7 @@ class TestWatcherInitialization:
         logger = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync"
+            "gengowatcher.watcher_session_sync.fetch_browser_session_snapshot_sync"
         ) as mock_fetch:
             GengoWatcher(mock_config, mock_state, logger)
 
@@ -227,7 +227,7 @@ class TestWatcherInitialization:
         )
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.watcher_session_sync.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-token",
                 user_agent="Helium Browser",
@@ -290,7 +290,7 @@ class TestWatcherInitialization:
         watcher_instance.show_notification = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.watcher_session_sync.fetch_browser_session_snapshot_sync",
             side_effect=RuntimeError("browser gone"),
         ):
             changed = watcher_instance._sync_session_from_browser(
@@ -316,7 +316,7 @@ class TestWatcherInitialization:
         watcher_instance.show_notification = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.watcher_session_sync.fetch_browser_session_snapshot_sync",
             side_effect=RuntimeError("browser gone"),
         ):
             changed = watcher_instance._sync_session_from_browser(
@@ -347,7 +347,7 @@ class TestWatcherInitialization:
         )
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.watcher_session_sync.fetch_browser_session_snapshot_sync",
             side_effect=RuntimeError("browser gone"),
         ):
             changed = watcher_instance._sync_session_from_browser(
@@ -374,7 +374,7 @@ class TestWatcherInitialization:
         )
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.watcher_session_sync.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-token",
                 user_agent="Helium Browser",
@@ -400,7 +400,7 @@ class TestWatcherInitialization:
 
         with (
             patch(
-                "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+                "gengowatcher.watcher_session_sync.fetch_browser_session_snapshot_sync",
                 side_effect=[
                     RuntimeError("attach failed"),
                     MagicMock(
@@ -411,11 +411,11 @@ class TestWatcherInitialization:
                 ],
             ) as mock_fetch,
             patch(
-                "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
+                "gengowatcher.watcher_session_sync.maybe_launch_managed_firefox_debug",
                 return_value=True,
             ) as mock_launch,
             patch(
-                "gengowatcher.watcher.get_firefox_debug_retry_window",
+                "gengowatcher.watcher_session_sync.get_firefox_debug_retry_window",
                 return_value=(2.0, 0.01),
             ),
             patch("gengowatcher.watcher.time.sleep"),

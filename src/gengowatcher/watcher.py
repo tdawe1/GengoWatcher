@@ -57,6 +57,10 @@ from .watcher_ws_debug import (
 
 from .watcher_ws_monitor import run_websocket_monitor as _run_websocket_monitor_impl
 from .watcher_ws_logic import websocket_logic as _websocket_logic_impl
+from .watcher_session_sync import (
+    sync_session_from_browser as _sync_session_from_browser_impl,
+    sync_session_before_websocket_connect as _sync_session_before_websocket_connect_impl,
+)
 from .watcher_alerting import json_safe as _json_safe_impl
 from .browser_detector import get_preferred_browser_user_agent
 from .config import AppConfig
@@ -452,118 +456,11 @@ class GengoWatcher:
         alert_on_failure: bool = False,
     ) -> bool:
         """Refresh the configured websocket session token from a live browser."""
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        if not debug_url:
-            return False
-
-        snapshot = None
-        sync_error: Exception | None = None
-        try:
-            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
-        except Exception as exc:
-            sync_error = exc
-            if maybe_launch_managed_firefox_debug(
-                self.config,
-                str(debug_url),
-                logger=self.logger,
-            ):
-                timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(
-                    self.config
-                )
-                deadline = time.monotonic() + timeout_sec
-                last_exc: Exception = exc
-                while time.monotonic() < deadline:
-                    time.sleep(retry_interval_sec)
-                    try:
-                        snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
-                        break
-                    except Exception as retry_exc:
-                        last_exc = retry_exc
-                sync_error = last_exc
-
-        if snapshot is None:
-            self._browser_session_last_sync_ts = time.time()
-            self._browser_session_last_sync_state = "error"
-            error_detail = str(sync_error or "browser session sync failed")
-            self._browser_session_last_sync_detail = error_detail
-            self.logger.warning(
-                "Browser session sync failed for %s: %s",
-                debug_url,
-                error_detail,
-            )
-            if self._has_cached_websocket_credentials():
-                self.logger.warning(
-                    "Browser session sync failed for %s, but cached WebSocket"
-                    " credentials are present. Continuing with the last known"
-                    " session instead of stopping realtime monitoring.",
-                    debug_url,
-                )
-                self._websocket_sync_failed = False
-                self._websocket_sync_failure_reason = None
-                return False
-            if alert_on_failure:
-                sound_file = self.config.get(
-                    "Paths", "browser_session_sync_failed_sound_file"
-                )
-                self.show_notification(
-                    message=f"Browser session sync failed: {error_detail}",
-                    title="GengoWatcher Session Sync Failed",
-                    play_sound=True,
-                    sound_file=sound_file or None,
-                )
-            if fail_hard:
-                self._websocket_sync_failed = True
-                self._websocket_sync_failure_reason = error_detail
-                self.websocket_status = "Session Sync Failed"
-            return False
-
-        current_token = self.config.get("WebSocket", "user_session")
-        current_browser_user_agent = self.config.get("Network", "browser_user_agent")
-        current_accept_language = self.config.get("Network", "browser_accept_language")
-        browser_token = snapshot.session_token
-        browser_user_agent = str(snapshot.user_agent or "").strip()
-        browser_accept_language = str(snapshot.accept_language or "").strip()
-        self._browser_cookies = snapshot.cookies or []
-        self._browser_session_last_sync_ts = time.time()
-        self._browser_session_last_sync_state = "healthy"
-        changed_fields = []
-        if browser_token != current_token:
-            self.config.set("WebSocket", "user_session", browser_token)
-            changed_fields.append("user_session")
-        if (
-            browser_user_agent
-            and browser_user_agent != str(current_browser_user_agent or "").strip()
-        ):
-            self.config.set("Network", "browser_user_agent", browser_user_agent)
-            changed_fields.append("browser_user_agent")
-        if (
-            browser_accept_language
-            and browser_accept_language != str(current_accept_language or "").strip()
-        ):
-            self.config.set(
-                "Network", "browser_accept_language", browser_accept_language
-            )
-            changed_fields.append("browser_accept_language")
-        if str(debug_url) != str(
-            self.config.get("WebSocket", "browser_debug_url") or ""
-        ):
-            self.config.set("WebSocket", "browser_debug_url", str(debug_url))
-            changed_fields.append("browser_debug_url")
-
-        if changed_fields:
-            self.config.save_config()
-            self._browser_session_last_sync_detail = (
-                f"updated {', '.join(changed_fields)}"
-            )
-        else:
-            self._browser_session_last_sync_detail = "unchanged"
-        self.logger.info(
-            "Updated WebSocket session settings from live browser session at %s "
-            "(session=%s)",
-            debug_url,
-            self._mask_secret(browser_token),
+        return _sync_session_from_browser_impl(
+            self,
+            fail_hard=fail_hard,
+            alert_on_failure=alert_on_failure,
         )
-        return bool(changed_fields)
 
     def _pick_quiet_socket_sync_delay_seconds(self) -> float:
         min_delay = float(
@@ -626,30 +523,7 @@ class GengoWatcher:
 
     def _sync_session_before_websocket_connect(self) -> bool:
         """Try to sync browser session once before building websocket auth."""
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        if not debug_url:
-            return True
-
-        sync_fail_hard = self.config.getboolean(
-            "WebSocket", "session_sync_fail_hard", fallback=True
-        )
-        sync_alert_on_failure = self.config.getboolean(
-            "WebSocket",
-            "session_sync_alert_on_failure",
-            fallback=True,
-        )
-        self.logger.info(
-            "WebSocket: Syncing browser session from %s before connecting.",
-            debug_url,
-        )
-        self._sync_session_from_browser(
-            fail_hard=sync_fail_hard,
-            alert_on_failure=sync_alert_on_failure,
-        )
-        if self._websocket_sync_failed:
-            self.logger.error("WebSocket: Browser session sync failed before connect.")
-            return False
-        return True
+        return _sync_session_before_websocket_connect_impl(self)
 
     def _is_gengo_rss_feed(self) -> bool:
         feed_url = str(self.config.get("Watcher", "feed_url") or "")
