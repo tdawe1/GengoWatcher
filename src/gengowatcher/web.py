@@ -67,6 +67,7 @@ from .web_models import (
     CommandRequest,
     ConfigSection,
     JobEntry,
+    PaginationParams,  # noqa: F401 - compatibility re-export
     SECURITY,
     WatcherStatus,
 )
@@ -75,26 +76,6 @@ authenticator = APIAuthenticator()
 
 DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1_048_576
 DEFAULT_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024
-
-class PaginationParams:
-    """Legacy pydantic-style pagination model preserved for back-compat with tests.
-
-    Enforces ``1 <= page`` and ``1 <= limit <= 100`` so callers cannot request
-    pathological ranges. ``ValidationError`` is exposed as a ValueError-shaped
-    exception so callers that ``pytest.raises(ValueError)`` keep passing.
-    """
-
-    __slots__ = ("page", "limit")
-
-    MAX_LIMIT = 100
-
-    def __init__(self, page: int = 1, limit: int = 20):
-        if page < 1:
-            raise ValueError(f"page must be >= 1 (got {page!r})")
-        if limit < 1 or limit > self.MAX_LIMIT:
-            raise ValueError(f"limit must be in [1, {self.MAX_LIMIT}] (got {limit!r})")
-        self.page = page
-        self.limit = limit
 
 
 DEFAULT_DOWNLOAD_ALLOWED_HOSTS = ("gengo.com", ".gengo.com")

@@ -4,7 +4,7 @@
 - Python 3.11+ application for monitoring Gengo translation jobs.
 - A Textual TUI, a FastAPI web API, optional browser-worker integration, persistent config/state files, and a large pytest suite.
 - Main package: src/gengowatcher/ (entrypoint src/gengowatcher/main.py).
-- Current version: 2.9.3 (see pyproject.toml).
+- Current version: 2.9.4 (see pyproject.toml).
 
 ## Repo Layout
 - `src/gengowatcher/`: stable package entrypoints and shared application services.

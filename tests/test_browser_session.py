@@ -1275,6 +1275,20 @@ def test_build_browser_aligned_websocket_headers_derives_chrome_client_hints():
     assert "Sec-Fetch-Mode" not in headers
 
 
+def test_build_browser_aligned_websocket_headers_preserves_full_chrome_version():
+    headers = build_browser_aligned_websocket_headers(
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/142.0.7444.176 Safari/537.36"
+        )
+    )
+
+    assert 'v="142.0.7444.176"' in headers["Sec-CH-UA-Full-Version-List"]
+    assert headers["Sec-CH-UA-Platform"] == '"Windows"'
+    assert headers["Sec-CH-UA-Platform-Version"] == '"10.0.0"'
+
+
 def test_build_browser_aligned_websocket_headers_skips_client_hints_for_non_chrome():
     headers = build_browser_aligned_websocket_headers(
         session_token="token",

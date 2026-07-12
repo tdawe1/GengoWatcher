@@ -1,4 +1,5 @@
-__version__ = "2.9.3"
+from . import __version__
+
 __release_date__ = "2026-07-08"
 
 import asyncio

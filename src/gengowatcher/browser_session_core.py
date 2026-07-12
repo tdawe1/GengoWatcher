@@ -283,7 +283,10 @@ def _is_chrome_ua(user_agent: str) -> bool:
 # This guards against Client-Hint synthesis for synthetic UAs the caller passes
 # (e.g. test fixtures with "Chrome/142"). A fake version number is itself a
 # fingerprint tell, so we refuse to invent Client Hints for it.
-_CHROME_VERSION_RE = re.compile("chrome/([0-9]+)" + chr(46), re.IGNORECASE)
+_CHROME_VERSION_RE = re.compile(
+    r"chrome/(?P<full>[0-9]+(?:\.[0-9]+){1,3})",
+    re.IGNORECASE,
+)
 
 
 def _is_real_chrome_ua(user_agent: str) -> bool:
@@ -293,7 +296,7 @@ def _is_real_chrome_ua(user_agent: str) -> bool:
     if not m:
         return False
     try:
-        major = int(m.group(1))
+        major = int(m.group("full").split(".", 1)[0])
     except (TypeError, ValueError):
         return False
     return 138 <= major <= 152
@@ -318,13 +321,23 @@ def derive_client_hints(user_agent: str) -> dict[str, str]:
         match = _CHROME_VERSION_RE.search(user_agent)
         if match is None:
             return {}
-        major = match.group(1)
-        full_version = f"{major}.0.0.0"
+        full_version = match.group("full")
+        major = full_version.split(".", 1)[0]
+        ua = user_agent.lower()
+        if "windows" in ua:
+            platform = "Windows"
+            platform_version = "10.0.0"
+        elif "macintosh" in ua or "mac os x" in ua:
+            platform = "macOS"
+            platform_version = "10.15.7"
+        else:
+            platform = "Linux"
+            platform_version = "6.0"
         return {
             "Sec-CH-UA": f'"Chromium";v="{major}", "Not_A Brand";v="24", "Google Chrome";v="{major}"',
             "Sec-CH-UA-Mobile": "?0",
-            "Sec-CH-UA-Platform": '"Linux"',
-            "Sec-CH-UA-Platform-Version": '"6.0"',
+            "Sec-CH-UA-Platform": f'"{platform}"',
+            "Sec-CH-UA-Platform-Version": f'"{platform_version}"',
             "Sec-CH-UA-Arch": '"x86"',
             "Sec-CH-UA-Bitness": '"64"',
             "Sec-CH-UA-Model": '""',
