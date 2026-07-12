@@ -175,8 +175,8 @@ def is_config_complete(watcher, required_fields=None):
 
 
 __all__ = [
-    "set_config_value",
     "get_config_value",
-    "prompt_for_config_values",
     "is_config_complete",
+    "prompt_for_config_values",
+    "set_config_value",
 ]

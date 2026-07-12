@@ -1,25 +1,16 @@
-"""Compatibility shim for legacy tests referencing symbols removed in the api-browser-job-telemetry refactor.
-
-These tests pre-date the stealth/anti-detection refactor and reference modules that
-were either renamed or moved (BAR_CHARS, _render_chart, _should_enable_stdio_logging,
-PaginationParams, StoredFileUploadResponse, etc.).
-
-Until the new modules expose equivalents, the tests below are skipped at collection
-time. They are preserved here as documentation of the legacy contract.
-"""
-from __future__ import annotations
-
-import pytest
-
-_REMOVED_SYMBOLS = "PaginationParams"
-
-# Always skip until refactor introduces compatible APIs.
-pytestmark = pytest.mark.skip(
-    reason=f"Stale tests referencing removed symbols: {_REMOVED_SYMBOLS}. "
-           "Re-enable once gengowatcher.web exposes equivalents."
-)
+from gengowatcher.web import PaginationParams, app
 
 
-def test_legacy_symbols_removed():
-    """Trivially passes the skip gate and documents why this file is intentionally empty."""
-    assert _REMOVED_SYMBOLS
+def test_current_web_api_exposes_core_routes():
+    paths = {route.path for route in app.routes}
+
+    assert "/api/status" in paths
+    assert "/api/jobs" in paths
+    assert "/api/files/upload" in paths
+
+
+def test_pagination_params_accepts_maximum_limit():
+    params = PaginationParams(page=2, limit=PaginationParams.MAX_LIMIT)
+
+    assert params.page == 2
+    assert params.limit == 100

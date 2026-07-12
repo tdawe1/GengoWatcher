@@ -42,7 +42,7 @@ async def test_stats_panel_refresh_updates_content():
         manager.record_job(50.0, "WebSocket", "JA→EN", accepted=True)
 
         app = StatsPanelTestApp(manager)
-        async with app.run_test() as pilot:  # noqa: F841
+        async with app.run_test() as pilot:
             panel = app.query_one(StatsPanel)
             panel.refresh_stats()
             await pilot.pause()

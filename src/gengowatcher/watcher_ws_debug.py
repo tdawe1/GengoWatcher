@@ -130,43 +130,25 @@ def handle_browser_worker_telemetry_payload(
         "source": str(event_payload.get("source") or "browser_worker"),
         "payload": payload,
     }
-    updated = watcher.state.mark_job_accepted(
+    current_job = watcher.state.get_job(job_id)
+    accepted_job = {
+        **(current_job if isinstance(current_job, dict) else {}),
+        "id": job_id,
+        "workbench_url": event_payload.get("url"),
+        "accepted_workbench": accepted_workbench,
+        "source": str(event_payload.get("source") or "browser_worker"),
+    }
+    reward = summary.get("reward", accepted_job.get("reward", 0.0))
+    try:
+        accepted_job["reward"] = float(reward or 0.0)
+    except (TypeError, ValueError):
+        accepted_job["reward"] = 0.0
+
+    watcher.logger.info(
+        "Browser worker captured accepted job %s; updating acceptance tracking",
         job_id,
-        accepted_workbench=accepted_workbench,
-        workbench_url=event_payload.get("url"),
     )
-    if updated:
-        watcher.state.save_state()
-        current_job = watcher.state.get_job(job_id)
-        accepted_job = (
-            current_job
-            if isinstance(current_job, dict)
-            else {
-                "id": job_id,
-                "workbench_url": event_payload.get("url"),
-                "accepted_workbench": accepted_workbench,
-                "source": "browser_worker",
-            }
-        )
-        watcher.logger.info(
-            "Browser worker captured accepted job %s; countdown tracking updated",
-            job_id,
-        )
-        watcher._emit_webhook_event(
-            "job.accepted",
-            {
-                "id": job_id,
-                "workbench_url": event_payload.get("url"),
-                "accepted_workbench": accepted_workbench,
-                "source": "browser_worker",
-            },
-        )
-        watcher._emit_api_event("job.accepted", accepted_job)
-    else:
-        watcher.logger.debug(
-            "Browser worker captured accepted job %s but no stored job matched",
-            job_id,
-        )
+    watcher._on_job_accepted(accepted_job)
 
 
 __all__ = [

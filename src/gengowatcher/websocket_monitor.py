@@ -128,16 +128,21 @@ class GengoWebSocketMonitor:
             configured_token = self.config.get("WebSocket", "user_session")
             configured_rd_id = self.config.get("WebSocket", "rd_session_id", "")
             changed = False
+            credentials_changed = False
             if browser_token and browser_token != configured_token:
                 self.logger.info(
                     f"WebSocket: Synced browser session token (masked: {configured_token[:4] if configured_token else ''}...{configured_token[-4:] if configured_token and len(configured_token) > 4 else ''})"
                 )
                 self.config.set("WebSocket", "user_session", browser_token)
                 changed = True
+                credentials_changed = True
             if browser_rd_id and browser_rd_id != configured_rd_id:
                 self.logger.info("WebSocket: Synced browser rd_session_id cookie")
                 self.config.set("WebSocket", "rd_session_id", browser_rd_id)
                 changed = True
+                credentials_changed = True
+            if credentials_changed:
+                self._browser_cookies = []
             # Also sync UA and accept-language from real browser.
             if snapshot.user_agent:
                 current_ua = self.config.get("Network", "browser_user_agent", "")
@@ -203,7 +208,6 @@ class GengoWebSocketMonitor:
             user_agent=user_agent,
             origin="https://gengo.com",
             accept_language=accept_language,
-            sec_websocket_extensions="permessage-deflate",
             sec_gpc="1",
             cookie_header=cookie_header,
         )

@@ -134,6 +134,7 @@ def handle_exit(watcher):
     watcher.logger.info("GengoWatcher shutting down...")
     watcher.shutdown_event.set()
     watcher.check_now_event.set()
+    watcher._emit_api_event("shutdown", {"status": "shutdown"})
 
     def _run_coro_safely(coro, description):
         try:

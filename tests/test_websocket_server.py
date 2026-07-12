@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gengowatcher.websocket_server as websocket_server
-from gengowatcher.websocket_server import GengoRealtimeGateway
+from gengowatcher.websocket_server import GengoRealtimeGateway, _extract_session_token
 
 
 class _FakeConfig:
@@ -44,6 +44,23 @@ class _FakeGatewayWebSocket:
                 "collection": {"id": "123", "reward": 1.0},
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("cookie_header", "expected"),
+    [
+        ("myG_myGSession_=canonical-token", "canonical-token"),
+        ("_ga=value; my_gengo_session=legacy-token", "legacy-token"),
+        (
+            "my_gengo_session=legacy-token; myG_myGSession_=canonical-token",
+            "canonical-token",
+        ),
+    ],
+)
+def test_extract_session_token_supports_browser_cookie_names(
+    cookie_header: str, expected: str
+):
+    assert _extract_session_token(cookie_header) == expected
 
 
 @pytest.mark.asyncio

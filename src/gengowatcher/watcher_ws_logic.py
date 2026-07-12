@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from websockets.exceptions import (
     ConnectionClosed,
     InvalidHandshake,
-    InvalidStatusCode,
+    InvalidStatus,
 )
 
 from .browser_session import (
@@ -463,7 +463,7 @@ async def websocket_logic(watcher):
                 await run_session(headers)
                 last_error = None
                 break
-            except (InvalidStatusCode, InvalidHandshake, TimeoutError) as e:
+            except (InvalidStatus, InvalidHandshake, TimeoutError) as e:
                 last_error = e
                 if index == len(header_profiles) - 1:
                     raise
@@ -476,7 +476,7 @@ async def websocket_logic(watcher):
             raise last_error
     except (
         ConnectionClosed,
-        InvalidStatusCode,
+        InvalidStatus,
         InvalidHandshake,
         ConnectionRefusedError,
     ) as e:

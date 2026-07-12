@@ -52,6 +52,11 @@ def run_browser_worker_event_listener(watcher) -> None:
                         handle.seek(0, os.SEEK_END)
                     initialized = True
                     skip_existing_on_open = False
+                    ready_event = getattr(
+                        watcher, "_browser_worker_listener_ready_event", None
+                    )
+                    if ready_event is not None:
+                        ready_event.set()
                 while not watcher.shutdown_event.is_set():
                     line = handle.readline()
                     if not line:
@@ -106,20 +111,17 @@ def on_job_accepted(watcher, job_data: dict):
             f"Tracking job {job_id} (${reward:.2f}) as current engagement"
         )
         current_job = watcher.state.get_job(job_id)
-        accepted_job = (
-            current_job
-            if isinstance(current_job, dict)
-            else {
-                **job_data,
-                "accepted": True,
-                "acceptance_state": "accepted",
-                "lifecycle_state": "accepted",
-            }
-        )
+        accepted_job = {
+            **job_data,
+            **(current_job if isinstance(current_job, dict) else {}),
+            "accepted": True,
+            "acceptance_state": "accepted",
+            "lifecycle_state": "accepted",
+        }
         watcher._emit_webhook_event("job.accepted", accepted_job)
         watcher._emit_api_event("job.accepted", accepted_job)
     except Exception as e:
-        watcher.logger.error(
+        watcher.logger.exception(
             f"Failed to record accepted job for cancellation tracking: {e}"
         )
 

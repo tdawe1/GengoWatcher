@@ -28,7 +28,7 @@ async def test_title_bar_renders():
 async def test_title_bar_session_time_updates():
     """Session time should be displayed."""
     app = TitleBarTestApp()
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         await pilot.pause()  # Allow timer to tick
         # Updated: use #session-timer instead of #session-time
         session_time = app.query_one("#session-timer")

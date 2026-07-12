@@ -3127,12 +3127,18 @@ class TextualLogHandler(logging.Handler):
 # working until they are migrated to the new (render_chart_with_axes) impl.
 # ==============================================================================
 try:
-    from .ui_charts import render_chart_with_axes as _render_chart  # type: ignore[attr-defined]
-except Exception:  # pragma: no cover - charts module not always available
-    def _render_chart(values, width=10, height=5, **_kwargs):  # type: ignore[no-redef]
-        """Legacy alias: minimal pass-through wrapper around render_chart_with_axes."""
-        try:
-            from .ui_charts import render_chart_with_axes
-        except Exception:
-            return ""
-        return render_chart_with_axes(values=values, width=width, height=height)
+    from .ui_charts import render_chart_with_axes as _legacy_render_chart_with_axes
+except ImportError:  # pragma: no cover - charts module not always available
+    _legacy_render_chart_with_axes = None
+
+
+def _render_chart(values, width=10, height=5, **kwargs):
+    """Render a chart through the legacy positional API."""
+    if _legacy_render_chart_with_axes is None:
+        return ""
+    return _legacy_render_chart_with_axes(
+        values=values,
+        width=width,
+        height=height,
+        **kwargs,
+    )

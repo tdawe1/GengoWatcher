@@ -172,6 +172,6 @@ def sync_session_before_websocket_connect(watcher) -> bool:
 
 
 __all__ = [
-    "sync_session_from_browser",
     "sync_session_before_websocket_connect",
+    "sync_session_from_browser",
 ]

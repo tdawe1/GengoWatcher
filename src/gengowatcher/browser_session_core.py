@@ -247,16 +247,11 @@ def extract_cookie_value(
 # the WS identity from looking like a static Python script. The pool is small
 # on purpose - large pools are a fingerprint vector of their own.
 ROTATING_USER_AGENT_POOL: tuple[str, ...] = (
-    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
 )
 
 
@@ -284,7 +279,7 @@ def _is_chrome_ua(user_agent: str) -> bool:
     return "chrome/" in ua and "safari/" in ua and "edg/" not in ua
 
 
-# Match a plausible *real* Chrome major version (current stable is ~131 today).
+# Match a plausible supported Chrome major version.
 # This guards against Client-Hint synthesis for synthetic UAs the caller passes
 # (e.g. test fixtures with "Chrome/142"). A fake version number is itself a
 # fingerprint tell, so we refuse to invent Client Hints for it.
@@ -301,9 +296,7 @@ def _is_real_chrome_ua(user_agent: str) -> bool:
         major = int(m.group(1))
     except (TypeError, ValueError):
         return False
-    # Anything newer than the latest stable (with margin for skew) is treated as
-    # synthetic. Lower bound = 100 to refuse obviously-stale fingerprints.
-    return 100 <= major <= 140
+    return 138 <= major <= 152
 
 
 def derive_client_hints(user_agent: str) -> dict[str, str]:
@@ -322,17 +315,20 @@ def derive_client_hints(user_agent: str) -> dict[str, str]:
         return {}
 
     if _is_chrome_ua(user_agent) and _is_real_chrome_ua(user_agent):
-        # Best-effort Client Hints for current stable Chrome. These match the
-        # values a real Chrome 131 sends to gengo-style dashboard pages.
+        match = _CHROME_VERSION_RE.search(user_agent)
+        if match is None:
+            return {}
+        major = match.group(1)
+        full_version = f"{major}.0.0.0"
         return {
-            "Sec-CH-UA": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+            "Sec-CH-UA": f'"Chromium";v="{major}", "Not_A Brand";v="24", "Google Chrome";v="{major}"',
             "Sec-CH-UA-Mobile": "?0",
             "Sec-CH-UA-Platform": '"Linux"',
             "Sec-CH-UA-Platform-Version": '"6.0"',
             "Sec-CH-UA-Arch": '"x86"',
             "Sec-CH-UA-Bitness": '"64"',
             "Sec-CH-UA-Model": '""',
-            "Sec-CH-UA-Full-Version-List": '"Chromium";v="131.0.6778.108", "Not_A Brand";v="24.0.0.0", "Google Chrome";v="131.0.6778.108"',
+            "Sec-CH-UA-Full-Version-List": f'"Chromium";v="{full_version}", "Not_A Brand";v="24.0.0.0", "Google Chrome";v="{full_version}"',
         }
 
     # Unknown UA family - do not invent Client Hints.

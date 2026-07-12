@@ -87,7 +87,7 @@ async def test_main_tabs_exist():
     """Verify main navigation tabs are present."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         # Check that TabbedContent exists
         from textual.widgets import TabbedContent
 
@@ -109,7 +109,7 @@ async def test_tab_switching_with_keys():
     """Test that tabs can be switched programmatically."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
@@ -133,7 +133,7 @@ async def test_tab_switching_all_tabs():
     """Test switching through all available tabs."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)
@@ -157,7 +157,7 @@ async def test_dashboard_contains_panels():
     """Verify Dashboard tab contains expected widgets."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import (
             ActivityPreview,
             JobsPreview,
@@ -188,7 +188,7 @@ async def test_hourly_activity_with_empty_data():
     """Verify HourlyActivity handles empty data correctly (no misleading peak highlight)."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import HourlyActivity
         from textual.widgets import Static
 
@@ -245,7 +245,7 @@ async def test_hourly_activity_with_data():
             stats=stats,
         )
 
-        async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
             hourly = pilot.app.query_one(HourlyActivity)
             hourly.refresh_hourly()
             await pilot.pause()
@@ -264,7 +264,7 @@ async def test_dashboard_contains_chart():
     """Verify Dashboard contains chart widget."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import HourlyActivity
 
         chart = pilot.app.query_one(HourlyActivity)
@@ -276,7 +276,7 @@ async def test_dashboard_contains_telemetry_panel():
     """Verify Dashboard contains telemetry panel widget."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import TelemetryPanel
 
         telemetry = pilot.app.query_one(TelemetryPanel)
@@ -288,7 +288,7 @@ async def test_jobs_tab_contains_datatable():
     """Verify Jobs tab contains DataTable."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import TabbedContent, DataTable
         from gengowatcher.ui_textual import JobsPanel
 
@@ -344,7 +344,7 @@ async def test_jobs_tab_renders_accepted_workbench_job():
         }
     ]
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import JOBS_FULL_COLUMNS
         from textual.widgets import TabbedContent, DataTable
 
@@ -377,7 +377,7 @@ async def test_dashboard_activity_preview_contains_richlog():
     """Verify dashboard activity preview contains RichLog."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import RichLog
 
         await pilot.pause()
@@ -392,7 +392,7 @@ async def test_output_tab_contains_richlog():
     """Verify Output tab contains RichLog."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import TabbedContent, RichLog
 
         tabbed = pilot.app.query_one(TabbedContent)
@@ -409,7 +409,7 @@ async def test_app_has_footer():
     """Verify app has footer with key bindings."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import Footer
 
         footer = pilot.app.query_one(Footer)
@@ -421,7 +421,7 @@ async def test_app_has_input():
     """Verify app has input widget."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import Input
 
         input_widget = pilot.app.query_one(Input)
@@ -433,7 +433,7 @@ async def test_title_bar_exists():
     """Verify title bar exists."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import TitleBar
 
         title_bar = pilot.app.query_one(TitleBar)
@@ -445,7 +445,7 @@ async def test_status_indicators_exist():
     """Verify all status indicators are present."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import StatusIndicator
 
         # Check for all expected status indicators
@@ -467,7 +467,7 @@ async def test_metric_cards_exist():
     """Verify all metric cards are present."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import MetricCard
 
         cards = pilot.app.query(MetricCard)
@@ -485,7 +485,7 @@ async def test_tab_count():
     """Verify correct number of tabs."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import TabPane
 
         tabs = pilot.app.query(TabPane)
@@ -497,7 +497,7 @@ async def test_dashboard_quadrants_exist():
     """Verify all dashboard quadrants are present."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import (
             JobsPreview,
             HourlyActivity,
@@ -522,7 +522,7 @@ async def test_dashboard_refresh_targets_match_mounted_widgets():
     """Required dashboard refresh targets should all be mounted widgets."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from gengowatcher.ui_textual import (
             HourlyActivity,
             JobsPreview,
@@ -564,7 +564,7 @@ async def test_plain_q_exits_when_command_prompt_is_empty():
     """Bare q should quit instead of being typed into the bottom prompt."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         await pilot.press("q")
         await pilot.pause(0.1)
 
@@ -578,7 +578,7 @@ async def test_q_is_typed_into_command_prompt_when_not_empty():
 
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         prompt = pilot.app.query_one(Input)
         prompt.focus()
         await pilot.press("h")
@@ -594,7 +594,7 @@ async def test_tab_switching_performance():
     """Test rapid tab switching doesn't cause issues."""
     app = create_mock_app()
 
-    async with app.run_test() as pilot:  # noqa: F841
+    async with app.run_test() as pilot:
         from textual.widgets import TabbedContent
 
         tabbed = pilot.app.query_one(TabbedContent)

@@ -9,9 +9,9 @@ module scope.
 
 from __future__ import annotations
 
-from typing import Any, Final, FrozenSet
+from typing import Any, Final
 
-PLACEHOLDER_CONFIG_VALUES: Final[FrozenSet[Any]] = frozenset(
+PLACEHOLDER_CONFIG_VALUES: Final[frozenset[Any]] = frozenset(
     {
         None,
         "",
@@ -21,7 +21,7 @@ PLACEHOLDER_CONFIG_VALUES: Final[FrozenSet[Any]] = frozenset(
     }
 )
 
-SENSITIVE_KEYWORDS: Final[FrozenSet[str]] = frozenset(
+SENSITIVE_KEYWORDS: Final[frozenset[str]] = frozenset(
     {"auth", "cookie", "key", "password", "secret", "session", "token"}
 )
 

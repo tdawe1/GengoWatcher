@@ -40,6 +40,19 @@ def test_backward_compatibility_aliases_live_in_importing_modules():
     assert ui_textual._format_timestamp("2024-01-01T12:34:56Z") == "12:34:56"
 
 
+def test_render_chart_compatibility_wrapper_forwards_keywords():
+    chart = ui_textual._render_chart(
+        [1, 2],
+        10,
+        5,
+        x_left="first",
+        x_right="last",
+    )
+
+    assert chart.splitlines()[-1].strip().startswith("first")
+    assert chart.splitlines()[-1].endswith("last")
+
+
 def test_raw_websocket_text_redacts_common_token_like_fields():
     redacted = redact_raw_ws_text(
         'token=plain api_key:"abc123" "secret": "hidden" refresh_token=rtvalue'

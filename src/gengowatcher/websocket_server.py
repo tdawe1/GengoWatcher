@@ -28,11 +28,26 @@ from .browser_session import (
 )
 from .browser_session_core import GENGO_REALTIME_URL
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
+from .websocket_monitor import WebSocketConfig
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+_WEBSOCKET_DEFAULTS = WebSocketConfig()
+
+
+def _extract_session_token(cookie_header: str) -> str:
+    cookies: dict[str, str] = {}
+    for item in cookie_header.split(";"):
+        name, separator, value = item.partition("=")
+        if separator:
+            cookies[name.strip()] = value.strip()
+
+    for name in ("myG_myGSession_", "my_gengo_session"):
+        if cookies.get(name):
+            return cookies[name]
+    return ""
 
 
 class GengoRealtimeGateway:
@@ -82,11 +97,11 @@ class GengoRealtimeGateway:
 
         user_agent = user_agent or (
             self.config.get("Network", "browser_user_agent")
-            or "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
+            or _WEBSOCKET_DEFAULTS.user_agent
         )
         accept_language = accept_language or (
             self.config.get("Network", "browser_accept_language")
-            or "en-US,en;q=0.9"
+            or _WEBSOCKET_DEFAULTS.accept_language
         )
 
         return build_browser_aligned_websocket_headers(
@@ -95,7 +110,6 @@ class GengoRealtimeGateway:
             user_agent=user_agent,
             origin="https://gengo.com",
             accept_language=accept_language,
-            sec_websocket_extensions="permessage-deflate",
             sec_gpc="1",
             cookie_header=cookie_header,
         )
@@ -154,11 +168,8 @@ class GengoRealtimeGateway:
 
                     user_id = self.config.get("WebSocket", "user_id", "")
                     user_key = self.config.get("WebSocket", "user_key", "")
-                    # Extract session token from Cookie header (format: myG_myGSession_=TOKEN; myG_rdsessID=TOKEN)
                     cookie = headers.get("Cookie", "")
-                    session = ""
-                    if "myG_myGSession_=" in cookie:
-                        session = cookie.split("myG_myGSession_=")[1].split(";")[0]
+                    session = _extract_session_token(cookie)
                     # Gengo's realtime WS expects the same field shape as the
                     # browser-aligned in-process monitor: userId / sessionToken /
                     # userKey. Sending user_id / user_session (snake_case) silently

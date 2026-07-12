@@ -2248,7 +2248,6 @@ def build_browser_aligned_websocket_headers(
     origin: str = DEFAULT_GENGO_ORIGIN,
     accept_language: str = "",
     rd_session_id: str = "",
-    sec_websocket_extensions: str = "permessage-deflate",
     sec_gpc: str = "1",
     cookie_header: str = "",
 ) -> dict[str, str]:
@@ -2259,18 +2258,13 @@ def build_browser_aligned_websocket_headers(
     distinct when the browser supplied it.
     """
     headers = {
-        "Host": "live-dashboard.gengo.com",
         "User-Agent": user_agent
         or "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0",
         "Accept": "*/*",
         "Accept-Language": accept_language or "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Sec-WebSocket-Version": "13",
         "Origin": origin or DEFAULT_GENGO_ORIGIN,
-        "Sec-WebSocket-Extensions": sec_websocket_extensions,
         "Sec-GPC": sec_gpc,
-        "Connection": "Upgrade",
-        "Upgrade": "websocket",
     }
     if cookie_header:
         headers["Cookie"] = cookie_header

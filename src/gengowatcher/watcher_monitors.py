@@ -23,22 +23,22 @@ from typing import TYPE_CHECKING
 
 try:
     from .email_monitor import EmailMonitor
-except Exception:  # pragma: no cover - email monitor optional
+except ImportError:  # pragma: no cover - email monitor optional
     EmailMonitor = None
 
 try:
     from .native_browser_listener import NativeBrowserListener
-except Exception:  # pragma: no cover - native listener optional
+except ImportError:  # pragma: no cover - native listener optional
     NativeBrowserListener = None
 
 try:
     from .state_projector import StateProjector
-except Exception:  # pragma: no cover - state projector optional
+except ImportError:  # pragma: no cover - state projector optional
     StateProjector = None
 
 try:
     from .website_monitor import WebsiteMonitor
-except Exception:  # pragma: no cover - website monitor optional
+except ImportError:  # pragma: no cover - website monitor optional
     WebsiteMonitor = None
 
 if TYPE_CHECKING:
@@ -66,9 +66,13 @@ def run_email_monitor(watcher):
         shutdown_event=asyncio.Event(),
     )
 
+    checker_stop = threading.Event()
+
     def check_shutdown():
-        while not watcher.shutdown_event.is_set():
-            time.sleep(1)
+        while not checker_stop.wait(1):
+            if not watcher.shutdown_event.is_set():
+                continue
+            break
         if watcher.email_monitor:
             loop.call_soon_threadsafe(watcher.email_monitor.shutdown_event.set)
 
@@ -80,6 +84,8 @@ def run_email_monitor(watcher):
     except Exception as e:
         watcher.logger.error(f"Email monitor error: {e}")
     finally:
+        checker_stop.set()
+        shutdown_thread.join()
         loop.close()
 
 
@@ -104,9 +110,13 @@ def run_website_monitor(watcher):
         shutdown_event=asyncio.Event(),
     )
 
+    checker_stop = threading.Event()
+
     def check_shutdown():
-        while not watcher.shutdown_event.is_set():
-            time.sleep(1)
+        while not checker_stop.wait(1):
+            if not watcher.shutdown_event.is_set():
+                continue
+            break
         if watcher.website_monitor:
             loop.call_soon_threadsafe(watcher.website_monitor.shutdown_event.set)
 
@@ -118,6 +128,8 @@ def run_website_monitor(watcher):
     except Exception as e:
         watcher.logger.error(f"Website monitor error: {e}")
     finally:
+        checker_stop.set()
+        shutdown_thread.join()
         loop.close()
 
 
@@ -164,6 +176,6 @@ def run_native_browser_listener(watcher):
 
 __all__ = [
     "run_email_monitor",
-    "run_website_monitor",
     "run_native_browser_listener",
+    "run_website_monitor",
 ]

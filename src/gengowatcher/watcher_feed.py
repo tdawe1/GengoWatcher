@@ -25,6 +25,7 @@ _REWARD_PATTERN = re.compile(
     r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)",
     re.IGNORECASE,
 )
+_JOB_DETAILS_ID_PATTERN = re.compile(r"/jobs/details/(\d+)")
 
 
 def extract_reward(entry) -> float:
@@ -105,7 +106,7 @@ def process_feed_entries(watcher, entries):
         url = entry.get("link")
         watcher.logger.debug(f"Processing new RSS entry: {title} {url}")
         try:
-            match = re.search(r"/jobs/details/(\d+)", url)
+            match = _JOB_DETAILS_ID_PATTERN.search(url)
             if not match:
                 watcher.logger.warning(f"Could not parse job ID from RSS link: {url}")
                 continue

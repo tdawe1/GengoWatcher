@@ -20,7 +20,7 @@ import webbrowser  # noqa: F401  -- still patched by tests via watcher.webbrowse
 import feedparser  # noqa: F401  -- still patched by tests via watcher.feedparser
 
 from .browser_session import (
-    fetch_browser_session_snapshot_sync,
+    fetch_browser_session_snapshot_sync,  # noqa: F401  -- still patched by tests via watcher.<name>
     open_url_in_browser_debug_sync,  # noqa: F401  -- still patched by tests via watcher.<name>
     refresh_browser_page_activity_sync,
 )
@@ -95,6 +95,15 @@ from .watcher_monitor_status import (
     sync_monitor_metrics as _sync_monitor_metrics_impl,
     process_browser_jobs_snapshot as _process_browser_jobs_snapshot_impl,
 )
+
+from .watcher_orchestration_helpers import (
+    sync_browser_session_for_quiet_socket as _sync_browser_session_for_quiet_socket_impl,
+    warn_if_browser_session_mismatch as _warn_if_browser_session_mismatch_impl,
+    get_default_required_config_fields as _get_default_required_config_fields_impl,
+    get_effective_rss_wait_range_seconds as _get_effective_rss_wait_range_seconds_impl,
+    configure_cancellation_manager as _configure_cancellation_manager_impl,
+)
+
 
 
 from .watcher_alerting import json_safe as _json_safe_impl
@@ -388,64 +397,14 @@ class GengoWatcher:
         return f"{text[:4]}...{text[-4:]}"
 
     def _warn_if_browser_session_mismatch(self) -> None:
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        configured_token = self.config.get("WebSocket", "user_session")
+        """Log a warning when the configured session differs from the live browser."""
+        return _warn_if_browser_session_mismatch_impl(self)
 
-        if not debug_url or configured_token in PLACEHOLDER_CONFIG_VALUES:
-            return
-
-        try:
-            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
-        except Exception as exc:
-            self.logger.debug(
-                "Browser session check skipped for %s: %s",
-                debug_url,
-                exc,
-            )
-            return
-
-        browser_token = snapshot.session_token
-        if browser_token == configured_token:
-            return
-
-        self.logger.warning(
-            "WebSocket.user_session differs from the live browser session at %s "
-            "(config=%s browser=%s). Realtime detections may fall back to RSS until"
-            " you sync the token.",
-            debug_url,
-            self._mask_secret(configured_token),
-            self._mask_secret(browser_token),
-        )
 
     def _get_default_required_config_fields(self) -> list[tuple[str, str]]:
         """Return the required config fields for currently enabled features."""
-        required_fields = [("Watcher", "feed_url"), ("Watcher", "check_interval")]
+        return _get_default_required_config_fields_impl(self)
 
-        if self.config.getboolean("WebSocket", "enable_websocket", fallback=True):
-            required_fields.extend(
-                [("WebSocket", "user_id"), ("WebSocket", "user_session")]
-            )
-
-        if self.config.getboolean("EmailMonitor", "enabled", fallback=False):
-            required_fields.extend(
-                [
-                    ("EmailMonitor", "email"),
-                    ("EmailMonitor", "client_id"),
-                    ("EmailMonitor", "client_secret"),
-                    ("EmailMonitor", "refresh_token"),
-                ]
-            )
-
-        if self.config.getboolean("WebsiteMonitor", "enabled", fallback=False):
-            required_fields.append(("WebsiteMonitor", "jobs_url"))
-
-        if self.config.getboolean("AutoAccept", "enabled", fallback=False):
-            required_fields.append(("AutoAccept", "browser_profile_path"))
-
-        if self.config.getboolean("BrowserWorker", "enabled", fallback=False):
-            required_fields.append(("BrowserWorker", "socket_path"))
-
-        return required_fields
 
     def _get_session_sync_interval_seconds(self) -> int:
         return self.config.getint(
@@ -520,43 +479,13 @@ class GengoWatcher:
         alert_on_failure: bool = False,
     ) -> bool:
         """Refresh the browser session when a quiet websocket needs a recheck."""
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        if not debug_url or self.websocket_status != "Live":
-            return False
-
-        now = current_time if current_time is not None else time.time()
-        quiet_age = self._get_websocket_quiet_age(now)
-        quiet_probe_after = self._get_session_quiet_probe_seconds()
-        if quiet_age is None or quiet_age < quiet_probe_after:
-            return False
-
-        next_sync_ts = self._next_quiet_socket_sync_ts
-        if next_sync_ts is not None and now < next_sync_ts:
-            return False
-        if self._browser_session_last_sync_ts is not None:
-            sync_age = max(0.0, now - self._browser_session_last_sync_ts)
-            if sync_age < quiet_probe_after:
-                return False
-
-        self.logger.warning(
-            "WebSocket: No application messages for %.1fs while live; syncing browser"
-            " session from %s before continuing.",
-            quiet_age,
-            debug_url,
-        )
-
-        changed = self._sync_session_from_browser(
+        return _sync_browser_session_for_quiet_socket_impl(
+            self,
+            current_time=current_time,
             fail_hard=fail_hard,
             alert_on_failure=alert_on_failure,
         )
-        if changed:
-            self._next_quiet_socket_sync_ts = None
-            return True
 
-        self._next_quiet_socket_sync_ts = (
-            now + self._pick_quiet_socket_sync_delay_seconds()
-        )
-        return False
 
     def _sync_session_before_websocket_connect(self) -> bool:
         """Try to sync browser session once before building websocket auth."""
@@ -567,21 +496,9 @@ class GengoWatcher:
         return "gengo.com" in feed_url.lower()
 
     def _get_effective_rss_wait_range_seconds(self) -> tuple[float, float]:
-        if self._is_gengo_rss_feed():
-            min_delay = float(
-                self.config.get("Watcher", "gengo_rss_interval_min_sec", fallback=31)
-                or 31
-            )
-            max_delay = float(
-                self.config.get("Watcher", "gengo_rss_interval_max_sec", fallback=60)
-                or 60
-            )
-            if max_delay < min_delay:
-                min_delay, max_delay = max_delay, min_delay
-            return min_delay, max_delay
+        """Compute the effective RSS wait range from config + adaptive state."""
+        return _get_effective_rss_wait_range_seconds_impl(self)
 
-        check_interval = float(self.config.get("Watcher", "check_interval") or 45)
-        return check_interval, check_interval
 
     def _get_effective_rss_check_interval(self) -> float:
         if self._is_gengo_rss_feed():
@@ -754,8 +671,8 @@ class GengoWatcher:
 
         Delegates to watcher_job_processor.process_new_job for the actual
         implementation, while keeping the method on the class so call
-        sites and tests (web.py:410, watcher.py:793/1481/1922/2718,
-        tests/test_watcher_enhanced.py:173) continue to work unchanged.
+        sites such as WebAPI discovery handling, monitor callbacks, and tests
+        continue to work unchanged.
         """
         return _process_new_job_impl(self, job_id, title, reward, url, source, source_meta)
 
@@ -1051,21 +968,8 @@ class GengoWatcher:
 
     def _configure_cancellation_manager(self):
         """Apply configuration settings to the cancellation manager."""
-        try:
-            settings = {
-                "cancellation_enabled": self.cancellation_manager._config_getboolean(
-                    "Cancellation", "enabled", fallback=False
-                ),
-                "min_improvement_ratio": self.cancellation_manager._config_getfloat(
-                    "Cancellation", "min_improvement_ratio", fallback=2.0
-                ),
-                "extreme_threshold": self.cancellation_manager._config_getfloat(
-                    "Cancellation", "extreme_threshold", fallback=1000.0
-                ),
-            }
-            self.cancellation_manager.update_settings(**settings)
-        except Exception as e:
-            self.logger.error(f"Failed to configure cancellation manager: {e}")
+        return _configure_cancellation_manager_impl(self)
+
 
     def prompt_for_config_values(self, required_fields=None):
         """Prompt the user for missing required config values."""
@@ -1113,4 +1017,3 @@ class GengoWatcher:
     def _run_website_monitor(self):
         """Optional side-channel monitor thread - delegates to watcher_monitors.run_website_monitor."""
         return _run_website_monitor_impl(self)
-

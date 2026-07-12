@@ -1,25 +1,40 @@
-"""Compatibility shim for legacy tests referencing symbols removed in the api-browser-job-telemetry refactor.
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-These tests pre-date the stealth/anti-detection refactor and reference modules that
-were either renamed or moved (BAR_CHARS, _render_chart, _should_enable_stdio_logging,
-PaginationParams, StoredFileUploadResponse, etc.).
-
-Until the new modules expose equivalents, the tests below are skipped at collection
-time. They are preserved here as documentation of the legacy contract.
-"""
-from __future__ import annotations
-
-import pytest
-
-_REMOVED_SYMBOLS = "PROJECT_ROOT, _should_enable_stdio_logging, _start_metrics_server_if_enabled"
-
-# Always skip until refactor introduces compatible APIs.
-pytestmark = pytest.mark.skip(
-    reason=f"Stale tests referencing removed symbols: {_REMOVED_SYMBOLS}. "
-           "Re-enable once gengowatcher.main exposes equivalents."
-)
+from gengowatcher.main import PROJECT_ROOT, _start_metrics_server_if_enabled
 
 
-def test_legacy_symbols_removed():
-    """Trivially passes the skip gate and documents why this file is intentionally empty."""
-    assert _REMOVED_SYMBOLS
+def test_project_root_contains_pyproject():
+    assert PROJECT_ROOT == Path(__file__).resolve().parents[1]
+    assert (PROJECT_ROOT / "pyproject.toml").is_file()
+
+
+def test_metrics_server_stays_disabled_by_default():
+    config = MagicMock()
+    config.getboolean.return_value = False
+
+    assert _start_metrics_server_if_enabled(config, MagicMock(), MagicMock()) is None
+
+
+def test_metrics_server_uses_configured_address():
+    config = MagicMock()
+    config.getboolean.return_value = True
+    config.get.side_effect = lambda section, key, fallback=None: {
+        ("Metrics", "host"): "0.0.0.0",
+    }.get((section, key), fallback)
+    config.getint.return_value = 9191
+    watcher = MagicMock()
+    logger = MagicMock()
+
+    with patch(
+        "gengowatcher.main.start_watcher_metrics_server", return_value="server"
+    ) as start:
+        result = _start_metrics_server_if_enabled(config, watcher, logger)
+
+    assert result == "server"
+    start.assert_called_once_with(
+        host="0.0.0.0",
+        port=9191,
+        watcher=watcher,
+        logger=logger,
+    )

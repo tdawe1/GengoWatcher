@@ -13,7 +13,6 @@ import asyncio
 import queue
 import threading
 import time
-from typing import TYPE_CHECKING
 
 from .translation_app_queue import (
     submit_translation_app_task as _submit_translation_app_task,
@@ -26,11 +25,8 @@ from .watcher_job_metadata import (
 
 try:
     from .translation_app_client import TranslationAppClient
-except Exception:  # pragma: no cover - translation-app optional
+except ImportError:  # pragma: no cover - translation-app optional
     TranslationAppClient = None
-
-if TYPE_CHECKING:
-    pass
 
 def process_new_job(watcher, job_id, title, reward, url, source, source_meta=None):
     """Process a newly discovered job from RSS or WebSocket sources.
@@ -53,7 +49,7 @@ def process_new_job(watcher, job_id, title, reward, url, source, source_meta=Non
         if job_id in watcher._seen_jobs_session:
             return
         min_reward = watcher.config.get("Watcher", "min_reward")
-        if min_reward > 0.0 and reward < min_reward:
+        if min_reward is not None and min_reward > 0.0 and reward < min_reward:
             watcher.logger.warning(
                 f"Job '{title}' (US$ {reward:.2f}) ignored due to [yellow]min_reward filter[/]."
             )

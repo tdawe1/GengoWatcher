@@ -62,8 +62,6 @@ def run_websocket_monitor(watcher) -> None:
                 alert_on_failure=watcher.config.getboolean(
                     "WebSocket", "session_sync_alert", fallback=False
                 ),
-                placeholder_session_token=session_placeholder,
-                placeholder_user_key=key_placeholder,
             )
             if watcher.shutdown_event.is_set():
                 break
@@ -168,7 +166,7 @@ def run_websocket_monitor(watcher) -> None:
                 wait_time = max(1, wait_time + random.uniform(
                     -reconnect_jitter_max, reconnect_jitter_max
                 ))
-            watcher.logger.error(
+            watcher.logger.exception(
                 "WebSocket connection failed: %s. Reconnecting in %.1fs",
                 e,
                 wait_time,

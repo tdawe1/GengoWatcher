@@ -546,6 +546,19 @@ class TestEdgeCases:
         watcher_with_mocks.show_notification.assert_not_called()
         assert 123 not in watcher_with_mocks.state.seen_job_ids
 
+    def test_process_new_job_allows_missing_min_reward(
+        self, watcher_with_mocks, mock_config
+    ):
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "min_reward"): None
+        }.get((s, k), kw.get("fallback"))
+
+        watcher_with_mocks._process_new_job(
+            124, "Unfiltered Job", 5.0, "http://example.com", "RSS"
+        )
+
+        watcher_with_mocks.state.add_job.assert_called()
+
     def test_process_feed_entries_empty_list(self, watcher_with_mocks):
         """Test processing empty feed entries list."""
         watcher_with_mocks._process_feed_entries([])
