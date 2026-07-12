@@ -22,7 +22,7 @@ from .browser_session import (
 )
 from .config import AppConfig
 from .state import AppState
-from .watcher_debug import redact_raw_ws_text as _redact_raw_ws_text
+from .orchestration.watcher_debug import redact_raw_ws_text as _redact_raw_ws_text
 
 
 @dataclass

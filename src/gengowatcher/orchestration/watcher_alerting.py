@@ -13,7 +13,7 @@ import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .watcher import GengoWatcher
+    from ..watcher import GengoWatcher
 
 
 # Event types that should wake the BrowserJobs event-driven monitor.

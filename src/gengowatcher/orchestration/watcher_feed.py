@@ -18,7 +18,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .watcher import GengoWatcher
+    from ..watcher import GengoWatcher
 
 
 _REWARD_PATTERN = re.compile(

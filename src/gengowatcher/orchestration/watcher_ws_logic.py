@@ -23,7 +23,7 @@ from websockets.exceptions import (
     InvalidStatus,
 )
 
-from .browser_session import (
+from ..browser_session import (
     build_browser_aligned_websocket_headers,
     build_websocket_auth_payload,
     format_cookies_as_header,

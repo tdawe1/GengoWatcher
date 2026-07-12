@@ -11,15 +11,15 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from .browser_debug_launcher import (
+from ..browser_debug_launcher import (
     get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
 )
-from .browser_session import open_url_in_browser_debug_sync
+from ..browser_session import open_url_in_browser_debug_sync
 
 if TYPE_CHECKING:
-    from .watcher import GengoWatcher
+    from ..watcher import GengoWatcher
 
 
 def open_in_managed_firefox_debug_session(

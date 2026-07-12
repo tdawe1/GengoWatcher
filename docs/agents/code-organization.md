@@ -2,7 +2,8 @@
 
 ## Module Layout
 - Prefer small helper functions for parsing, coercion, and lifecycle boundaries.
-- CLI lives in cli.py; startup/runtime orchestration in runtime.py and main.py; web layer in web.py, web_models.py, webhooks.py, web_file_storage.py.
+- CLI lives in `cli.py`; startup/runtime coordination lives in `runtime.py` and `main.py`; the web layer lives in `web.py`, `web_models.py`, `webhooks.py`, and `web_file_storage.py`.
+- Keep `GengoWatcher` as the public facade. Extracted watcher implementations belong in `src/gengowatcher/orchestration/`.
 - Shared mutable state is typically protected with threading.Lock or threading.RLock.
 - Async workflows bridge blocking code with asyncio.to_thread().
 - State and config persistence prefer atomic writes over in-place file mutation.

@@ -19,7 +19,7 @@ from .watcher_debug import (
 )
 
 if TYPE_CHECKING:
-    from .watcher import GengoWatcher
+    from ..watcher import GengoWatcher
 
 
 def capture_raw_ws_message(

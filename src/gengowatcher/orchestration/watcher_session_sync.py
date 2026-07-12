@@ -12,11 +12,11 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from .browser_debug_launcher import (
+from ..browser_debug_launcher import (
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
 )
-from .browser_session import fetch_browser_session_snapshot_sync
+from ..browser_session import fetch_browser_session_snapshot_sync
 
 if TYPE_CHECKING:
     pass

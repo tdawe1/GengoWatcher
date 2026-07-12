@@ -322,13 +322,13 @@ def test_translation_app_submission_uses_bounded_worker(watcher_instance):
         return MagicMock()
 
     with patch(
-        "gengowatcher.watcher_job_processor._submit_translation_app_task", side_effect=queue_task
+        "gengowatcher.orchestration.watcher_job_processor._submit_translation_app_task", side_effect=queue_task
     ):
         w._submit_job_to_translation_app_async({"id": "123", "title": "New Job"})
 
     assert len(queued_tasks) == 1
 
-    with patch("gengowatcher.watcher_job_processor.TranslationAppClient") as client_cls:
+    with patch("gengowatcher.orchestration.watcher_job_processor.TranslationAppClient") as client_cls:
         queued_tasks[0]()
 
     client_cls.assert_called_once_with(
@@ -355,7 +355,7 @@ def test_translation_app_submission_logs_when_queue_full(watcher_instance):
     w.logger.warning = MagicMock()
 
     with patch(
-        "gengowatcher.watcher_job_processor._submit_translation_app_task",
+        "gengowatcher.orchestration.watcher_job_processor._submit_translation_app_task",
         side_effect=queue.Full,
     ):
         w._submit_job_to_translation_app_async({"id": "123"})
@@ -377,14 +377,14 @@ def test_translation_app_submission_task_logs_failures(watcher_instance):
     queued_tasks = []
 
     with patch(
-        "gengowatcher.watcher_job_processor._submit_translation_app_task",
+        "gengowatcher.orchestration.watcher_job_processor._submit_translation_app_task",
         side_effect=lambda task: queued_tasks.append(task) or MagicMock(),
     ):
         w._submit_job_to_translation_app_async({"id": "123"})
 
     w.logger.exception = MagicMock()
     with patch(
-        "gengowatcher.watcher_job_processor.TranslationAppClient",
+        "gengowatcher.orchestration.watcher_job_processor.TranslationAppClient",
         side_effect=RuntimeError("client failed"),
     ):
         queued_tasks[0]()

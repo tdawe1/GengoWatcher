@@ -22,22 +22,22 @@ import time
 from typing import TYPE_CHECKING
 
 try:
-    from .email_monitor import EmailMonitor
+    from ..email_monitor import EmailMonitor
 except ImportError:  # pragma: no cover - email monitor optional
     EmailMonitor = None
 
 try:
-    from .native_browser_listener import NativeBrowserListener
+    from ..native_browser_listener import NativeBrowserListener
 except ImportError:  # pragma: no cover - native listener optional
     NativeBrowserListener = None
 
 try:
-    from .state_projector import StateProjector
+    from ..state_projector import StateProjector
 except ImportError:  # pragma: no cover - state projector optional
     StateProjector = None
 
 try:
-    from .website_monitor import WebsiteMonitor
+    from ..website_monitor import WebsiteMonitor
 except ImportError:  # pragma: no cover - website monitor optional
     WebsiteMonitor = None
 
@@ -147,8 +147,8 @@ def run_native_browser_listener(watcher):
             # Drain events into state projector
             if hasattr(watcher, "_state_projector"):
                 try:
-                    from .event_bus import get_native_events_queue
-                    from .events import EventEnvelope
+                    from ..event_bus import get_native_events_queue
+                    from ..events import EventEnvelope
 
                     q = get_native_events_queue()
                     while True:

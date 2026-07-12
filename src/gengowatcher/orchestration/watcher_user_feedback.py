@@ -26,7 +26,7 @@ import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import notifier
+from .. import notifier
 
 if TYPE_CHECKING:
     pass

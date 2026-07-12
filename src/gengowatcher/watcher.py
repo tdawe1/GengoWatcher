@@ -29,24 +29,24 @@ from .browser_debug_launcher import (  # noqa: F401  -- re-exported for tests / 
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
 )
-from .watcher_firefox import open_in_managed_firefox_debug_session
-from .watcher_browser_jobs import (
+from .orchestration.watcher_firefox import open_in_managed_firefox_debug_session
+from .orchestration.watcher_browser_jobs import (
     run_browser_jobs_monitor,
     trigger_browser_jobs_refresh as _bj_trigger,
 )
-from .watcher_feed import (
+from .orchestration.watcher_feed import (
     extract_reward as _extract_reward_impl,
     log_all_entries as _log_all_entries_impl,
     process_feed_entries as _process_feed_entries_impl,
     run_rss_monitor as _run_rss_monitor_impl,
 )
-from .watcher_job_processor import (
+from .orchestration.watcher_job_processor import (
     process_new_job as _process_new_job_impl,
     async_job_acceptance_wrapper as _async_job_acceptance_wrapper_impl,
     async_cancel_current_job_wrapper as _async_cancel_current_job_wrapper_impl,
     submit_job_to_translation_app_async as _submit_job_to_translation_app_async_impl,
 )
-from .watcher_ws_debug import (
+from .orchestration.watcher_ws_debug import (
     capture_raw_ws_message as _capture_raw_ws_message_impl,
     get_raw_ws_messages as _get_raw_ws_messages_impl,
     clear_raw_ws_messages as _clear_raw_ws_messages_impl,
@@ -54,49 +54,49 @@ from .watcher_ws_debug import (
     handle_browser_worker_telemetry_payload as _handle_telemetry_payload_impl,
 )
 
-from .watcher_ws_monitor import run_websocket_monitor as _run_websocket_monitor_impl
-from .watcher_ws_logic import websocket_logic as _websocket_logic_impl
-from .watcher_session_sync import (
+from .orchestration.watcher_ws_monitor import run_websocket_monitor as _run_websocket_monitor_impl
+from .orchestration.watcher_ws_logic import websocket_logic as _websocket_logic_impl
+from .orchestration.watcher_session_sync import (
     sync_session_from_browser as _sync_session_from_browser_impl,
     sync_session_before_websocket_connect as _sync_session_before_websocket_connect_impl,
 )
 
-from .watcher_config_io import (
+from .orchestration.watcher_config_io import (
     set_config_value as _set_config_value_impl,
     get_config_value as _get_config_value_impl,
     prompt_for_config_values as _prompt_for_config_values_impl,
     is_config_complete as _is_config_complete_impl,
 )
 
-from .watcher_monitors import (
+from .orchestration.watcher_monitors import (
     run_email_monitor as _run_email_monitor_impl,
     run_website_monitor as _run_website_monitor_impl,
     run_native_browser_listener as _run_native_browser_listener_impl,
 )
 
-from .watcher_io import (
+from .orchestration.watcher_io import (
     fetch_rss as _fetch_rss_impl,
     handle_exit as _handle_exit_impl,
 )
 
-from .watcher_worker_events import (
+from .orchestration.watcher_worker_events import (
     run_browser_worker_event_listener as _run_browser_worker_event_listener_impl,
     on_job_accepted as _on_job_accepted_impl,
 )
 
-from .watcher_user_feedback import (
+from .orchestration.watcher_user_feedback import (
     _setup_csv_logging as _setup_csv_logging_impl,
     show_notification as _show_notification_impl,
     open_in_browser as _open_in_browser_impl,
 )
 
-from .watcher_monitor_status import (
+from .orchestration.watcher_monitor_status import (
     get_monitor_status as _get_monitor_status_impl,
     sync_monitor_metrics as _sync_monitor_metrics_impl,
     process_browser_jobs_snapshot as _process_browser_jobs_snapshot_impl,
 )
 
-from .watcher_orchestration_helpers import (
+from .orchestration.watcher_orchestration_helpers import (
     sync_browser_session_for_quiet_socket as _sync_browser_session_for_quiet_socket_impl,
     warn_if_browser_session_mismatch as _warn_if_browser_session_mismatch_impl,
     get_default_required_config_fields as _get_default_required_config_fields_impl,
@@ -106,7 +106,7 @@ from .watcher_orchestration_helpers import (
 
 
 
-from .watcher_alerting import json_safe as _json_safe_impl
+from .orchestration.watcher_alerting import json_safe as _json_safe_impl
 import concurrent.futures  # noqa: F401  -- still patched by tests via watcher.concurrent.futures
 
 from .config import AppConfig
@@ -114,7 +114,7 @@ from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
 
-from .watcher_health import (
+from .orchestration.watcher_health import (
     alert_on_health_snapshot as _alert_on_health_snapshot,
     build_health_snapshot,
     get_websocket_quiet_age,
@@ -144,7 +144,7 @@ try:
 except ImportError:  # pragma: no cover - optional integration at runtime
     TranslationAppClient = None
 
-from .watcher_config_values import (
+from .orchestration.watcher_config_values import (
     PLACEHOLDER_CONFIG_VALUES,  # noqa: F401
     SENSITIVE_KEYWORDS,
 )
@@ -345,7 +345,7 @@ class GengoWatcher:
         implementation, while keeping the method on the class so existing
         call sites and tests continue to work.
         """
-        from .watcher_alerting import emit_api_event
+        from .orchestration.watcher_alerting import emit_api_event
         emit_api_event(self, event_type, payload)
 
     @staticmethod
@@ -850,11 +850,11 @@ class GengoWatcher:
         debug_url: str,
         allow_navigation: bool,
     ) -> None:
-        from .watcher_browser_jobs import run_browser_jobs_triggered_refresh
+        from .orchestration.watcher_browser_jobs import run_browser_jobs_triggered_refresh
         return run_browser_jobs_triggered_refresh(self, debug_url, allow_navigation)
 
     def _run_browser_jobs_passive_keepalive(self, debug_url: str) -> None:
-        from .watcher_browser_jobs import run_browser_jobs_passive_keepalive
+        from .orchestration.watcher_browser_jobs import run_browser_jobs_passive_keepalive
         return run_browser_jobs_passive_keepalive(self, debug_url)
 
     def _run_browser_jobs_scrape(
@@ -867,7 +867,7 @@ class GengoWatcher:
         allow_navigation: bool,
         is_keepalive: bool,
     ) -> None:
-        from .watcher_browser_jobs import _run_browser_jobs_scrape as _bj_scrape
+        from .orchestration.watcher_browser_jobs import _run_browser_jobs_scrape as _bj_scrape
         return _bj_scrape(
             self,
             debug_url,

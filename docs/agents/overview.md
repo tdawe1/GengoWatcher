@@ -7,7 +7,8 @@
 - Current version: 2.9.3 (see pyproject.toml).
 
 ## Repo Layout
-- src/gengowatcher/: application code. watcher.py orchestrates the lifecycle; most heavy logic now lives in watcher_*.py helpers (watcher_io.py, watcher_feed.py, watcher_ws_monitor.py, watcher_ws_logic.py, watcher_ws_debug.py, watcher_job_processor.py, watcher_alerting.py, watcher_browser_jobs.py, watcher_firefox.py, watcher_session_sync.py, watcher_config_io.py, watcher_monitors.py, watcher_worker_events.py, watcher_user_feedback.py, watcher_monitor_status.py, watcher_orchestration_helpers.py, watcher_debug.py).
+- `src/gengowatcher/`: stable package entrypoints and shared application services.
+- `src/gengowatcher/orchestration/`: internal watcher lifecycle, monitor, feed, session-sync, and job-processing components used by `watcher.py`.
 - src/gengowatcher/browser_worker/: long-lived Playwright sidecar (main.py, client.py, coordinator.py, flows/, models.py, profile.py, protocol.py, registry.py, runtime.py, tabs.py, telemetry.py).
 - tests/: pytest suite (~62 files). Shared fixtures in tests/conftest.py; binary fixtures in tests/fixtures/; helpers in tests/helpers/.
 - scripts/: operational and analysis scripts (not part of the installed package).

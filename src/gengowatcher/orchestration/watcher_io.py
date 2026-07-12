@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import feedparser
 
-from .browser_detector import get_preferred_browser_user_agent
+from ..browser_detector import get_preferred_browser_user_agent
 
 if TYPE_CHECKING:
     pass

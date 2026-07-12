@@ -14,7 +14,7 @@ import queue
 import threading
 import time
 
-from .translation_app_queue import (
+from ..translation_app_queue import (
     submit_translation_app_task as _submit_translation_app_task,
 )
 from .watcher_config_values import PLACEHOLDER_CONFIG_VALUES
@@ -24,7 +24,7 @@ from .watcher_job_metadata import (
 )
 
 try:
-    from .translation_app_client import TranslationAppClient
+    from ..translation_app_client import TranslationAppClient
 except ImportError:  # pragma: no cover - translation-app optional
     TranslationAppClient = None
 

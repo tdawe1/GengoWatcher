@@ -14,11 +14,11 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from .browser_session import inspect_available_jobs_page_sync
-from .browser_session_core import GENGO_AVAILABLE_JOBS_URL
+from ..browser_session import inspect_available_jobs_page_sync
+from ..browser_session_core import GENGO_AVAILABLE_JOBS_URL
 
 if TYPE_CHECKING:
-    from .watcher import GengoWatcher
+    from ..watcher import GengoWatcher
 
 
 def run_browser_jobs_monitor(watcher: "GengoWatcher") -> None:

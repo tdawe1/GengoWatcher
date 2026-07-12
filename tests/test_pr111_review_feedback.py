@@ -9,9 +9,9 @@ import gengowatcher.browser_session_core as browser_session_core
 import gengowatcher.ui_charts as ui_charts
 import gengowatcher.ui_formatting as ui_formatting
 import gengowatcher.ui_textual as ui_textual
-from gengowatcher.watcher_debug import RAW_WS_REDACTED, redact_raw_ws_text
-from gengowatcher.watcher_health import timestamp_or_none
-from gengowatcher.watcher_job_metadata import (
+from gengowatcher.orchestration.watcher_debug import RAW_WS_REDACTED, redact_raw_ws_text
+from gengowatcher.orchestration.watcher_health import timestamp_or_none
+from gengowatcher.orchestration.watcher_job_metadata import (
     normalize_lang_pair_string,
     parse_lang_pair_from_title,
 )
