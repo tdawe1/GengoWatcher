@@ -10,8 +10,8 @@ import pytest
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from gengowatcher.config import AppConfig
-from gengowatcher.state import AppState
+from gengowatcher.config import AppConfig  # noqa: E402
+from gengowatcher.state import AppState  # noqa: E402
 
 
 @pytest.fixture

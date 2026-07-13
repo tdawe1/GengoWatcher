@@ -2,9 +2,7 @@
 
 import pytest
 import asyncio
-import json
 import tempfile
-import pathlib
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from gengowatcher.web import (
@@ -34,11 +32,16 @@ def mock_logger():
 def mock_config(tmp_path):
     """Create a mock config."""
     config = MagicMock(spec=AppConfig)
-    config.get.side_effect = lambda s, k, **kw: {
-        ("Watcher", "check_interval"): 60,
-        ("Paths", "all_entries_log"): str(tmp_path / "test_entries.csv"),
-        ("WebServer", "auth_token"): "test_token_12345",
-    }.get((s, k), kw.get("fallback", "test_value"))
+
+    def mock_get(section, option, *args, **kwargs):
+        fallback = kwargs.get("fallback", args[0] if args else "test_value")
+        return {
+            ("Watcher", "check_interval"): 60,
+            ("Paths", "all_entries_log"): str(tmp_path / "test_entries.csv"),
+            ("WebServer", "auth_token"): "test_token_12345",
+        }.get((section, option), fallback)
+
+    config.get.side_effect = mock_get
     config.getint.side_effect = lambda *_, **__: 60
     config.getboolean.side_effect = lambda *_, **__: False
     config.getfloat.side_effect = lambda *_, **__: 0.0

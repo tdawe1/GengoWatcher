@@ -3,10 +3,6 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from playwright.async_api import Page
 
 
 WORKBENCH_RE = re.compile(r"/t/workbench/(?P<job_id>\d+)")

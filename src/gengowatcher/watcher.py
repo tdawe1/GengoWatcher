@@ -1,74 +1,122 @@
-__version__ = "2.9.4"
+from . import __version__
 __release_date__ = "2026-07-08"
 
 import asyncio
 import concurrent.futures
-import csv
-import datetime
-import json
 import logging
 import os
-import queue
-import re
 import random
-import subprocess
 import sys
 import threading
 import time
-import webbrowser
 from typing import Any, Callable, Optional
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-import feedparser
 import websockets
-from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
+
+import subprocess  # noqa: F401  -- still patched by tests via watcher.subprocess
+import webbrowser  # noqa: F401  -- still patched by tests via watcher.webbrowser
+import feedparser  # noqa: F401  -- still patched by tests via watcher.feedparser
 
 from .browser_session import (
-    GENGO_AVAILABLE_JOBS_URL,
-    GENGO_BROWSER_BROWSE_URLS,
-    build_browser_aligned_websocket_headers,
-    build_websocket_auth_payload,
-    fetch_browser_session_snapshot_sync,
-    inspect_available_jobs_page_sync,
-    open_url_in_browser_debug_sync,
+    fetch_browser_session_snapshot_sync,  # noqa: F401  -- still patched by tests via watcher.<name>
+    open_url_in_browser_debug_sync,  # noqa: F401  -- still patched by tests via watcher.<name>
     refresh_browser_page_activity_sync,
 )
-from .browser_debug_launcher import (
+from .browser_debug_launcher import (  # noqa: F401  -- re-exported for tests / watcher_firefox.py
     get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
 )
-from .browser_detector import get_preferred_browser_user_agent
+from .orchestration.watcher_firefox import open_in_managed_firefox_debug_session
+from .orchestration.watcher_browser_jobs import (
+    run_browser_jobs_monitor,
+    trigger_browser_jobs_refresh as _bj_trigger,
+)
+from .orchestration.watcher_feed import (
+    extract_reward as _extract_reward_impl,
+    log_all_entries as _log_all_entries_impl,
+    process_feed_entries as _process_feed_entries_impl,
+    run_rss_monitor as _run_rss_monitor_impl,
+)
+from .orchestration.watcher_job_processor import (
+    process_new_job as _process_new_job_impl,
+    async_job_acceptance_wrapper as _async_job_acceptance_wrapper_impl,
+    async_cancel_current_job_wrapper as _async_cancel_current_job_wrapper_impl,
+    submit_job_to_translation_app_async as _submit_job_to_translation_app_async_impl,
+)
+from .orchestration.watcher_ws_debug import (
+    capture_raw_ws_message as _capture_raw_ws_message_impl,
+    get_raw_ws_messages as _get_raw_ws_messages_impl,
+    clear_raw_ws_messages as _clear_raw_ws_messages_impl,
+    handle_browser_worker_telemetry_line as _handle_telemetry_line_impl,
+    handle_browser_worker_telemetry_payload as _handle_telemetry_payload_impl,
+)
+
+from .orchestration.watcher_ws_monitor import run_websocket_monitor as _run_websocket_monitor_impl
+from .orchestration.watcher_ws_logic import websocket_logic as _websocket_logic_impl
+from .orchestration.watcher_session_sync import (
+    sync_session_from_browser as _sync_session_from_browser_impl,
+    sync_session_before_websocket_connect as _sync_session_before_websocket_connect_impl,
+)
+
+from .orchestration.watcher_config_io import (
+    set_config_value as _set_config_value_impl,
+    get_config_value as _get_config_value_impl,
+    prompt_for_config_values as _prompt_for_config_values_impl,
+    is_config_complete as _is_config_complete_impl,
+)
+
+from .orchestration.watcher_monitors import (
+    run_email_monitor as _run_email_monitor_impl,
+    run_website_monitor as _run_website_monitor_impl,
+    run_native_browser_listener as _run_native_browser_listener_impl,
+)
+
+from .orchestration.watcher_io import (
+    fetch_rss as _fetch_rss_impl,
+    handle_exit as _handle_exit_impl,
+)
+
+from .orchestration.watcher_worker_events import (
+    run_browser_worker_event_listener as _run_browser_worker_event_listener_impl,
+    on_job_accepted as _on_job_accepted_impl,
+)
+
+from .orchestration.watcher_user_feedback import (
+    _setup_csv_logging as _setup_csv_logging_impl,
+    show_notification as _show_notification_impl,
+    open_in_browser as _open_in_browser_impl,
+)
+
+from .orchestration.watcher_monitor_status import (
+    get_monitor_status as _get_monitor_status_impl,
+    sync_monitor_metrics as _sync_monitor_metrics_impl,
+    process_browser_jobs_snapshot as _process_browser_jobs_snapshot_impl,
+)
+
+from .orchestration.watcher_orchestration_helpers import (
+    sync_browser_session_for_quiet_socket as _sync_browser_session_for_quiet_socket_impl,
+    warn_if_browser_session_mismatch as _warn_if_browser_session_mismatch_impl,
+    get_default_required_config_fields as _get_default_required_config_fields_impl,
+    get_effective_rss_wait_range_seconds as _get_effective_rss_wait_range_seconds_impl,
+    configure_cancellation_manager as _configure_cancellation_manager_impl,
+)
+
+
+
+from .orchestration.watcher_alerting import json_safe as _json_safe_impl
+import concurrent.futures  # noqa: F401  -- still patched by tests via watcher.concurrent.futures
+
 from .config import AppConfig
 from .job_acceptance import JobAcceptanceEngine
 from .job_cancellation_manager import JobCancellationManager
 from .state import AppState
-from .translation_app_queue import (
-    submit_translation_app_task as _submit_translation_app_task,
-)
-from .watcher_debug import (
-    redact_raw_ws_text as _redact_raw_ws_text,
-    redact_raw_ws_value as _redact_raw_ws_value,
-)
-from .watcher_job_metadata import (
-    TIER_UNIT_RATES,
-    coerce_positive_float,
-    coerce_positive_int,
-    derive_lang_pair,
-    derive_word_count,
-    estimate_word_count_from_reward,
-    format_lang_token,
-    normalize_lang_pair_string,
-    normalize_meta,
-    parse_lang_pair_from_title,
-    pick_meta_value,
-    resolve_tier_rate,
-)
-from .watcher_health import (
+
+from .orchestration.watcher_health import (
     alert_on_health_snapshot as _alert_on_health_snapshot,
     build_health_snapshot,
     get_websocket_quiet_age,
@@ -77,7 +125,6 @@ from .watcher_health import (
 )
 from .webhooks import WebhookAuditLogger, WebhookDispatcher
 
-from . import notifier
 
 try:
     from .browser_worker.client import BrowserWorkerClient
@@ -99,15 +146,10 @@ try:
 except ImportError:  # pragma: no cover - optional integration at runtime
     TranslationAppClient = None
 
-PLACEHOLDER_CONFIG_VALUES = {
-    None,
-    "",
-    "REPLACE_WITH_YOUR_SESSION_TOKEN",
-    "REPLACE_WITH_YOUR_USER_KEY",
-    "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN",
-}
-
-SENSITIVE_KEYWORDS = {"auth", "cookie", "key", "password", "secret", "session", "token"}
+from .orchestration.watcher_config_values import (
+    PLACEHOLDER_CONFIG_VALUES,  # noqa: F401
+    SENSITIVE_KEYWORDS,
+)
 
 
 def _redact_config_for_log(value: Any, key: str = "") -> Any:
@@ -223,9 +265,9 @@ class GengoWatcher:
         self.browser_jobs_last_action = ""
         self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
-        self._csv_lock = threading.Lock()
         self._all_entries_log_file = None
         self._csv_writer = None
+        self._csv_lock = threading.Lock()
         self._shutdown_initiated = False
         self._rss_executor = None
         self._rss_future = None
@@ -240,12 +282,17 @@ class GengoWatcher:
         self._browser_session_last_sync_ts = None
         self._browser_session_last_sync_state = "idle"
         self._browser_session_last_sync_detail = "never synced"
+        self._browser_cookies = []
         self._next_quiet_socket_sync_ts = None
         # BrowserJobs monitor wakes from this event when a workbench becomes
         # visible (or an explicit manual trigger fires). The monitor does NOT
         # poll the browser on a fixed timer by default.
         self._browser_jobs_refresh_event = threading.Event()
         self._health_alert_states = {}
+        # BrowserJobs monitor wakes from this event when a workbench becomes
+        # visible (or an explicit manual trigger fires). The monitor does NOT
+        # poll the browser on a fixed timer by default.
+        self._browser_jobs_refresh_event = threading.Event()
         # Thread references for health monitoring
         self._monitor_threads = {}  # name -> threading.Thread
         # Raw WebSocket message buffer for debug output
@@ -303,31 +350,18 @@ class GengoWatcher:
             )
 
     def _emit_api_event(self, event_type: str, payload: dict) -> None:
-        """Emit an in-process API websocket event without blocking monitors."""
-        # Trigger an event-driven BrowserJobs refresh when a workbench becomes
-        # visible or job details land. Keeps the monitor passive by default.
-        if event_type in {"job.visible", "job.details", "job.discovered"}:
-            trigger = getattr(self, "_browser_jobs_refresh_event", None)
-            if trigger is not None:
-                trigger.set()
-        callback = getattr(self, "on_api_event_callback", None)
-        if not callable(callback):
-            return
-        try:
-            callback(event_type, dict(payload))
-        except Exception:
-            self.logger.exception(
-                "Failed to publish API event %s for job %s",
-                event_type,
-                payload.get("id", payload.get("job_id", "unknown")),
-            )
+        """Emit an in-process API websocket event without blocking monitors.
+
+        Delegates to watcher_alerting.emit_api_event for the actual
+        implementation, while keeping the method on the class so existing
+        call sites and tests continue to work.
+        """
+        from .orchestration.watcher_alerting import emit_api_event
+        emit_api_event(self, event_type, payload)
 
     @staticmethod
     def _json_safe(value):
-        try:
-            return json.loads(json.dumps(value, default=str))
-        except Exception:
-            return str(value)
+        return _json_safe_impl(value)
 
     def _build_browser_worker_client(self):
         if BrowserWorkerClient is None:
@@ -374,64 +408,14 @@ class GengoWatcher:
         return f"{text[:4]}...{text[-4:]}"
 
     def _warn_if_browser_session_mismatch(self) -> None:
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        configured_token = self.config.get("WebSocket", "user_session")
+        """Log a warning when the configured session differs from the live browser."""
+        return _warn_if_browser_session_mismatch_impl(self)
 
-        if not debug_url or configured_token in PLACEHOLDER_CONFIG_VALUES:
-            return
-
-        try:
-            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
-        except Exception as exc:
-            self.logger.debug(
-                "Browser session check skipped for %s: %s",
-                debug_url,
-                exc,
-            )
-            return
-
-        browser_token = snapshot.session_token
-        if browser_token == configured_token:
-            return
-
-        self.logger.warning(
-            "WebSocket.user_session differs from the live browser session at %s "
-            "(config=%s browser=%s). Realtime detections may fall back to RSS until"
-            " you sync the token.",
-            debug_url,
-            self._mask_secret(configured_token),
-            self._mask_secret(browser_token),
-        )
 
     def _get_default_required_config_fields(self) -> list[tuple[str, str]]:
         """Return the required config fields for currently enabled features."""
-        required_fields = [("Watcher", "feed_url"), ("Watcher", "check_interval")]
+        return _get_default_required_config_fields_impl(self)
 
-        if self.config.getboolean("WebSocket", "enable_websocket", fallback=True):
-            required_fields.extend(
-                [("WebSocket", "user_id"), ("WebSocket", "user_session")]
-            )
-
-        if self.config.getboolean("EmailMonitor", "enabled", fallback=False):
-            required_fields.extend(
-                [
-                    ("EmailMonitor", "email"),
-                    ("EmailMonitor", "client_id"),
-                    ("EmailMonitor", "client_secret"),
-                    ("EmailMonitor", "refresh_token"),
-                ]
-            )
-
-        if self.config.getboolean("WebsiteMonitor", "enabled", fallback=False):
-            required_fields.append(("WebsiteMonitor", "jobs_url"))
-
-        if self.config.getboolean("AutoAccept", "enabled", fallback=False):
-            required_fields.append(("AutoAccept", "browser_profile_path"))
-
-        if self.config.getboolean("BrowserWorker", "enabled", fallback=False):
-            required_fields.append(("BrowserWorker", "socket_path"))
-
-        return required_fields
 
     def _get_session_sync_interval_seconds(self) -> int:
         return self.config.getint(
@@ -479,117 +463,11 @@ class GengoWatcher:
         alert_on_failure: bool = False,
     ) -> bool:
         """Refresh the configured websocket session token from a live browser."""
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        if not debug_url:
-            return False
-
-        snapshot = None
-        sync_error: Exception | None = None
-        try:
-            snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
-        except Exception as exc:
-            sync_error = exc
-            if maybe_launch_managed_firefox_debug(
-                self.config,
-                str(debug_url),
-                logger=self.logger,
-            ):
-                timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(
-                    self.config
-                )
-                deadline = time.monotonic() + timeout_sec
-                last_exc: Exception = exc
-                while time.monotonic() < deadline:
-                    time.sleep(retry_interval_sec)
-                    try:
-                        snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
-                        break
-                    except Exception as retry_exc:
-                        last_exc = retry_exc
-                sync_error = last_exc
-
-        if snapshot is None:
-            self._browser_session_last_sync_ts = time.time()
-            self._browser_session_last_sync_state = "error"
-            error_detail = str(sync_error or "browser session sync failed")
-            self._browser_session_last_sync_detail = error_detail
-            self.logger.warning(
-                "Browser session sync failed for %s: %s",
-                debug_url,
-                error_detail,
-            )
-            if self._has_cached_websocket_credentials():
-                self.logger.warning(
-                    "Browser session sync failed for %s, but cached WebSocket"
-                    " credentials are present. Continuing with the last known"
-                    " session instead of stopping realtime monitoring.",
-                    debug_url,
-                )
-                self._websocket_sync_failed = False
-                self._websocket_sync_failure_reason = None
-                return False
-            if alert_on_failure:
-                sound_file = self.config.get(
-                    "Paths", "browser_session_sync_failed_sound_file"
-                )
-                self.show_notification(
-                    message=f"Browser session sync failed: {error_detail}",
-                    title="GengoWatcher Session Sync Failed",
-                    play_sound=True,
-                    sound_file=sound_file or None,
-                )
-            if fail_hard:
-                self._websocket_sync_failed = True
-                self._websocket_sync_failure_reason = error_detail
-                self.websocket_status = "Session Sync Failed"
-            return False
-
-        current_token = self.config.get("WebSocket", "user_session")
-        current_browser_user_agent = self.config.get("Network", "browser_user_agent")
-        current_accept_language = self.config.get("Network", "browser_accept_language")
-        browser_token = snapshot.session_token
-        browser_user_agent = str(snapshot.user_agent or "").strip()
-        browser_accept_language = str(snapshot.accept_language or "").strip()
-        self._browser_session_last_sync_ts = time.time()
-        self._browser_session_last_sync_state = "healthy"
-        changed_fields = []
-        if browser_token != current_token:
-            self.config.set("WebSocket", "user_session", browser_token)
-            changed_fields.append("user_session")
-        if (
-            browser_user_agent
-            and browser_user_agent != str(current_browser_user_agent or "").strip()
-        ):
-            self.config.set("Network", "browser_user_agent", browser_user_agent)
-            changed_fields.append("browser_user_agent")
-        if (
-            browser_accept_language
-            and browser_accept_language != str(current_accept_language or "").strip()
-        ):
-            self.config.set(
-                "Network", "browser_accept_language", browser_accept_language
-            )
-            changed_fields.append("browser_accept_language")
-        if str(debug_url) != str(
-            self.config.get("WebSocket", "browser_debug_url") or ""
-        ):
-            self.config.set("WebSocket", "browser_debug_url", str(debug_url))
-            changed_fields.append("browser_debug_url")
-
-        if changed_fields:
-            self.config.save_config()
-            self._browser_session_last_sync_detail = (
-                f"updated {', '.join(changed_fields)}"
-            )
-        else:
-            self._browser_session_last_sync_detail = "unchanged"
-        self.logger.info(
-            "Updated WebSocket session settings from live browser session at %s "
-            "(session=%s)",
-            debug_url,
-            self._mask_secret(browser_token),
+        return _sync_session_from_browser_impl(
+            self,
+            fail_hard=fail_hard,
+            alert_on_failure=alert_on_failure,
         )
-        return bool(changed_fields)
 
     def _pick_quiet_socket_sync_delay_seconds(self) -> float:
         min_delay = float(
@@ -612,91 +490,26 @@ class GengoWatcher:
         alert_on_failure: bool = False,
     ) -> bool:
         """Refresh the browser session when a quiet websocket needs a recheck."""
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        if not debug_url or self.websocket_status != "Live":
-            return False
-
-        now = current_time if current_time is not None else time.time()
-        quiet_age = self._get_websocket_quiet_age(now)
-        quiet_probe_after = self._get_session_quiet_probe_seconds()
-        if quiet_age is None or quiet_age < quiet_probe_after:
-            return False
-
-        next_sync_ts = self._next_quiet_socket_sync_ts
-        if next_sync_ts is not None and now < next_sync_ts:
-            return False
-        if self._browser_session_last_sync_ts is not None:
-            sync_age = max(0.0, now - self._browser_session_last_sync_ts)
-            if sync_age < quiet_probe_after:
-                return False
-
-        self.logger.warning(
-            "WebSocket: No application messages for %.1fs while live; syncing browser"
-            " session from %s before continuing.",
-            quiet_age,
-            debug_url,
-        )
-
-        changed = self._sync_session_from_browser(
+        return _sync_browser_session_for_quiet_socket_impl(
+            self,
+            current_time=current_time,
             fail_hard=fail_hard,
             alert_on_failure=alert_on_failure,
         )
-        if changed:
-            self._next_quiet_socket_sync_ts = None
-            return True
 
-        self._next_quiet_socket_sync_ts = (
-            now + self._pick_quiet_socket_sync_delay_seconds()
-        )
-        return False
 
     def _sync_session_before_websocket_connect(self) -> bool:
         """Try to sync browser session once before building websocket auth."""
-        debug_url = self.config.get("WebSocket", "browser_debug_url")
-        if not debug_url:
-            return True
-
-        sync_fail_hard = self.config.getboolean(
-            "WebSocket", "session_sync_fail_hard", fallback=True
-        )
-        sync_alert_on_failure = self.config.getboolean(
-            "WebSocket",
-            "session_sync_alert_on_failure",
-            fallback=True,
-        )
-        self.logger.info(
-            "WebSocket: Syncing browser session from %s before connecting.",
-            debug_url,
-        )
-        self._sync_session_from_browser(
-            fail_hard=sync_fail_hard,
-            alert_on_failure=sync_alert_on_failure,
-        )
-        if self._websocket_sync_failed:
-            self.logger.error("WebSocket: Browser session sync failed before connect.")
-            return False
-        return True
+        return _sync_session_before_websocket_connect_impl(self)
 
     def _is_gengo_rss_feed(self) -> bool:
         feed_url = str(self.config.get("Watcher", "feed_url") or "")
         return "gengo.com" in feed_url.lower()
 
     def _get_effective_rss_wait_range_seconds(self) -> tuple[float, float]:
-        if self._is_gengo_rss_feed():
-            min_delay = float(
-                self.config.get("Watcher", "gengo_rss_interval_min_sec", fallback=31)
-                or 31
-            )
-            max_delay = float(
-                self.config.get("Watcher", "gengo_rss_interval_max_sec", fallback=60)
-                or 60
-            )
-            if max_delay < min_delay:
-                min_delay, max_delay = max_delay, min_delay
-            return min_delay, max_delay
+        """Compute the effective RSS wait range from config + adaptive state."""
+        return _get_effective_rss_wait_range_seconds_impl(self)
 
-        check_interval = float(self.config.get("Watcher", "check_interval") or 45)
-        return check_interval, check_interval
 
     def _get_effective_rss_check_interval(self) -> float:
         if self._is_gengo_rss_feed():
@@ -803,151 +616,34 @@ class GengoWatcher:
         return random.random() < min(1.0, max(0.0, probability))
 
     def _process_browser_jobs_snapshot(self, snapshot) -> int:
-        processed = 0
-        candidates = list(snapshot.detected_jobs) + list(snapshot.jobs)
-        seen_candidate_ids: set[int] = set()
-        for job in candidates:
-            if job.job_id in seen_candidate_ids:
-                continue
-            seen_candidate_ids.add(job.job_id)
-            self._process_new_job(
-                job.job_id,
-                job.title,
-                job.reward,
-                job.url,
-                source="BrowserJobs",
-                source_meta={
-                    "title": job.title,
-                    "reward": job.reward,
-                    "url": job.url,
-                    "text": job.text,
-                    "browser_action": snapshot.action,
-                    "browser_page_url": snapshot.url,
-                },
-            )
-            processed += 1
-        return processed
+        """Dispatch newly-detected browser-jobs through process_new_job."""
+        return _process_browser_jobs_snapshot_impl(self, snapshot)
+
 
     def get_monitor_status(self) -> dict:
-        """
-        Check health of all monitor threads.
+        """Check health of all monitor threads."""
+        return _get_monitor_status_impl(self)
 
-        Returns:
-            dict: Mapping of monitor name to status ("alive", "dead", "disabled")
-        """
-        status = {}
-        for name in [
-            "rss",
-            "websocket",
-            "email",
-            "website",
-            "browser_worker",
-            "native_browser",
-            "browser_jobs",
-        ]:
-            thread = self._monitor_threads.get(name)
-            if thread is None:
-                status[name] = "disabled"
-            elif thread.is_alive():
-                status[name] = "alive"
-            else:
-                status[name] = "dead"
-        status["email_detail"] = self.email_monitor_status
-        status["website_detail"] = self.website_monitor_status
-        status["browser_jobs_detail"] = self.browser_jobs_monitor_status
-        return status
 
     def _sync_monitor_metrics(self):
         """Sync metrics from email and website monitors."""
-        if hasattr(self, "_email_monitor") and self._email_monitor:
-            self.email_monitor_status = getattr(
-                self._email_monitor, "status", "Disabled"
-            )
-            self.email_last_check_time = getattr(
-                self._email_monitor, "last_check_time", None
-            )
-            self.email_jobs_found_session = getattr(
-                self._email_monitor, "jobs_found_session", 0
-            )
+        return _sync_monitor_metrics_impl(self)
 
-        if hasattr(self, "_website_monitor") and self._website_monitor:
-            self.website_monitor_status = getattr(
-                self._website_monitor, "status", "Disabled"
-            )
-            self.website_last_check_time = getattr(
-                self._website_monitor, "last_check_time", None
-            )
-            self.website_jobs_found_session = getattr(
-                self._website_monitor, "jobs_found_session", 0
-            )
 
     def _capture_raw_ws_message(self, message: str, direction: str = "recv"):
-        """Capture raw WebSocket message for debug output when raw debug is enabled.
-
-        Args:
-            message: The raw message string (JSON or otherwise)
-            direction: "recv" for received, "send" for sent
-        """
-        if not self.config.get("DebugCategories", "raw"):
-            return
-
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        prefix = "→" if direction == "send" else "←"
-
-        # Try to pretty-format JSON
-        try:
-            parsed = json.loads(message)
-            parsed = _redact_raw_ws_value(parsed)
-            formatted = json.dumps(parsed, indent=2)
-        except (json.JSONDecodeError, TypeError):
-            formatted = _redact_raw_ws_text(str(message))
-
-        entry = f"[{timestamp}] {prefix} {formatted}"
-
-        with self._raw_ws_lock:
-            self._raw_ws_messages.append(entry)
+        """Capture raw WebSocket message for debug output when raw debug is enabled."""
+        return _capture_raw_ws_message_impl(self, message, direction)
 
     def get_raw_ws_messages(self) -> list:
-        """Get a copy of the raw WebSocket message buffer.
-
-        Returns:
-            List of raw message entries with timestamps
-        """
-        with self._raw_ws_lock:
-            return list(self._raw_ws_messages)
+        """Get a copy of the raw WebSocket message buffer."""
+        return _get_raw_ws_messages_impl(self)
 
     def clear_raw_ws_messages(self):
         """Clear the raw WebSocket message buffer."""
-        with self._raw_ws_lock:
-            self._raw_ws_messages.clear()
-
+        return _clear_raw_ws_messages_impl(self)
     def _setup_csv_logging(self):
-        """
-        Initialise CSV logging for recording RSS feed entries.
-
-        Creates the configured log directory if missing, opens the log file for appending and initialises a CSV writer. If the file is empty a header row ("timestamp", "title", "reward", "link", "summary") is written. If the file cannot be opened, CSV logging is disabled and an error is logged.
-        """
-        self.logger.debug("Setting up CSV logging.")
-        try:
-            log_path_str = self.config.get("Paths", "all_entries_log")
-            if not log_path_str or not isinstance(log_path_str, (str, Path)):
-                self.logger.error("all_entries_log path not configured or invalid")
-                return
-            log_path = Path(str(log_path_str))
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            self._all_entries_log_file = open(
-                log_path, "a", newline="", encoding="utf-8"
-            )
-            self._csv_writer = csv.writer(self._all_entries_log_file)
-            if log_path.stat().st_size == 0:
-                self._csv_writer.writerow(
-                    ["timestamp", "title", "reward", "link", "summary"]
-                )
-            self.logger.debug(f"CSV logging enabled at {log_path}")
-        except IOError as e:
-            self.logger.error(f"Could not open all_entries_log file: {e}")
-            self._all_entries_log_file = None
-            self._csv_writer = None
+        """Initialise CSV logging for RSS feed entries."""
+        return _setup_csv_logging_impl(self)
 
     def show_notification(
         self,
@@ -958,27 +654,9 @@ class GengoWatcher:
         url=None,
         sound_file=None,
     ):
-        """
-        Send a desktop notification and optionally play a sound or open a URL.
+        """Send a desktop notification + optional sound + browser open."""
+        return _show_notification_impl(self, message, title=title, play_sound=play_sound, open_link=open_link, url=url, sound_file=sound_file)
 
-        Parameters:
-            message (str): Notification message body.
-            title (str): Notification title; defaults to "GengoWatcher".
-            play_sound (bool): If True and sound is enabled in configuration, play the configured sound.
-            open_link (bool): If True and `url` is provided, open the URL in the configured browser.
-            url (str | None): URL to open when `open_link` is True; ignored if not provided.
-            sound_file (str | None): Optional override sound path; defaults to Paths.sound_file.
-        """
-        if self.config.get("Watcher", "enable_notifications"):
-            icon_path = self.config.get("Paths", "notification_icon_path")
-            notifier.send_notification(title, message, icon_path)
-
-        if play_sound and self.config.get("Watcher", "enable_sound"):
-            chosen_sound = sound_file or self.config.get("Paths", "sound_file")
-            notifier.play_sound(chosen_sound)
-
-        if open_link and url:
-            self.open_in_browser(url)
 
     @staticmethod
     def _is_gengo_url(url: str) -> bool:
@@ -987,1451 +665,70 @@ class GengoWatcher:
         return hostname == "gengo.com" or hostname.endswith(".gengo.com")
 
     def _open_in_managed_firefox_debug_session(self, url: str) -> bool:
-        if not self._is_gengo_url(url):
-            return False
-
-        debug_url = self.config.get("WebSocket", "browser_debug_url") or ""
-        try:
-            spec = get_firefox_debug_launch_spec(self.config, str(debug_url))
-        except Exception as exc:
-            self.logger.debug(
-                "Skipping managed Firefox debug browser for %s: %s",
-                url,
-                exc,
-            )
-            return False
-        if spec is None:
-            return False
-
-        last_exc: Exception | None = None
-        try:
-            open_url_in_browser_debug_sync(spec.debug_url, url)
-            self.logger.debug(
-                "Opened URL in managed Firefox debug session at %s: %s",
-                spec.debug_url,
-                url,
-            )
-            return True
-        except Exception as exc:
-            last_exc = exc
-
-        if maybe_launch_managed_firefox_debug(
-            self.config,
-            spec.debug_url,
-            logger=self.logger,
-        ):
-            timeout_sec, retry_interval_sec = get_firefox_debug_retry_window(
-                self.config
-            )
-            deadline = time.monotonic() + timeout_sec
-            while time.monotonic() < deadline:
-                time.sleep(retry_interval_sec)
-                try:
-                    open_url_in_browser_debug_sync(spec.debug_url, url)
-                    self.logger.debug(
-                        "Opened URL in newly launched managed Firefox debug "
-                        "session at %s: %s",
-                        spec.debug_url,
-                        url,
-                    )
-                    return True
-                except Exception as exc:
-                    last_exc = exc
-
-        self.logger.warning(
-            "Managed Firefox debug session at %s could not open %s (%s); "
-            "falling back to configured browser",
-            spec.debug_url,
-            url,
-            last_exc,
-        )
-        return False
-
+        return open_in_managed_firefox_debug_session(self, url)
     def open_in_browser(self, url):
-        """
-        Open the given URL using the configured browser if available, otherwise use the system default browser.
+        """Open the given URL using the configured browser if available."""
+        return _open_in_browser_impl(self, url)
 
-        Parameters:
-            url (str): The URL to open. If the configured `browser_args` include formatting placeholders (for example `{url}`), they will be formatted with this URL.
-        """
-        self.logger.debug(f"Opening URL in browser: {url}")
-        try:
-            if self._open_in_managed_firefox_debug_session(str(url)):
-                return
-
-            browser_path_str = self.config.get("Paths", "browser_path")
-            if not browser_path_str or not Path(browser_path_str).is_file():
-                webbrowser.open(url)
-            else:
-                args = [
-                    arg.format(url=url)
-                    for arg in self.config.get("Paths", "browser_args").split()
-                ]
-                subprocess.Popen([str(browser_path_str)] + args)
-        except Exception as e:
-            self.logger.error(f"Browser Error: {e}")
 
     def _extract_reward(self, entry) -> float:
-        """
-        Extracts the numeric reward value from an RSS entry.
-
-        Searches the entry's title and summary for a "Reward:" label followed by an optional currency symbol and returns the parsed value.
-
-        Parameters:
-            entry (Mapping): RSS entry containing at least 'title' and 'summary' strings.
-
-        Returns:
-            float: Reward amount as a float, or 0.0 if no valid reward is found.
-        """
-        text = entry.get("title", "") + " | " + entry.get("summary", "")
-        self.logger.debug(f"Extracting reward from entry: {text}")
-        match = re.search(r"Reward:\s*(?:US\$|\$)?\s*(\d+\.?\d*)", text, re.IGNORECASE)
-        try:
-            return float(match.group(1)) if match else 0.0
-        except (ValueError, IndexError):
-            return 0.0
+        return _extract_reward_impl(entry)
 
     def _log_all_entries(self, entries):
-        """Log all RSS entries to the CSV file.
-
-        Writes each entry's timestamp, title, reward, link, and summary to the
-        configured CSV log file. Only logs if CSV writer is properly initialized.
-
-        Args:
-            entries: List of RSS entry dictionaries to log.
-        """
-        self.logger.debug(f"Logging {len(entries)} entries to CSV.")
-        with self._csv_lock:
-            if not self._csv_writer or not self._all_entries_log_file:
-                return
-            timestamp = datetime.datetime.now().isoformat()
-            for entry in entries:
-                self._csv_writer.writerow(
-                    [
-                        timestamp,
-                        entry.get("title", "N/A"),
-                        self._extract_reward(entry),
-                        entry.get("link", "N/A"),
-                        entry.get("summary", "N/A"),
-                    ]
-                )
-            self._all_entries_log_file.flush()
+        return _log_all_entries_impl(self, entries)
 
     def _process_new_job(self, job_id, title, reward, url, source, source_meta=None):
         """Process a newly discovered job from RSS or WebSocket sources.
 
-        Handles job filtering, notification, storage, and auto-acceptance logic.
-        Updates session statistics and ensures thread-safe access to shared state.
-
-        Args:
-            job_id: Unique identifier for the job.
-            title: Job title/description.
-            reward: Job reward amount in USD.
-            url: URL to access the job.
-            source: Source of the job discovery ("RSS" or "WebSocket").
-            source_meta: Optional metadata from the source (entry dict, websocket payload, etc.).
+        Delegates to watcher_job_processor.process_new_job for the actual
+        implementation, while keeping the method on the class so call
+        sites such as WebAPI discovery handling, monitor callbacks, and tests
+        continue to work unchanged.
         """
-        self.logger.debug(
-            f"Processing new job: {job_id}, {title}, {reward}, {url}, {source}"
-        )
-        with self._seen_jobs_lock:
-            if job_id in self._seen_jobs_session:
-                return
-            min_reward = self.config.get("Watcher", "min_reward")
-            if min_reward > 0.0 and reward < min_reward:
-                self.logger.warning(
-                    f"Job '{title}' (US$ {reward:.2f}) ignored due to [yellow]min_reward filter[/]."
-                )
-                return
-
-            lang_pair = self._derive_lang_pair(title, source_meta)
-            word_count = self._derive_word_count(title, source_meta, reward=reward)
-
-            # Prepare job data for storage, callbacks, and acceptance checks
-            job_data = {
-                "id": str(job_id),
-                "title": title,
-                "reward": float(reward),
-                "currency": "USD",
-                "url": url,
-                "timestamp": time.time(),
-                "source": source,
-                "lang_pair": lang_pair,
-                "word_count": word_count,
-                "source_meta": self._json_safe(source_meta or {}),
-                "lifecycle_state": "detected",
-                "acceptance_state": "not_requested",
-                "workflow_state": "new",
-            }
-
-            try:
-                inserted = self.state.add_job(job_data)
-                if inserted is False:
-                    # Job is a duplicate, bail out immediately
-                    return
-
-                # Job was successfully inserted, proceed with all side effects
-                self.logger.info(
-                    f"[success]New job via {source}: {title.split('|')[0].strip()} (US$ {reward:.2f})[/success]"
-                )
-                self.show_notification(
-                    message=title,
-                    title="New Gengo Job Available!",
-                    play_sound=True,
-                    open_link=True,
-                    url=url,
-                )
-
-                # Update bookkeeping after successful add_job
-                self._seen_jobs_session.add(job_id)
-                self.state.seen_job_ids.append(job_id)
-                self.state.total_new_entries_found += 1
-                self.session_new_entries += 1
-                self.session_total_value += reward
-            except Exception as e:
-                self.logger.warning(f"Failed to store job in state: {e}")
-                return
-
-        eligible_for_auto_accept = self.job_acceptance_engine.is_job_eligible(job_data)
-        allow_http_fallback = self.config.getboolean(
-            "AutoAccept", "allow_http_fallback", fallback=False
-        )
-        self._emit_webhook_event("job.discovered", job_data)
-        self._emit_api_event("job.discovered", job_data)
-        self._emit_api_event("job.details", job_data)
-
-        if self.browser_worker_enabled and eligible_for_auto_accept:
-            self.logger.info(
-                "Routing job %s to browser worker via local client", job_id
-            )
-            if not self.browser_worker_client:
-                if allow_http_fallback:
-                    self.logger.error(
-                        "Browser worker is enabled for job %s but the local client is unavailable;"
-                        " falling back to standard acceptance path",
-                        job_id,
-                    )
-                else:
-                    self.logger.error(
-                        "Browser worker is enabled for job %s but the local client is unavailable;"
-                        " HTTP fallback is disabled",
-                        job_id,
-                    )
-            else:
-                try:
-                    self.browser_worker_client.submit_job(
-                        url,
-                        source,
-                        metadata=job_data,
-                    )
-                    accept_requested_payload = {
-                        **job_data,
-                        "accept_path": "browser_worker",
-                        "acceptance_state": "requested",
-                        "lifecycle_state": "accept_requested",
-                    }
-                    self._emit_webhook_event(
-                        "job.accept_requested",
-                        accept_requested_payload,
-                    )
-                    self.state.update_job(
-                        str(job_id),
-                        {
-                            "acceptance_state": "requested",
-                            "lifecycle_state": "accept_requested",
-                            "accept_path": "browser_worker",
-                        },
-                    )
-                    self._emit_api_event(
-                        "job.accept_requested",
-                        accept_requested_payload,
-                    )
-                    self.state.save_state()
-                    if self.on_job_added_callback:
-                        try:
-                            self.on_job_added_callback(job_data)
-                        except Exception as e:
-                            self.logger.debug(f"Error in job added callback: {e}")
-                    return
-                except Exception as e:
-                    if allow_http_fallback:
-                        self.logger.error(
-                            "Failed to submit job %s to browser worker: %s; falling back to"
-                            " standard acceptance path",
-                            job_id,
-                            e,
-                        )
-                    else:
-                        self.logger.error(
-                            "Failed to submit job %s to browser worker: %s; HTTP fallback is disabled",
-                            job_id,
-                            e,
-                        )
-
-        # Consider cancelling a current job if this one is better
-        try:
-            if (
-                self.cancellation_manager.cancellation_enabled
-                and self.cancellation_manager.should_cancel_for_job(
-                    float(job_data.get("reward", 0.0)), str(job_data.get("id"))
-                )
-            ):
-                self.logger.info(
-                    "Better opportunity detected - scheduling cancellation of current job before accepting new job"
-                )
-                self._cancellation_executor.submit(
-                    self._async_cancel_current_job_wrapper,
-                    job_data,
-                )
-        except Exception as e:
-            self.logger.error(f"Error while evaluating job cancellation: {e}")
-
-        # Check if job should be auto-accepted
-        if eligible_for_auto_accept:
-            if not allow_http_fallback:
-                self.logger.info(
-                    "Job %s meets auto-accept criteria, but standard HTTP acceptance is disabled",
-                    job_id,
-                )
-                failed_payload = {
-                    **job_data,
-                    "acceptance_state": "failed",
-                    "lifecycle_state": "accept_failed",
-                    "accept_path": "native_browser",
-                    "reason": "http fallback disabled",
-                }
-                self.state.update_job(
-                    str(job_id),
-                    {
-                        "acceptance_state": "failed",
-                        "lifecycle_state": "accept_failed",
-                        "accept_path": "native_browser",
-                        "accept_failure_reason": "http fallback disabled",
-                    },
-                )
-                self.state.save_state()
-                self._emit_webhook_event("job.accept_failed", failed_payload)
-                self._emit_api_event("job.accept_failed", failed_payload)
-                self._submit_job_to_translation_app_async(job_data)
-                return
-
-            self.logger.info(
-                f"Job {job_id} meets auto-accept criteria, queuing for acceptance"
-            )
-            accept_requested_payload = {
-                **job_data,
-                "accept_path": "standard",
-                "acceptance_state": "requested",
-                "lifecycle_state": "accept_requested",
-            }
-            self._emit_webhook_event(
-                "job.accept_requested",
-                accept_requested_payload,
-            )
-            self.state.update_job(
-                str(job_id),
-                {
-                    "acceptance_state": "requested",
-                    "lifecycle_state": "accept_requested",
-                    "accept_path": "standard",
-                },
-            )
-            self._emit_api_event("job.accept_requested", accept_requested_payload)
-            threading.Thread(
-                target=self._async_job_acceptance_wrapper, args=(job_data,), daemon=True
-            ).start()
-        else:
-            self.logger.debug(f"Job {job_id} does not meet auto-accept criteria")
-
-        self._submit_job_to_translation_app_async(job_data)
-        self.state.save_state()
-
-        if self.on_job_added_callback:
-            try:
-                self.on_job_added_callback(job_data)
-            except Exception as e:
-                self.logger.debug(f"Error in job added callback: {e}")
-
-    def _normalize_meta(self, meta) -> dict:
-        return normalize_meta(meta)
-
-    def _pick_meta_value(self, meta: dict, keys: list[str]):
-        return pick_meta_value(meta, keys)
-
-    def _format_lang_token(self, token: str) -> str:
-        return format_lang_token(token)
-
-    def _normalize_lang_pair_string(self, value) -> str:
-        return normalize_lang_pair_string(value)
-
-    def _parse_lang_pair_from_title(self, title) -> str:
-        return parse_lang_pair_from_title(title)
-
-    def _derive_lang_pair(self, title, source_meta) -> str:
-        return derive_lang_pair(title, source_meta)
-
-    def _coerce_positive_int(self, value) -> int:
-        return coerce_positive_int(value)
-
-    def _coerce_positive_float(self, value) -> float:
-        return coerce_positive_float(value)
-
-    def _resolve_tier_rate(self, tier_value) -> float:
-        return resolve_tier_rate(tier_value)
-
-    def _estimate_word_count_from_reward(self, reward, title, source_meta) -> int:
-        return estimate_word_count_from_reward(reward, title, source_meta)
-
-    def _derive_word_count(self, title, source_meta, reward=0.0) -> int:
-        return derive_word_count(title, source_meta, reward)
+        return _process_new_job_impl(self, job_id, title, reward, url, source, source_meta)
 
     def _async_job_acceptance_wrapper(self, job_data: dict):
-        """
-        Wrapper to run async job acceptance in a separate thread.
-
-        Args:
-            job_data: Dictionary containing job information
-        """
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            success = loop.run_until_complete(
-                self.job_acceptance_engine.accept_job(job_data)
-            )
-            if success:
-                self._on_job_accepted(job_data)
-            else:
-                self.state.update_job(
-                    str(job_data.get("id")),
-                    {
-                        "acceptance_state": "failed",
-                        "lifecycle_state": "accept_failed",
-                        "accept_failure_reason": "accept_job returned false",
-                    },
-                )
-                self.state.save_state()
-                failed_payload = {
-                    **job_data,
-                    "acceptance_state": "failed",
-                    "lifecycle_state": "accept_failed",
-                    "reason": "accept_job returned false",
-                }
-                self._emit_webhook_event(
-                    "job.accept_failed",
-                    failed_payload,
-                )
-                self._emit_api_event("job.accept_failed", failed_payload)
-        except Exception as e:
-            self.logger.error(
-                f"Error in job acceptance wrapper for job {job_data.get('id')}: {e}"
-            )
-            self.state.update_job(
-                str(job_data.get("id")),
-                {
-                    "acceptance_state": "failed",
-                    "lifecycle_state": "accept_failed",
-                    "accept_failure_reason": str(e),
-                },
-            )
-            self.state.save_state()
-            failed_payload = {
-                **job_data,
-                "acceptance_state": "failed",
-                "lifecycle_state": "accept_failed",
-                "reason": str(e),
-            }
-            self._emit_webhook_event(
-                "job.accept_failed",
-                failed_payload,
-            )
-            self._emit_api_event("job.accept_failed", failed_payload)
-        finally:
-            loop.close()
+        """Wrapper to run async job acceptance in a separate thread."""
+        return _async_job_acceptance_wrapper_impl(self, job_data)
 
     def _run_browser_worker_event_listener(self) -> None:
-        telemetry_path = self._browser_worker_telemetry_path()
-        self.logger.info("Browser worker event listener watching %s", telemetry_path)
-        initialized = False
-        skip_existing_on_open = True
-        while not self.shutdown_event.is_set():
-            if not telemetry_path.exists():
-                self.shutdown_event.wait(1.0)
-                continue
-
-            try:
-                with telemetry_path.open("r", encoding="utf-8") as handle:
-                    opened_stat = os.fstat(handle.fileno())
-                    if not initialized:
-                        if skip_existing_on_open:
-                            handle.seek(0, os.SEEK_END)
-                        initialized = True
-                        skip_existing_on_open = False
-                    while not self.shutdown_event.is_set():
-                        line = handle.readline()
-                        if not line:
-                            try:
-                                current_stat = telemetry_path.stat()
-                                if (
-                                    current_stat.st_size < handle.tell()
-                                    or current_stat.st_ino != opened_stat.st_ino
-                                    or current_stat.st_dev != opened_stat.st_dev
-                                ):
-                                    initialized = False
-                                    skip_existing_on_open = False
-                                    break
-                            except OSError:
-                                initialized = False
-                                break
-                            self.shutdown_event.wait(0.5)
-                            continue
-                        self._handle_browser_worker_telemetry_line(line)
-            except OSError as exc:
-                self.logger.debug(
-                    "Browser worker telemetry listener could not read %s: %s",
-                    telemetry_path,
-                    exc,
-                )
-                self.shutdown_event.wait(1.0)
-            except Exception:
-                self.logger.exception("Browser worker telemetry listener failed")
-                self.shutdown_event.wait(1.0)
-        self.logger.info("Browser worker event listener stopped.")
+        """Tails the browser-worker telemetry JSONL file and forwards each line to the handler."""
+        return _run_browser_worker_event_listener_impl(self)
 
     def _handle_browser_worker_telemetry_line(self, line: str) -> None:
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            self.logger.debug("Ignoring malformed browser worker telemetry line")
-            return
-        if isinstance(payload, dict):
-            self._handle_browser_worker_telemetry_payload(payload)
+        return _handle_telemetry_line_impl(self, line)
 
     def _handle_browser_worker_telemetry_payload(self, event_payload: dict) -> None:
-        event = event_payload.get("event")
-        if not isinstance(event, dict):
-            return
-        if event.get("name") != "accepted_workbench_payload":
-            return
+        return _handle_telemetry_payload_impl(self, event_payload)
 
-        payload = event_payload.get("payload")
-        if not isinstance(payload, dict):
-            return
-
-        summary = payload.get("summary")
-        if not isinstance(summary, dict):
-            summary = {}
-        job_id = str(
-            event_payload.get("job_id") or summary.get("order_id") or ""
-        ).strip()
-        if not job_id:
-            return
-
-        accepted_workbench = {
-            "source": str(event_payload.get("source") or "browser_worker"),
-            "payload": payload,
-        }
-        updated = self.state.mark_job_accepted(
-            job_id,
-            accepted_workbench=accepted_workbench,
-            workbench_url=event_payload.get("url"),
-        )
-        if updated:
-            self.state.save_state()
-            current_job = self.state.get_job(job_id)
-            accepted_job = (
-                current_job
-                if isinstance(current_job, dict)
-                else {
-                    "id": job_id,
-                    "workbench_url": event_payload.get("url"),
-                    "accepted_workbench": accepted_workbench,
-                    "source": "browser_worker",
-                }
-            )
-            self.logger.info(
-                "Browser worker captured accepted job %s; countdown tracking updated",
-                job_id,
-            )
-            self._emit_webhook_event(
-                "job.accepted",
-                {
-                    "id": job_id,
-                    "workbench_url": event_payload.get("url"),
-                    "accepted_workbench": accepted_workbench,
-                    "source": "browser_worker",
-                },
-            )
-            self._emit_api_event("job.accepted", accepted_job)
-        else:
-            self.logger.debug(
-                "Browser worker captured accepted job %s but no stored job matched",
-                job_id,
-            )
 
     def _async_cancel_current_job_wrapper(self, upcoming_job: dict):
         """Wrapper to cancel the current job without blocking the main thread."""
-        previous_job_id = self.cancellation_manager.current_job_id
-        try:
-            success = self.cancel_current_job_sync()
-            if success:
-                self.logger.info(
-                    f"Current job {previous_job_id} cancelled. Preparing to accept {upcoming_job.get('id')}"
-                )
-            else:
-                self.logger.warning(
-                    "Failed to cancel current job before processing new opportunity"
-                )
-        except Exception as e:
-            self.logger.error(f"Error during automatic job cancellation: {e}")
+        return _async_cancel_current_job_wrapper_impl(self, upcoming_job)
 
     def _on_job_accepted(self, job_data: dict):
         """Record that a job has been accepted for future cancellation decisions."""
-        try:
-            job_id = str(job_data.get("id"))
-            reward = float(job_data.get("reward", 0.0))
-            try:
-                self.state.mark_job_accepted(
-                    job_id,
-                    accepted_workbench=job_data.get("accepted_workbench"),
-                    workbench_url=job_data.get("workbench_url"),
-                )
-                self.state.save_state()
-            except Exception:
-                self.logger.exception(
-                    "Failed to persist accepted job metadata for job %s",
-                    job_id,
-                )
-            self.cancellation_manager.set_current_job(job_id, reward)
-            self.logger.debug(
-                f"Tracking job {job_id} (${reward:.2f}) as current engagement"
-            )
-            current_job = self.state.get_job(job_id)
-            accepted_job = (
-                current_job
-                if isinstance(current_job, dict)
-                else {
-                    **job_data,
-                    "accepted": True,
-                    "acceptance_state": "accepted",
-                    "lifecycle_state": "accepted",
-                }
-            )
-            self._emit_webhook_event("job.accepted", accepted_job)
-            self._emit_api_event("job.accepted", accepted_job)
-        except Exception as e:
-            self.logger.error(
-                f"Failed to record accepted job for cancellation tracking: {e}"
-            )
+        return _on_job_accepted_impl(self, job_data)
 
     def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
         """Submit a discovered job to translation-app without blocking monitors."""
-        if TranslationAppClient is None:
-            self.logger.debug("translation-app client is unavailable")
-            return
-        if not self.config.getboolean("TranslationApp", "enabled", fallback=False):
-            return
-
-        base_url = str(
-            self.config.get("TranslationApp", "base_url", fallback="") or ""
-        ).strip()
-        auth_token = str(
-            self.config.get("TranslationApp", "auth_token", fallback="") or ""
-        ).strip()
-        if not base_url or auth_token in PLACEHOLDER_CONFIG_VALUES:
-            self.logger.warning(
-                "TranslationApp is enabled but base_url or auth_token is not configured"
-            )
-            return
-
-        timeout_sec = float(
-            self.config.getfloat("TranslationApp", "timeout_sec", fallback=5.0) or 5.0
-        )
-        verify_tls = self.config.getboolean(
-            "TranslationApp", "verify_tls", fallback=True
-        )
-
-        def submit() -> None:
-            try:
-                client = TranslationAppClient(
-                    base_url=base_url,
-                    auth_token=auth_token,
-                    timeout_sec=timeout_sec,
-                    verify_tls=verify_tls,
-                    logger=self.logger,
-                )
-                client.submit_job(dict(job_data))
-            except Exception:
-                self.logger.exception(
-                    "Failed to submit job %s to translation-app",
-                    job_data.get("id", "unknown"),
-                )
-
-        try:
-            _submit_translation_app_task(submit)
-        except queue.Full:
-            self.logger.warning(
-                "Translation-app submission queue is full; dropping job %s",
-                job_data.get("id", "unknown"),
-            )
-        except Exception:
-            self.logger.exception(
-                "Failed to queue job %s for translation-app submission",
-                job_data.get("id", "unknown"),
-            )
+        return _submit_job_to_translation_app_async_impl(self, job_data)
 
     def _process_feed_entries(self, entries):
-        """Process RSS feed entries to identify new jobs.
-
-        Filters entries to find only new ones since the last check, extracts job
-        information, and processes each new job. Updates the last seen RSS link
-        to avoid duplicate processing.
-
-        Args:
-            entries: List of RSS entry dictionaries from the feed parser.
-        """
-        self.logger.debug(f"Processing {len(entries) if entries else 0} RSS entries.")
-        if not entries:
-            return
-        self._log_all_entries(entries)
-        new_entries = []
-        for entry in entries:
-            link = entry.get("link")
-            if not link:
-                self.logger.debug(f"Skipping entry with no link: {entry}")
-                continue
-            if link == self.state.last_seen_rss_link:
-                self.logger.debug(f"Reached last seen RSS link: {link}")
-                break
-            new_entries.append(entry)
-        self.logger.debug(f"Found {len(new_entries)} new RSS entries.")
-        if not new_entries:
-            return
-        latest_link = new_entries[0].get("link")
-        self.state.last_seen_rss_link = latest_link
-        self.state.last_seen_link = latest_link
-        for entry in reversed(new_entries):
-            title = entry.get("title", "No Title")
-            url = entry.get("link")
-            self.logger.debug(f"Processing new RSS entry: {title} {url}")
-            try:
-                match = re.search(r"/jobs/details/(\d+)", url)
-                if not match:
-                    self.logger.warning(f"Could not parse job ID from RSS link: {url}")
-                    continue
-                job_id = int(match.group(1))
-                reward = self._extract_reward(entry)
-                self._process_new_job(
-                    job_id,
-                    title,
-                    reward,
-                    url,
-                    source="RSS",
-                    source_meta=entry,
-                )
-            except (ValueError, IndexError) as e:
-                self.logger.warning(f"Error processing RSS entry {url}: {e}")
+        """Process RSS feed entries to identify new jobs."""
+        return _process_feed_entries_impl(self, entries)
 
     def fetch_rss(self):
-        """Fetch and parse the RSS feed from Gengo.
-
-        Retrieves the RSS feed using feedparser with an optional browser-like user agent.
-        Handles various error conditions and logs appropriate messages.
-
-        Returns:
-            feedparser.FeedParserDict: Parsed RSS feed object, or None if fetch failed.
-
-        Raises:
-            Exception: For network or parsing errors (logged internally).
-        """
-        headers = {}
-        if self.config.get("Watcher", "use_custom_user_agent"):
-            headers["User-Agent"] = get_preferred_browser_user_agent(
-                self.config, self.logger
-            )
-        self.logger.debug(
-            f"Fetching RSS feed: {self.config.get('Watcher', 'feed_url')} with headers: {headers}"
-        )
-        try:
-            feed_url = self.config.get("Watcher", "feed_url")
-            # Wrap feedparser in thread with timeout to prevent blocking
-            if self._rss_executor is None:
-                self._rss_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=1
-                )
-            if self._rss_future is not None:
-                if not self._rss_future.done():
-                    elapsed = (
-                        time.monotonic() - self._rss_future_started_at
-                        if self._rss_future_started_at is not None
-                        else 0.0
-                    )
-                    self.logger.warning(
-                        f"Skipping RSS fetch: previous fetch still running ({elapsed:.1f}s elapsed)"
-                    )
-                    return None
-                self._rss_future = None
-                self._rss_future_started_at = None
-            future = self._rss_executor.submit(
-                feedparser.parse,
-                feed_url,
-                request_headers=headers,
-            )
-            self._rss_future = future
-            self._rss_future_started_at = time.monotonic()
-            try:
-                feed = future.result(timeout=30)
-            except concurrent.futures.TimeoutError:
-                cancel_success = future.cancel()
-                self.logger.warning("RSS feed fetch timed out after 30 seconds")
-                self.logger.info(f"RSS fetch future cancelled: {cancel_success}")
-                return None
-            finally:
-                if future.done():
-                    self._rss_future = None
-                    self._rss_future_started_at = None
-            # Check HTTP status first (feedparser stores it in feed.status)
-            http_status = getattr(feed, "status", None)
-            if http_status == 429:
-                self.logger.warning(
-                    "RSS rate limited (HTTP 429). Gengo limits requests to once per 60s. "
-                    "Consider increasing check_interval in config."
-                )
-                return None
-            if http_status and http_status >= 400:
-                self.logger.error(f"RSS HTTP Error: {http_status}")
-                return None
-
-            if feed.bozo:
-                # Check if it's a parsing error due to HTML response (rate limit page)
-                exc_str = str(feed.bozo_exception).lower()
-                if "mismatched tag" in exc_str or "not well-formed" in exc_str:
-                    # Likely an HTML error page instead of RSS/XML
-                    self.logger.warning(
-                        "RSS feed returned invalid XML (likely rate-limited or error page). "
-                        "Will retry after backoff."
-                    )
-                else:
-                    self.logger.error(f"Feed Parse Error: {feed.bozo_exception}")
-                return None
-            self.logger.debug(
-                f"RSS feed fetched successfully. Entries: {len(feed.entries)}"
-            )
-            return feed
-        except Exception as e:
-            self.logger.error(f"RSS Error: {e}")
-            return None
+        """Fetch and parse the RSS feed from Gengo."""
+        return _fetch_rss_impl(self)
 
     async def _websocket_logic(self):
-        """
-        Manage a single WebSocket connection: establish, authenticate, maintain heartbeat, receive events and handle clean disconnects.
-
-        Establishes a connection to the configured WebSocket URL, sends authentication payload (user/session and optional key), and updates connection state. Maintains a periodic heartbeat to measure latency and detect stalls, monitors for manual test commands, and listens for incoming messages; when an "available_collection" event is received it extracts job details and delegates handling to the watcher. Records socket close codes and reasons, performs a retry without custom headers when handshakes fail due to header restrictions, and sets websocket_status to reflect connection state or offline on failure.
-        """
-        ws_url = (
-            self.config.get("WebSocket", "wss_url") or "wss://live-dashboard.gengo.com/"
-        )
-        self.websocket_status = "Connecting"
-        self.logger.info(f"WebSocket: Initializing connection to {ws_url}")
-
-        try:
-            if not await asyncio.to_thread(self._sync_session_before_websocket_connect):
-                return
-            # Determine User-Agent
-            user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
-            custom_ua = self.config.get("Network", "browser_user_agent")
-            accept_language = (
-                self.config.get("Network", "browser_accept_language")
-                or "en-GB,en-US;q=0.9,en;q=0.8"
-            )
-            if custom_ua:
-                user_agent = custom_ua
-                self.logger.info(
-                    f"WebSocket: Using configured browser User-Agent: {user_agent[:30]}..."
-                )
-            else:
-                self.logger.debug(
-                    f"WebSocket: Using default User-Agent: {user_agent[:30]}..."
-                )
-
-            session_token = self.config.get("WebSocket", "user_session")
-            user_key = self.config.get("WebSocket", "user_key")
-            masked_token = (
-                f"{session_token[:4]}...{session_token[-4:]}"
-                if session_token and len(session_token) > 8
-                else "NOT_SET"
-            )
-            additional_headers = build_browser_aligned_websocket_headers(
-                session_token=session_token,
-                user_agent=user_agent,
-                origin="https://gengo.com",
-                accept_language=accept_language,
-            )
-            ua_only_headers = {"User-Agent": user_agent} if user_agent else None
-
-            # Log headers (masking sensitive info)
-            safe_headers = []
-            for k, v in additional_headers.items():
-                if k == "Cookie":
-                    safe_headers.append((k, f"my_gengo_session={masked_token}"))
-                else:
-                    safe_headers.append((k, v))
-            self.logger.debug(f"WebSocket: Preparing headers: {safe_headers}")
-
-            async def run_session(headers):
-                """
-                Run a single WebSocket session: connect, authenticate, monitor heartbeat and test commands, and process incoming messages.
-
-                Parameters:
-                    headers (dict | None): Optional additional HTTP headers to include in the WebSocket handshake; pass None to omit custom headers.
-
-                Detailed behaviour:
-                    - Connects to the configured WebSocket URL and sends an authentication payload containing the configured `user_id` and stored session token.
-                    - Starts a heartbeat task that measures ping/pong latency and updates connection timing/state attributes.
-                    - Starts a test-monitor task that responds to manual UI test commands (e.g. ping, notify).
-                    - Listens for incoming messages and invokes the watcher's message handling for recognised events (notably `available_collection` events, which are forwarded to `_process_new_job`).
-                    - Records the socket close code and reason on disconnect, cancels auxiliary tasks and performs orderly cleanup while logging notable conditions and errors.
-                """
-                header_desc = (
-                    "with custom headers" if headers else "with no custom headers"
-                )
-                messages_received = False
-                self.websocket_status = "Connecting"
-                self.websocket_connected_at_ts = None
-                self.websocket_last_message_ts = None
-                self.websocket_last_pong_ts = None
-                self.websocket_ping_latency_ms = None
-                self.websocket_next_ping_ts = None
-                self._next_quiet_socket_sync_ts = None
-                self.logger.debug(
-                    f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
-                )
-                async with connect(
-                    ws_url,
-                    additional_headers=headers,
-                    open_timeout=20,
-                    # Manual heartbeat below owns ping timing and metrics.
-                    ping_interval=None,
-                    ping_timeout=10,
-                ) as websocket:
-                    connected_at = time.time()
-                    self.websocket_connected_at_ts = connected_at
-                    self.websocket_status = "Authenticating"
-                    user_id = self.config.get("WebSocket", "user_id")
-
-                    auth_payload = build_websocket_auth_payload(
-                        user_id=user_id,
-                        session_token=session_token,
-                    )
-                    self.logger.debug(
-                        "WebSocket: Sending auth payload for user_id=%s",
-                        user_id,
-                    )
-
-                    auth_json = json.dumps(auth_payload)
-                    self._capture_raw_ws_message(auth_json, direction="send")
-                    await websocket.send(auth_json)
-
-                    self.websocket_status = "Live"
-                    self.logger.info(
-                        "WebSocket: Connection established and authenticated."
-                    )
-
-                    sync_fail_hard = self.config.getboolean(
-                        "WebSocket", "session_sync_fail_hard", fallback=True
-                    )
-                    sync_alert_on_failure = self.config.getboolean(
-                        "WebSocket",
-                        "session_sync_alert_on_failure",
-                        fallback=True,
-                    )
-                    debug_url = self.config.get("WebSocket", "browser_debug_url")
-
-                    # Heartbeat task: send periodic ping to measure latency and expose countdown to UI
-                    HEARTBEAT_INTERVAL = 25  # seconds
-
-                    async def heartbeat():
-                        """
-                        Periodically sends WebSocket pings to measure connectivity and update heartbeat metrics.
-
-                        This coroutine runs an infinite loop that sends a ping at the configured heartbeat interval, measures round-trip latency, and updates the instance attributes used for uptime/diagnostics (next scheduled ping timestamp, last pong timestamp and last measured ping latency in milliseconds). It will propagate asyncio.CancelledError when cancelled; other exceptions are caught and logged so the outer connection loop can handle disconnects.
-                        """
-                        while True:
-                            try:
-                                interval = max(
-                                    1.0,
-                                    HEARTBEAT_INTERVAL + random.uniform(-5.0, 5.0),
-                                )
-                                self.websocket_next_ping_ts = time.time() + interval
-                                await asyncio.sleep(interval)
-                                t0 = time.perf_counter()
-                                self.logger.debug(
-                                    "WebSocket: Sending heartbeat ping..."
-                                )
-                                self._capture_raw_ws_message("PING", direction="send")
-                                waiter = await websocket.ping()
-                                await asyncio.wait_for(waiter, timeout=5)
-                                self._capture_raw_ws_message("PONG", direction="recv")
-                                latency = (time.perf_counter() - t0) * 1000.0
-                                pong_received_at = time.time()
-                                self.websocket_last_pong_ts = pong_received_at
-                                self.websocket_ping_latency_ms = latency
-                                self.logger.debug(
-                                    f"WebSocket: Heartbeat pong received. Latency: {latency:.2f}ms"
-                                )
-                                changed = await asyncio.to_thread(
-                                    self._sync_browser_session_for_quiet_socket,
-                                    current_time=pong_received_at,
-                                    fail_hard=sync_fail_hard,
-                                    alert_on_failure=sync_alert_on_failure,
-                                )
-                                if self._websocket_sync_failed:
-                                    self.logger.error(
-                                        "WebSocket: Quiet-socket browser session sync"
-                                        " failed; closing realtime connection immediately."
-                                    )
-                                    await websocket.close(
-                                        code=4002,
-                                        reason="browser session sync failed",
-                                    )
-                                    return
-                                if changed:
-                                    self._websocket_session_refresh_requested = True
-                                    self.logger.warning(
-                                        "WebSocket: Quiet-socket browser session refresh"
-                                        " requested; reconnecting now."
-                                    )
-                                    await websocket.close(
-                                        code=4001,
-                                        reason="browser session token refreshed",
-                                    )
-                                    return
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception as e:
-                                # Log and continue; the main loop will handle real disconnects
-                                self.logger.warning(f"WebSocket: Heartbeat failed: {e}")
-
-                    heartbeat_task = asyncio.create_task(heartbeat())
-
-                    session_refresh_task = None
-                    sync_interval = self._get_session_sync_interval_seconds()
-
-                    if debug_url and sync_interval > 0:
-
-                        async def refresh_session_token_periodically():
-                            while True:
-                                await asyncio.sleep(sync_interval)
-                                changed = await asyncio.to_thread(
-                                    self._sync_session_from_browser,
-                                    fail_hard=sync_fail_hard,
-                                    alert_on_failure=sync_alert_on_failure,
-                                )
-                                if self._websocket_sync_failed:
-                                    self.logger.error(
-                                        "WebSocket: Browser session sync failed; closing realtime connection immediately."
-                                    )
-                                    await websocket.close(
-                                        code=4002,
-                                        reason="browser session sync failed",
-                                    )
-                                    return
-                                if changed:
-                                    self._websocket_session_refresh_requested = True
-                                    self.logger.warning(
-                                        "WebSocket: Session token refreshed from browser; reconnecting now."
-                                    )
-                                    await websocket.close(
-                                        code=4001,
-                                        reason="browser session token refreshed",
-                                    )
-                                    return
-
-                        session_refresh_task = asyncio.create_task(
-                            refresh_session_token_periodically()
-                        )
-
-                    try:
-                        self.logger.debug("WebSocket: Waiting for first message...")
-                        first_message = await asyncio.wait_for(
-                            websocket.recv(), timeout=5
-                        )
-                        messages_received = True
-                        self.websocket_last_message_ts = time.time()
-                        self.logger.debug(
-                            f"WebSocket: First message received: {first_message[:100]}..."
-                        )
-                        # Capture raw message
-                        self._capture_raw_ws_message(first_message, direction="recv")
-                        try:
-                            data = json.loads(first_message)
-                            self.logger.debug(
-                                f"WebSocket: First message type: {data.get('type', 'unknown')}"
-                            )
-                        except Exception as e:
-                            self.logger.warning(
-                                f"WebSocket: Could not parse first message as JSON: {e}. Raw: {first_message[:100]}..."
-                            )
-                    except asyncio.TimeoutError:
-                        self.logger.debug(
-                            "WebSocket: No message received immediately after authentication (this is normal)."
-                        )
-                        self._capture_raw_ws_message(
-                            "TIMEOUT: No initial message from server", direction="recv"
-                        )
-                    except Exception as e:
-                        self.logger.warning(
-                            f"WebSocket: Error receiving first message: {e}"
-                        )
-
-                    async def monitor_test_request():
-                        """
-                        Monitor the UI for manual test commands and execute the corresponding test actions.
-
-                        This coroutine runs continuously until cancelled. When a pending test command is detected it:
-                        - Executes "ping": sends a WebSocket ping, awaits a pong and logs success or timeout/failure.
-                        - Executes "notify": triggers a simulated new-job notification via _simulate_new_job_notification().
-
-                        No parameters or return value.
-                        """
-                        self.logger.debug("WebSocket: Test command monitor started.")
-                        while True:
-                            command = None
-                            with self._test_command_lock:
-                                if self._test_command:
-                                    command = self._test_command
-                                    self._test_command = None
-                            if command == "ping":
-                                self.logger.info(
-                                    "WebSocket: PING test initiated by user."
-                                )
-                                try:
-                                    self._capture_raw_ws_message(
-                                        "PING (Manual)", direction="send"
-                                    )
-                                    pong_waiter = await websocket.ping()
-                                    await asyncio.wait_for(pong_waiter, timeout=5)
-                                    self._capture_raw_ws_message(
-                                        "PONG (Manual)", direction="recv"
-                                    )
-                                    self.logger.info(
-                                        "[bold green]WebSocket: PING test successful. Connection is live.[/bold green]"
-                                    )
-                                except asyncio.TimeoutError:
-                                    self.logger.warning(
-                                        "[bold red]WebSocket: PING test failed (timeout). Connection may be stalled.[/bold red]"
-                                    )
-                                except Exception as e:
-                                    self.logger.error(
-                                        f"WebSocket: PING test failed: {e}"
-                                    )
-                            elif command == "notify":
-                                self._simulate_new_job_notification()
-                            await asyncio.sleep(0.2)
-
-                    test_monitor_task = asyncio.create_task(monitor_test_request())
-                    try:
-                        async for message in websocket:
-                            messages_received = True
-                            self.websocket_last_message_ts = time.time()
-                            self.logger.debug(
-                                f"WebSocket: Message received (len={len(message)})"
-                            )
-                            # Capture raw message for debug output
-                            self._capture_raw_ws_message(message, direction="recv")
-
-                            data = None
-                            try:
-                                data = json.loads(message)
-                            except Exception as e:
-                                self.logger.warning(
-                                    f"WebSocket: Could not parse message as JSON: {e}"
-                                )
-                                continue
-
-                            if isinstance(data, dict):
-                                msg_type = data.get("type")
-                                if msg_type == "available_collection":
-                                    job = data.get("collection", {})
-                                    job_id = job.get("id")
-                                    self.logger.info(
-                                        f"WebSocket: 'available_collection' event for job ID {job_id}"
-                                    )
-                                    if job_id:
-                                        reward = float(job.get("rewards", 0.0))
-                                        title = (
-                                            f"{job.get('lc_src')} > {job.get('lc_tgt')}"
-                                        )
-                                        url = (
-                                            f"https://gengo.com/t/jobs/details/{job_id}"
-                                        )
-                                        self._process_new_job(
-                                            job_id,
-                                            title,
-                                            reward,
-                                            url,
-                                            source="WebSocket",
-                                            source_meta=job,
-                                        )
-                                else:
-                                    self.logger.debug(
-                                        f"WebSocket: Ignoring message type '{msg_type}'"
-                                    )
-                            else:
-                                self.logger.debug(
-                                    f"WebSocket: Ignoring non-dict message: {str(data)[:50]}..."
-                                )
-
-                    except ConnectionClosed as e:
-                        self.websocket_last_close_code = getattr(e, "code", None)
-                        self.websocket_last_close_reason = getattr(e, "reason", None)
-                        log_method = (
-                            self.logger.info
-                            if getattr(e, "code", None) == 1000
-                            else self.logger.warning
-                        )
-                        log_method(
-                            f"WebSocket: Disconnected by server: code={getattr(e, 'code', None)}, reason={getattr(e, 'reason', None)}"
-                        )
-                    except Exception as e:
-                        self.logger.error(f"WebSocket: Error in main message loop: {e}")
-                    finally:
-                        test_monitor_task.cancel()
-                        heartbeat_task.cancel()
-                        if session_refresh_task is not None:
-                            session_refresh_task.cancel()
-                        try:
-                            await test_monitor_task
-                            await heartbeat_task
-                            if session_refresh_task is not None:
-                                await session_refresh_task
-                        except asyncio.CancelledError:
-                            self.logger.debug(
-                                "WebSocket: Auxiliary tasks cancelled cleanly."
-                            )
-                        except Exception as e:
-                            self.logger.warning(
-                                f"WebSocket: Exception while awaiting tasks cleanup: {e}"
-                            )
-                    if hasattr(websocket, "close_code") or hasattr(
-                        websocket, "close_reason"
-                    ):
-                        close_code = getattr(websocket, "close_code", None)
-                        close_reason = getattr(websocket, "close_reason", None)
-                        self.websocket_last_close_code = close_code
-                        self.websocket_last_close_reason = close_reason
-                        connection_age = time.time() - connected_at
-                        self.logger.info(
-                            f"WebSocket: Socket Closed: code={close_code}, reason={close_reason}"
-                        )
-                        if (
-                            close_code in (1000, 1001)
-                            and not messages_received
-                            and connection_age < 20
-                        ):
-                            self.logger.warning(
-                                "WebSocket closed cleanly %.1fs after auth with no messages. "
-                                "This can indicate session/auth mismatch or server-side filtering.",
-                                connection_age,
-                            )
-                    self.websocket_connected_at_ts = None
-                    self.websocket_next_ping_ts = None
-
-            header_profiles = [
-                ("browser-aligned headers", additional_headers),
-                ("user-agent only headers", ua_only_headers),
-                ("no custom headers", None),
-            ]
-            last_error = None
-            for index, (profile_name, headers) in enumerate(header_profiles):
-                if headers is None and index == 1 and ua_only_headers is None:
-                    continue
-                try:
-                    if index > 0:
-                        self.logger.warning(
-                            "WebSocket: Retrying handshake with %s.",
-                            profile_name,
-                        )
-                    await run_session(headers)
-                    last_error = None
-                    break
-                except (InvalidStatus, InvalidHandshake, TimeoutError) as e:
-                    last_error = e
-                    if index == len(header_profiles) - 1:
-                        raise
-                    self.logger.warning(
-                        "WebSocket handshake failed using %s: %s",
-                        profile_name,
-                        e,
-                    )
-            if last_error is not None:
-                raise last_error
-        except (
-            ConnectionClosed,
-            InvalidStatus,
-            InvalidHandshake,
-            ConnectionRefusedError,
-        ) as e:
-            code = getattr(e, "code", None)
-            reason = getattr(e, "reason", None)
-            self.logger.warning(
-                f"WebSocket: Connection failed: code={code}, reason={reason}, error={e}"
-            )
-            self.websocket_status = "Offline"
-        except TimeoutError as e:
-            self.logger.warning(
-                f"WebSocket: Connection timed out during handshake/open: {e}"
-            )
-            self.websocket_status = "Offline"
-        except Exception as e:
-            self.logger.error(f"WebSocket: Unexpected error: {e}", exc_info=True)
-            self.websocket_status = "Offline"
+        """Single WebSocket connection lifecycle - delegates to watcher_ws_logic.websocket_logic."""
+        return await _websocket_logic_impl(self)
 
     def _run_websocket_monitor(self):
-        """
-        Manage the persistent WebSocket connection lifecycle, including configuration validation, connection attempts, reconnection with exponential backoff, and orderly shutdown.
-
-        On each loop iteration this method:
-        - Verifies required WebSocket credentials are configured; if missing, marks the WebSocket as disabled and waits for shutdown.
-        - Runs the asynchronous connection logic and records the last close code and reason.
-        - Distinguishes clean closes (codes 1000/1001) from abnormal closes and applies exponential backoff (bounded by the configured `Network.max_backoff`) before reconnecting.
-        - Observes `shutdown_event` to exit promptly and updates `websocket_status` to reflect current state.
-
-        This method does not return a value.
-        """
-        self.logger.debug("Starting WebSocket monitor thread.")
-        # Exponential backoff on reconnect to avoid hammering server
-        base_backoff = 5
-        backoff = base_backoff
-        max_backoff = int(self.config.get("Network", "max_backoff"))
-        clean_close_backoff_min = self.config.getint(
-            "Network", "clean_close_backoff_min", fallback=20
-        )
-        clean_close_backoff_max = self.config.getint(
-            "Network", "clean_close_backoff_max", fallback=45
-        )
-        reconnect_jitter_max = self.config.getint(
-            "Network", "reconnect_jitter_max", fallback=5
-        )
-        session_placeholder = "REPLACE_WITH_YOUR_SESSION_TOKEN"
-        key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
-        while not self.shutdown_event.is_set():
-            self._websocket_session_refresh_requested = False
-            self._websocket_sync_failed = False
-            self._websocket_sync_failure_reason = None
-
-            debug_url = self.config.get("WebSocket", "browser_debug_url")
-            if debug_url:
-                self._sync_session_from_browser(
-                    fail_hard=self.config.getboolean(
-                        "WebSocket", "session_sync_fail_hard", fallback=True
-                    ),
-                    alert_on_failure=self.config.getboolean(
-                        "WebSocket",
-                        "session_sync_alert_on_failure",
-                        fallback=True,
-                    ),
-                )
-                if self._websocket_sync_failed:
-                    self.logger.error(
-                        "WebSocket monitor stopped after browser session sync failure: %s",
-                        self._websocket_sync_failure_reason,
-                    )
-                    self.websocket_status = "Session Sync Failed"
-                    break
-
-            session_token = self.config.get("WebSocket", "user_session")
-            user_key = self.config.get("WebSocket", "user_key")
-
-            # Validate session token (required)
-            if not session_token or session_token == session_placeholder:
-                self.logger.warning(
-                    "WebSocket disabled: Please set 'user_session' in config.toml."
-                )
-                self.websocket_status = "Disabled"
-                self.shutdown_event.wait()
-                break
-
-            # Validate user_key (optional but recommended)
-            if user_key == key_placeholder:
-                self.logger.info(
-                    "WebSocket: user_key is set to placeholder value. "
-                    "Authentication will rely only on session token."
-                )
-
-            try:
-                self.logger.debug("Running websocket logic (asyncio.run)")
-                self.websocket_last_close_code = None
-                self.websocket_last_close_reason = None
-                session_started_at = time.time()
-                asyncio.run(self._websocket_logic())
-                session_duration = time.time() - session_started_at
-                if self.shutdown_event.is_set():
-                    break
-                if self.websocket_status != "Disabled":
-                    self.websocket_reconnect_count += 1
-                if self._websocket_sync_failed:
-                    self.logger.error(
-                        "WebSocket monitor stopped after browser session sync failure: %s",
-                        self._websocket_sync_failure_reason,
-                    )
-                    self.websocket_status = "Session Sync Failed"
-                    break
-                if self._websocket_session_refresh_requested:
-                    self.logger.info(
-                        "WebSocket: Reconnecting immediately after browser session refresh."
-                    )
-                    backoff = base_backoff
-                    continue
-                self.websocket_status = "Offline"
-                close_code = self.websocket_last_close_code
-                close_reason = self.websocket_last_close_reason
-                normal_close = close_code in (1000, 1001)
-                if normal_close:
-                    wait_time = min(
-                        max_backoff,
-                        random.uniform(
-                            clean_close_backoff_min, clean_close_backoff_max
-                        ),
-                    )
-                    # If we churn quickly, extend the delay to avoid hammering the endpoint.
-                    if session_duration < 10:
-                        wait_time = max(wait_time, clean_close_backoff_max)
-                        self.logger.warning(
-                            "WebSocket connection closed cleanly after %.1fs. "
-                            "Backing off to %.1fs before reconnecting.",
-                            session_duration,
-                            wait_time,
-                        )
-                    else:
-                        self.logger.info(
-                            "WebSocket connection closed cleanly (code=%s, reason=%s). "
-                            "Reconnecting in %.1f seconds...",
-                            close_code,
-                            close_reason,
-                            wait_time,
-                        )
-                    backoff = base_backoff
-                else:
-                    wait_time = min(
-                        max_backoff, backoff + random.uniform(0, reconnect_jitter_max)
-                    )
-                    self.logger.info(
-                        f"WebSocket connection closed. Reconnecting in {wait_time:.1f} seconds..."
-                    )
-                    backoff = min(backoff * 2, max_backoff)
-                if self.shutdown_event.wait(wait_time):
-                    break
-            except Exception as e:
-                self.logger.error(f"Critical error in WebSocket runner: {e}")
-                wait_time = min(
-                    max_backoff, backoff + random.uniform(0, reconnect_jitter_max)
-                )
-                if self.shutdown_event.wait(wait_time):
-                    break
-                backoff = min(backoff * 2, max_backoff)
-        self.logger.info("WebSocket monitor thread stopped.")
-        if not self._websocket_sync_failed:
-            self.websocket_status = "Stopped"
+        """Persistent WebSocket connection lifecycle - delegates to watcher_ws_monitor.run_websocket_monitor."""
+        return _run_websocket_monitor_impl(self)
 
     def run(self):
         self.logger.debug("Starting watcher parent thread.")
@@ -2459,23 +756,37 @@ class GengoWatcher:
                 )
                 or "http://127.0.0.1:8000"
             )
-            health_url = f"{gateway_url.rstrip('/')}/health"
-            try:
-                with urlopen(health_url, timeout=1.0) as response:
-                    gateway_healthy = response.status == 200
-            except Exception as exc:
-                gateway_healthy = False
+            parsed_gateway = urlparse(gateway_url)
+            if (
+                parsed_gateway.scheme.lower() not in {"http", "https"}
+                or not parsed_gateway.netloc
+            ):
                 self.logger.warning(
-                    "External WebSocket gateway is unreachable at %s: %s; "
+                    "External WebSocket gateway URL must use http or https: %s; "
                     "falling back to the embedded monitor",
                     gateway_url,
-                    exc,
                 )
-            if gateway_healthy:
-                self.websocket_status = "Gateway Connected"
-                self.logger.info("WebSocket using external gateway at %s", gateway_url)
-            else:
                 use_gateway = False
+            else:
+                health_url = f"{gateway_url.rstrip('/')}/health"
+                try:
+                    with urlopen(health_url, timeout=1.0) as response:
+                        gateway_healthy = response.status == 200
+                except Exception as exc:
+                    gateway_healthy = False
+                    self.logger.warning(
+                        "External WebSocket gateway is unreachable at %s: %s; "
+                        "falling back to the embedded monitor",
+                        gateway_url,
+                        exc,
+                    )
+                if gateway_healthy:
+                    self.websocket_status = "Gateway Connected"
+                    self.logger.info(
+                        "WebSocket using external gateway at %s", gateway_url
+                    )
+                else:
+                    use_gateway = False
 
         if not use_gateway and self.config.get("WebSocket", "enable_websocket"):
             ws_thread = threading.Thread(
@@ -2565,53 +876,7 @@ class GengoWatcher:
         self.logger.info("Watcher parent thread shutting down.")
 
     def _run_browser_jobs_monitor(self):
-        self.logger.info(
-            "Browser available-jobs monitor thread started (event-driven, idle by default)."
-        )
-        debug_url = str(self.config.get("WebSocket", "browser_debug_url", fallback=""))
-        if not debug_url:
-            self.browser_jobs_monitor_status = "Disabled"
-            return
-
-        allow_navigation = self._browser_jobs_navigation_enabled()
-        if allow_navigation:
-            self._open_in_managed_firefox_debug_session(GENGO_AVAILABLE_JOBS_URL)
-        self.browser_jobs_monitor_status = "Idle (event-driven)"
-        # No fixed timer. The monitor wakes when:
-        #   1. The native browser listener publishes a workbench-visible event
-        #      (handled by watcher._emit_api_event setting the refresh event),
-        #   2. The WS monitor or HTTP monitor surfaces a job.discovered,
-        #   3. An explicit refresh is requested via trigger_browser_jobs_refresh().
-        idle_cap_seconds = self._get_browser_jobs_idle_cap_seconds()
-        while not self.shutdown_event.is_set():
-            triggered = self._browser_jobs_refresh_event.wait(timeout=idle_cap_seconds)
-            if self.shutdown_event.is_set():
-                break
-            if not triggered:
-                # Idle cap elapsed without a trigger; perform a passive
-                # keepalive only to validate the connection is still healthy.
-                # No navigation, no interaction.
-                self._run_browser_jobs_scrape(
-                    debug_url,
-                    force_refresh=False,
-                    browse_url=None,
-                    interact=False,
-                    allow_navigation=False,
-                    is_keepalive=True,
-                )
-                continue
-            self._browser_jobs_refresh_event.clear()
-            self._run_browser_jobs_scrape(
-                debug_url,
-                force_refresh=allow_navigation,
-                browse_url=None,
-                interact=False,
-                allow_navigation=allow_navigation,
-                is_keepalive=False,
-            )
-
-        self.browser_jobs_monitor_status = "Stopped"
-        self.logger.info("Browser available-jobs monitor thread stopped.")
+        return run_browser_jobs_monitor(self)
 
     def _get_browser_jobs_idle_cap_seconds(self) -> float:
         """Long sleep between idle-cap keepalive pings. Default 30 minutes."""
@@ -2621,16 +886,20 @@ class GengoWatcher:
         )
 
     def trigger_browser_jobs_refresh(self, *, reason: str = "manual") -> None:
-        """Public hook to wake the BrowserJobs monitor from external triggers.
+        """Public hook to wake the BrowserJobs monitor from external triggers."""
+        return _bj_trigger(self, reason=reason)
 
-        Called from TUI commands, the WS monitor's sync-fallback path, and any
-        other producer that wants an immediate refresh.
-        """
-        trigger = getattr(self, "_browser_jobs_refresh_event", None)
-        if trigger is None:
-            return
-        self.logger.debug("BrowserJobs refresh triggered (%s)", reason)
-        trigger.set()
+    def _run_browser_jobs_triggered_refresh(
+        self,
+        debug_url: str,
+        allow_navigation: bool,
+    ) -> None:
+        from .orchestration.watcher_browser_jobs import run_browser_jobs_triggered_refresh
+        return run_browser_jobs_triggered_refresh(self, debug_url, allow_navigation)
+
+    def _run_browser_jobs_passive_keepalive(self, debug_url: str) -> None:
+        from .orchestration.watcher_browser_jobs import run_browser_jobs_passive_keepalive
+        return run_browser_jobs_passive_keepalive(self, debug_url)
 
     def _run_browser_jobs_scrape(
         self,
@@ -2642,156 +911,24 @@ class GengoWatcher:
         allow_navigation: bool,
         is_keepalive: bool,
     ) -> None:
-        try:
-            snapshot = inspect_available_jobs_page_sync(
-                debug_url,
-                force_refresh=force_refresh,
-                browse_url=browse_url,
-                interact=interact,
-                allow_navigation=allow_navigation,
-            )
-            self.browser_jobs_last_check_time = time.time()
-            self.browser_jobs_last_action = snapshot.action
-            if snapshot.action == "manual_browse":
-                self.browser_jobs_monitor_status = "Paused: browser in manual use"
-            elif is_keepalive:
-                self.browser_jobs_monitor_status = "Idle (keepalive ok)"
-            else:
-                self.browser_jobs_monitor_status = "Refreshed (triggered)"
-
-            if is_keepalive or snapshot.action == "manual_browse":
-                return
-
-            processed = self._process_browser_jobs_snapshot(snapshot)
-            if processed:
-                self.browser_jobs_found_session += processed
-                self.logger.info(
-                    "Browser available-jobs page reported %d candidate job(s).",
-                    processed,
-                )
-        except Exception as exc:
-            self.browser_jobs_monitor_status = f"Error: {exc}"
-            self.logger.warning(
-                "Browser available-jobs monitor scrape failed: %s",
-                exc,
-            )
+        from .orchestration.watcher_browser_jobs import _run_browser_jobs_scrape as _bj_scrape
+        return _bj_scrape(
+            self,
+            debug_url,
+            force_refresh=force_refresh,
+            browse_url=browse_url,
+            interact=interact,
+            allow_navigation=allow_navigation,
+            is_keepalive=is_keepalive,
+        )
 
     def _run_rss_monitor(self):
-        self.logger.debug("Starting RSS monitor thread.")
-        self.logger.info("RSS monitor thread started.")
-        state_updated = False
-        if not self.state.last_seen_rss_link:
-            if self.state.last_seen_link:
-                self.state.last_seen_rss_link = self.state.last_seen_link
-                self.logger.debug(
-                    "Migrated legacy last_seen_link value to last_seen_rss_link."
-                )
-                state_updated = True
-            else:
-                self.rss_action = "Priming feed"
-                initial_feed = self.fetch_rss()
-                if initial_feed and initial_feed.entries:
-                    first_link = initial_feed.entries[0].get("link")
-                    self.state.last_seen_rss_link = first_link
-                    self.state.last_seen_link = first_link
-                    self.logger.info("Initial RSS feed primed successfully.")
-                    state_updated = True
-        if state_updated:
-            self.state.save_state()
-
-        while not self.shutdown_event.is_set():
-            is_paused = os.path.exists(self.PAUSE_FILE)
-            time_to_next_check = self.next_check_time - time.time()
-            wait_duration = max(0, time_to_next_check)
-            self.logger.debug(
-                f"Waiting for next RSS check: {wait_duration:.2f}s (paused={is_paused})"
-            )
-
-            triggered = self.check_now_event.wait(timeout=wait_duration)
-            if self.shutdown_event.is_set():
-                break
-
-            if triggered or time.time() >= self.next_check_time:
-                self.logger.debug("RSS check triggered.")
-                self.check_now_event.clear()
-
-                if os.path.exists(self.PAUSE_FILE):
-                    self.rss_action = "Paused"
-                    wait_time = 5
-                else:
-                    self.rss_action = "Fetching RSS"
-                    feed = self.fetch_rss()
-                    if feed is None:
-                        self.failure_count += 1
-                        wait_time = min(
-                            self._pick_next_rss_wait_seconds()
-                            * (2**self.failure_count),
-                            self.config.get("Network", "max_backoff"),
-                        )
-                        self.rss_action = f"RSS Backoff ({int(wait_time)}s)"
-                    else:
-                        if self.failure_count > 0:
-                            self.logger.info("RSS Connection re-established.")
-                        self.failure_count = 0
-                        self.last_check_time = datetime.datetime.now()
-                        self.rss_action = "Processing RSS"
-                        self._process_feed_entries(feed.entries)
-                        wait_time = self._pick_next_rss_wait_seconds()
-                        self.rss_action = "Waiting"
-                self.next_check_time = time.time() + wait_time
-
-        self.logger.info("RSS monitor thread stopped.")
+        """RSS monitor thread - delegates to watcher_feed.run_rss_monitor."""
+        return _run_rss_monitor_impl(self)
 
     def _run_native_browser_listener(self):
-        """Run native browser listener loop - drains events into state projector."""
-        from queue import Empty
-
-        self.logger.info("Native browser listener starting...")
-        try:
-            while not self.shutdown_event.is_set():
-                try:
-                    if hasattr(self, "_native_listener"):
-                        self._native_listener.run_once()
-
-                    if hasattr(self, "_state_projector"):
-                        try:
-                            from .event_bus import get_native_events_queue
-                            from .events import EventEnvelope
-
-                            q = get_native_events_queue()
-                            while True:
-                                try:
-                                    event_dict = q.get_nowait()
-                                    event = EventEnvelope.from_dict(event_dict)
-                                    self._state_projector.project(event)
-                                except Empty:
-                                    break
-                                except Exception as e:
-                                    self.logger.warning(
-                                        "Event projection error: %s", e, exc_info=True
-                                    )
-                        except Exception as e:
-                            self.logger.warning(
-                                "Event bus drain error: %s", e, exc_info=True
-                            )
-                except Exception as e:
-                    self.logger.warning(
-                        "Native browser listener error: %s", e, exc_info=True
-                    )
-                capture_interval = (
-                    getattr(self, "_native_listener", None).capture_interval
-                    if hasattr(self, "_native_listener")
-                    and hasattr(
-                        getattr(self, "_native_listener", None), "capture_interval"
-                    )
-                    else 0.75
-                )
-                self.shutdown_event.wait(capture_interval)
-        finally:
-            listener = getattr(self, "_native_listener", None)
-            close = getattr(listener, "close", None)
-            if callable(close):
-                close()
+        """Optional side-channel monitor thread - delegates to watcher_monitors.run_native_browser_listener."""
+        return _run_native_browser_listener_impl(self)
 
     def run_notify_test(self):
         self.logger.info("Sending a test notification...")
@@ -2832,17 +969,12 @@ class GengoWatcher:
         os.execv(python, [python] + sys.argv)
 
     def set_config_value(self, section, option, value):
-        self.logger.debug(f"Setting config value: [{section}] {option} = {value}")
-        self.config.set(section, option, value)
-        self.config.save_config()
-        self.logger.info(f"Config updated: [{section}] {option} = {value}")
-        if section.lower() == "cancellation":
-            self._configure_cancellation_manager()
+        """Set a config value and persist it."""
+        return _set_config_value_impl(self, section, option, value)
 
     def get_config_value(self, section, option):
-        value = self.config.get(section, option)
-        self.logger.debug(f"Getting config value: [{section}] {option} = {value}")
-        return value
+        """Get a config value."""
+        return _get_config_value_impl(self, section, option)
 
     def list_config_values(self):
         config_dict = self.config.list_all()
@@ -2880,160 +1012,16 @@ class GengoWatcher:
 
     def _configure_cancellation_manager(self):
         """Apply configuration settings to the cancellation manager."""
-        try:
-            settings = {
-                "cancellation_enabled": self.cancellation_manager._config_getboolean(
-                    "Cancellation", "enabled", fallback=False
-                ),
-                "min_improvement_ratio": self.cancellation_manager._config_getfloat(
-                    "Cancellation", "min_improvement_ratio", fallback=2.0
-                ),
-                "extreme_threshold": self.cancellation_manager._config_getfloat(
-                    "Cancellation", "extreme_threshold", fallback=1000.0
-                ),
-            }
-            self.cancellation_manager.update_settings(**settings)
-        except Exception as e:
-            self.logger.error(f"Failed to configure cancellation manager: {e}")
+        return _configure_cancellation_manager_impl(self)
+
 
     def prompt_for_config_values(self, required_fields=None):
-        """
-        Interactively prompt the user to supply missing configuration values.
-
-        If `required_fields` is not provided, the method scans the current configuration for values that match
-        module-level placeholder markers and prompts for each missing item. For a fresh or small config file a
-        welcome message is printed. Prompts are grouped by section and sensitive fields (containing "password",
-        "session" or "key") are read without echo. Provided values are saved via set_config_value; skipped entries
-        leave existing values unchanged. Progress and completion messages are printed and the action is logged.
-
-        Parameters:
-            required_fields (iterable[(str, str)], optional): Iterable of (section, option) pairs to prompt.
-                If omitted or None, missing values are auto-detected from placeholder constants.
-        """
-        import getpass
-
-        self.logger.debug("Prompting for config values interactively.")
-
-        # Check if this is a fresh config
-        config_file = Path(self.config.CONFIG_FILE)
-        is_new_config = (
-            config_file.stat().st_size < 1000
-        )  # Rough check for new/small config
-
-        if is_new_config:
-            print("\n" + "=" * 60)
-            print("🎉 Welcome to GengoWatcher!")
-            print("=" * 60)
-            print("A default configuration file has been created.")
-            print("Let's set up the essential settings to get you started.")
-            print("=" * 60 + "\n")
-
-        if required_fields is None:
-            required_fields = [
-                field
-                for field in self._get_default_required_config_fields()
-                if self.config.get(field[0], field[1]) in PLACEHOLDER_CONFIG_VALUES
-            ]
-
-        if not required_fields:
-            print("✅ All configuration values are set!")
-            return
-
-        print(
-            f"\n📝 Please provide values for {len(required_fields)} required configuration settings:"
-        )
-        print("-" * 60)
-
-        # Group fields by section for better organization
-        fields_by_section = {}
-        for section, option in required_fields:
-            if section not in fields_by_section:
-                fields_by_section[section] = []
-            fields_by_section[section].append(option)
-
-        for section, options in fields_by_section.items():
-            print(f"\n[{section}] Section:")
-            for option in options:
-                current = self.config.get(section, option)
-                display_current = (
-                    current if current not in PLACEHOLDER_CONFIG_VALUES else "(not set)"
-                )
-
-                # Provide helpful descriptions for common fields
-                descriptions = {
-                    "user_session": "Your Gengo session token (found in browser dev tools)",
-                    "user_id": "Your Gengo user ID number",
-                    "feed_url": "RSS feed URL for job monitoring",
-                    "min_reward": "Minimum job reward to monitor (USD)",
-                    "check_interval": "How often to check for new jobs (seconds)",
-                    "api_key": "CAPTCHA service API key",
-                    "browser_path": "Path to your preferred browser executable",
-                }
-
-                desc = descriptions.get(option, "")
-                desc_text = f" - {desc}" if desc else ""
-
-                prompt = f"  {option} (current: {display_current}){desc_text}: "
-
-                is_sensitive = any(
-                    keyword in option.lower() for keyword in SENSITIVE_KEYWORDS
-                )
-
-                if is_sensitive:
-                    value = getpass.getpass(prompt)
-                else:
-                    value = input(prompt).strip()
-
-                if value:
-                    self.set_config_value(section, option, value)
-                    if is_sensitive:
-                        print(f"  ✅ Set {option} (value stored securely)")
-                    else:
-                        print(f"  ✅ Set {option} = {value}")
-                else:
-                    print(f"  ⚠️  Skipped {option} (keeping current value)")
-
-        print("\n" + "=" * 60)
-        print("✅ Configuration setup complete!")
-        print(
-            "You can always reconfigure later with: python -m gengowatcher.main --configure"
-        )
-        print("=" * 60 + "\n")
-
-        self.logger.info("Config interactive prompt complete.")
+        """Prompt the user for missing required config values."""
+        return _prompt_for_config_values_impl(self, required_fields)
 
     def is_config_complete(self, required_fields=None):
-        """
-        Determine whether required configuration fields are set to non-placeholder values.
-
-        If `required_fields` is omitted, every section/option present in the loaded config is validated against the module's placeholder sentinel values.
-
-        Parameters:
-            required_fields (list[tuple[str, str]]|None): Optional iterable of (section, option) pairs to validate. If `None`, all loaded config options are checked.
-
-        Returns:
-            bool: `True` if all specified fields are set to values other than the placeholder sentinels, `False` otherwise.
-        """
-        self.logger.debug("Checking if config is complete.")
-        if required_fields is None:
-            required_fields = self._get_default_required_config_fields()
-
-        for section, option in required_fields:
-            try:
-                val = self.config.get(section, option)
-                if val in PLACEHOLDER_CONFIG_VALUES:
-                    self.logger.debug(
-                        f"Config incomplete: [{section}] {option} is unset or placeholder."
-                    )
-                    return False
-            except KeyError:
-                # Section or option doesn't exist in loaded config
-                self.logger.debug(
-                    f"Config incomplete: [{section}] {option} is missing from loaded config."
-                )
-                return False
-
-        return True
+        """Return True when every required config field has a usable value."""
+        return _is_config_complete_impl(self, required_fields)
 
     def get_job_acceptance_stats(self):
         """Get job acceptance engine statistics"""
@@ -3063,157 +1051,13 @@ class GengoWatcher:
         )
 
     def handle_exit(self):
-        """Handle application exit"""
-        if getattr(self, "_shutdown_initiated", False):
-            return
-
-        self._shutdown_initiated = True
-        self.logger.info("GengoWatcher shutting down...")
-        self.shutdown_event.set()
-        self.check_now_event.set()
-
-        def _run_coro_safely(coro, description):
-            try:
-                loop = asyncio.new_event_loop()
-                try:
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(coro)
-                finally:
-                    asyncio.set_event_loop(None)
-                    loop.close()
-            except Exception as error:
-                self.logger.exception(
-                    "Failed to %s during shutdown: %s", description, error
-                )
-
-        if getattr(self, "job_acceptance_engine", None) and hasattr(
-            self.job_acceptance_engine, "close_session"
-        ):
-            _run_coro_safely(
-                self.job_acceptance_engine.close_session(),
-                "close job acceptance session",
-            )
-
-        if getattr(self, "cancellation_manager", None) and hasattr(
-            self.cancellation_manager, "close_session"
-        ):
-            _run_coro_safely(
-                self.cancellation_manager.close_session(),
-                "close cancellation session",
-            )
-
-        with self._csv_lock:
-            if self._all_entries_log_file:
-                try:
-                    self._all_entries_log_file.flush()
-                    self._all_entries_log_file.close()
-                except Exception as error:
-                    self.logger.exception("Failed to close CSV log file: %s", error)
-                finally:
-                    self._all_entries_log_file = None
-                    self._csv_writer = None
-        if self._rss_executor is not None:
-            try:
-                self._rss_executor.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                self._rss_executor.shutdown(wait=False)
-            self._rss_executor = None
-        self._rss_future = None
-        self._rss_future_started_at = None
-        self._cancellation_executor.shutdown(wait=False, cancel_futures=True)
-
-        join_deadline = time.monotonic() + 3.0
-        current_thread = threading.current_thread()
-        for name, thread in list(self._monitor_threads.items()):
-            if thread is current_thread or not thread.is_alive():
-                continue
-            remaining = join_deadline - time.monotonic()
-            if remaining <= 0:
-                self.logger.warning(
-                    "Monitor thread still running at shutdown: %s", name
-                )
-                continue
-            thread.join(timeout=min(0.5, remaining))
-            if thread.is_alive():
-                self.logger.warning("Monitor thread did not stop cleanly: %s", name)
-
-        try:
-            self.state.save_state()
-        except Exception as error:
-            self.logger.exception("Failed to save state during shutdown: %s", error)
-
-        self.logger.info("GengoWatcher shutdown complete")
+        """Run the shutdown sequence for the watcher."""
+        return _handle_exit_impl(self)
 
     def _run_email_monitor(self):
-        """Run email monitor in a dedicated thread with its own event loop."""
-        if EmailMonitor is None:
-            self.logger.error("Email monitor dependencies not installed")
-            return
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def job_callback(job_id, title, reward, url, source):
-            await asyncio.to_thread(
-                self._process_new_job, job_id, title, reward, url, source
-            )
-
-        self.email_monitor = EmailMonitor(
-            config=self.config,
-            logger=self.logger,
-            job_callback=job_callback,
-            shutdown_event=asyncio.Event(),
-        )
-
-        def check_shutdown():
-            while not self.shutdown_event.is_set():
-                time.sleep(1)
-            if self.email_monitor:
-                loop.call_soon_threadsafe(self.email_monitor.shutdown_event.set)
-
-        shutdown_thread = threading.Thread(target=check_shutdown, daemon=True)
-        shutdown_thread.start()
-
-        try:
-            loop.run_until_complete(self.email_monitor.start())
-        except Exception as e:
-            self.logger.error(f"Email monitor error: {e}")
-        finally:
-            loop.close()
+        """Optional side-channel monitor thread - delegates to watcher_monitors.run_email_monitor."""
+        return _run_email_monitor_impl(self)
 
     def _run_website_monitor(self):
-        """Run website monitor in a dedicated thread with its own event loop."""
-        if WebsiteMonitor is None:
-            self.logger.error("Website monitor dependencies not installed (playwright)")
-            return
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def job_callback(job_id, title, reward, url, source):
-            await asyncio.to_thread(
-                self._process_new_job, job_id, title, reward, url, source
-            )
-
-        self.website_monitor = WebsiteMonitor(
-            config=self.config,
-            logger=self.logger,
-            job_callback=job_callback,
-            shutdown_event=asyncio.Event(),
-        )
-
-        def check_shutdown():
-            while not self.shutdown_event.is_set():
-                time.sleep(1)
-            if self.website_monitor:
-                loop.call_soon_threadsafe(self.website_monitor.shutdown_event.set)
-
-        shutdown_thread = threading.Thread(target=check_shutdown, daemon=True)
-        shutdown_thread.start()
-
-        try:
-            loop.run_until_complete(self.website_monitor.start())
-        except Exception as e:
-            self.logger.error(f"Website monitor error: {e}")
-        finally:
-            loop.close()
+        """Optional side-channel monitor thread - delegates to watcher_monitors.run_website_monitor."""
+        return _run_website_monitor_impl(self)

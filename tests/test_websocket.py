@@ -1,9 +1,9 @@
-import pytest
-import asyncio
-import json
-from unittest.mock import patch, MagicMock, AsyncMock, ANY
 import collections
+import json
 from builtins import TimeoutError
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from gengowatcher.watcher import GengoWatcher
 from gengowatcher.config import AppConfig
@@ -82,7 +82,7 @@ class MockConnectFactory:
 
 
 @pytest.mark.asyncio
-@patch("gengowatcher.watcher.connect")
+@patch("gengowatcher.orchestration.watcher_ws_logic.connect")
 async def test_websocket_receives_and_processes_job(mock_connect, watcher_instance):
     """
     Test that a valid job received from the WebSocket is correctly processed.
@@ -109,20 +109,17 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
 
     kwargs = mock_connect.call_args.kwargs
     assert mock_connect.call_args.args[0] == "wss://live-dashboard.gengo.com/"
-    header_key = (
-        "additional_headers"
-        if kwargs.get("additional_headers") is not None
-        else "extra_headers"
-    )
-    assert kwargs[header_key] is not None
-    assert kwargs[header_key]["Cookie"] == (
+    assert kwargs["additional_headers"] is not None
+    assert kwargs["additional_headers"]["Cookie"] == (
         "myG_myGSession_=fake_session_token; myG_rdsessID=fake_session_token"
     )
-    assert kwargs[header_key]["User-Agent"] == (
+    assert kwargs["additional_headers"]["User-Agent"] == (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
     )
-    assert kwargs[header_key]["Accept-Language"] == "en-GB,en-US;q=0.9,en;q=0.8"
+    assert kwargs["additional_headers"]["Accept-Language"] == (
+        "en-GB,en-US;q=0.9,en;q=0.8"
+    )
     assert kwargs["ping_interval"] is None
     assert kwargs["ping_timeout"] == 10
     mock_ws_client.send.assert_awaited_once()
@@ -141,7 +138,7 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
 
 
 @pytest.mark.asyncio
-@patch("gengowatcher.watcher.connect")
+@patch("gengowatcher.orchestration.watcher_ws_logic.connect")
 async def test_websocket_retries_with_ua_only_after_handshake_timeout(
     mock_connect, watcher_instance
 ):

@@ -15,7 +15,7 @@ class TitleBarTestApp(App):
 async def test_title_bar_renders():
     """TitleBar should render brand, session time, and clock."""
     app = TitleBarTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         title_bar = app.query_one(TitleBar)
         assert title_bar is not None
 

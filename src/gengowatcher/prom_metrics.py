@@ -2,7 +2,11 @@ import time
 from typing import Any, Callable, cast
 
 
-_WATCHER_PROVIDER: Callable[[], Any | None] = lambda: None
+def _watcher_provider_default() -> Any | None:
+    return None
+
+
+_WATCHER_PROVIDER: Callable[[], Any | None] = _watcher_provider_default
 _METRICS_REGISTERED = False
 
 

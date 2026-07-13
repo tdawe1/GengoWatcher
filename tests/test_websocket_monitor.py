@@ -18,6 +18,9 @@ class _FakeConfig:
     def getint(self, section, key, fallback=None):
         return int(self.values.get((section, key), fallback))
 
+    def set(self, section, key, value):
+        self.values[(section, key)] = value
+
 
 class _FakeWebSocket:
     close_code = 1000
@@ -58,6 +61,66 @@ class _SlowClosingWebSocket(_FakeWebSocket):
     async def __anext__(self):
         await self.close_event.wait()
         raise StopAsyncIteration
+
+
+def test_session_rotation_replaces_stale_browser_cookies(monkeypatch):
+    config = _FakeConfig(
+        {
+            ("WebSocket", "browser_debug_url"): "ws://127.0.0.1:6000",
+            ("WebSocket", "user_session"): "old-token",
+            ("WebSocket", "rd_session_id"): "old-rd",
+        }
+    )
+    monitor = GengoWebSocketMonitor(
+        config,
+        MagicMock(),
+        logging.getLogger("test.websocket_monitor.cookies"),
+    )
+    monitor._browser_cookies = [{"name": "old", "value": "cookie"}]
+    snapshot = MagicMock(
+        session_token="new-token",
+        rd_session_id="new-rd",
+        user_agent="",
+        accept_language="",
+        cookies=[{"name": "new", "value": "cookie"}],
+    )
+    monkeypatch.setattr(
+        "gengowatcher.websocket_monitor.fetch_browser_session_snapshot_sync",
+        lambda _url: snapshot,
+    )
+
+    assert monitor._sync_session_from_browser() is True
+    assert monitor._browser_cookies == [{"name": "new", "value": "cookie"}]
+
+
+def test_session_rotation_clears_stale_cookies_without_replacement(monkeypatch):
+    config = _FakeConfig(
+        {
+            ("WebSocket", "browser_debug_url"): "ws://127.0.0.1:6000",
+            ("WebSocket", "user_session"): "old-token",
+            ("WebSocket", "rd_session_id"): "old-rd",
+        }
+    )
+    monitor = GengoWebSocketMonitor(
+        config,
+        MagicMock(),
+        logging.getLogger("test.websocket_monitor.cookies"),
+    )
+    monitor._browser_cookies = [{"name": "old", "value": "cookie"}]
+    snapshot = MagicMock(
+        session_token="new-token",
+        rd_session_id="new-rd",
+        user_agent="",
+        accept_language="",
+        cookies=[],
+    )
+    monkeypatch.setattr(
+        "gengowatcher.websocket_monitor.fetch_browser_session_snapshot_sync",
+        lambda _url: snapshot,
+    )
+
+    assert monitor._sync_session_from_browser() is True
+    assert monitor._browser_cookies == []
 
 
 @pytest.mark.asyncio

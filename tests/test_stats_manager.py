@@ -1,6 +1,5 @@
 """Tests for StatsManager."""
 
-import pytest
 import tempfile
 import pathlib
 import time

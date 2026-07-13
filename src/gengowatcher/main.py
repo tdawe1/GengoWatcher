@@ -8,18 +8,19 @@ from pathlib import Path
 
 from rich.console import Console
 
-from .browser_session import (
-    fetch_browser_session_snapshot_sync,
-    fetch_browser_session_token_sync,
-)
 from .cli import (
     build_argument_parser,
     handle_cli_config_commands,
     should_handle_lightweight_command,
 )
+# Re-export browser session helpers so callers (and tests) can ``patch(
+# "gengowatcher.main.fetch_browser_session_snapshot_sync")`` etc.
+from .browser_session import (  # noqa: F401  -- re-exported for back-compat (test patches)
+    fetch_browser_session_snapshot_sync,
+    fetch_browser_session_token_sync,
+)
 from .config import AppConfig
 from .logging_setup import APP_THEME
-from .logging_setup import should_enable_stdio_logging as _should_enable_stdio_logging
 from .prom_metrics import start_watcher_metrics_server
 from .runtime import run_application
 

@@ -68,16 +68,43 @@ class WebFileStorage:
 
         cutoff = time.time() - retention_days * 86400
         removed = 0
-        for path in self.get_storage_dir().iterdir():
-            if not path.is_file() or path.is_symlink():
+        storage_dir = self.get_storage_dir()
+        for path in storage_dir.iterdir():
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or path.name.startswith(".")
+                or path.name.endswith(".meta.json")
+            ):
                 continue
             try:
                 if path.stat().st_mtime >= cutoff:
                     continue
                 path.unlink()
                 removed += 1
+                metadata_path = self.metadata_path(path)
+                if metadata_path.is_file() and not metadata_path.is_symlink():
+                    metadata_path.unlink()
+                    removed += 1
             except OSError as exc:
                 self.logger.warning("Failed removing expired file %s: %s", path, exc)
+
+        for metadata_path in storage_dir.glob(".*.meta.json"):
+            if not metadata_path.is_file() or metadata_path.is_symlink():
+                continue
+            primary_name = metadata_path.name[1 : -len(".meta.json")]
+            primary_path = storage_dir / primary_name
+            if primary_path.exists():
+                continue
+            try:
+                metadata_path.unlink()
+                removed += 1
+            except OSError as exc:
+                self.logger.warning(
+                    "Failed removing orphaned file metadata %s: %s",
+                    metadata_path,
+                    exc,
+                )
         return removed
 
     @staticmethod

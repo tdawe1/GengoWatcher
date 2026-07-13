@@ -325,11 +325,14 @@ def workbench_start(event: EventEnvelope, state: "AppState") -> None:
         return
 
     current = state.get_job(collection_id) or {}
+    was_accepted = bool(current.get("accepted"))
     changed = state.upsert_browser_job_details(
         collection_id=collection_id,
         workbench_payload=payload,
     )
     if not changed:
+        return
+    if was_accepted:
         return
     refreshed = state.get_job(collection_id) or current
     accepted_at = refreshed.get("accepted_at") or time.time()

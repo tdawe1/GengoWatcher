@@ -1,10 +1,8 @@
 """Extended tests for StatsManager with additional coverage."""
 
-import pytest
 import tempfile
 import pathlib
 import time
-import json
 from gengowatcher.stats import (
     StatsManager,
     SessionStats,

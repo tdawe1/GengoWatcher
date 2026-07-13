@@ -1,14 +1,9 @@
 """Enhanced tests for GengoWatcher - covering new and enhanced methods."""
 
 import pytest
-import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
-import collections
-import logging
 
 from gengowatcher.watcher import GengoWatcher
-from gengowatcher.config import AppConfig
-from gengowatcher.state import AppState
 
 
 @pytest.fixture

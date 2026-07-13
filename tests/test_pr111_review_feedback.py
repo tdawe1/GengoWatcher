@@ -11,9 +11,9 @@ import gengowatcher.browser_session_core as browser_session_core
 import gengowatcher.ui_charts as ui_charts
 import gengowatcher.ui_formatting as ui_formatting
 import gengowatcher.ui_textual as ui_textual
-from gengowatcher.watcher_debug import RAW_WS_REDACTED, redact_raw_ws_text
-from gengowatcher.watcher_health import timestamp_or_none
-from gengowatcher.watcher_job_metadata import (
+from gengowatcher.orchestration.watcher_debug import RAW_WS_REDACTED, redact_raw_ws_text
+from gengowatcher.orchestration.watcher_health import timestamp_or_none
+from gengowatcher.orchestration.watcher_job_metadata import (
     normalize_lang_pair_string,
     parse_lang_pair_from_title,
 )
@@ -44,6 +44,32 @@ def test_file_storage_removes_expired_files_and_metadata(tmp_path):
     assert not metadata_path.exists()
 
 
+def test_file_storage_expires_content_and_fresh_metadata_together(tmp_path):
+    storage = _storage(tmp_path)
+    entry = storage.save_uploaded_file("source.txt", b"text")
+    path = storage.get_file_path(entry.stored_name)
+    metadata_path = storage.metadata_path(path)
+    old = time.time() - 3 * 86400
+    os.utime(path, (old, old))
+
+    assert storage.cleanup_expired_files() == 2
+    assert not path.exists()
+    assert not metadata_path.exists()
+
+
+def test_file_storage_keeps_metadata_with_fresh_content(tmp_path):
+    storage = _storage(tmp_path)
+    entry = storage.save_uploaded_file("source.txt", b"text")
+    path = storage.get_file_path(entry.stored_name)
+    metadata_path = storage.metadata_path(path)
+    old = time.time() - 3 * 86400
+    os.utime(metadata_path, (old, old))
+
+    assert storage.cleanup_expired_files() == 0
+    assert path.exists()
+    assert metadata_path.exists()
+
+
 def test_backward_compatibility_aliases_live_in_importing_modules():
     assert not hasattr(browser_session_core, "_normalize_debug_url")
     assert not hasattr(browser_session_core, "_coerce_cookie_value")
@@ -55,6 +81,19 @@ def test_backward_compatibility_aliases_live_in_importing_modules():
     )
     assert ui_textual._render_chart([1, 2], width=2, height=1)
     assert ui_textual._format_timestamp("2024-01-01T12:34:56Z") == "12:34:56"
+
+
+def test_render_chart_compatibility_wrapper_forwards_keywords():
+    chart = ui_textual._render_chart(
+        [1, 2],
+        10,
+        5,
+        x_left="first",
+        x_right="last",
+    )
+
+    assert chart.splitlines()[-1].strip().startswith("first")
+    assert chart.splitlines()[-1].endswith("last")
 
 
 def test_raw_websocket_text_redacts_common_token_like_fields():

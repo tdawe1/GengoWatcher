@@ -5,7 +5,7 @@ FIREFOX_DEBUG_PROFILE ?= profiles/firefox-debug
 FIREFOX_DEBUG_SEED_PROFILE ?=
 FIREFOX_DEBUG_AUTO_LAUNCH ?= true
 
-.PHONY: build test coverage lint format run run-web run-web-only firefox-debug firefox-debug-bootstrap install-user
+.PHONY: build test smoke-e2e coverage lint format run run-web run-web-only firefox-debug firefox-debug-bootstrap install-user
 
 build:
 	@echo "Compiling Python files..."
@@ -14,6 +14,9 @@ build:
 
 test:
 	$(PYTHON) -m pytest
+
+smoke-e2e:
+	PYTHONPATH=src $(PYTHON) -m pytest -m e2e -q
 
 coverage:
 	$(PYTHON) -m pytest --cov=.

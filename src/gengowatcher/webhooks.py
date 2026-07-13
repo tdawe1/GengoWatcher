@@ -233,10 +233,17 @@ def redact_debug_value(value: Any) -> Any:
 
 CUSTOMER_CONTENT_KEYS = {
     "_raw",
-    "source_text",
+    "accepted_segments",
     "accepted_source_text",
-    "source_content",
+    "accepted_target_text",
+    "accepted_workbench",
+    "accepted_workbench_payload",
+    "glossary",
     "segments",
+    "source_content",
+    "source_text",
+    "target_content",
+    "target_text",
 }
 
 
@@ -508,10 +515,17 @@ class WebhookAuditLogger:
                 for line in handle:
                     if cutoff is not None:
                         try:
-                            if float(json.loads(line).get("ts", 0)) < cutoff:
+                            parsed = json.loads(line)
+                            if (
+                                isinstance(parsed, dict)
+                                and "ts" in parsed
+                                and float(parsed["ts"]) < cutoff
+                            ):
                                 continue
                         except (TypeError, ValueError, json.JSONDecodeError):
-                            continue
+                            # Unknown-age records are retained rather than
+                            # silently discarded during maintenance.
+                            pass
                     recent_lines.append(line)
             temp_path = self.path.with_name(f".{self.path.name}.tmp")
             with temp_path.open("w", encoding="utf-8") as handle:

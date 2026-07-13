@@ -335,13 +335,28 @@ def test_webhook_audit_redacts_customer_content(tmp_path):
             "job_id": "123",
             "source_text": "private customer text",
             "segments": [{"source_content": "private customer text"}],
+            "accepted_segments": [
+                {
+                    "target_content": "private target text",
+                    "glossary": ["private glossary term"],
+                }
+            ],
+            "accepted_target_text": "private accepted target",
         },
         raw_body=json.dumps(
-            {"source_text": "private customer text", "job_id": "123"}
+            {
+                "accepted_target_text": "private accepted target",
+                "source_text": "private customer text",
+                "job_id": "123",
+            }
         ).encode(),
     )
 
-    assert "private customer text" not in json.dumps(entry)
+    serialized = json.dumps(entry)
+    assert "private customer text" not in serialized
+    assert "private target text" not in serialized
+    assert "private glossary term" not in serialized
+    assert "private accepted target" not in serialized
     assert entry["payload"] == {"job_id": "123"}
 
 
@@ -355,6 +370,9 @@ def test_webhook_audit_removes_entries_older_than_retention(tmp_path):
         + "\n",
         encoding="utf-8",
     )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("not-json\n")
+        handle.write(json.dumps({"event_id": "unknown-age"}) + "\n")
     audit = WebhookAuditLogger(
         path=path,
         logger=logging.getLogger("test.webhooks.audit"),
@@ -368,6 +386,8 @@ def test_webhook_audit_removes_entries_older_than_retention(tmp_path):
     content = path.read_text(encoding="utf-8")
     assert '"event_id": "old"' not in content
     assert '"event_id": "new"' in content
+    assert "not-json" in content
+    assert '"event_id": "unknown-age"' in content
 
 
 def test_outbound_webhook_redacts_customer_content_by_default(tmp_path):
@@ -384,8 +404,18 @@ def test_outbound_webhook_redacts_customer_content_by_default(tmp_path):
     dispatcher._deliver = MagicMock()
 
     dispatcher.emit(
-        "job.details",
-        {"job_id": "123", "source_text": "private customer text"},
+        "job.accepted",
+        {
+            "job_id": "123",
+            "source_text": "private customer text",
+            "accepted_segments": [
+                {
+                    "target_content": "private target text",
+                    "glossary": ["private glossary term"],
+                }
+            ],
+            "accepted_target_text": "private accepted target",
+        },
         background=False,
     )
 

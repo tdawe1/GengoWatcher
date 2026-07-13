@@ -7,7 +7,7 @@ from typing import Any
 from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
 
-from .watcher_job_metadata import TIER_UNIT_RATES
+from .orchestration.watcher_job_metadata import TIER_UNIT_RATES
 
 
 class Icons:

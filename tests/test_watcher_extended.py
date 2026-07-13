@@ -4,12 +4,10 @@ import pytest
 import asyncio
 import logging
 import time
-import json
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 from collections import deque
 
 from gengowatcher.watcher import GengoWatcher
-from gengowatcher.state import AppState
 @pytest.fixture
 def watcher_with_mocks(mock_config, mock_state, mock_logger):
     """Create a watcher instance with mocked dependencies."""
@@ -338,7 +336,6 @@ class TestPromptForConfigValues:
 
     def test_prompt_sensitive_fields_hidden(self, watcher_with_mocks, tmp_path):
         """Test that sensitive fields use hidden input."""
-        import getpass
 
         watcher_with_mocks.config.get.return_value = "REPLACE_WITH_YOUR_SESSION_TOKEN"
         config_path = tmp_path / "config.toml"
@@ -548,6 +545,19 @@ class TestEdgeCases:
         # Should not show notification for filtered job
         watcher_with_mocks.show_notification.assert_not_called()
         assert 123 not in watcher_with_mocks.state.seen_job_ids
+
+    def test_process_new_job_allows_missing_min_reward(
+        self, watcher_with_mocks, mock_config
+    ):
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("Watcher", "min_reward"): None
+        }.get((s, k), kw.get("fallback"))
+
+        watcher_with_mocks._process_new_job(
+            124, "Unfiltered Job", 5.0, "http://example.com", "RSS"
+        )
+
+        watcher_with_mocks.state.add_job.assert_called()
 
     def test_process_feed_entries_empty_list(self, watcher_with_mocks):
         """Test processing empty feed entries list."""
