@@ -245,18 +245,18 @@ async def test_hourly_activity_with_data():
             stats=stats,
         )
 
-        async with app.run_test() as pilot:
-            hourly = pilot.app.query_one(HourlyActivity)
-            hourly.refresh_hourly()
-            await pilot.pause()
+    async with app.run_test() as pilot:
+        hourly = pilot.app.query_one(HourlyActivity)
+        hourly.refresh_hourly()
+        await pilot.pause()
 
-            # Should show peak period (12-15) with 5 jobs
-            from textual.widgets import Static
+        # Should show peak period (12-15) with 5 jobs
+        from textual.widgets import Static
 
-            content = hourly.query_one("#hourly-content", Static)
-            text = str(content.render())
-            assert "12-15" in text  # Peak period containing hour 14
-            assert "5" in text  # 5 jobs
+        content = hourly.query_one("#hourly-content", Static)
+        text = str(content.render())
+        assert "12-15" in text  # Peak period containing hour 14
+        assert "5" in text  # 5 jobs
 
 
 @pytest.mark.asyncio

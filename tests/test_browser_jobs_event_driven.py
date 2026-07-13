@@ -81,6 +81,7 @@ def _make_watcher(**config_overrides):
     config = _FakeConfig(values)
     state = _FakeState()
     import logging
+
     watcher = GengoWatcher.__new__(GengoWatcher)
     watcher.config = config
     watcher.state = state
@@ -105,6 +106,7 @@ def test_no_scrape_without_trigger_within_idle_cap():
     def fake_inspect(debug_url, **kwargs):
         scrape_calls.append(time.time())
         from gengowatcher.browser_session import BrowserAvailableJobsSnapshot
+
         return BrowserAvailableJobsSnapshot(
             url="https://gengo.com/t/jobs/available",
             title="Available jobs",
@@ -116,11 +118,15 @@ def test_no_scrape_without_trigger_within_idle_cap():
     def run_loop():
         with (
             patch(
-                "gengowatcher.watcher.inspect_available_jobs_page_sync",
+                "gengowatcher.orchestration.watcher_browser_jobs.inspect_available_jobs_page_sync",
                 fake_inspect,
             ),
-            patch.object(watcher, "_browser_jobs_navigation_enabled", return_value=False),
-            patch.object(watcher, "_browser_jobs_mouse_activity_enabled", return_value=False),
+            patch.object(
+                watcher, "_browser_jobs_navigation_enabled", return_value=False
+            ),
+            patch.object(
+                watcher, "_browser_jobs_mouse_activity_enabled", return_value=False
+            ),
         ):
             watcher._run_browser_jobs_monitor()
         shutdown.set()
@@ -132,9 +138,9 @@ def test_no_scrape_without_trigger_within_idle_cap():
     # Now trigger shutdown
     watcher.shutdown_event.set()
     shutdown.wait(timeout=2)
-    assert scrape_calls == [], (
-        "monitor should not scrape without a trigger inside idle_cap window"
-    )
+    assert (
+        scrape_calls == []
+    ), "monitor should not scrape without a trigger inside idle_cap window"
 
 
 def test_scrape_after_explicit_trigger():
@@ -146,6 +152,7 @@ def test_scrape_after_explicit_trigger():
     def fake_inspect(debug_url, **kwargs):
         scrape_calls.append(time.time())
         from gengowatcher.browser_session import BrowserAvailableJobsSnapshot
+
         return BrowserAvailableJobsSnapshot(
             url="https://gengo.com/t/jobs/available",
             title="Available jobs",
@@ -157,11 +164,15 @@ def test_scrape_after_explicit_trigger():
     def run_loop():
         with (
             patch(
-                "gengowatcher.watcher.inspect_available_jobs_page_sync",
+                "gengowatcher.orchestration.watcher_browser_jobs.inspect_available_jobs_page_sync",
                 fake_inspect,
             ),
-            patch.object(watcher, "_browser_jobs_navigation_enabled", return_value=False),
-            patch.object(watcher, "_browser_jobs_mouse_activity_enabled", return_value=False),
+            patch.object(
+                watcher, "_browser_jobs_navigation_enabled", return_value=False
+            ),
+            patch.object(
+                watcher, "_browser_jobs_mouse_activity_enabled", return_value=False
+            ),
         ):
             watcher._run_browser_jobs_monitor()
         shutdown.set()
@@ -188,12 +199,11 @@ def test_keepalive_scrape_after_idle_cap_elapses():
     shutdown = threading.Event()
 
     def fake_inspect(debug_url, *, force_refresh=False, browse_url=None, **kwargs):
-        scrape_calls.append(
-            {"force_refresh": force_refresh, "browse_url": browse_url}
-        )
+        scrape_calls.append({"force_refresh": force_refresh, "browse_url": browse_url})
         if browse_url is not None:
             browse_urls_seen.append(browse_url)
         from gengowatcher.browser_session import BrowserAvailableJobsSnapshot
+
         return BrowserAvailableJobsSnapshot(
             url="https://gengo.com/t/jobs/available",
             title="Available jobs",
@@ -205,11 +215,15 @@ def test_keepalive_scrape_after_idle_cap_elapses():
     def run_loop():
         with (
             patch(
-                "gengowatcher.watcher.inspect_available_jobs_page_sync",
+                "gengowatcher.orchestration.watcher_browser_jobs.inspect_available_jobs_page_sync",
                 fake_inspect,
             ),
-            patch.object(watcher, "_browser_jobs_navigation_enabled", return_value=False),
-            patch.object(watcher, "_browser_jobs_mouse_activity_enabled", return_value=False),
+            patch.object(
+                watcher, "_browser_jobs_navigation_enabled", return_value=False
+            ),
+            patch.object(
+                watcher, "_browser_jobs_mouse_activity_enabled", return_value=False
+            ),
         ):
             watcher._run_browser_jobs_monitor()
         shutdown.set()
@@ -235,7 +249,9 @@ def test_triggered_refresh_runs_passive_when_navigation_disabled():
     scrape_calls = []
     shutdown = threading.Event()
 
-    def fake_inspect(debug_url, *, force_refresh=False, browse_url=None, interact=False, **kwargs):
+    def fake_inspect(
+        debug_url, *, force_refresh=False, browse_url=None, interact=False, **kwargs
+    ):
         scrape_calls.append(
             {
                 "force_refresh": force_refresh,
@@ -244,6 +260,7 @@ def test_triggered_refresh_runs_passive_when_navigation_disabled():
             }
         )
         from gengowatcher.browser_session import BrowserAvailableJobsSnapshot
+
         return BrowserAvailableJobsSnapshot(
             url="https://gengo.com/t/jobs/available",
             title="Available jobs",
@@ -255,11 +272,15 @@ def test_triggered_refresh_runs_passive_when_navigation_disabled():
     def run_loop():
         with (
             patch(
-                "gengowatcher.watcher.inspect_available_jobs_page_sync",
+                "gengowatcher.orchestration.watcher_browser_jobs.inspect_available_jobs_page_sync",
                 fake_inspect,
             ),
-            patch.object(watcher, "_browser_jobs_navigation_enabled", return_value=False),
-            patch.object(watcher, "_browser_jobs_mouse_activity_enabled", return_value=False),
+            patch.object(
+                watcher, "_browser_jobs_navigation_enabled", return_value=False
+            ),
+            patch.object(
+                watcher, "_browser_jobs_mouse_activity_enabled", return_value=False
+            ),
         ):
             watcher._run_browser_jobs_monitor()
         shutdown.set()
@@ -272,8 +293,7 @@ def test_triggered_refresh_runs_passive_when_navigation_disabled():
     watcher.shutdown_event.set()
     shutdown.wait(timeout=2)
     triggered_calls = [
-        c for c in scrape_calls
-        if c["browse_url"] is None and c["interact"] is False
+        c for c in scrape_calls if c["browse_url"] is None and c["interact"] is False
     ]
     assert triggered_calls, "trigger should produce at least one passive scrape"
     assert all(

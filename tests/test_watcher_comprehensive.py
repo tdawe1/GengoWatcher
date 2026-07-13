@@ -3,16 +3,12 @@
 import pytest
 import logging
 import concurrent.futures
-from unittest.mock import MagicMock, patch, mock_open, call
+from unittest.mock import MagicMock, patch, mock_open
 import collections
-import time
-import json
 import asyncio
-import tempfile
-import pathlib
 import threading
 
-from gengowatcher.watcher import GengoWatcher, PLACEHOLDER_CONFIG_VALUES
+from gengowatcher.watcher import GengoWatcher
 from gengowatcher.config import AppConfig
 from gengowatcher.state import AppState
 
@@ -183,7 +179,7 @@ class TestWatcherInitialization:
         mock_config.config["WebSocket"]["browser_debug_url"] = "http://127.0.0.1:9222"
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.orchestration.watcher_orchestration_helpers.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-browser-token",
             ),
@@ -203,7 +199,7 @@ class TestWatcherInitialization:
         logger = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync"
+            "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync"
         ) as mock_fetch:
             GengoWatcher(mock_config, mock_state, logger)
 
@@ -231,7 +227,7 @@ class TestWatcherInitialization:
         )
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-token",
                 user_agent="Helium Browser",
@@ -258,7 +254,9 @@ class TestWatcherInitialization:
         """Websocket startup should sync once so session health is not stale."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
-        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
         watcher_instance._sync_session_from_browser = MagicMock(return_value=False)
 
         assert watcher_instance._sync_session_before_websocket_connect() is True
@@ -274,7 +272,9 @@ class TestWatcherInitialization:
         """No browser debug URL means there is nothing to sync before connect."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "",
-        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
         watcher_instance._sync_session_from_browser = MagicMock()
 
         assert watcher_instance._sync_session_before_websocket_connect() is True
@@ -294,7 +294,7 @@ class TestWatcherInitialization:
         watcher_instance.show_notification = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync",
             side_effect=RuntimeError("browser gone"),
         ):
             changed = watcher_instance._sync_session_from_browser(
@@ -320,7 +320,7 @@ class TestWatcherInitialization:
         watcher_instance.show_notification = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync",
             side_effect=RuntimeError("browser gone"),
         ):
             changed = watcher_instance._sync_session_from_browser(
@@ -351,7 +351,7 @@ class TestWatcherInitialization:
         )
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync",
             side_effect=RuntimeError("browser gone"),
         ):
             changed = watcher_instance._sync_session_from_browser(
@@ -378,7 +378,7 @@ class TestWatcherInitialization:
         )
 
         with patch(
-            "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+            "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync",
             return_value=MagicMock(
                 session_token="fresh-token",
                 user_agent="Helium Browser",
@@ -404,7 +404,7 @@ class TestWatcherInitialization:
 
         with (
             patch(
-                "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
+                "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync",
                 side_effect=[
                     RuntimeError("attach failed"),
                     MagicMock(
@@ -415,11 +415,11 @@ class TestWatcherInitialization:
                 ],
             ) as mock_fetch,
             patch(
-                "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
+                "gengowatcher.orchestration.watcher_session_sync.maybe_launch_managed_firefox_debug",
                 return_value=True,
             ) as mock_launch,
             patch(
-                "gengowatcher.watcher.get_firefox_debug_retry_window",
+                "gengowatcher.orchestration.watcher_session_sync.get_firefox_debug_retry_window",
                 return_value=(2.0, 0.01),
             ),
             patch("gengowatcher.watcher.time.sleep"),
@@ -1251,7 +1251,7 @@ class TestWebSocketIntegration:
         watcher_instance.logger.error = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.websockets.connect",
+            "gengowatcher.orchestration.watcher_ws_logic.connect",
             side_effect=TimeoutError("open timed out"),
         ) as mock_connect:
             asyncio.run(watcher_instance._websocket_logic())

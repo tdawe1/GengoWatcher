@@ -13,13 +13,12 @@ Tests cover:
 
 import pytest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from email.message import EmailMessage
 import logging
 import imaplib
-import aiohttp
 
-from gengowatcher.email_monitor import EmailMonitor, EmailJob
+from gengowatcher.email_monitor import EmailMonitor
 from gengowatcher.config import AppConfig
 import gengowatcher.email_monitor as email_monitor_module
 

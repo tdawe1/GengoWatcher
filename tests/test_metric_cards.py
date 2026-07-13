@@ -26,7 +26,7 @@ class MetricsRowTestApp(App):
 async def test_metric_card_displays_value():
     """MetricCard should display only the stat value in card content."""
     app = MetricCardTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         card = app.query_one(MetricCard)
         value_widget = card.query_one(".metric-value")
         # Use render() for Static content inspection
@@ -38,7 +38,7 @@ async def test_metric_card_displays_value():
 async def test_metric_card_update_value():
     """MetricCard.update_value should change displayed value."""
     app = MetricCardTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         card = app.query_one(MetricCard)
         card.update_value("99")
         await pilot.pause()
@@ -54,7 +54,7 @@ async def test_metrics_row_renders_five_cards():
     state.sparkline_data = []
 
     app = MetricsRowTestApp(state)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         cards = app.query(MetricCard)
         assert len(cards) == 5
 
@@ -67,7 +67,7 @@ async def test_metrics_row_card_titles_include_icons():
     state.sparkline_data = []
 
     app = MetricsRowTestApp(state)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         found = app.query_one("#card-found", MetricCard)
         accepted = app.query_one("#card-accepted", MetricCard)
         value = app.query_one("#card-value", MetricCard)

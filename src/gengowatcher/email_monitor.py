@@ -7,7 +7,6 @@ job has already been taken.
 """
 
 import asyncio
-import base64
 import html
 import imaplib
 import email
@@ -17,7 +16,6 @@ import logging
 from email.header import decode_header
 from typing import Optional, Callable, Awaitable
 from dataclasses import dataclass
-from http.cookies import SimpleCookie
 
 import aiohttp
 

@@ -5,7 +5,6 @@ import time
 import tempfile
 import pathlib
 from unittest.mock import MagicMock, patch
-from datetime import datetime
 
 from gengowatcher.ui_textual import (
     TitleBar,
@@ -154,7 +153,7 @@ class TestTitleBar:
                 yield TitleBar(config=mock_config)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             await pilot.pause(0.1)
             # Clock should be mounted and updating
             title_bar = app.query_one(TitleBar)
@@ -182,7 +181,7 @@ class TestMetricCard:
                 yield MetricCard("Test", "★", id="test-card")
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             card = app.query_one("#test-card", MetricCard)
             card.update_value("100")
             await pilot.pause(0.1)
@@ -202,7 +201,7 @@ class TestMetricsRow:
                 yield MetricsRow(state=mock_state)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             metrics_row = app.query_one(MetricsRow)
             cards = metrics_row.query(MetricCard)
             assert len(cards) == 5  # Found, Accepted, Value, Rate, Today
@@ -222,7 +221,7 @@ class TestMetricsRow:
                 yield MetricsRow(state=mock_state)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             metrics_row = app.query_one(MetricsRow)
             metrics_row.refresh_metrics()
             await pilot.pause(0.1)
@@ -242,7 +241,7 @@ class TestStatusIndicator:
                 yield StatusIndicator("●", "Test", id="test-indicator")
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             indicator = app.query_one("#test-indicator", StatusIndicator)
 
             # Test different states
@@ -268,7 +267,7 @@ class TestStatusIndicator:
                 yield StatusIndicator("●", "Test", id="test-indicator")
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             indicator = app.query_one("#test-indicator", StatusIndicator)
             indicator.set_state("live")
             await pilot.pause(1.0)  # Wait for pulse animation
@@ -288,7 +287,7 @@ class TestStatusRow:
                 yield StatusRow(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             status_row = app.query_one(StatusRow)
             indicators = status_row.query(StatusIndicator)
             assert (
@@ -308,7 +307,7 @@ class TestStatusRow:
                 yield StatusRow(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             status_row = app.query_one(StatusRow)
             status_row.refresh_status()
             await pilot.pause(0.1)
@@ -332,7 +331,7 @@ class TestStatusRow:
                 yield StatusRow(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             status_row = app.query_one(StatusRow)
             status_row.refresh_status()
             await pilot.pause(0.1)
@@ -367,7 +366,7 @@ class TestStatusRow:
                 yield StatusRow(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             with patch("gengowatcher.ui_textual._api_socket_open", return_value=True):
                 status_row = app.query_one(StatusRow)
                 status_row.refresh_status()
@@ -437,7 +436,7 @@ class TestStatusRow:
                 yield TelemetryPanel(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             panel = app.query_one(TelemetryPanel)
             panel.refresh_telemetry()
             await pilot.pause(0.1)
@@ -502,7 +501,7 @@ class TestStatusRow:
                 yield TelemetryTab(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             tab = app.query_one(TelemetryTab)
             tab.refresh_telemetry()
             await pilot.pause(0.1)
@@ -564,7 +563,7 @@ class TestStatusRow:
                 yield ApiTab(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             with patch("gengowatcher.ui_textual._api_socket_open", return_value=True):
                 tab = app.query_one(ApiTab)
                 tab.refresh_api()
@@ -608,7 +607,7 @@ class TestStatusRow:
                 yield StatusRow(watcher=mock_watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             status_row = app.query_one(StatusRow)
             status_row.refresh_status()
             await pilot.pause(0.1)
@@ -629,7 +628,7 @@ class TestActivityPreview:
                 yield ActivityPreview()
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             preview = app.query_one(ActivityPreview)
             preview.add_line("Test message", level="info")
             await pilot.pause(0.1)
@@ -646,7 +645,7 @@ class TestActivityPreview:
                 yield ActivityPreview()
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             preview = app.query_one(ActivityPreview)
 
             # Test colorization of different message types
@@ -678,7 +677,7 @@ class TestJobsPreview:
                 yield JobsPreview(state=mock_state)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             preview = app.query_one(JobsPreview)
             preview.refresh_jobs()
             await pilot.pause(0.1)
@@ -698,7 +697,7 @@ class TestHourlyActivity:
                 yield HourlyActivity(stats=mock_stats)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             chart = app.query_one(HourlyActivity)
             chart.refresh_hourly()
             await pilot.pause(0.1)
@@ -714,7 +713,7 @@ class TestHourlyActivity:
                 yield HourlyActivity(stats=None)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             chart = app.query_one(HourlyActivity)
             chart.refresh_hourly()
             await pilot.pause(0.1)
@@ -734,7 +733,7 @@ class TestConfigPreview:
                 yield ConfigPreview(config=mock_config)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             preview = app.query_one(ConfigPreview)
             preview.refresh_config()
             await pilot.pause(0.1)
@@ -777,7 +776,7 @@ class TestSessionStats:
                 yield SessionStats(watcher=mock_watcher, state=mock_state)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             stats = app.query_one(SessionStats)
             stats.refresh_stats()
             await pilot.pause(0.1)
@@ -797,7 +796,7 @@ class TestStatsPanel:
                 yield StatsPanel(stats=mock_stats)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             panel = app.query_one(StatsPanel)
             panel.refresh_stats()
             await pilot.pause(0.1)
@@ -846,7 +845,6 @@ class TestEdgeCases:
 
     def test_activity_preview_with_special_characters(self):
         """Test ActivityPreview handles special characters."""
-        from textual.app import App
 
         preview = ActivityPreview()
         colored = preview._colorize_message("Test 日本語 UTF-8 ♠♥♦♣", "info")
@@ -868,7 +866,7 @@ class TestEdgeCases:
                 yield StatusRow(watcher=watcher)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             status_row = app.query_one(StatusRow)
             status_row.refresh_status()  # Should not crash
             await pilot.pause(0.1)
@@ -898,7 +896,7 @@ class TestEdgeCases:
                 yield JobsPreview(state=mock_state)
 
         app = TestApp()
-        async with app.run_test() as pilot:
+        async with app.run_test() as pilot:  # noqa: F841
             preview = app.query_one(JobsPreview)
             preview.refresh_jobs()  # Should not crash
             await pilot.pause(0.1)

@@ -1,9 +1,5 @@
-# GengoWatcher Configuration Example
-# Copy this file to config.toml and fill in your values
-# Sensitive values can also be set via environment variables (see .env.example)
-
 [Watcher]
-feed_url = "https://gengo.com/rss/available_jobs/YOUR_RSS_FEED_TOKEN"
+feed_url = "https://www.theguardian.com/uk/rss"
 check_interval = 31
 gengo_rss_interval_min_sec = 31
 gengo_rss_interval_max_sec = 60
@@ -17,39 +13,41 @@ enable_websocket = true
 use_gateway = false
 gateway_url = "http://127.0.0.1:8000"
 wss_url = "wss://live-dashboard.gengo.com/"
-# Set via GENGO_USER_ID env var or here
-user_id = "YOUR_USER_ID"
-# Set via GENGO_USER_SESSION env var or here
-user_session = "YOUR_SESSION_TOKEN"
+user_id = 0
+user_session = "REPLACE_WITH_YOUR_SESSION_TOKEN"
 user_key = "REPLACE_WITH_YOUR_USER_KEY"
 browser_debug_url = ""
+browser_debug_auto_launch = false
+browser_debug_profile_path = "profiles/firefox-debug"
+browser_debug_seed_profile_path = ""
+browser_debug_start_url = "https://gengo.com/t/jobs/status/available"
+browser_debug_launch_timeout_sec = 15.0
+browser_debug_retry_interval_sec = 1.0
 session_sync_interval_sec = 14400
-session_quiet_probe_sec = 90
-session_quiet_stale_after_sec = 300
-planned_reconnect_min_sec = 300
-planned_reconnect_max_sec = 3600
-browser_activity_min_sec = 300
-browser_activity_max_sec = 3600
 session_sync_fail_hard = true
 session_sync_alert_on_failure = true
 
+[BrowserJobs]
+enabled = true
+allow_navigation = false
+# The monitor is event-driven; this bounds passive connection checks while idle.
+idle_cap_sec = 1800
+
 [Paths]
+sound_file = "assets/alert.wav"
+websocket_stale_sound_file = ""
+browser_session_sync_failed_sound_file = ""
+file_storage_dir = "data/files"
 log_file = "logs/gengowatcher.log"
-notification_icon_path = "/path/to/icon.png"
-browser_path = "/usr/bin/google-chrome"
+notification_icon_path = ""
+browser_path = ""
+browser_debug_browser_path = "firefox"
 browser_args = "--new-window {url}"
 all_entries_log = "logs/all_entries.csv"
-sound_file = "assets/alert.wav"
-# Optional override for websocket stale alerts; falls back to sound_file when blank
-websocket_stale_sound_file = ""
-# Optional override for browser session sync failure alerts; falls back to sound_file when blank
-browser_session_sync_failed_sound_file = ""
-# Local storage for uploaded/downloadable release files exposed by the web API
-file_storage_dir = "data/files"
 
 [Logging]
 log_max_bytes = 1000000
-log_backup_count = 3
+log_backup_count = 99
 log_main_enabled = true
 log_stdio_enabled = false
 log_all_entries_enabled = true
@@ -58,21 +56,22 @@ log_all_entries_enabled = true
 theme_name = "nord"
 
 [DebugCategories]
-websocket = true
-rss = true
+websocket = false
+rss = false
 job = true
-browser = true
-config = true
+captcha = true
+browser = false
+config = false
 system = true
 email = true
-website = true
+website = false
 raw = false
 
 [Network]
 max_backoff = 300
-user_agent_email = "your-email@example.com"
-browser_user_agent = "Mozilla/5.0"
-browser_accept_language = "en-GB,en-US;q=0.9"
+user_agent_email = ""
+browser_user_agent = ""
+browser_accept_language = ""
 detect_browser_ua = false
 clean_close_backoff_min = 20
 clean_close_backoff_max = 45
@@ -81,46 +80,48 @@ reconnect_jitter_max = 5
 [RateLimit]
 max_acceptances_per_hour = 30
 
+[Metrics]
+enabled = false
+host = "127.0.0.1"
+port = 9091
+
 [WebServer]
 enabled = false
 host = "127.0.0.1"
 port = 8000
 cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
-# Set via GENGOWATCHER_API_TOKEN env var or here
 auth_token = "REPLACE_WITH_YOUR_WEB_API_TOKEN"
 
 [TranslationApp]
 enabled = false
-base_url = "http://127.0.0.1:8080"
-# Set via TRANSLATION_APP_AUTH_TOKEN env var or here
+base_url = ""
 auth_token = "REPLACE_WITH_YOUR_TRANSLATION_APP_TOKEN"
 timeout_sec = 5.0
 verify_tls = true
 
 [TranslationWorkflow]
-# user: wait for /api/files/upload with job_id after acceptance.
-# auto: try to download a file URL found in the accepted workbench JSON.
-# none: start the workflow from workbench JSON text only.
 file_mode = "user"
 download_timeout_sec = 30.0
+download_max_bytes = 52428800
+download_allowed_hosts = ["gengo.com", ".gengo.com"]
 file_text_max_chars = 250000
 
 [Webhooks]
 incoming_enabled = false
-# Set via GENGOWATCHER_WEBHOOK_SECRET env var or here
 incoming_secret = ""
 require_signature = true
 signature_tolerance_sec = 300.0
+max_body_bytes = 1048576
 max_seen_event_ids = 1000
 debug_enabled = false
 debug_payload_preview_bytes = 4096
 audit_enabled = true
 audit_log_path = "logs/webhooks.jsonl"
+audit_max_bytes = 1048576
+audit_max_lines = 5000
 outbound_enabled = false
 outbound_urls = []
-# Set via GENGOWATCHER_WEBHOOK_OUTBOUND_SECRET env var or here
 outbound_secret = ""
-# Set via GENGOWATCHER_WEBHOOK_OUTBOUND_AUTH_TOKEN env var or here
 outbound_auth_token = ""
 outbound_timeout_sec = 5.0
 outbound_max_attempts = 3
@@ -142,8 +143,16 @@ concurrent_submission = true
 accept_click_probe_ms = 75
 attempt_timeout_sec = 12
 selenium_attempt_timeout_sec = 8
-# Keep false in native browser mode. Set true only for the legacy direct HTTP accept path.
 allow_http_fallback = false
+
+[BrowserWorker]
+enabled = false
+socket_path = ""
+auth_token = ""
+profile_path = "profiles/browser-worker"
+seed_profile_path = ""
+headless = false
+artifacts_dir = "logs/browser-worker-artifacts"
 
 [Browser]
 backend = "native"
@@ -156,26 +165,6 @@ debug_url = "ws://127.0.0.1:6000"
 enabled = false
 capture_interval_ms = 750
 status_poll_seconds = 5
-
-[BrowserJobs]
-# BrowserJobs monitor is now event-driven by default. It wakes when:
-#   - The native browser listener publishes a workbench-visible event, OR
-#   - A job.discovered / job.details event lands from any source, OR
-#   - An explicit TUI / CLI command calls trigger_browser_jobs_refresh().
-# No fixed polling cadence is used. The idle_cap_sec below bounds how often
-# the monitor runs a passive keepalive eval when nothing has happened.
-enabled = true
-allow_navigation = false
-idle_cap_sec = 1800
-
-[BrowserWorker]
-enabled = false
-socket_path = ""
-# Start with: gengowatcher-browser-worker --profile-path profiles/browser-worker
-profile_path = "profiles/browser-worker"
-seed_profile_path = ""
-headless = false
-artifacts_dir = "logs/browser-worker-artifacts"
 
 [HighValue]
 threshold = 500.0
@@ -198,12 +187,10 @@ auto_cancel_extreme_value = true
 
 [EmailMonitor]
 enabled = false
-email = "your-email@gmail.com"
-# OAuth credentials - prefer environment variables:
-# GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
-client_id = "YOUR_CLIENT_ID"
-client_secret = "YOUR_CLIENT_SECRET"
-refresh_token = "YOUR_REFRESH_TOKEN"
+email = ""
+client_id = ""
+client_secret = ""
+refresh_token = ""
 access_token = ""
 token_expiry = 0
 folder = "INBOX"

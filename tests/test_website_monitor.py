@@ -17,7 +17,7 @@ import pytest
 import asyncio
 import logging
 import re
-from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from gengowatcher.website_monitor import WebsiteMonitor
 from gengowatcher.config import AppConfig

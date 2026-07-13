@@ -2,7 +2,8 @@ import asyncio
 import json
 import logging
 import sys
-import websockets
+from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 # Configure logging
 logging.basicConfig(
@@ -34,17 +35,11 @@ async def run_test(name, user_id, headers):
     """
     logger.info(f"--- Starting Test: {name} ---")
     try:
-        # Handle websockets version difference
-        # websockets >= 13.0 uses "additional_headers", earlier versions use "extra_headers"
-        ws_version = getattr(websockets, "__version__", "0")
-        ws_header_key = (
-            "additional_headers"
-            if int(ws_version.split(".")[0]) >= 13
-            else "extra_headers"
-        )
-
-        async with websockets.connect(
-            WS_URL, **{ws_header_key: headers}, ping_interval=20, ping_timeout=10
+        async with connect(
+            WS_URL,
+            additional_headers=headers,
+            ping_interval=20,
+            ping_timeout=10,
         ) as websocket:
             logger.info(f"[{name}] Connected")
 
@@ -62,7 +57,7 @@ async def run_test(name, user_id, headers):
             except asyncio.TimeoutError:
                 logger.info(f"[{name}] Timeout waiting for message")
 
-    except websockets.exceptions.ConnectionClosed as e:
+    except ConnectionClosed as e:
         logger.error(f"[{name}] Closed: code={e.code}, reason={e.reason}")
     except Exception as e:
         logger.error(f"[{name}] Error: {e}")

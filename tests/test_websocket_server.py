@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gengowatcher.websocket_server as websocket_server
-from gengowatcher.websocket_server import GengoRealtimeGateway
+from gengowatcher.websocket_server import GengoRealtimeGateway, _extract_session_token
 
 
 class _FakeConfig:
@@ -41,9 +41,26 @@ class _FakeGatewayWebSocket:
         return json.dumps(
             {
                 "type": "available_collection",
-                "data": [{"id": "123", "reward": 1.0}],
+                "collection": {"id": "123", "reward": 1.0},
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("cookie_header", "expected"),
+    [
+        ("myG_myGSession_=canonical-token", "canonical-token"),
+        ("_ga=value; my_gengo_session=legacy-token", "legacy-token"),
+        (
+            "my_gengo_session=legacy-token; myG_myGSession_=canonical-token",
+            "canonical-token",
+        ),
+    ],
+)
+def test_extract_session_token_supports_browser_cookie_names(
+    cookie_header: str, expected: str
+):
+    assert _extract_session_token(cookie_header) == expected
 
 
 @pytest.mark.asyncio
@@ -72,7 +89,7 @@ async def test_gateway_run_offloads_header_build_and_event_emit(
     fake_ws = _FakeGatewayWebSocket(gateway)
     monkeypatch.setattr(websocket_server.asyncio, "to_thread", fake_to_thread)
     monkeypatch.setattr(
-        websocket_server.websockets,
+        websocket_server,
         "connect",
         lambda *_args, **_kwargs: fake_ws,
     )
@@ -88,7 +105,9 @@ async def test_gateway_run_offloads_header_build_and_event_emit(
         json.dumps({"userId": "user-1", "sessionToken": "session-token"})
     ]
     assert event_file.is_file()
-    assert json.loads(event_file.read_text().splitlines()[0])["type"] == "job"
+    event = json.loads(event_file.read_text().splitlines()[0])
+    assert event["type"] == "job"
+    assert event["data"] == {"id": "123", "reward": 1.0}
 
 
 def test_latest_event_requires_api_token(monkeypatch):

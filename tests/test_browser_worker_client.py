@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -255,13 +256,14 @@ def test_browser_worker_telemetry_event_marks_job_accepted(watcher_deps):
             "jobs": [{"id": 98936958}],
         },
     }
-    state.mark_job_accepted.return_value = True
+    state.mark_job_accepted.return_value = False
     state.get_job.return_value = {
         "id": "123",
         "accepted": True,
         "accepted_source_text": "Workbench source text",
     }
     watcher.on_api_event_callback = MagicMock()
+    watcher.cancellation_manager.set_current_job = MagicMock()
 
     watcher._handle_browser_worker_telemetry_payload(event_payload)
 
@@ -280,8 +282,52 @@ def test_browser_worker_telemetry_event_marks_job_accepted(watcher_deps):
             "id": "123",
             "accepted": True,
             "accepted_source_text": "Workbench source text",
+            "workbench_url": "https://gengo.com/t/workbench/123",
+            "accepted_workbench": {
+                "source": "window.__GENGO_WORKBENCH_DATA__",
+                "payload": event_payload["payload"],
+            },
+            "source": "window.__GENGO_WORKBENCH_DATA__",
+            "reward": 0.0,
+            "acceptance_state": "accepted",
+            "lifecycle_state": "accepted",
         },
     )
+    watcher.cancellation_manager.set_current_job.assert_called_once_with("123", 0.0)
+
+
+def test_browser_worker_event_listener_tails_existing_telemetry_without_crashing(
+    watcher_deps, tmp_path
+):
+    logger = logging.getLogger("test_browser_worker_event_listener_existing_file")
+    config, state = watcher_deps
+    watcher = GengoWatcher(config=config, state=state, logger=logger)
+    telemetry_path = tmp_path / "browser-worker.jsonl"
+    telemetry_path.write_text('{"old": true}\n', encoding="utf-8")
+    watcher._browser_worker_telemetry_path = MagicMock(return_value=telemetry_path)
+
+    calls = []
+
+    def handle_line(line):
+        calls.append(json.loads(line))
+        watcher.shutdown_event.set()
+
+    watcher._handle_browser_worker_telemetry_line = handle_line
+    watcher._browser_worker_listener_ready_event = threading.Event()
+
+    thread = threading.Thread(target=watcher._run_browser_worker_event_listener)
+    thread.start()
+    try:
+        assert watcher._browser_worker_listener_ready_event.wait(timeout=2.0)
+        with telemetry_path.open("a", encoding="utf-8") as handle:
+            handle.write('{"new": true}\n')
+        thread.join(timeout=2.0)
+    finally:
+        watcher.shutdown_event.set()
+        thread.join(timeout=2.0)
+
+    assert calls == [{"new": True}]
+    assert not thread.is_alive()
 
 
 def test_watcher_falls_back_to_standard_acceptance_when_browser_worker_submit_fails():

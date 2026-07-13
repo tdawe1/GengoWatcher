@@ -5,7 +5,7 @@ import pathlib
 import threading
 import time
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from collections import defaultdict
 import datetime
 

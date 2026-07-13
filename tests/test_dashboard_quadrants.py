@@ -48,7 +48,7 @@ class JobsPanelTestApp(App):
 async def test_activity_preview_has_log():
     """ActivityPreview should have a RichLog widget."""
     app = ActivityPreviewTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ActivityPreview)
         # Updated: ActivityPreview uses RichLog with id="activity-log"
         log_widget = preview.query_one("#activity-log")
@@ -65,7 +65,7 @@ async def test_jobs_preview_displays_jobs():
     ]
 
     app = JobsPreviewTestApp(state)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(JobsPreview)
         preview.refresh_jobs()
         await pilot.pause()
@@ -164,7 +164,7 @@ async def test_config_preview_renders_sections():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
         scroll = preview.query_one("#config-scroll")
         assert scroll is not None
@@ -185,7 +185,7 @@ async def test_config_preview_masks_sensitive_keys():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
 
         # Test the masking function directly
@@ -211,7 +211,7 @@ async def test_config_preview_formats_booleans():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
 
         assert preview._format_value("enable_notifications", True) == "✓"
@@ -228,7 +228,7 @@ async def test_config_preview_formats_numbers():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
 
         # Integer-like floats should display as integers
@@ -249,7 +249,7 @@ async def test_config_preview_formats_lists():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
 
         formatted = preview._format_value("cors_origins", ["a", "b", "c"])
@@ -271,7 +271,7 @@ async def test_config_preview_truncates_long_values():
     # breakdown functionality has been migrated to ChartsPanel._render_sources_chart
     # (lines 1086, 1119). Delete the class entirely.
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
         text = preview._render_config()
         plain_text = text.plain
@@ -294,7 +294,7 @@ async def test_config_preview_handles_empty_values():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
 
         assert preview._format_value("browser_path", "") == "—"
@@ -311,7 +311,7 @@ async def test_config_preview_refresh_updates_content():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
 
         # Update config mock
@@ -339,7 +339,7 @@ async def test_config_preview_section_ordering():
     )
 
     app = ConfigPreviewTestApp(config)
-    async with app.run_test() as pilot:
+    async with app.run_test() as pilot:  # noqa: F841
         preview = app.query_one(ConfigPreview)
         ordered_sections = [
             section

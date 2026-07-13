@@ -67,7 +67,7 @@ from .web_models import (
     CommandRequest,
     ConfigSection,
     JobEntry,
-    PaginationParams,
+    PaginationParams,  # noqa: F401 - compatibility re-export
     SECURITY,
     WatcherStatus,
 )
@@ -76,6 +76,8 @@ authenticator = APIAuthenticator()
 
 DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1_048_576
 DEFAULT_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024
+
+
 DEFAULT_DOWNLOAD_ALLOWED_HOSTS = ("gengo.com", ".gengo.com")
 
 
@@ -1322,7 +1324,7 @@ class WebAPI:
         except Exception as e:
             # Log full details server-side, but return a generic error message
             self.logger.exception(
-                f"Unexpected error executing watcher command '%s': %s",
+                "Unexpected error executing watcher command '%s': %s",
                 command,
                 e,
             )

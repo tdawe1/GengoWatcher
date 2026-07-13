@@ -17,22 +17,37 @@ import sys
 import time
 from pathlib import Path
 
-import websockets
+from websockets.asyncio.client import connect
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .browser_session import (
-    GENGO_REALTIME_URL,
-    BrowserSessionError,
     build_browser_aligned_websocket_headers,
-    fetch_browser_session_token_sync,
+    fetch_browser_session_snapshot_sync,
+    format_cookies_as_header,
 )
+from .browser_session_core import GENGO_REALTIME_URL
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
+from .websocket_monitor import WebSocketConfig
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+_WEBSOCKET_DEFAULTS = WebSocketConfig()
+
+
+def _extract_session_token(cookie_header: str) -> str:
+    cookies: dict[str, str] = {}
+    for item in cookie_header.split(";"):
+        name, separator, value = item.partition("=")
+        if separator:
+            cookies[name.strip()] = value.strip()
+
+    for name in ("myG_myGSession_", "my_gengo_session"):
+        if cookies.get(name):
+            return cookies[name]
+    return ""
 
 
 class GengoRealtimeGateway:
@@ -54,14 +69,19 @@ class GengoRealtimeGateway:
         debug_url = self.config.get("WebSocket", "browser_debug_url")
         session_token = ""
         rd_session_id = ""
+        cookie_header = ""
+        user_agent = ""
+        accept_language = ""
 
         if debug_url:
             try:
-                from .browser_session import fetch_browser_session_snapshot_sync
                 snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
                 if snapshot.session_token:
                     session_token = snapshot.session_token
                     rd_session_id = snapshot.rd_session_id
+                    cookie_header = format_cookies_as_header(snapshot.cookies)
+                    user_agent = snapshot.user_agent
+                    accept_language = snapshot.accept_language
                     logger.info("Fetched live session from browser")
             except Exception as e:
                 logger.warning(f"Browser extract failed: {e}")
@@ -75,13 +95,13 @@ class GengoRealtimeGateway:
                 self.config.get("WebSocket", "rd_session_id") or ""
             )
 
-        user_agent = (
+        user_agent = user_agent or (
             self.config.get("Network", "browser_user_agent")
-            or "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+            or _WEBSOCKET_DEFAULTS.user_agent
         )
-        accept_language = (
+        accept_language = accept_language or (
             self.config.get("Network", "browser_accept_language")
-            or "en-GB,en-US;q=0.9,en;q=0.8"
+            or _WEBSOCKET_DEFAULTS.accept_language
         )
 
         return build_browser_aligned_websocket_headers(
@@ -90,6 +110,8 @@ class GengoRealtimeGateway:
             user_agent=user_agent,
             origin="https://gengo.com",
             accept_language=accept_language,
+            sec_gpc="1",
+            cookie_header=cookie_header,
         )
 
     _MAX_EVENT_LOG_LINES = 5000
@@ -134,7 +156,7 @@ class GengoRealtimeGateway:
                     backoff = min(backoff * 1.5, 60.0)
                     continue
                 ws_url = self.config.get("WebSocket", "wss_url") or GENGO_REALTIME_URL
-                async with websockets.connect(
+                async with connect(
                     ws_url,
                     additional_headers=headers,
                     open_timeout=20,
@@ -146,11 +168,8 @@ class GengoRealtimeGateway:
 
                     user_id = self.config.get("WebSocket", "user_id", "")
                     user_key = self.config.get("WebSocket", "user_key", "")
-                    # Extract session token from Cookie header (format: myG_myGSession_=TOKEN; myG_rdsessID=TOKEN)
                     cookie = headers.get("Cookie", "")
-                    session = ""
-                    if "myG_myGSession_=" in cookie:
-                        session = cookie.split("myG_myGSession_=")[1].split(";")[0]
+                    session = _extract_session_token(cookie)
                     # Gengo's realtime WS expects the same field shape as the
                     # browser-aligned in-process monitor: userId / sessionToken /
                     # userKey. Sending user_id / user_session (snake_case) silently
@@ -169,7 +188,13 @@ class GengoRealtimeGateway:
                         try:
                             data = json.loads(msg)
                             if data.get("type") == "available_collection":
-                                for job in data.get("data", []):
+                                collection = data.get("collection")
+                                jobs = (
+                                    [collection]
+                                    if isinstance(collection, dict)
+                                    else data.get("data", [])
+                                )
+                                for job in jobs:
                                     await asyncio.to_thread(self._emit, "job", job)
                             self._last_event = data
                         except json.JSONDecodeError:

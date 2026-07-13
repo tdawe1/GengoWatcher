@@ -4,7 +4,6 @@ Website Setup - Interactive WebsiteMonitor configuration wizard.
 Guides user through configuring the WebsiteMonitor for scraping the Gengo jobs page.
 """
 
-import re
 from urllib.parse import urlparse
 
 from .config import AppConfig

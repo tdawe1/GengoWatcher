@@ -76,6 +76,7 @@ def config():
 from gengowatcher.watcher import GengoWatcher
 from gengowatcher.state import AppState
 
+
 @pytest.fixture
 def state(logger):
     """Create a test state."""
@@ -107,6 +108,7 @@ class TestAutoAcceptWithCaptcha:
     @pytest.mark.asyncio
     async def test_job_acceptance_eligibility(self, config, logger):
         """Test job eligibility checking."""
+
         # Mock the config methods to return test values
         def getboolean_mock(section, key, fallback=None):
             """ConfigParser-style boolean parsing for test config."""
@@ -261,7 +263,9 @@ class TestWebSocketConnectivity:
         watcher = GengoWatcher(config, state, logger)
 
         # Mock WebSocket connection
-        with patch("websockets.connect") as mock_connect:
+        with patch(
+            "gengowatcher.orchestration.watcher_ws_logic.connect"
+        ) as mock_connect:
             mock_ws = AsyncMock()
             mock_connect.return_value = mock_ws
 
@@ -304,7 +308,9 @@ class TestWebSocketConnectivity:
         watcher = GengoWatcher(config, state, logger)
 
         # Mock failed connection followed by success
-        with patch("websockets.connect") as mock_connect:
+        with patch(
+            "gengowatcher.orchestration.watcher_ws_logic.connect"
+        ) as mock_connect:
             # First attempt fails
             mock_connect.side_effect = [Exception("Connection failed"), AsyncMock()]
 

@@ -9,9 +9,9 @@ import gengowatcher.browser_session_core as browser_session_core
 import gengowatcher.ui_charts as ui_charts
 import gengowatcher.ui_formatting as ui_formatting
 import gengowatcher.ui_textual as ui_textual
-from gengowatcher.watcher_debug import RAW_WS_REDACTED, redact_raw_ws_text
-from gengowatcher.watcher_health import timestamp_or_none
-from gengowatcher.watcher_job_metadata import (
+from gengowatcher.orchestration.watcher_debug import RAW_WS_REDACTED, redact_raw_ws_text
+from gengowatcher.orchestration.watcher_health import timestamp_or_none
+from gengowatcher.orchestration.watcher_job_metadata import (
     normalize_lang_pair_string,
     parse_lang_pair_from_title,
 )
@@ -38,6 +38,19 @@ def test_backward_compatibility_aliases_live_in_importing_modules():
     )
     assert ui_textual._render_chart([1, 2], width=2, height=1)
     assert ui_textual._format_timestamp("2024-01-01T12:34:56Z") == "12:34:56"
+
+
+def test_render_chart_compatibility_wrapper_forwards_keywords():
+    chart = ui_textual._render_chart(
+        [1, 2],
+        10,
+        5,
+        x_left="first",
+        x_right="last",
+    )
+
+    assert chart.splitlines()[-1].strip().startswith("first")
+    assert chart.splitlines()[-1].endswith("last")
 
 
 def test_raw_websocket_text_redacts_common_token_like_fields():

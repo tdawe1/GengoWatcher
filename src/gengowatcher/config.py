@@ -7,7 +7,7 @@ import threading
 import tomllib
 from configparser import ConfigParser
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 try:
     import fcntl
@@ -495,6 +495,7 @@ class AppConfig:
                     pass
             except IOError as e:
                 print(f"Error saving config: {e}")
+                raise
             finally:
                 if lock_file is not None:
                     if fcntl is not None:

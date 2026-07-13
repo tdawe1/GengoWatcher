@@ -39,7 +39,7 @@ def test_open_in_browser_uses_managed_firefox_for_gengo_url(
     monkeypatch.setattr("gengowatcher.watcher.webbrowser.open", mock_webbrowser_open)
 
     with patch(
-        "gengowatcher.watcher.open_url_in_browser_debug_sync",
+        "gengowatcher.orchestration.watcher_firefox.open_url_in_browser_debug_sync",
         return_value="https://gengo.com/t/jobs/details/123",
     ) as mock_debug_open:
         watcher.open_in_browser("https://gengo.com/t/jobs/details/123")

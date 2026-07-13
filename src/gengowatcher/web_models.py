@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -145,5 +145,6 @@ class CommandRequest(BaseModel):
 
 
 class PaginationParams(BaseModel):
+    MAX_LIMIT: ClassVar[int] = 100
     page: int = Field(default=1, ge=1)
-    limit: int = Field(default=50, ge=1, le=100)
+    limit: int = Field(default=50, ge=1, le=MAX_LIMIT)

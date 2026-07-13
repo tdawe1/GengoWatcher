@@ -163,7 +163,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_cdp():
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=_MockJSONWebSocket([cdp_response]),
         ),
     ):
@@ -212,7 +212,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage():
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=_MockJSONWebSocket([cookie_response, runtime_response]),
         ),
     ):
@@ -249,7 +249,7 @@ async def test_fetch_browser_session_snapshot_keeps_cookie_when_runtime_eval_fai
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=_MockJSONWebSocket([cookie_response]),
         ),
         patch(
@@ -336,7 +336,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_rdp():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ) as mock_connect:
         token = await fetch_browser_session_token("ws://127.0.0.1:9222")
@@ -398,7 +398,7 @@ async def test_open_url_in_browser_debug_uses_firefox_rdp_browser_window():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ) as mock_connect:
         opened_url = await open_url_in_browser_debug(
@@ -505,7 +505,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ):
         snapshot = await fetch_browser_session_snapshot("ws://127.0.0.1:9222")
@@ -586,7 +586,7 @@ async def test_inspect_available_jobs_page_reads_firefox_rdp_dom_jobs():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ):
         snapshot = await inspect_available_jobs_page("ws://127.0.0.1:9222")
@@ -624,7 +624,7 @@ async def test_inspect_available_jobs_page_passive_firefox_rdp_does_not_reclaim_
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ):
         snapshot = await inspect_available_jobs_page(
@@ -653,7 +653,7 @@ async def test_inspect_available_jobs_page_passive_cdp_does_not_reclaim_manual_t
                 }
             ],
         ),
-        patch("gengowatcher.browser_session.websockets.connect") as connect,
+        patch("gengowatcher.browser_session.connect") as connect,
     ):
         snapshot = await inspect_available_jobs_page(
             "http://127.0.0.1:9222",
@@ -842,7 +842,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_
 
     with (
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             new=AsyncMock(return_value=mock_ws),
         ),
         patch(
@@ -922,7 +922,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_bidi():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         return_value=mock_ws,
     ) as mock_connect:
         token = await fetch_browser_session_token("ws://127.0.0.1:9222/session")
@@ -1004,7 +1004,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         return_value=mock_ws,
     ):
         snapshot = await fetch_browser_session_snapshot("ws://127.0.0.1:9222/session")
@@ -1085,7 +1085,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_bidi
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         return_value=mock_ws,
     ):
         action = await refresh_browser_page_activity(
@@ -1171,7 +1171,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_cdp_navigati
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=mock_ws,
         ),
     ):
@@ -1219,14 +1219,27 @@ def test_build_browser_aligned_websocket_headers_uses_browser_profile():
         accept_language="en-GB,en-US;q=0.9",
     )
 
-    # Chrome does NOT send Pragma / Cache-Control / Accept-Encoding on a
-    # WebSocket upgrade — including them is a Python `websockets` fingerprint.
     assert headers == {
-        "Origin": "https://gengo.com",
-        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
         "User-Agent": "Helium Browser",
+        "Accept": "*/*",
         "Accept-Language": "en-GB,en-US;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Origin": "https://gengo.com",
+        "Sec-GPC": "1",
+        "Cookie": "myG_myGSession_=fresh-token; myG_rdsessID=fresh-token",
     }
+
+
+def test_build_browser_aligned_websocket_headers_omits_handshake_headers():
+    headers = build_browser_aligned_websocket_headers(session_token="token")
+
+    assert {
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Extensions",
+    }.isdisjoint(headers)
 
 
 def test_build_browser_aligned_websocket_headers_separate_rd_session_id():
@@ -1243,7 +1256,7 @@ def test_build_browser_aligned_websocket_headers_separate_rd_session_id():
     )
 
 
-def test_build_browser_aligned_websocket_headers_emits_client_hints_for_chrome():
+def test_build_browser_aligned_websocket_headers_derives_chrome_client_hints():
     headers = build_browser_aligned_websocket_headers(
         session_token="token",
         user_agent=(
@@ -1252,10 +1265,26 @@ def test_build_browser_aligned_websocket_headers_emits_client_hints_for_chrome()
         ),
     )
 
-    assert "Sec-CH-UA" in headers
-    assert "Chromium" in headers["Sec-CH-UA"]
-    assert headers["Sec-Fetch-Mode"] == "websocket"
-    assert headers["Sec-CH-UA-Mobile"] == "?0"
+    assert headers["Sec-CH-UA"] == (
+        '"Chromium";v="142", "Not_A Brand";v="24", "Google Chrome";v="142"'
+    )
+    assert "Sec-CH-UA-Full-Version-List" not in headers
+    assert headers["Sec-CH-UA-Platform-Version"] == '""'
+    assert "Sec-Fetch-Mode" not in headers
+
+
+def test_build_browser_aligned_websocket_headers_preserves_full_chrome_version():
+    headers = build_browser_aligned_websocket_headers(
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/142.0.7444.176 Safari/537.36"
+        )
+    )
+
+    assert 'v="142.0.7444.176"' in headers["Sec-CH-UA-Full-Version-List"]
+    assert headers["Sec-CH-UA-Platform"] == '"Windows"'
+    assert headers["Sec-CH-UA-Platform-Version"] == '"10.0.0"'
 
 
 def test_build_browser_aligned_websocket_headers_skips_client_hints_for_non_chrome():
@@ -1267,6 +1296,21 @@ def test_build_browser_aligned_websocket_headers_skips_client_hints_for_non_chro
     # Don't emit Sec-CH-UA for non-Chrome UAs — that would be a tell.
     assert "Sec-CH-UA" not in headers
     assert "Sec-Fetch-Mode" not in headers
+
+
+def test_build_browser_aligned_websocket_headers_uses_full_browser_cookie_header():
+    headers = build_browser_aligned_websocket_headers(
+        session_token="fresh-token",
+        user_agent="Helium Browser",
+        origin="https://gengo.com",
+        accept_language="en-GB,en-US;q=0.9",
+        cookie_header="_ga=ga-token; myG_myGSession_=fresh-token; myG_rdsessID=rd-token",
+    )
+
+    assert headers["Cookie"] == (
+        "_ga=ga-token; myG_myGSession_=fresh-token; myG_rdsessID=rd-token"
+    )
+    assert "myG_rdsessID=fresh-token" not in headers["Cookie"]
 
 
 def test_build_websocket_auth_payload_uses_session_only():

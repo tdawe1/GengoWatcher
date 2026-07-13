@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
+
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -40,6 +42,7 @@ class BrowserSessionSnapshot:
     target_url: str = ""
     target_title: str = ""
     rd_session_id: str = ""
+    cookies: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -230,3 +233,124 @@ def extract_cookie_value(
     raise BrowserSessionError(
         f"None of the session cookies {cookie_names} were found for gengo.com"
     )
+
+
+# ==============================================================================
+# Anti-detection helpers: rotating User-Agent pool + Client-Hints synthesis.
+#
+# These exist so the WebSocket identity presented to Gengo's dashboard matches
+# a real current-generation Firefox/Chrome browser, with rotating UA strings
+# drawn from a small pool (avoid the "one synthetic UA forever" tell).
+# ==============================================================================
+
+# A small pool of *plausible current* desktop UAs. Rotating between them keeps
+# the WS identity from looking like a static Python script. The pool is small
+# on purpose - large pools are a fingerprint vector of their own.
+ROTATING_USER_AGENT_POOL: tuple[str, ...] = (
+    "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+)
+
+
+def pick_rotating_user_agent(existing: str | None = None) -> str:
+    """Pick a UA from the rotation pool.
+
+    If ``existing`` is provided AND already a member of the pool, keep it so
+    sessions stay stable. Otherwise pick a fresh entry deterministically-ish
+    (random for variety, but stable within a single Python process because the
+    random module is seeded once at import time elsewhere).
+    """
+    if existing and existing in ROTATING_USER_AGENT_POOL:
+        return existing
+    import random as _random
+
+    return _random.choice(ROTATING_USER_AGENT_POOL)
+
+
+def _is_firefox_ua(user_agent: str) -> bool:
+    ua = (user_agent or "").lower()
+    return "firefox/" in ua or "rv:" in ua and "gecko" in ua
+
+
+def _is_chrome_ua(user_agent: str) -> bool:
+    ua = (user_agent or "").lower()
+    return "chrome/" in ua and "safari/" in ua and "edg/" not in ua
+
+
+# Match a plausible supported Chrome major version.
+# This guards against Client-Hint synthesis for synthetic UAs the caller passes
+# (e.g. test fixtures with "Chrome/142"). A fake version number is itself a
+# fingerprint tell, so we refuse to invent Client Hints for it.
+_CHROME_VERSION_RE = re.compile(
+    r"chrome/(?P<full>[0-9]+(?:\.[0-9]+){1,3})",
+    re.IGNORECASE,
+)
+
+
+def _is_real_chrome_ua(user_agent: str) -> bool:
+    if not _is_chrome_ua(user_agent):
+        return False
+    m = _CHROME_VERSION_RE.search(user_agent)
+    if not m:
+        return False
+    try:
+        major = int(m.group("full").split(".", 1)[0])
+    except (TypeError, ValueError):
+        return False
+    return 138 <= major <= 152
+
+
+def derive_client_hints(user_agent: str) -> dict[str, str]:
+    """Derive Sec-CH-UA Client Hints for the given User-Agent.
+
+    Returns an empty dict when the UA is not in a recognized family so we don't
+    synthesize fingerprints for UAs we don't actually know about.
+    """
+    if not user_agent:
+        return {}
+
+    if _is_firefox_ua(user_agent):
+        # Firefox does not send Sec-CH-UA headers today. Returning an empty
+        # dict is the *correct* behaviour for Firefox - sending Chrome-style
+        # hints from a Firefox UA is itself a fingerprint vector.
+        return {}
+
+    if _is_chrome_ua(user_agent) and _is_real_chrome_ua(user_agent):
+        match = _CHROME_VERSION_RE.search(user_agent)
+        if match is None:
+            return {}
+        full_version = match.group("full")
+        major = full_version.split(".", 1)[0]
+        ua = user_agent.lower()
+        if "windows" in ua:
+            platform = "Windows"
+            platform_version = "10.0.0"
+        elif "macintosh" in ua or "mac os x" in ua:
+            platform = "macOS"
+            platform_version = "10.15.7"
+        else:
+            platform = "Linux"
+            platform_version = ""
+        hints = {
+            "Sec-CH-UA": f'"Chromium";v="{major}", "Not_A Brand";v="24", "Google Chrome";v="{major}"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": f'"{platform}"',
+            "Sec-CH-UA-Platform-Version": f'"{platform_version}"',
+            "Sec-CH-UA-Arch": '"x86"',
+            "Sec-CH-UA-Bitness": '"64"',
+            "Sec-CH-UA-Model": '""',
+        }
+        version_parts = full_version.split(".")
+        if any(part != "0" for part in version_parts[1:]):
+            hints["Sec-CH-UA-Full-Version-List"] = (
+                f'"Chromium";v="{full_version}", '
+                f'"Not_A Brand";v="24.0.0.0", '
+                f'"Google Chrome";v="{full_version}"'
+            )
+        return hints
+
+    # Unknown UA family - do not invent Client Hints.
+    return {}
