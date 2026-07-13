@@ -1,5 +1,4 @@
 from . import __version__
-
 __release_date__ = "2026-07-08"
 
 import asyncio
@@ -278,6 +277,10 @@ class GengoWatcher:
         self._browser_session_last_sync_detail = "never synced"
         self._browser_cookies = []
         self._next_quiet_socket_sync_ts = None
+        # BrowserJobs monitor wakes from this event when a workbench becomes
+        # visible (or an explicit manual trigger fires). The monitor does NOT
+        # poll the browser on a fixed timer by default.
+        self._browser_jobs_refresh_event = threading.Event()
         self._health_alert_states = {}
         # BrowserJobs monitor wakes from this event when a workbench becomes
         # visible (or an explicit manual trigger fires). The monitor does NOT

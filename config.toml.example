@@ -30,12 +30,8 @@ session_sync_alert_on_failure = true
 [BrowserJobs]
 enabled = true
 allow_navigation = false
-poll_interval_sec = 1.5
-refresh_min_sec = 20.0
-refresh_max_sec = 65.0
-browse_min_sec = 180.0
-browse_max_sec = 420.0
-mouse_activity_probability = 0.25
+# The monitor is event-driven; this bounds passive connection checks while idle.
+idle_cap_sec = 1800
 
 [Paths]
 sound_file = "assets/alert.wav"
