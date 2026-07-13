@@ -119,7 +119,7 @@ async def websocket_logic(watcher):
             )
             async with websockets.connect(  # type: ignore
                 ws_url,
-                additional_headers=headers,
+                extra_headers=headers,
                 open_timeout=20,
                 ping_interval=20,
                 ping_timeout=10,
