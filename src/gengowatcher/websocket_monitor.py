@@ -132,9 +132,7 @@ class GengoWebSocketMonitor:
                 self.config.set("WebSocket", "user_session", browser_token)
                 changed = True
             if browser_rd_id and browser_rd_id != configured_rd_id:
-                self.logger.info(
-                    "WebSocket: Synced browser rd_session_id cookie"
-                )
+                self.logger.info("WebSocket: Synced browser rd_session_id cookie")
                 self.config.set("WebSocket", "rd_session_id", browser_rd_id)
                 changed = True
             return changed
@@ -214,9 +212,8 @@ class GengoWebSocketMonitor:
             open_timeout=self._config_int(
                 "WebSocket", "open_timeout", self.defaults.open_timeout
             ),
-            ping_interval=self._config_int(
-                "WebSocket", "heartbeat_sec", self.defaults.heartbeat_sec
-            ),
+            # Manual heartbeat_loop below owns ping timing and metrics.
+            ping_interval=None,
             ping_timeout=self._config_int(
                 "WebSocket", "ping_timeout", self.defaults.ping_timeout
             ),

@@ -231,6 +231,28 @@ def redact_debug_value(value: Any) -> Any:
     return value
 
 
+CUSTOMER_CONTENT_KEYS = {
+    "_raw",
+    "source_text",
+    "accepted_source_text",
+    "source_content",
+    "segments",
+}
+
+
+def redact_customer_content(value: Any) -> Any:
+    """Remove customer translation content from external/audit payloads."""
+    if isinstance(value, dict):
+        return {
+            str(key): redact_customer_content(item)
+            for key, item in value.items()
+            if str(key).lower() not in CUSTOMER_CONTENT_KEYS
+        }
+    if isinstance(value, list):
+        return [redact_customer_content(item) for item in value]
+    return value
+
+
 def normalize_headers(headers: Mapping[str, Any] | None) -> dict[str, str]:
     if not headers:
         return {}
@@ -262,7 +284,9 @@ def _body_preview(raw_body: bytes, max_bytes: int) -> str:
         preview = raw_body[:max_bytes]
         text = preview.decode("utf-8", errors="replace")
     else:
-        text = json.dumps(redact_debug_value(parsed), sort_keys=True)
+        text = json.dumps(
+            redact_debug_value(redact_customer_content(parsed)), sort_keys=True
+        )
         if len(text.encode("utf-8")) > max_bytes:
             text = text.encode("utf-8")[:max_bytes].decode("utf-8", errors="replace")
             truncated = True
@@ -341,10 +365,12 @@ class WebhookAuditLogger:
     path: Path
     logger: logging.Logger
     enabled: bool = True
-    debug_enabled: bool = True
+    debug_enabled: bool = False
     max_payload_preview_bytes: int = 4096
     max_log_bytes: int = 1_048_576
     max_log_lines: int = 5000
+    retention_days: int = 30
+    _records_since_retention_check: int = 99
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _counters: dict[str, int] = field(default_factory=dict)
     _last_entry: dict[str, Any] | None = None
@@ -365,7 +391,7 @@ class WebhookAuditLogger:
             path=path,
             logger=logger,
             enabled=_config_bool(config, "Webhooks", "audit_enabled", True),
-            debug_enabled=_config_bool(config, "Webhooks", "debug_enabled", True),
+            debug_enabled=_config_bool(config, "Webhooks", "debug_enabled", False),
             max_payload_preview_bytes=_config_int(
                 config,
                 "Webhooks",
@@ -383,6 +409,12 @@ class WebhookAuditLogger:
                 "Webhooks",
                 "audit_max_lines",
                 5000,
+            ),
+            retention_days=_config_int(
+                config,
+                "Webhooks",
+                "audit_retention_days",
+                30,
             ),
         )
 
@@ -424,7 +456,7 @@ class WebhookAuditLogger:
                     self.max_payload_preview_bytes,
                 )
         if payload is not None and self.debug_enabled:
-            entry["payload"] = redact_debug_value(payload)
+            entry["payload"] = redact_debug_value(redact_customer_content(payload))
         if headers is not None and self.debug_enabled:
             entry["headers"] = sanitize_headers(headers)
         if extra:
@@ -453,18 +485,33 @@ class WebhookAuditLogger:
         return compact
 
     def _trim_log_unlocked(self) -> None:
-        if self.max_log_bytes <= 0:
-            return
+        self._records_since_retention_check += 1
+        retention_due = self._records_since_retention_check >= 100
         try:
-            if self.path.stat().st_size <= self.max_log_bytes:
+            size_due = (
+                self.max_log_bytes > 0 and self.path.stat().st_size > self.max_log_bytes
+            )
+            if not size_due and not retention_due:
                 return
         except OSError:
             return
+        self._records_since_retention_check = 0
 
         recent_lines: deque[str] = deque(maxlen=max(1, self.max_log_lines))
+        cutoff = (
+            time.time() - max(0, self.retention_days) * 86400
+            if self.retention_days > 0
+            else None
+        )
         try:
             with self.path.open("r", encoding="utf-8") as handle:
                 for line in handle:
+                    if cutoff is not None:
+                        try:
+                            if float(json.loads(line).get("ts", 0)) < cutoff:
+                                continue
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            continue
                     recent_lines.append(line)
             temp_path = self.path.with_name(f".{self.path.name}.tmp")
             with temp_path.open("w", encoding="utf-8") as handle:
@@ -581,6 +628,7 @@ class WebhookDispatcher:
         max_attempts: int = 3,
         initial_delay_sec: float = 0.5,
         max_delay_sec: float = 10.0,
+        include_customer_content: bool = False,
     ):
         self.targets = targets
         self.logger = logger
@@ -589,6 +637,7 @@ class WebhookDispatcher:
         self.max_attempts = max(1, max_attempts)
         self.initial_delay_sec = max(0.0, initial_delay_sec)
         self.max_delay_sec = max(0.0, max_delay_sec)
+        self.include_customer_content = include_customer_content
 
     @classmethod
     def from_config(
@@ -631,6 +680,12 @@ class WebhookDispatcher:
             max_delay_sec=_config_float(
                 config, "Webhooks", "outbound_max_delay_sec", 10.0
             ),
+            include_customer_content=_config_bool(
+                config,
+                "Webhooks",
+                "outbound_include_customer_content",
+                False,
+            ),
         )
 
     @property
@@ -651,11 +706,16 @@ class WebhookDispatcher:
             )
             return []
 
+        outbound_payload = (
+            payload
+            if self.include_customer_content
+            else redact_customer_content(payload)
+        )
         envelope = {
             "event_id": event_id or str(uuid.uuid4()),
             "event_type": event_type,
             "created_at": time.time(),
-            "payload": payload,
+            "payload": outbound_payload,
         }
         raw_body = json.dumps(
             envelope,

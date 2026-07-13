@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
 import feedparser
 import websockets
@@ -123,9 +124,9 @@ def _redact_config_for_log(value: Any, key: str = "") -> Any:
         if value in (None, ""):
             return value
         text = str(value)
-        if len(text) <= 8:
+        if len(text) < 20:
             return "***"
-        return f"{text[:4]}...{text[-4:]}"
+        return f"{text[:2]}...{text[-2:]}"
     return value
 
 
@@ -222,12 +223,17 @@ class GengoWatcher:
         self.browser_jobs_last_action = ""
         self._seen_jobs_session = set(state.seen_job_ids)
         self._seen_jobs_lock = threading.Lock()
+        self._csv_lock = threading.Lock()
         self._all_entries_log_file = None
         self._csv_writer = None
         self._shutdown_initiated = False
         self._rss_executor = None
         self._rss_future = None
         self._rss_future_started_at = None
+        self._cancellation_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="gengowatcher-cancellation",
+        )
         self._websocket_session_refresh_requested = False
         self._websocket_sync_failed = False
         self._websocket_sync_failure_reason = None
@@ -1095,20 +1101,21 @@ class GengoWatcher:
             entries: List of RSS entry dictionaries to log.
         """
         self.logger.debug(f"Logging {len(entries)} entries to CSV.")
-        if not self._csv_writer:
-            return
-        timestamp = datetime.datetime.now().isoformat()
-        for entry in entries:
-            self._csv_writer.writerow(
-                [
-                    timestamp,
-                    entry.get("title", "N/A"),
-                    self._extract_reward(entry),
-                    entry.get("link", "N/A"),
-                    entry.get("summary", "N/A"),
-                ]
-            )
-        self._all_entries_log_file.flush()
+        with self._csv_lock:
+            if not self._csv_writer or not self._all_entries_log_file:
+                return
+            timestamp = datetime.datetime.now().isoformat()
+            for entry in entries:
+                self._csv_writer.writerow(
+                    [
+                        timestamp,
+                        entry.get("title", "N/A"),
+                        self._extract_reward(entry),
+                        entry.get("link", "N/A"),
+                        entry.get("summary", "N/A"),
+                    ]
+                )
+            self._all_entries_log_file.flush()
 
     def _process_new_job(self, job_id, title, reward, url, source, source_meta=None):
         """Process a newly discovered job from RSS or WebSocket sources.
@@ -1272,11 +1279,10 @@ class GengoWatcher:
                 self.logger.info(
                     "Better opportunity detected - scheduling cancellation of current job before accepting new job"
                 )
-                threading.Thread(
-                    target=self._async_cancel_current_job_wrapper,
-                    args=(job_data,),
-                    daemon=True,
-                ).start()
+                self._cancellation_executor.submit(
+                    self._async_cancel_current_job_wrapper,
+                    job_data,
+                )
         except Exception as e:
             self.logger.error(f"Error while evaluating job cancellation: {e}")
 
@@ -1446,6 +1452,7 @@ class GengoWatcher:
         telemetry_path = self._browser_worker_telemetry_path()
         self.logger.info("Browser worker event listener watching %s", telemetry_path)
         initialized = False
+        skip_existing_on_open = True
         while not self.shutdown_event.is_set():
             if not telemetry_path.exists():
                 self.shutdown_event.wait(1.0)
@@ -1902,7 +1909,8 @@ class GengoWatcher:
                     ws_url,
                     additional_headers=headers,
                     open_timeout=20,
-                    ping_interval=20,
+                    # Manual heartbeat below owns ping timing and metrics.
+                    ping_interval=None,
                     ping_timeout=10,
                 ) as websocket:
                     connected_at = time.time()
@@ -1949,10 +1957,12 @@ class GengoWatcher:
                         """
                         while True:
                             try:
-                                self.websocket_next_ping_ts = (
-                                    time.time() + HEARTBEAT_INTERVAL
+                                interval = max(
+                                    1.0,
+                                    HEARTBEAT_INTERVAL + random.uniform(-5.0, 5.0),
                                 )
-                                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                                self.websocket_next_ping_ts = time.time() + interval
+                                await asyncio.sleep(interval)
                                 t0 = time.perf_counter()
                                 self.logger.debug(
                                     "WebSocket: Sending heartbeat ping..."
@@ -2443,19 +2453,38 @@ class GengoWatcher:
         # Check for gateway mode
         use_gateway = self.config.getboolean("WebSocket", "use_gateway", fallback=False)
         if use_gateway:
-            gateway_url = self.config.get(
-                "WebSocket", "gateway_url", fallback="http://127.0.0.1:8000"
+            gateway_url = str(
+                self.config.get(
+                    "WebSocket", "gateway_url", fallback="http://127.0.0.1:8000"
+                )
+                or "http://127.0.0.1:8000"
             )
-            self.websocket_status = "Gateway Connected"
-            self.logger.info(f"WebSocket using external gateway at {gateway_url}")
-        elif self.config.get("WebSocket", "enable_websocket"):
+            health_url = f"{gateway_url.rstrip('/')}/health"
+            try:
+                with urlopen(health_url, timeout=1.0) as response:
+                    gateway_healthy = response.status == 200
+            except Exception as exc:
+                gateway_healthy = False
+                self.logger.warning(
+                    "External WebSocket gateway is unreachable at %s: %s; "
+                    "falling back to the embedded monitor",
+                    gateway_url,
+                    exc,
+                )
+            if gateway_healthy:
+                self.websocket_status = "Gateway Connected"
+                self.logger.info("WebSocket using external gateway at %s", gateway_url)
+            else:
+                use_gateway = False
+
+        if not use_gateway and self.config.get("WebSocket", "enable_websocket"):
             ws_thread = threading.Thread(
                 target=self._run_websocket_monitor, daemon=True
             )
             ws_thread.start()
             self._monitor_threads["websocket"] = ws_thread
             self.websocket_status = "Enabled"
-        else:
+        elif not use_gateway:
             self.websocket_status = "Disabled"
 
         # Native Browser Listener (replaces WebsiteMonitor)
@@ -2718,40 +2747,51 @@ class GengoWatcher:
         from queue import Empty
 
         self.logger.info("Native browser listener starting...")
-        while not self.shutdown_event.is_set():
-            try:
-                # Poll native listener (publishes events)
-                if hasattr(self, "_native_listener"):
-                    self._native_listener.run_once()
+        try:
+            while not self.shutdown_event.is_set():
+                try:
+                    if hasattr(self, "_native_listener"):
+                        self._native_listener.run_once()
 
-                # Drain events into state projector
-                if hasattr(self, "_state_projector"):
-                    try:
-                        from .event_bus import get_native_events_queue
-                        from .events import EventEnvelope
+                    if hasattr(self, "_state_projector"):
+                        try:
+                            from .event_bus import get_native_events_queue
+                            from .events import EventEnvelope
 
-                        q = get_native_events_queue()
-                        while True:
-                            try:
-                                event_dict = q.get_nowait()
-                                event = EventEnvelope.from_dict(event_dict)
-                                self._state_projector.project(event)
-                            except Empty:
-                                break
-                            except Exception as e:
-                                self.logger.debug(f"Event projection error: {e}")
-                    except Exception as e:
-                        self.logger.debug(f"Event bus drain error: {e}")
-
-            except Exception as e:
-                self.logger.debug(f"Native browser listener error: {e}")
-            capture_interval = (
-                getattr(self, "_native_listener", None).capture_interval
-                if hasattr(self, "_native_listener")
-                and hasattr(getattr(self, "_native_listener", None), "capture_interval")
-                else 0.75
-            )
-            time.sleep(capture_interval)
+                            q = get_native_events_queue()
+                            while True:
+                                try:
+                                    event_dict = q.get_nowait()
+                                    event = EventEnvelope.from_dict(event_dict)
+                                    self._state_projector.project(event)
+                                except Empty:
+                                    break
+                                except Exception as e:
+                                    self.logger.warning(
+                                        "Event projection error: %s", e, exc_info=True
+                                    )
+                        except Exception as e:
+                            self.logger.warning(
+                                "Event bus drain error: %s", e, exc_info=True
+                            )
+                except Exception as e:
+                    self.logger.warning(
+                        "Native browser listener error: %s", e, exc_info=True
+                    )
+                capture_interval = (
+                    getattr(self, "_native_listener", None).capture_interval
+                    if hasattr(self, "_native_listener")
+                    and hasattr(
+                        getattr(self, "_native_listener", None), "capture_interval"
+                    )
+                    else 0.75
+                )
+                self.shutdown_event.wait(capture_interval)
+        finally:
+            listener = getattr(self, "_native_listener", None)
+            close = getattr(listener, "close", None)
+            if callable(close):
+                close()
 
     def run_notify_test(self):
         self.logger.info("Sending a test notification...")
@@ -3062,15 +3102,16 @@ class GengoWatcher:
                 "close cancellation session",
             )
 
-        if self._all_entries_log_file:
-            try:
-                self._all_entries_log_file.flush()
-                self._all_entries_log_file.close()
-            except Exception as error:
-                self.logger.exception("Failed to close CSV log file: %s", error)
-            finally:
-                self._all_entries_log_file = None
-                self._csv_writer = None
+        with self._csv_lock:
+            if self._all_entries_log_file:
+                try:
+                    self._all_entries_log_file.flush()
+                    self._all_entries_log_file.close()
+                except Exception as error:
+                    self.logger.exception("Failed to close CSV log file: %s", error)
+                finally:
+                    self._all_entries_log_file = None
+                    self._csv_writer = None
         if self._rss_executor is not None:
             try:
                 self._rss_executor.shutdown(wait=False, cancel_futures=True)
@@ -3079,6 +3120,22 @@ class GengoWatcher:
             self._rss_executor = None
         self._rss_future = None
         self._rss_future_started_at = None
+        self._cancellation_executor.shutdown(wait=False, cancel_futures=True)
+
+        join_deadline = time.monotonic() + 3.0
+        current_thread = threading.current_thread()
+        for name, thread in list(self._monitor_threads.items()):
+            if thread is current_thread or not thread.is_alive():
+                continue
+            remaining = join_deadline - time.monotonic()
+            if remaining <= 0:
+                self.logger.warning(
+                    "Monitor thread still running at shutdown: %s", name
+                )
+                continue
+            thread.join(timeout=min(0.5, remaining))
+            if thread.is_alive():
+                self.logger.warning("Monitor thread did not stop cleanly: %s", name)
 
         try:
             self.state.save_state()

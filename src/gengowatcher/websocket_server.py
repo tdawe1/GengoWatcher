@@ -44,6 +44,7 @@ class GengoRealtimeGateway:
         self._shutdown_event = asyncio.Event()
         self._last_event: dict | None = None
         self._event_file: Path | None = None
+        self._event_write_count = 0
 
     def _get_event_file(self) -> Path:
         cache_dir = Path.home() / ".cache" / "gengowatcher"
@@ -58,6 +59,7 @@ class GengoRealtimeGateway:
         if debug_url:
             try:
                 from .browser_session import fetch_browser_session_snapshot_sync
+
                 snapshot = fetch_browser_session_snapshot_sync(str(debug_url))
                 if snapshot.session_token:
                     session_token = snapshot.session_token
@@ -71,9 +73,7 @@ class GengoRealtimeGateway:
             if session_token:
                 logger.info("Using configured session token")
         if not rd_session_id:
-            rd_session_id = str(
-                self.config.get("WebSocket", "rd_session_id") or ""
-            )
+            rd_session_id = str(self.config.get("WebSocket", "rd_session_id") or "")
 
         user_agent = (
             self.config.get("Network", "browser_user_agent")
@@ -106,8 +106,12 @@ class GengoRealtimeGateway:
             event_file = self._get_event_file()
             with event_file.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(event) + "\n")
-            # Cap file size: keep last N lines if file is too large
-            if event_file.stat().st_size > 1_000_000:  # 1MB cap
+            self._event_write_count += 1
+            # Amortize the stat/read/rewrite work across bursts of events.
+            if (
+                self._event_write_count % 100 == 0
+                and event_file.stat().st_size > 1_000_000
+            ):
                 with event_file.open("r", encoding="utf-8") as f:
                     lines = f.readlines()
                 temp_file = event_file.with_name(f".{event_file.name}.tmp")

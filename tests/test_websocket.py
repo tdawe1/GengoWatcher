@@ -123,7 +123,7 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
         "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
     )
     assert kwargs[header_key]["Accept-Language"] == "en-GB,en-US;q=0.9,en;q=0.8"
-    assert kwargs["ping_interval"] == 20
+    assert kwargs["ping_interval"] is None
     assert kwargs["ping_timeout"] == 10
     mock_ws_client.send.assert_awaited_once()
     auth_call = mock_ws_client.send.await_args[0][0]

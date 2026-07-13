@@ -270,8 +270,8 @@ def _api_health_entry(widget: object, watcher: object) -> dict[str, object]:
             running = bool(app_running())
         except Exception:
             running = False
-    elif enabled:
-        running = _api_socket_open(host, port)
+    # Widgets without an app context cannot safely perform blocking I/O here.
+    # They report the configured state until the app-level background probe runs.
 
     state = "healthy" if running else "error" if enabled else "disabled"
     detail = "listening" if running else "not reachable" if enabled else "off"
@@ -2295,6 +2295,14 @@ class GengoWatcherApp(App):
         if self._logging_attached:
             self._log_source.removeHandler(self._textual_log_handler)
             self._logging_attached = False
+        try:
+            from .tui_store import TuiStore
+
+            TuiStore.reset_instance()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to release the TUI event consumer", exc_info=True
+            )
 
     def on_mount(self) -> None:
         """Initialize the jobs table with columns when the app mounts."""
@@ -2453,7 +2461,12 @@ class GengoWatcherApp(App):
         elif normalized in {"config", "get", "set", "list"}:
             self._run_config_command(normalized, args)
         elif normalized == "api":
-            self._run_api_command(args)
+            threading.Thread(
+                target=self._run_api_command,
+                args=(list(args),),
+                daemon=True,
+                name="TUIApiCommand",
+            ).start()
         else:
             self._write_command_output(
                 f"Unknown command: {parts[0]}. Type help for commands.",

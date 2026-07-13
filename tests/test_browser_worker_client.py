@@ -284,6 +284,32 @@ def test_browser_worker_telemetry_event_marks_job_accepted(watcher_deps):
     )
 
 
+def test_browser_worker_listener_initializes_rotation_state(watcher_deps, tmp_path):
+    logger = logging.getLogger("test_browser_worker_event_listener")
+    config, state = watcher_deps
+    watcher = GengoWatcher(config=config, state=state, logger=logger)
+    telemetry_path = tmp_path / "worker.jsonl"
+    telemetry_path.write_text("", encoding="utf-8")
+    watcher._browser_worker_telemetry_path = MagicMock(return_value=telemetry_path)
+
+    class StopAfterOpening:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 1
+
+        def wait(self, _timeout):
+            return True
+
+    watcher.shutdown_event = StopAfterOpening()
+
+    watcher._run_browser_worker_event_listener()
+
+    assert watcher.shutdown_event.calls >= 2
+
+
 def test_watcher_falls_back_to_standard_acceptance_when_browser_worker_submit_fails():
     logger = logging.getLogger("test_browser_worker_client_fallback")
     config = MagicMock(spec=AppConfig)

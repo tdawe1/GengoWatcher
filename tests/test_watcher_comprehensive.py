@@ -157,12 +157,18 @@ class TestWatcherInitialization:
             "capture_interval_ms": 750,
         }
         watcher_instance.shutdown_event.wait = MagicMock(return_value=True)
+        gateway_response = MagicMock()
+        gateway_response.__enter__.return_value.status = 200
 
         with (
             patch(
                 "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
                 return_value=True,
             ) as launch_debug_browser,
+            patch(
+                "gengowatcher.watcher.urlopen",
+                return_value=gateway_response,
+            ),
             patch("threading.Thread"),
         ):
             watcher_instance.run()
@@ -226,7 +232,9 @@ class TestWatcherInitialization:
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
             ("WebSocket", "user_session"): "stale-token",
-        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
 
         with patch(
             "gengowatcher.watcher.fetch_browser_session_snapshot_sync",
@@ -256,7 +264,9 @@ class TestWatcherInitialization:
         """Websocket startup should sync once so session health is not stale."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
-        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
         watcher_instance._sync_session_from_browser = MagicMock(return_value=False)
 
         assert watcher_instance._sync_session_before_websocket_connect() is True

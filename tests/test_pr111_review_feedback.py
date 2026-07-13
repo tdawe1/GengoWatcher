@@ -1,5 +1,7 @@
 import logging
+import os
 from pathlib import Path
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,9 +24,24 @@ from gengowatcher.web_models import CommandRequest, SECURITY
 def _storage(tmp_path: Path) -> WebFileStorage:
     config = MagicMock()
     config.get.side_effect = lambda section, key, **kwargs: {
-        ("Paths", "file_storage_dir"): str(tmp_path / "files")
+        ("Paths", "file_storage_dir"): str(tmp_path / "files"),
+        ("TranslationWorkflow", "file_retention_days"): 1,
     }.get((section, key), kwargs.get("fallback", ""))
     return WebFileStorage(config, logging.getLogger("test-pr111-review-feedback"))
+
+
+def test_file_storage_removes_expired_files_and_metadata(tmp_path):
+    storage = _storage(tmp_path)
+    entry = storage.save_uploaded_file("source.txt", b"text")
+    path = storage.get_file_path(entry.stored_name)
+    metadata_path = storage.metadata_path(path)
+    old = time.time() - 3 * 86400
+    os.utime(path, (old, old))
+    os.utime(metadata_path, (old, old))
+
+    assert storage.cleanup_expired_files() == 2
+    assert not path.exists()
+    assert not metadata_path.exists()
 
 
 def test_backward_compatibility_aliases_live_in_importing_modules():

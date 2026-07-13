@@ -104,6 +104,7 @@ verify_tls = true
 file_mode = "user"
 download_timeout_sec = 30.0
 file_text_max_chars = 250000
+file_retention_days = 30
 
 [Webhooks]
 incoming_enabled = false
@@ -116,6 +117,7 @@ debug_enabled = false
 debug_payload_preview_bytes = 4096
 audit_enabled = true
 audit_log_path = "logs/webhooks.jsonl"
+audit_retention_days = 30
 outbound_enabled = false
 outbound_urls = []
 # Set via GENGOWATCHER_WEBHOOK_OUTBOUND_SECRET env var or here
@@ -127,6 +129,7 @@ outbound_max_attempts = 3
 outbound_initial_delay_sec = 0.5
 outbound_max_delay_sec = 10.0
 outbound_verify_tls = true
+outbound_include_customer_content = false
 
 [AutoAccept]
 enabled = false
