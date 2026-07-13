@@ -19,6 +19,8 @@ class AppState:
         "source_text",
         "accepted_source_text",
         "segments",
+        "accepted_segments",
+        "accepted_target_text",
     }
 
     def __init__(
