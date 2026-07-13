@@ -12,9 +12,9 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict, deque
-import websockets
 import aiohttp
 from pathlib import Path
+from websockets.asyncio.client import connect
 
 from src.gengowatcher.config import AppConfig
 from src.gengowatcher.state import AppState
@@ -68,16 +68,11 @@ class GengoAnalyzer:
                 ),
             ]
 
-            ws_version = getattr(websockets, "__version__", "0")
-            ws_header_key = (
-                "additional_headers"
-                if int(ws_version.split(".")[0]) >= 13
-                else "extra_headers"
-            )
-            header_kwargs = {ws_header_key: extra_headers}
-
-            async with websockets.connect(
-                ws_url, **header_kwargs, ping_interval=20, ping_timeout=10
+            async with connect(
+                ws_url,
+                additional_headers=extra_headers,
+                ping_interval=20,
+                ping_timeout=10,
             ) as websocket:
                 # Authenticate
                 auth_payload = {

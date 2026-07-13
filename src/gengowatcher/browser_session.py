@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlparse
 
-import websockets
+from websockets.asyncio.client import connect
 
 from ._async_utils import run_coroutine_sync
 from .browser_session_core import (
@@ -408,7 +408,7 @@ def select_gengo_context(
 @asynccontextmanager
 async def _firefox_bidi_session(debug_url: str | None):
     websocket_url = _firefox_bidi_url(debug_url)
-    async with websockets.connect(websocket_url, max_size=5_000_000) as websocket:
+    async with connect(websocket_url, max_size=5_000_000) as websocket:
         session = _FirefoxBiDiSession(websocket)
         await session.call(
             "session.new",
@@ -459,7 +459,7 @@ async def _firefox_evaluate_json(
 
 
 async def _open_firefox_rdp_client(debug_url: str | None) -> _FirefoxRdpClient:
-    websocket = await websockets.connect(
+    websocket = await connect(
         _normalize_debug_url(debug_url), max_size=5_000_000
     )
     try:
@@ -1249,7 +1249,7 @@ async def fetch_browser_session_snapshot(
             "Selected gengo.com page target has no CDP websocket URL"
         )
 
-    async with websockets.connect(websocket_url, max_size=5_000_000) as websocket:
+    async with connect(websocket_url, max_size=5_000_000) as websocket:
         cookie_result = await _cdp_call(
             websocket,
             "Network.getCookies",
@@ -1324,7 +1324,7 @@ async def fetch_browser_session_token(
             "Selected gengo.com page target has no CDP websocket URL"
         )
 
-    async with websockets.connect(websocket_url, max_size=5_000_000) as websocket:
+    async with connect(websocket_url, max_size=5_000_000) as websocket:
         result = await _cdp_call(
             websocket,
             "Network.getCookies",
@@ -1677,7 +1677,7 @@ async def inspect_available_jobs_page(
         )
 
     action = "inspect"
-    async with websockets.connect(websocket_url, max_size=5_000_000) as websocket:
+    async with connect(websocket_url, max_size=5_000_000) as websocket:
         call_id = 1
         await _cdp_call(websocket, "Page.enable", call_id=call_id)
         call_id += 1
@@ -2119,7 +2119,7 @@ async def refresh_browser_page_activity(
             "Selected gengo.com page target has no CDP websocket URL"
         )
 
-    async with websockets.connect(websocket_url, max_size=5_000_000) as websocket:
+    async with connect(websocket_url, max_size=5_000_000) as websocket:
         call_id = 1
         await _cdp_call(websocket, "Page.enable", call_id=call_id)
         call_id += 1

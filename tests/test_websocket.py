@@ -82,7 +82,7 @@ class MockConnectFactory:
 
 
 @pytest.mark.asyncio
-@patch("gengowatcher.watcher.websockets.connect")
+@patch("gengowatcher.watcher.connect")
 async def test_websocket_receives_and_processes_job(mock_connect, watcher_instance):
     """
     Test that a valid job received from the WebSocket is correctly processed.
@@ -141,7 +141,7 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
 
 
 @pytest.mark.asyncio
-@patch("gengowatcher.watcher.websockets.connect")
+@patch("gengowatcher.watcher.connect")
 async def test_websocket_retries_with_ua_only_after_handshake_timeout(
     mock_connect, watcher_instance
 ):

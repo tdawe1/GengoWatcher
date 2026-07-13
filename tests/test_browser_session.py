@@ -163,7 +163,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_cdp():
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=_MockJSONWebSocket([cdp_response]),
         ),
     ):
@@ -212,7 +212,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage():
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=_MockJSONWebSocket([cookie_response, runtime_response]),
         ),
     ):
@@ -249,7 +249,7 @@ async def test_fetch_browser_session_snapshot_keeps_cookie_when_runtime_eval_fai
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=_MockJSONWebSocket([cookie_response]),
         ),
         patch(
@@ -336,7 +336,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_rdp():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ) as mock_connect:
         token = await fetch_browser_session_token("ws://127.0.0.1:9222")
@@ -398,7 +398,7 @@ async def test_open_url_in_browser_debug_uses_firefox_rdp_browser_window():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ) as mock_connect:
         opened_url = await open_url_in_browser_debug(
@@ -505,7 +505,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ):
         snapshot = await fetch_browser_session_snapshot("ws://127.0.0.1:9222")
@@ -586,7 +586,7 @@ async def test_inspect_available_jobs_page_reads_firefox_rdp_dom_jobs():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ):
         snapshot = await inspect_available_jobs_page("ws://127.0.0.1:9222")
@@ -624,7 +624,7 @@ async def test_inspect_available_jobs_page_passive_firefox_rdp_does_not_reclaim_
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         new=AsyncMock(return_value=mock_ws),
     ):
         snapshot = await inspect_available_jobs_page(
@@ -653,7 +653,7 @@ async def test_inspect_available_jobs_page_passive_cdp_does_not_reclaim_manual_t
                 }
             ],
         ),
-        patch("gengowatcher.browser_session.websockets.connect") as connect,
+        patch("gengowatcher.browser_session.connect") as connect,
     ):
         snapshot = await inspect_available_jobs_page(
             "http://127.0.0.1:9222",
@@ -842,7 +842,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_rdp_
 
     with (
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             new=AsyncMock(return_value=mock_ws),
         ),
         patch(
@@ -922,7 +922,7 @@ async def test_fetch_browser_session_token_reads_cookie_from_firefox_bidi():
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         return_value=mock_ws,
     ) as mock_connect:
         token = await fetch_browser_session_token("ws://127.0.0.1:9222/session")
@@ -1004,7 +1004,7 @@ async def test_fetch_browser_session_snapshot_reads_cookie_and_local_storage_fro
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         return_value=mock_ws,
     ):
         snapshot = await fetch_browser_session_snapshot("ws://127.0.0.1:9222/session")
@@ -1085,7 +1085,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_firefox_bidi
     mock_ws = _MockJSONWebSocket(responses)
 
     with patch(
-        "gengowatcher.browser_session.websockets.connect",
+        "gengowatcher.browser_session.connect",
         return_value=mock_ws,
     ):
         action = await refresh_browser_page_activity(
@@ -1171,7 +1171,7 @@ async def test_refresh_browser_page_activity_summary_roundtrip_uses_cdp_navigati
             return_value=_MockUrlResponse(targets),
         ),
         patch(
-            "gengowatcher.browser_session.websockets.connect",
+            "gengowatcher.browser_session.connect",
             return_value=mock_ws,
         ),
     ):

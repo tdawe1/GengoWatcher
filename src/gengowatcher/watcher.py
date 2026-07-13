@@ -23,7 +23,8 @@ from urllib.parse import urlparse
 
 import feedparser
 import websockets
-from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatusCode
+from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
 
 from .browser_session import (
     GENGO_AVAILABLE_JOBS_URL,
@@ -1897,7 +1898,7 @@ class GengoWatcher:
                 self.logger.debug(
                     f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
                 )
-                async with websockets.connect(  # type: ignore
+                async with connect(
                     ws_url,
                     additional_headers=headers,
                     open_timeout=20,
@@ -2243,7 +2244,7 @@ class GengoWatcher:
                     await run_session(headers)
                     last_error = None
                     break
-                except (InvalidStatusCode, InvalidHandshake, TimeoutError) as e:
+                except (InvalidStatus, InvalidHandshake, TimeoutError) as e:
                     last_error = e
                     if index == len(header_profiles) - 1:
                         raise
@@ -2256,7 +2257,7 @@ class GengoWatcher:
                 raise last_error
         except (
             ConnectionClosed,
-            InvalidStatusCode,
+            InvalidStatus,
             InvalidHandshake,
             ConnectionRefusedError,
         ) as e:

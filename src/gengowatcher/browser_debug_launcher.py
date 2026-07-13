@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import websockets
+from websockets.asyncio.client import connect
 
 from ._async_utils import run_coroutine_sync
 from .browser_session_core import GENGO_AVAILABLE_JOBS_URL, GENGO_REALTIME_URL
@@ -339,7 +339,7 @@ def launch_managed_firefox_debug(spec: FirefoxDebugLaunchSpec) -> subprocess.Pop
 
 async def _probe_firefox_debug_server(debug_url: str) -> bool:
     try:
-        async with websockets.connect(debug_url, max_size=1_000_000) as websocket:
+        async with connect(debug_url, max_size=1_000_000) as websocket:
             raw_message = await asyncio.wait_for(websocket.recv(), timeout=2)
     except Exception:
         return False

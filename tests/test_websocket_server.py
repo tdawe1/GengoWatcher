@@ -72,7 +72,7 @@ async def test_gateway_run_offloads_header_build_and_event_emit(
     fake_ws = _FakeGatewayWebSocket(gateway)
     monkeypatch.setattr(websocket_server.asyncio, "to_thread", fake_to_thread)
     monkeypatch.setattr(
-        websocket_server.websockets,
+        websocket_server,
         "connect",
         lambda *_args, **_kwargs: fake_ws,
     )

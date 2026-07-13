@@ -189,7 +189,7 @@ async def test_websocket_simulation():
         state.last_seen_link = None
 
         # Mock WebSocket
-        with patch("websockets.connect") as mock_connect:
+        with patch("gengowatcher.watcher.connect") as mock_connect:
             mock_ws = AsyncMock()
             mock_connect.return_value = mock_ws
 
