@@ -146,7 +146,7 @@ def estimate_word_count_from_reward(reward: Any, title: Any, source_meta: Any) -
     ):
         rate = coerce_positive_float(meta.get(key))
         if rate > 0:
-            return max(1, int(round(reward_value / rate)))
+            return max(1, round(reward_value / rate))
 
     tier = pick_meta_value(meta, ["tier", "job_tier", "service_level"])
     if not tier and title:
@@ -156,7 +156,7 @@ def estimate_word_count_from_reward(reward: Any, title: Any, source_meta: Any) -
 
     rate = resolve_tier_rate(tier)
     if rate > 0:
-        return max(1, int(round(reward_value / rate)))
+        return max(1, round(reward_value / rate))
     return 0
 
 

@@ -495,6 +495,7 @@ class AppConfig:
                     pass
             except IOError as e:
                 print(f"Error saving config: {e}")
+                raise
             finally:
                 if lock_file is not None:
                     if fcntl is not None:

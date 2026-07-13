@@ -26,7 +26,7 @@ async def test_stats_panel_renders_sections():
         manager = StatsManager(stats_path=path)
 
         app = StatsPanelTestApp(manager)
-        async with app.run_test() as pilot:  # noqa: F841
+        async with app.run_test():
             panel = app.query_one(StatsPanel)
             # Check section titles exist
             assert panel.query_one("#stats-session-content") is not None

@@ -246,17 +246,17 @@ async def test_hourly_activity_with_data():
         )
 
     async with app.run_test() as pilot:
-            hourly = pilot.app.query_one(HourlyActivity)
-            hourly.refresh_hourly()
-            await pilot.pause()
+        hourly = pilot.app.query_one(HourlyActivity)
+        hourly.refresh_hourly()
+        await pilot.pause()
 
-            # Should show peak period (12-15) with 5 jobs
-            from textual.widgets import Static
+        # Should show peak period (12-15) with 5 jobs
+        from textual.widgets import Static
 
-            content = hourly.query_one("#hourly-content", Static)
-            text = str(content.render())
-            assert "12-15" in text  # Peak period containing hour 14
-            assert "5" in text  # 5 jobs
+        content = hourly.query_one("#hourly-content", Static)
+        text = str(content.render())
+        assert "12-15" in text  # Peak period containing hour 14
+        assert "5" in text  # 5 jobs
 
 
 @pytest.mark.asyncio
@@ -309,7 +309,7 @@ async def test_telemetry_tab_contains_visible_table():
     """Verify Telemetry tab table mounts with usable height."""
     app = create_mock_app()
 
-    async with app.run_test(size=(160, 48)) as pilot:  # noqa: F841
+    async with app.run_test(size=(160, 48)) as pilot:
         from gengowatcher.ui_textual import TelemetryTab
         from textual.widgets import TabbedContent, DataTable
 

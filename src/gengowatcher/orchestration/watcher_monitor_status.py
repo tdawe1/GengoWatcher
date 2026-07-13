@@ -22,11 +22,6 @@ hooks, the test suite) continue to resolve through the instance.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
-
 
 def get_monitor_status(watcher) -> dict:
     """
@@ -58,7 +53,6 @@ def get_monitor_status(watcher) -> dict:
     return status
 
 
-
 def sync_monitor_metrics(watcher):
     """Sync metrics from email and website monitors."""
     if hasattr(watcher, "_email_monitor") and watcher._email_monitor:
@@ -71,6 +65,10 @@ def sync_monitor_metrics(watcher):
         watcher.email_jobs_found_session = getattr(
             watcher._email_monitor, "jobs_found_session", 0
         )
+    else:
+        watcher.email_monitor_status = "Disabled"
+        watcher.email_last_check_time = None
+        watcher.email_jobs_found_session = 0
 
     if hasattr(watcher, "_website_monitor") and watcher._website_monitor:
         watcher.website_monitor_status = getattr(
@@ -82,7 +80,10 @@ def sync_monitor_metrics(watcher):
         watcher.website_jobs_found_session = getattr(
             watcher._website_monitor, "jobs_found_session", 0
         )
-
+    else:
+        watcher.website_monitor_status = "Disabled"
+        watcher.website_last_check_time = None
+        watcher.website_jobs_found_session = 0
 
 
 def process_browser_jobs_snapshot(watcher, snapshot) -> int:
@@ -112,9 +113,8 @@ def process_browser_jobs_snapshot(watcher, snapshot) -> int:
     return processed
 
 
-
 __all__ = [
     "get_monitor_status",
-    "sync_monitor_metrics",
     "process_browser_jobs_snapshot",
+    "sync_monitor_metrics",
 ]

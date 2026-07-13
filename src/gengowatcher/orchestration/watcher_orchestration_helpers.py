@@ -35,14 +35,10 @@ continue to resolve through the instance.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
 
 from ..browser_session import fetch_browser_session_snapshot_sync
 
 from .watcher_config_values import PLACEHOLDER_CONFIG_VALUES
-
-if TYPE_CHECKING:
-    pass
 
 
 def sync_browser_session_for_quiet_socket(
@@ -192,9 +188,9 @@ def configure_cancellation_manager(watcher):
 
 
 __all__ = [
-    "sync_browser_session_for_quiet_socket",
-    "warn_if_browser_session_mismatch",
+    "configure_cancellation_manager",
     "get_default_required_config_fields",
     "get_effective_rss_wait_range_seconds",
-    "configure_cancellation_manager",
+    "sync_browser_session_for_quiet_socket",
+    "warn_if_browser_session_mismatch",
 ]

@@ -24,13 +24,8 @@ import csv
 import subprocess
 import webbrowser
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from .. import notifier
-
-if TYPE_CHECKING:
-    pass
-
 
 
 def _setup_csv_logging(watcher):
@@ -60,7 +55,6 @@ def _setup_csv_logging(watcher):
         watcher.logger.error(f"Could not open all_entries_log file: {e}")
         watcher._all_entries_log_file = None
         watcher._csv_writer = None
-
 
 
 def show_notification(
@@ -93,7 +87,6 @@ def show_notification(
 
     if open_link and url:
         watcher.open_in_browser(url)
-
 
 
 def open_in_browser(watcher, url):

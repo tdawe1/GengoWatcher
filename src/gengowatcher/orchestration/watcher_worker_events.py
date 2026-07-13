@@ -28,10 +28,6 @@ resolving them through the instance.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 
 def run_browser_worker_event_listener(watcher) -> None:

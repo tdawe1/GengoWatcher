@@ -24,14 +24,10 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import time
-from typing import TYPE_CHECKING
 
 import feedparser
 
 from ..browser_detector import get_preferred_browser_user_agent
-
-if TYPE_CHECKING:
-    pass
 
 
 def fetch_rss(watcher):
@@ -58,9 +54,7 @@ def fetch_rss(watcher):
         feed_url = watcher.config.get("Watcher", "feed_url")
         # Wrap feedparser in thread with timeout to prevent blocking
         if watcher._rss_executor is None:
-            watcher._rss_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=1
-            )
+            watcher._rss_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         if watcher._rss_future is not None:
             if not watcher._rss_future.done():
                 elapsed = (

@@ -266,6 +266,7 @@ def pick_rotating_user_agent(existing: str | None = None) -> str:
     if existing and existing in ROTATING_USER_AGENT_POOL:
         return existing
     import random as _random
+
     return _random.choice(ROTATING_USER_AGENT_POOL)
 
 
@@ -332,8 +333,8 @@ def derive_client_hints(user_agent: str) -> dict[str, str]:
             platform_version = "10.15.7"
         else:
             platform = "Linux"
-            platform_version = "6.0"
-        return {
+            platform_version = ""
+        hints = {
             "Sec-CH-UA": f'"Chromium";v="{major}", "Not_A Brand";v="24", "Google Chrome";v="{major}"',
             "Sec-CH-UA-Mobile": "?0",
             "Sec-CH-UA-Platform": f'"{platform}"',
@@ -341,8 +342,15 @@ def derive_client_hints(user_agent: str) -> dict[str, str]:
             "Sec-CH-UA-Arch": '"x86"',
             "Sec-CH-UA-Bitness": '"64"',
             "Sec-CH-UA-Model": '""',
-            "Sec-CH-UA-Full-Version-List": f'"Chromium";v="{full_version}", "Not_A Brand";v="24.0.0.0", "Google Chrome";v="{full_version}"',
         }
+        version_parts = full_version.split(".")
+        if any(part != "0" for part in version_parts[1:]):
+            hints["Sec-CH-UA-Full-Version-List"] = (
+                f'"Chromium";v="{full_version}", '
+                f'"Not_A Brand";v="24.0.0.0", '
+                f'"Google Chrome";v="{full_version}"'
+            )
+        return hints
 
     # Unknown UA family - do not invent Client Hints.
     return {}

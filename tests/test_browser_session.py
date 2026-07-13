@@ -1268,10 +1268,8 @@ def test_build_browser_aligned_websocket_headers_derives_chrome_client_hints():
     assert headers["Sec-CH-UA"] == (
         '"Chromium";v="142", "Not_A Brand";v="24", "Google Chrome";v="142"'
     )
-    assert headers["Sec-CH-UA-Full-Version-List"] == (
-        '"Chromium";v="142.0.0.0", "Not_A Brand";v="24.0.0.0", '
-        '"Google Chrome";v="142.0.0.0"'
-    )
+    assert "Sec-CH-UA-Full-Version-List" not in headers
+    assert headers["Sec-CH-UA-Platform-Version"] == '""'
     assert "Sec-Fetch-Mode" not in headers
 
 

@@ -10,26 +10,39 @@ tests) keep resolving them through ``watcher.<method>``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from .watcher_config_values import PLACEHOLDER_CONFIG_VALUES, SENSITIVE_KEYWORDS
 
-if TYPE_CHECKING:
-    pass
+
+def _safe_config_value(option, value):
+    """Return a display-safe configuration value without altering storage."""
+    if value in (None, "", "(not set)"):
+        return value
+    if any(keyword in option.lower() for keyword in SENSITIVE_KEYWORDS):
+        return "<redacted>"
+    return value
 
 
 def set_config_value(watcher, section, option, value):
-    watcher.logger.debug(f"Setting config value: [{section}] {option} = {value}")
+    safe_value = _safe_config_value(option, value)
+    watcher.logger.debug(
+        "Setting config value: [%s] %s = %s", section, option, safe_value
+    )
     watcher.config.set(section, option, value)
     watcher.config.save_config()
-    watcher.logger.info(f"Config updated: [{section}] {option} = {value}")
+    watcher.logger.info("Config updated: [%s] %s = %s", section, option, safe_value)
     if section.lower() == "cancellation":
         watcher._configure_cancellation_manager()
 
 
 def get_config_value(watcher, section, option):
     value = watcher.config.get(section, option)
-    watcher.logger.debug(f"Getting config value: [{section}] {option} = {value}")
+    watcher.logger.debug(
+        "Getting config value: [%s] %s = %s",
+        section,
+        option,
+        _safe_config_value(option, value),
+    )
     return value
 
 
@@ -95,6 +108,7 @@ def prompt_for_config_values(watcher, required_fields=None):
             display_current = (
                 current if current not in PLACEHOLDER_CONFIG_VALUES else "(not set)"
             )
+            display_current = _safe_config_value(option, display_current)
 
             # Provide helpful descriptions for common fields
             descriptions = {

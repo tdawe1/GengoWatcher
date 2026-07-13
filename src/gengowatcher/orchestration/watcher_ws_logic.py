@@ -14,9 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import websockets  # type: ignore
-from typing import TYPE_CHECKING
 
+from websockets.asyncio.client import connect
 from websockets.exceptions import (
     ConnectionClosed,
     InvalidHandshake,
@@ -28,9 +27,6 @@ from ..browser_session import (
     build_websocket_auth_payload,
     format_cookies_as_header,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 async def websocket_logic(watcher):
@@ -103,9 +99,7 @@ async def websocket_logic(watcher):
                 - Listens for incoming messages and invokes the watcher's message handling for recognised events (notably `available_collection` events, which are forwarded to `_process_new_job`).
                 - Records the socket close code and reason on disconnect, cancels auxiliary tasks and performs orderly cleanup while logging notable conditions and errors.
             """
-            header_desc = (
-                "with custom headers" if headers else "with no custom headers"
-            )
+            header_desc = "with custom headers" if headers else "with no custom headers"
             messages_received = False
             watcher.websocket_status = "Connecting"
             watcher.websocket_connected_at_ts = None
@@ -117,9 +111,9 @@ async def websocket_logic(watcher):
             watcher.logger.debug(
                 f"WebSocket: Attempting connection to {ws_url} ({header_desc})"
             )
-            async with websockets.connect(  # type: ignore
+            async with connect(
                 ws_url,
-                extra_headers=headers,
+                additional_headers=headers,
                 open_timeout=20,
                 ping_interval=20,
                 ping_timeout=10,
@@ -173,9 +167,7 @@ async def websocket_logic(watcher):
                             )
                             await asyncio.sleep(HEARTBEAT_INTERVAL)
                             t0 = time.perf_counter()
-                            watcher.logger.debug(
-                                "WebSocket: Sending heartbeat ping..."
-                            )
+                            watcher.logger.debug("WebSocket: Sending heartbeat ping...")
                             watcher._capture_raw_ws_message("PING", direction="send")
                             waiter = await websocket.ping()
                             await asyncio.wait_for(waiter, timeout=5)
@@ -261,9 +253,7 @@ async def websocket_logic(watcher):
 
                 try:
                     watcher.logger.debug("WebSocket: Waiting for first message...")
-                    first_message = await asyncio.wait_for(
-                        websocket.recv(), timeout=5
-                    )
+                    first_message = await asyncio.wait_for(websocket.recv(), timeout=5)
                     messages_received = True
                     watcher.websocket_last_message_ts = time.time()
                     watcher.logger.debug(
@@ -367,12 +357,8 @@ async def websocket_logic(watcher):
                                 )
                                 if job_id:
                                     reward = float(job.get("rewards", 0.0))
-                                    title = (
-                                        f"{job.get('lc_src')} > {job.get('lc_tgt')}"
-                                    )
-                                    url = (
-                                        f"https://gengo.com/t/jobs/details/{job_id}"
-                                    )
+                                    title = f"{job.get('lc_src')} > {job.get('lc_tgt')}"
+                                    url = f"https://gengo.com/t/jobs/details/{job_id}"
                                     watcher._process_new_job(
                                         job_id,
                                         title,

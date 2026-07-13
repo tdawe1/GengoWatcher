@@ -6,13 +6,13 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import pytest
-
 
 pytestmark = pytest.mark.e2e
 
@@ -50,15 +50,32 @@ def _request(
         with urlopen(request, timeout=2) as response:
             return response.status, json.loads(response.read())
     except HTTPError as error:
-        return error.code, json.loads(error.read())
+        raw_body = error.read()
+        try:
+            return error.code, json.loads(raw_body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return error.code, {"detail": raw_body.decode("utf-8", errors="replace")}
 
 
-def _wait_until_ready(base_url: str, process: subprocess.Popen, timeout: float) -> None:
+def _read_process_output(output_log) -> str:
+    output_log.flush()
+    output_log.seek(0)
+    output = output_log.read()
+    output_log.seek(0, os.SEEK_END)
+    return output
+
+
+def _wait_until_ready(
+    base_url: str,
+    process: subprocess.Popen,
+    output_log,
+    timeout: float,
+) -> None:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            output = process.stdout.read() if process.stdout else ""
+            output = _read_process_output(output_log)
             pytest.fail(
                 f"web process exited before readiness ({process.returncode})\n{output}"
             )
@@ -116,8 +133,7 @@ log_all_entries_enabled = false
 [Paths]
 browser_path = "/bin/true"
 browser_args = "{url}"
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 
@@ -129,6 +145,7 @@ def test_web_only_process_ingests_persists_and_serves_job(tmp_path):
     base_url = f"http://127.0.0.1:{port}"
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root / "src")
+    output_log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
     process = subprocess.Popen(
         [
             sys.executable,
@@ -140,17 +157,15 @@ def test_web_only_process_ingests_persists_and_serves_job(tmp_path):
         ],
         cwd=tmp_path,
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=output_log,
         stderr=subprocess.STDOUT,
         text=True,
     )
 
     try:
-        _wait_until_ready(base_url, process, timeout=15)
+        _wait_until_ready(base_url, process, output_log, timeout=15)
 
-        unauthorized_status, _ = _request(
-            base_url, "/api/status", authenticated=False
-        )
+        unauthorized_status, _ = _request(base_url, "/api/status", authenticated=False)
         assert unauthorized_status == 401
 
         event = {
@@ -196,9 +211,11 @@ def test_web_only_process_ingests_persists_and_serves_job(tmp_path):
 
         state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
         assert [job["id"] for job in state["jobs"]] == ["123"]
-        audit_lines = (tmp_path / "logs" / "webhooks.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        audit_lines = (
+            (tmp_path / "logs" / "webhooks.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
         audit_stages = {json.loads(line)["stage"] for line in audit_lines}
         assert {"received", "processed", "duplicate"} <= audit_stages
 
@@ -209,10 +226,14 @@ def test_web_only_process_ingests_persists_and_serves_job(tmp_path):
         if process.poll() is None:
             process.send_signal(signal.SIGINT)
         try:
-            output, _ = process.communicate(timeout=10)
+            process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
-            output, _ = process.communicate(timeout=5)
+            process.wait(timeout=5)
+            output = _read_process_output(output_log)
+            output_log.close()
             pytest.fail(f"web process did not stop after SIGINT\n{output}")
+        output = _read_process_output(output_log)
+        output_log.close()
 
     assert process.returncode == 0, output

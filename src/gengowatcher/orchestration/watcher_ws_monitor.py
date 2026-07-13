@@ -12,10 +12,6 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 
 def run_websocket_monitor(watcher) -> None:
@@ -60,7 +56,9 @@ def run_websocket_monitor(watcher) -> None:
                     "WebSocket", "session_sync_fail_hard", fallback=True
                 ),
                 alert_on_failure=watcher.config.getboolean(
-                    "WebSocket", "session_sync_alert", fallback=False
+                    "WebSocket",
+                    "session_sync_alert_on_failure",
+                    fallback=True,
                 ),
             )
             if watcher.shutdown_event.is_set():
@@ -81,9 +79,7 @@ def run_websocket_monitor(watcher) -> None:
             watcher.shutdown_event.wait(timeout=5)
             continue
         if not user_id_value:
-            watcher.logger.warning(
-                "WebSocket user_id missing; WebSocket disabled."
-            )
+            watcher.logger.warning("WebSocket user_id missing; WebSocket disabled.")
             watcher.websocket_status = "Disabled"
             watcher.shutdown_event.wait(timeout=5)
             continue
@@ -91,9 +87,7 @@ def run_websocket_monitor(watcher) -> None:
             watcher.logger.warning(
                 "WebSocket user key missing. Authentication will rely only on session token."
             )
-            watcher.logger.info(
-                "Authentication will rely only on session token."
-            )
+            watcher.logger.info("Authentication will rely only on session token.")
 
         try:
             watcher.logger.debug("Running websocket logic (asyncio.run)")
@@ -126,9 +120,7 @@ def run_websocket_monitor(watcher) -> None:
             if normal_close:
                 wait_time = min(
                     max_backoff,
-                    random.uniform(
-                        clean_close_backoff_min, clean_close_backoff_max
-                    ),
+                    random.uniform(clean_close_backoff_min, clean_close_backoff_max),
                 )
                 if session_duration < 10:
                     wait_time = max(wait_time, clean_close_backoff_max)
@@ -149,9 +141,11 @@ def run_websocket_monitor(watcher) -> None:
             else:
                 wait_time = min(backoff, max_backoff)
                 if reconnect_jitter_max > 0:
-                    wait_time = max(1, wait_time + random.uniform(
-                        -reconnect_jitter_max, reconnect_jitter_max
-                    ))
+                    wait_time = max(
+                        1,
+                        wait_time
+                        + random.uniform(-reconnect_jitter_max, reconnect_jitter_max),
+                    )
                 watcher.logger.warning(
                     "WebSocket closed abnormally (code=%s, reason=%s). "
                     "Reconnecting in %.1f seconds...",
@@ -163,9 +157,11 @@ def run_websocket_monitor(watcher) -> None:
         except Exception as e:
             wait_time = min(backoff, max_backoff)
             if reconnect_jitter_max > 0:
-                wait_time = max(1, wait_time + random.uniform(
-                    -reconnect_jitter_max, reconnect_jitter_max
-                ))
+                wait_time = max(
+                    1,
+                    wait_time
+                    + random.uniform(-reconnect_jitter_max, reconnect_jitter_max),
+                )
             watcher.logger.exception(
                 "WebSocket connection failed: %s. Reconnecting in %.1fs",
                 e,

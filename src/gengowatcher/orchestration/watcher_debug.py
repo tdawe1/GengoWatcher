@@ -58,6 +58,8 @@ def redact_raw_ws_value(value: Any):
         }
     if isinstance(value, list):
         return [redact_raw_ws_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_raw_ws_text(value)
     return value
 
 
@@ -66,3 +68,10 @@ def redact_raw_ws_text(message: str) -> str:
     for pattern, replacement in RAW_WS_SENSITIVE_PATTERNS:
         redacted = pattern.sub(replacement, redacted)
     return redacted
+
+
+__all__ = [
+    "raw_ws_key_is_sensitive",
+    "redact_raw_ws_text",
+    "redact_raw_ws_value",
+]

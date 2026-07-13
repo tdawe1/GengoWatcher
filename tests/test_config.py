@@ -83,6 +83,19 @@ def test_save_config_uses_sidecar_lock_file(test_dir):
     assert ("config.toml", "a+") not in open_calls
 
 
+def test_save_config_propagates_write_failure(test_dir):
+    with patch("sys.exit"):
+        app_config = AppConfig()
+
+    with patch.object(
+        app_config,
+        "_write_config_unlocked",
+        side_effect=OSError("disk full"),
+    ):
+        with pytest.raises(OSError, match="disk full"):
+            app_config.save_config()
+
+
 def test_default_list_values_are_stored_as_toml_arrays(test_dir):
     """Default list values should be serialized as TOML arrays in config.toml."""
     with patch("sys.exit"):

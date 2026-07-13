@@ -15,6 +15,7 @@
 - coverage: python -m pytest --cov=.
 - lint: python -m flake8 .
 - format: python -m black .
+- smoke-e2e: runs e2e-marked pytest tests quietly with PYTHONPATH=src.
 - run, run-web, run-web-only: as above with PYTHONPATH=src.
 - firefox-debug-bootstrap: writes browser-debug settings into config.toml and starts Firefox in remote-debug mode.
 - firefox-debug: runs the bootstrap then launches the TUI.
