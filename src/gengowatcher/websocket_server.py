@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-import websockets
+from websockets.asyncio.client import connect
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -156,7 +156,7 @@ class GengoRealtimeGateway:
                     backoff = min(backoff * 1.5, 60.0)
                     continue
                 ws_url = self.config.get("WebSocket", "wss_url") or GENGO_REALTIME_URL
-                async with websockets.connect(
+                async with connect(
                     ws_url,
                     additional_headers=headers,
                     open_timeout=20,

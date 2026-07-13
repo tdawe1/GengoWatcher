@@ -261,7 +261,7 @@ class TestWebSocketConnectivity:
         watcher = GengoWatcher(config, state, logger)
 
         # Mock WebSocket connection
-        with patch("websockets.connect") as mock_connect:
+        with patch("gengowatcher.watcher.connect") as mock_connect:
             mock_ws = AsyncMock()
             mock_connect.return_value = mock_ws
 
@@ -304,7 +304,7 @@ class TestWebSocketConnectivity:
         watcher = GengoWatcher(config, state, logger)
 
         # Mock failed connection followed by success
-        with patch("websockets.connect") as mock_connect:
+        with patch("gengowatcher.watcher.connect") as mock_connect:
             # First attempt fails
             mock_connect.side_effect = [Exception("Connection failed"), AsyncMock()]
 

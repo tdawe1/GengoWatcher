@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-import websockets
+from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from .browser_session import (
@@ -240,7 +240,7 @@ class GengoWebSocketMonitor:
             return fallback
 
     def _connect(self, ws_url: str, *, headers: Optional[dict] = None):
-        return websockets.connect(
+        return connect(
             ws_url,
             additional_headers=headers,
             open_timeout=self._config_int(

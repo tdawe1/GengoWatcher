@@ -10,8 +10,10 @@ import threading
 import time
 from typing import List, Dict, Any
 import json
-import websockets
 from concurrent.futures import ThreadPoolExecutor
+
+from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 from gengowatcher.config import AppConfig
 
@@ -51,9 +53,9 @@ class WebSocketWorker:
                 ),
             ]
 
-            async with websockets.connect(
+            async with connect(
                 ws_url,
-                extra_headers=extra_headers,
+                additional_headers=extra_headers,
                 ping_interval=20,
                 ping_timeout=10,
             ) as websocket:
@@ -98,7 +100,7 @@ class WebSocketWorker:
                             f"Worker {self.worker_id}: Failed to parse message: {e}"
                         )
 
-        except websockets.exceptions.ConnectionClosed as e:
+        except ConnectionClosed as e:
             self.logger.warning(f"Worker {self.worker_id}: Connection closed: {e}")
         except Exception as e:
             self.logger.error(f"Worker {self.worker_id}: Connection error: {e}")

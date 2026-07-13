@@ -2,8 +2,10 @@ import asyncio
 import json
 import logging
 import sys
-import websockets
 import ssl
+
+from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 # Configure logging
 logging.basicConfig(
@@ -84,21 +86,13 @@ async def test_config(header_name, headers, payload_name, payload):
     """
     logger.info(f"Testing Headers: {header_name} | Payload: {payload_name}")
     try:
-        # Handle websockets version difference
-        ws_version = getattr(websockets, "__version__", "0")
-        ws_header_key = (
-            "additional_headers"
-            if int(ws_version.split(".")[0]) >= 12
-            else "extra_headers"
-        )
-
         # Create SSL context to avoid verification errors if any (though gengo has valid certs)
         ssl_context = ssl.create_default_context()
 
         try:
-            async with websockets.connect(
+            async with connect(
                 WS_URL,
-                **{ws_header_key: headers},
+                additional_headers=headers,
                 ping_interval=20,
                 ping_timeout=10,
                 ssl=ssl_context,
@@ -114,14 +108,13 @@ async def test_config(header_name, headers, payload_name, payload):
                     logger.info(f"  [Received] {msg}")
                 except asyncio.TimeoutError:
                     logger.info(f"  [Timeout] No message received in 5s")
-                except websockets.exceptions.ConnectionClosed as e:
+                except ConnectionClosed as e:
                     logger.error(f"  [Closed After Send] {e.code} {e.reason}")
 
-        except websockets.exceptions.InvalidStatusCode as e:
-            logger.error(f"  [Handshake Failed] Status: {e.status_code}")
-            if hasattr(e, "headers"):
-                logger.error(f"  [Redirect/Error Headers] {e.headers}")
-        except websockets.exceptions.ConnectionClosed as e:
+        except InvalidStatus as e:
+            logger.error(f"  [Handshake Failed] Status: {e.response.status_code}")
+            logger.error(f"  [Redirect/Error Headers] {e.response.headers}")
+        except ConnectionClosed as e:
             logger.error(f"  [Connection Closed] {e.code} {e.reason}")
         except Exception as e:
             logger.error(f"  [Error] {e}")

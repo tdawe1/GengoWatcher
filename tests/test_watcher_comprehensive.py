@@ -222,9 +222,7 @@ class TestWatcherInitialization:
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "http://127.0.0.1:9222",
             ("WebSocket", "user_session"): "stale-token",
-        }.get(
-            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
-        )
+        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
 
         with patch(
             "gengowatcher.orchestration.watcher_session_sync.fetch_browser_session_snapshot_sync",
@@ -270,7 +268,9 @@ class TestWatcherInitialization:
         """No browser debug URL means there is nothing to sync before connect."""
         watcher_instance.config.get.side_effect = lambda s, k, **kw: {
             ("WebSocket", "browser_debug_url"): "",
-        }.get((s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback")))
+        }.get(
+            (s, k), watcher_instance.config.config.get(s, {}).get(k, kw.get("fallback"))
+        )
         watcher_instance._sync_session_from_browser = MagicMock()
 
         assert watcher_instance._sync_session_before_websocket_connect() is True
@@ -1247,7 +1247,7 @@ class TestWebSocketIntegration:
         watcher_instance.logger.error = MagicMock()
 
         with patch(
-            "gengowatcher.watcher.websockets.connect",
+            "gengowatcher.watcher.connect",
             side_effect=TimeoutError("open timed out"),
         ) as mock_connect:
             asyncio.run(watcher_instance._websocket_logic())
