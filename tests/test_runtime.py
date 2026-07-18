@@ -10,6 +10,7 @@ import pytest
 from gengowatcher.runtime import (
     _is_tcp_port_available,
     _run_tui,
+    _run_web_only,
     _start_web_server_if_requested,
 )
 
@@ -20,6 +21,20 @@ class _DeadWebThread:
 
     def is_alive(self):
         return False
+
+
+def test_run_web_only_stops_managed_server_on_interrupt():
+    console = MagicMock()
+    server = MagicMock()
+    web_thread = MagicMock()
+    web_thread.gengowatcher_api_server = server
+    web_thread.join.side_effect = KeyboardInterrupt
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run_web_only(console, web_thread)
+
+    assert exit_info.value.code == 0
+    server.stop.assert_called_once_with()
 
 
 def test_start_web_server_reuses_runtime_watcher_for_tui_web_mode():
@@ -79,6 +94,44 @@ def test_start_web_server_starts_runtime_watcher_for_web_only_mode():
         )
 
     assert mock_start_web_server.call_args.kwargs["start_watcher_thread"] is True
+
+
+def test_start_web_server_is_forced_for_ratatui_on_loopback():
+    args = Namespace(
+        web=False,
+        web_only=False,
+        web_port=37181,
+        tui="ratatui",
+    )
+    config = MagicMock()
+    config.getboolean.return_value = False
+    config.getint.return_value = 48222
+    state = MagicMock()
+    logger = MagicMock()
+    watcher = MagicMock()
+    web_thread = MagicMock()
+
+    with (
+        patch("gengowatcher.runtime._is_tcp_port_available", return_value=True),
+        patch(
+            "gengowatcher.web.start_web_server_thread",
+            return_value=web_thread,
+        ) as mock_start_web_server,
+        patch("gengowatcher.runtime.time.sleep"),
+    ):
+        result = _start_web_server_if_requested(
+            args,
+            MagicMock(),
+            config=config,
+            state=state,
+            logger=logger,
+            watcher=watcher,
+        )
+
+    assert result is web_thread
+    assert mock_start_web_server.call_args.kwargs["host"] == "127.0.0.1"
+    assert mock_start_web_server.call_args.kwargs["port"] == 48222
+    assert mock_start_web_server.call_args.kwargs["start_watcher_thread"] is False
 
 
 def test_start_web_server_exits_web_only_when_thread_records_startup_error():
@@ -213,6 +266,40 @@ def test_start_web_server_prints_port_conflict_for_web_only_mode():
     console.print.assert_called_once()
 
 
+def test_start_web_server_port_conflict_stops_ratatui_before_token_forwarding():
+    args = Namespace(
+        web=False,
+        web_only=False,
+        web_port=37181,
+        tui="ratatui",
+    )
+    config = MagicMock()
+    config.getboolean.return_value = False
+    config.getint.return_value = 48222
+    state = MagicMock()
+    logger = MagicMock()
+    watcher = MagicMock()
+    console = MagicMock()
+
+    with (
+        patch("gengowatcher.runtime._is_tcp_port_available", return_value=False),
+        patch("gengowatcher.web.start_web_server_thread") as mock_start_web_server,
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        _start_web_server_if_requested(
+            args,
+            console,
+            config=config,
+            state=state,
+            logger=logger,
+            watcher=watcher,
+        )
+
+    assert exit_info.value.code == 1
+    mock_start_web_server.assert_not_called()
+    console.print.assert_called_once()
+
+
 def test_is_tcp_port_available_uses_resolved_address_family():
     sockaddr = ("::1", 48222, 0, 0)
     with (
@@ -304,3 +391,68 @@ def test_run_tui_passes_api_thread_to_app_when_available():
     )
     mock_thread.return_value.start.assert_called_once()
     mock_app_class.return_value.run.assert_called_once()
+
+
+def test_run_tui_launches_ratatui_with_token_in_environment_only():
+    args = Namespace(tui="ratatui", web=False, web_port=8000)
+    console = MagicMock()
+    logger = MagicMock()
+    ui_handler = MagicMock()
+    config = MagicMock()
+    config.get.return_value = "secret-token"
+    config.getint.return_value = 48222
+    state = MagicMock()
+    watcher = MagicMock()
+    watcher.shutdown_event.is_set.return_value = False
+
+    with (
+        patch("gengowatcher.runtime.StatsManager"),
+        patch("gengowatcher.runtime.GengoWatcherApp") as mock_app_class,
+        patch("gengowatcher.runtime.threading.Thread") as mock_thread,
+        patch(
+            "gengowatcher.runtime._find_ratatui_command",
+            return_value=["/tmp/gengowatcher-tui"],
+        ),
+        patch("gengowatcher.runtime.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 0
+        _run_tui(args, console, logger, ui_handler, config, state, watcher)
+
+    mock_app_class.assert_not_called()
+    mock_thread.return_value.start.assert_called_once()
+    command = mock_run.call_args.args[0]
+    environment = mock_run.call_args.kwargs["env"]
+    assert "secret-token" not in command
+    assert environment["GENGOWATCHER_API_TOKEN"] == "secret-token"
+    assert environment["GENGOWATCHER_API_URL"] == "http://127.0.0.1:48222"
+
+
+def test_run_tui_cleans_up_and_exits_nonzero_when_ratatui_fails():
+    args = Namespace(tui="ratatui", web=False, web_port=8000)
+    console = MagicMock()
+    logger = MagicMock()
+    watcher = MagicMock()
+    watcher.shutdown_event.is_set.return_value = False
+
+    with (
+        patch("gengowatcher.runtime.StatsManager"),
+        patch("gengowatcher.runtime.threading.Thread"),
+        patch(
+            "gengowatcher.runtime._run_ratatui_process",
+            side_effect=RuntimeError("binary missing"),
+        ),
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        _run_tui(
+            args,
+            console,
+            logger,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            watcher,
+        )
+
+    assert exit_info.value.code == 1
+    watcher.handle_exit.assert_called_once()
+    console.print.assert_any_call("[error]Terminal UI failed: binary missing[/]")

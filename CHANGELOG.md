@@ -3,6 +3,57 @@
 All notable changes to GengoWatcher are documented in this file.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.0] - 2026-07-18
+
+### Added
+- A native Ratatui interface covering live watcher status, available jobs,
+  workflow, history, analytics, service health, and API events.
+- Authenticated loopback API polling with reconnect and backoff handling.
+- Ratatui actions for immediate checks, pause/resume, accepting or ignoring a
+  selected job, and cancelling active work. Destructive actions require
+  confirmation.
+- Keyboard and mouse workspace navigation, compact terminal layouts, and a
+  Kanagawa Dragon-inspired colour scheme.
+- Deterministic demo/render modes and SVG previews for interface development.
+- Cargo build, test, run, and install commands in the Makefile.
+- A loopback-only Gengo sandbox with captured job, RSS, WebSocket, acceptance,
+  workbench, CAT-service, and versioned persistence primitives for deterministic
+  testing.
+- Opt-in real-browser coverage that exercises the production browser-worker
+  acceptance flow against the local sandbox.
+- Repository guidance in `CLAUDE.md` covering development commands, runtime
+  topology, state/event flow, browser boundaries, and persistence invariants.
+
+### Changed
+- Ratatui is now the preferred terminal interface when its client is available.
+  The Python runtime starts the authenticated loopback API and launches it
+  automatically; Python-only installs fall back to Textual.
+- The existing Textual interface remains available through `--tui textual`.
+- API status responses now expose the watcher's paused state.
+- Browser-worker command validation now supports an explicitly configured,
+  exact-match loopback sandbox origin while preserving production Gengo URL
+  restrictions.
+- Browser-worker acceptance tracking captures and normalizes accepted workbench
+  payloads for the watcher telemetry path.
+- Python dependencies are locked in `uv.lock` for reproducible environments.
+
+### Removed
+### Security
+- The Python launcher passes the API token through
+  `GENGOWATCHER_API_TOKEN`, not through process arguments.
+- The native client accepts plain HTTP API connections only on loopback
+  addresses.
+- Sandbox servers reject non-loopback binding unless explicitly acknowledged;
+  browser connections enforce a matching loopback Origin.
+
+### Tests
+- Added Python coverage for backend selection, Ratatui process lifecycle,
+  loopback API startup, token forwarding, failures, and paused status.
+- Added Rust coverage for API parsing, live-state updates, input handling,
+  rendering, confirmation flows, and terminal-size variants.
+- Added sandbox route, lifecycle, CAT-service, persistence, origin-validation,
+  browser-worker protocol, and opt-in Chromium acceptance coverage.
+
 ## [2.9.4] - 2026-07-08
 
 ### Changed

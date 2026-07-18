@@ -26,11 +26,13 @@ class JobIntent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_signal(cls, signal: JobSignal) -> "JobIntent":
+    def from_signal(
+        cls, signal: JobSignal, *, allowed_origins: tuple[str, ...] = ()
+    ) -> "JobIntent":
         url = signal.preferred_url()
         if not url:
             raise ValueError("job signal does not contain a URL")
-        canonical_url = canonicalize_job_url(url)
+        canonical_url = canonicalize_job_url(url, allowed_origins=allowed_origins)
         return cls(
             job_id=extract_job_id(canonical_url),
             canonical_url=canonical_url,

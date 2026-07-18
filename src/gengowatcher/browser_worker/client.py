@@ -17,11 +17,13 @@ class BrowserWorkerClient:
         logger: logging.Logger | None = None,
         response_timeout: float = 5.0,
         auth_token: str = "",
+        sandbox_origin: str = "",
     ):
         self.socket_path = Path(socket_path)
         self.logger = logger or logging.getLogger(__name__)
         self.response_timeout = response_timeout
         self.auth_token = str(auth_token or "")
+        self.sandbox_origin = str(sandbox_origin or "").strip()
 
     def build_job_url_command(
         self,
@@ -35,6 +37,7 @@ class BrowserWorkerClient:
             source,
             metadata=metadata,
             auth_token=self.auth_token,
+            allowed_origins=(self.sandbox_origin,) if self.sandbox_origin else (),
         )
 
     async def send_command(
@@ -95,7 +98,9 @@ class BrowserWorkerClient:
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
         response_timeout = self._prepare_acceptance_payload(
-            payload, track_acceptance=track_acceptance, acceptance_timeout_sec=acceptance_timeout_sec
+            payload,
+            track_acceptance=track_acceptance,
+            acceptance_timeout_sec=acceptance_timeout_sec,
         )
         if response_timeout is None:
             return await self.send_command(payload)
@@ -112,7 +117,9 @@ class BrowserWorkerClient:
     ) -> dict[str, Any]:
         payload = self.build_job_url_command(url, source, metadata=metadata)
         response_timeout = self._prepare_acceptance_payload(
-            payload, track_acceptance=track_acceptance, acceptance_timeout_sec=acceptance_timeout_sec
+            payload,
+            track_acceptance=track_acceptance,
+            acceptance_timeout_sec=acceptance_timeout_sec,
         )
         if response_timeout is None:
             return run_coroutine_sync(self.send_command, payload)

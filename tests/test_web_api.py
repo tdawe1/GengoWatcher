@@ -262,6 +262,19 @@ class TestWebAPI:
             assert status.websocket_status == "Live"
             assert status.rss_status == "Checking"
 
+    def test_get_status_reports_pause_file_state(
+        self, mock_config, mock_state, mock_logger, mock_watcher, tmp_path
+    ):
+        pause_file = tmp_path / "paused"
+        pause_file.write_text("", encoding="utf-8")
+        mock_watcher.PAUSE_FILE = str(pause_file)
+
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+            api.watcher = mock_watcher
+
+            assert api.get_status().is_paused is True
+
     def test_get_status_includes_health_snapshot(
         self, mock_config, mock_state, mock_logger, mock_watcher
     ):
@@ -519,7 +532,103 @@ class TestWebAPI:
 
         headers = api._download_headers(url="https://cdn.gengo.com/source.txt")
 
-        assert headers["Cookie"] == "my_gengo_session=session-token"
+        assert headers["Cookie"] == (
+            "myG_myGSession_=session-token; myG_rdsessID=session-token"
+        )
+
+    def test_download_headers_do_not_attach_cookie_for_untrusted_host(
+        self, mock_config, mock_state, mock_logger, mock_watcher
+    ):
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("WebSocket", "user_session"): "session-token",
+            ("Network", "browser_user_agent"): "Sandbox Browser",
+        }.get((s, k), kw.get("fallback", ""))
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        headers = api._download_headers(url="http://127.0.0.1:8765/source.txt")
+
+        assert "Cookie" not in headers
+        assert headers["User-Agent"] == "Sandbox Browser"
+
+    @pytest.mark.parametrize(
+        "sandbox_origin,download_url",
+        [
+            (
+                "http://127.0.0.1:8765",
+                "http://127.0.0.1:8765/download/target/98851601/",
+            ),
+            (
+                "http://localhost:8765",
+                "http://localhost:8765/download/target/98851601/",
+            ),
+        ],
+    )
+    def test_validate_download_url_allows_exact_configured_sandbox_origin(
+        self,
+        mock_config,
+        mock_state,
+        mock_logger,
+        mock_watcher,
+        sandbox_origin,
+        download_url,
+    ):
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("BrowserWorker", "sandbox_origin"): sandbox_origin,
+        }.get((s, k), kw.get("fallback", ""))
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        assert api._validate_download_url(download_url) == download_url
+
+    @pytest.mark.parametrize(
+        "sandbox_origin,download_url",
+        [
+            (
+                "http://127.0.0.1:8765",
+                "https://127.0.0.1:8765/download/target/1/",
+            ),
+            (
+                "http://127.0.0.1:8765",
+                "http://localhost:8765/download/target/1/",
+            ),
+            (
+                "http://127.0.0.1:8765",
+                "http://127.0.0.1:8766/download/target/1/",
+            ),
+            (
+                "http://127.0.0.1:8765",
+                "http://169.254.169.254/latest/meta-data/",
+            ),
+            (
+                "http://192.168.1.10:8765",
+                "http://192.168.1.10:8765/download/target/1/",
+            ),
+        ],
+    )
+    def test_validate_download_url_rejects_nonmatching_or_nonloopback_sandbox(
+        self,
+        mock_config,
+        mock_state,
+        mock_logger,
+        mock_watcher,
+        sandbox_origin,
+        download_url,
+    ):
+        mock_config.get.side_effect = lambda s, k, **kw: {
+            ("WebServer", "auth_token"): "test_api_key_12345",
+            ("Paths", "all_entries_log"): "logs/test_entries.csv",
+            ("BrowserWorker", "sandbox_origin"): sandbox_origin,
+        }.get((s, k), kw.get("fallback", ""))
+        with patch("gengowatcher.web.GengoWatcher", return_value=mock_watcher):
+            api = WebAPI(mock_config, mock_state, mock_logger)
+
+        with pytest.raises(ValueError, match="host is not allowed"):
+            api._validate_download_url(download_url)
 
     @pytest.mark.asyncio
     async def test_accept_job(self, mock_config, mock_state, mock_logger, mock_watcher):

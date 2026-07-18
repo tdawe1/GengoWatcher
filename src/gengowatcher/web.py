@@ -40,6 +40,7 @@ import requests
 import uvicorn
 
 from .config import AppConfig
+from .browser_worker.protocol import is_allowed_browser_origin, url_origin
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
@@ -182,6 +183,7 @@ class WebAPI:
 
             return WatcherStatus(
                 is_running=not self.watcher.shutdown_event.is_set(),
+                is_paused=os.path.exists(self.watcher.PAUSE_FILE),
                 websocket_status=self.watcher.websocket_status,
                 rss_status=self.watcher.rss_action,
                 last_check_time=last_check,
@@ -981,7 +983,10 @@ class WebAPI:
         if user_session and not user_session.startswith("REPLACE_WITH"):
             host = urlparse(url).hostname or "" if url else ""
             if self._download_host_allowed(host):
-                headers["Cookie"] = f"my_gengo_session={user_session}"
+                headers["Cookie"] = (
+                    f"myG_myGSession_={user_session}; "
+                    f"myG_rdsessID={user_session}"
+                )
         user_agent = str(
             config_get(self.config, "Network", "browser_user_agent", "") or ""
         ).strip()
@@ -1015,6 +1020,42 @@ class WebAPI:
             for allowed in self._download_allowed_hosts()
         )
 
+    def _sandbox_download_origin(self) -> tuple[str, str, int | None] | None:
+        configured = str(
+            config_get(self.config, "BrowserWorker", "sandbox_origin", "") or ""
+        ).strip()
+        if not configured:
+            return None
+
+        try:
+            origin = url_origin(configured)
+            # This also applies the browser worker's stricter origin syntax rules
+            # (no credentials, path, query, or fragment) to the configured value.
+            if not is_allowed_browser_origin(
+                configured, allowed_origins=(configured,)
+            ):
+                return None
+        except ValueError:
+            return None
+
+        _, host, _ = origin
+        if host == "localhost":
+            return origin
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            return None
+        return origin if address.is_loopback else None
+
+    def _download_matches_sandbox_origin(self, url: str) -> bool:
+        sandbox_origin = self._sandbox_download_origin()
+        if sandbox_origin is None:
+            return False
+        try:
+            return url_origin(url) == sandbox_origin
+        except ValueError:
+            return False
+
     def _validate_download_url(self, url: str) -> str:
         parsed = urlparse(str(url or "").strip())
         if parsed.scheme not in {"http", "https"}:
@@ -1022,6 +1063,8 @@ class WebAPI:
         host = (parsed.hostname or "").strip().lower()
         if not host:
             raise ValueError("Download URL must include a host")
+        if self._download_matches_sandbox_origin(parsed.geturl()):
+            return parsed.geturl()
         try:
             ip = ipaddress.ip_address(host)
         except ValueError:

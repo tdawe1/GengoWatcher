@@ -61,6 +61,22 @@ def test_browser_worker_client_includes_auth_token_in_command(tmp_path):
     assert payload["auth_token"] == "secret-token"
 
 
+def test_browser_worker_client_allows_configured_sandbox_origin(tmp_path):
+    from gengowatcher.browser_worker.client import BrowserWorkerClient
+
+    client = BrowserWorkerClient(
+        socket_path=tmp_path / "browser-worker.sock",
+        sandbox_origin="http://127.0.0.1:8765",
+    )
+
+    payload = client.build_job_url_command(
+        "http://127.0.0.1:8765/t/jobs/details/34176080?src=rss",
+        "rss",
+    )
+
+    assert payload["url"] == ("http://127.0.0.1:8765/t/jobs/details/34176080")
+
+
 @pytest.fixture
 def watcher_deps():
     config = MagicMock(spec=AppConfig)

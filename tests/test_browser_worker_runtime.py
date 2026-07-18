@@ -3,6 +3,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+
+from gengowatcher.browser_worker.models import JobIntent
 from gengowatcher.browser_worker.runtime import (
     BrowserRuntime,
     BrowserRuntimeConfig,
@@ -16,6 +18,7 @@ def test_runtime_defaults_to_headed_mode():
     config = BrowserRuntimeConfig(profile_path=Path("/tmp/profile"))
 
     assert config.headless is False
+    assert config.browser_executable_path is None
 
 
 def test_runtime_uses_default_socket_path_inside_tmp():
@@ -66,6 +69,80 @@ async def test_runtime_handles_job_url_command_and_prepares_candidate(tmp_path):
         "url": "https://gengo.com/t/jobs/details/123",
     }
     runtime.prepare_candidate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_handles_explicit_sandbox_job_url(tmp_path):
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(
+            profile_path=tmp_path / "profile",
+            sandbox_origin="http://127.0.0.1:8765",
+        )
+    )
+    runtime.prepare_candidate = AsyncMock(
+        return_value="http://127.0.0.1:8765/t/jobs/details/34176080"
+    )
+
+    response = await runtime.handle_command(
+        {
+            "type": "job_url",
+            "url": "http://127.0.0.1:8765/t/jobs/details/34176080",
+            "source": "sandbox",
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["job_id"] == "34176080"
+
+
+@pytest.mark.asyncio
+async def test_prepare_candidate_rejects_redirect_to_another_origin(tmp_path):
+    class RedirectedPage:
+        url = "https://evil.example/t/jobs/details/123"
+
+        async def goto(self, _url, wait_until):
+            assert wait_until == "domcontentloaded"
+
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile")
+    )
+    runtime.ensure_tabs = AsyncMock(
+        return_value=TabRoles(hold_page=object(), candidate_page=RedirectedPage())
+    )
+    intent = JobIntent(
+        job_id="123",
+        canonical_url="https://gengo.com/t/jobs/details/123",
+        source="rss",
+    )
+
+    with pytest.raises(ValueError, match="escaped the trusted job URL"):
+        await runtime.prepare_candidate(intent)
+
+    assert runtime.registry.get("123") is None
+
+
+@pytest.mark.asyncio
+async def test_prepare_candidate_rejects_redirect_to_another_job_path(tmp_path):
+    class RedirectedPage:
+        url = "https://gengo.com/t/jobs/details/456"
+
+        async def goto(self, _url, wait_until):
+            assert wait_until == "domcontentloaded"
+
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile")
+    )
+    runtime.ensure_tabs = AsyncMock(
+        return_value=TabRoles(hold_page=object(), candidate_page=RedirectedPage())
+    )
+    intent = JobIntent(
+        job_id="123",
+        canonical_url="https://gengo.com/t/jobs/details/123",
+        source="rss",
+    )
+
+    with pytest.raises(ValueError, match="changed the trusted job origin or path"):
+        await runtime.prepare_candidate(intent)
 
 
 @pytest.mark.asyncio
@@ -202,6 +279,40 @@ async def test_runtime_page_observer_captures_workbench_payload(tmp_path):
     log_text = (tmp_path / "worker.jsonl").read_text(encoding="utf-8")
     assert log_text.count("accepted_workbench_payload") == 1
     assert (tmp_path / "accepted-workbench-123.json").is_file()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "page_url",
+    [
+        "https://evil.example/t/workbench/123",
+        "http://127.0.0.1:8766/t/workbench/123",
+    ],
+)
+async def test_runtime_page_observer_ignores_untrusted_workbench_origin(
+    tmp_path, page_url
+):
+    class FakePage:
+        url = page_url
+        evaluate = AsyncMock()
+
+    class FakeContext:
+        pages = [FakePage()]
+
+    telemetry = BrowserWorkerTelemetry(tmp_path / "worker.jsonl")
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(
+            profile_path=tmp_path / "profile",
+            sandbox_origin="http://127.0.0.1:8765",
+        ),
+        telemetry=telemetry,
+    )
+    runtime.context = FakeContext()
+
+    await runtime._observe_browser_pages_once()
+
+    FakePage.evaluate.assert_not_awaited()
+    assert not (tmp_path / "accepted-workbench-123.json").exists()
 
 
 def test_runtime_prunes_captured_workbench_ids_by_insertion_order(tmp_path):
