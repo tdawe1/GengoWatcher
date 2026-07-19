@@ -517,6 +517,10 @@ def test_websocket_origin_and_subscriber_bounds() -> None:
     assert _websocket_origin_is_allowed(FakeWebSocket("http://127.0.0.1:8765"))
     assert not _websocket_origin_is_allowed(FakeWebSocket("http://127.0.0.1:3000"))
     assert not _websocket_origin_is_allowed(FakeWebSocket("https://evil.example"))
+    assert not _websocket_origin_is_allowed(FakeWebSocket("http://127.0.0.1:bad"))
+    assert not _websocket_origin_is_allowed(
+        FakeWebSocket("http://127.0.0.1:8765", host="127.0.0.1:bad")
+    )
     assert not _websocket_origin_is_allowed(
         FakeWebSocket("http://localhost:8765", host="127.0.0.1:8765")
     )

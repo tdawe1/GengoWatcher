@@ -16,6 +16,12 @@ from typing import Any
 from urllib.parse import urlsplit
 from xml.sax.saxutils import escape
 
+from .persistence import (
+    SandboxDocumentError,
+    sanitize_file_filename,
+    validate_collection,
+)
+
 from fastapi import (
     Body,
     FastAPI,
@@ -62,21 +68,7 @@ MAX_SANDBOX_FILE_BYTES = 2 * 1024 * 1024
 MAX_SANDBOX_FILENAME_BYTES = 255
 
 
-def _sanitize_download_filename(value: Any) -> str:
-    raw_name = str(value or "").strip()
-    if not raw_name:
-        raise ValueError("file filename is required")
-    if len(raw_name.encode("utf-8")) > MAX_SANDBOX_FILENAME_BYTES:
-        raise ValueError("file filename is too long")
-    basename = raw_name.replace("\\", "/").rsplit("/", 1)[-1]
-    basename = re.sub(r"[\x00-\x1f\x7f]+", "", basename)
-    basename = re.sub(r"[^A-Za-z0-9_ .()\-]+", "_", basename)
-    while ".." in basename:
-        basename = basename.replace("..", ".")
-    basename = basename.strip(" .-_")
-    if not basename:
-        raise ValueError("file filename has no safe basename")
-    return basename
+_sanitize_download_filename = sanitize_file_filename
 
 
 @dataclass(frozen=True)
@@ -203,6 +195,10 @@ class SandboxCollection:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> SandboxCollection:
+        try:
+            value = validate_collection(value)
+        except SandboxDocumentError as exc:
+            raise ValueError(str(exc)) from exc
         allotted_seconds = max(1, int(value.get("allotted_seconds", 3600)))
         started_at = (
             float(value["started_at"]) if value.get("started_at") is not None else None
@@ -543,17 +539,24 @@ def _websocket_origin_is_allowed(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if not origin:
         return True
-    parts = urlsplit(origin)
+    try:
+        parts = urlsplit(origin)
+        host_parts = urlsplit(f"//{websocket.headers.get('host', '')}")
+    except ValueError:
+        return False
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         return False
-    host_parts = urlsplit(f"//{websocket.headers.get('host', '')}")
+
     if not host_parts.hostname:
+        return False
+    try:
+        origin_port = parts.port or (443 if parts.scheme == "https" else 80)
+        request_port = host_parts.port or (443 if websocket.url.scheme == "wss" else 80)
+    except ValueError:
         return False
     origin_host = _loopback_hostname(parts.hostname)
     request_host = _loopback_hostname(host_parts.hostname)
     request_scheme = "https" if websocket.url.scheme == "wss" else "http"
-    origin_port = parts.port or (443 if parts.scheme == "https" else 80)
-    request_port = host_parts.port or (443 if request_scheme == "https" else 80)
     return (
         origin_host is not None
         and origin_host == request_host

@@ -7,16 +7,20 @@ serialization/import cycle.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
+import functools
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tempfile
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 try:  # pragma: no cover - platform dependent
     import fcntl
@@ -32,6 +36,8 @@ except ImportError:  # pragma: no cover - POSIX
 DOCUMENT_FORMAT = "gengowatcher.gengo-sandbox"
 SCHEMA_VERSION = 1
 MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+MAX_SANDBOX_FILE_BYTES = 2 * 1024 * 1024
+MAX_SANDBOX_FILENAME_BYTES = 255
 
 _PAYLOAD_FIELDS = {
     "collections",
@@ -83,12 +89,48 @@ _FILE_FIXTURE_FIELDS = {
 _VALID_STATUSES = {"available", "incomplete", "reviewable", "complete", "declined"}
 
 
+def sanitize_file_filename(value: Any) -> str:
+    """Validate and canonicalize a fixture filename for runtime downloads."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("file filename is required")
+    if len(value.encode("utf-8")) > MAX_SANDBOX_FILENAME_BYTES:
+        raise ValueError("file filename is too long")
+    basename = value.replace("\\", "/").rsplit("/", 1)[-1]
+    basename = re.sub(r"[\x00-\x1f\x7f]+", "", basename)
+    basename = re.sub(r"[^A-Za-z0-9_ .()\-]+", "_", basename)
+    while ".." in basename:
+        basename = basename.replace("..", ".")
+    basename = basename.strip(" .-_")
+    if not basename:
+        raise ValueError("file filename has no safe basename")
+    return basename
+
+
 class SandboxDocumentError(ValueError):
     """Raised when a sandbox scenario or snapshot is invalid."""
 
 
 class SandboxStoreLockedError(RuntimeError):
     """Raised when another store already owns a state file's sidecar lock."""
+
+
+_PublicResult = TypeVar("_PublicResult")
+
+
+def _normalize_recursion_error(
+    function: Callable[..., _PublicResult],
+) -> Callable[..., _PublicResult]:
+    """Expose excessive nesting as the module's documented validation error."""
+
+    @functools.wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> _PublicResult:
+        try:
+            return function(*args, **kwargs)
+        except RecursionError as exc:
+            raise SandboxDocumentError("document nesting is too deep") from exc
+
+    return wrapped
 
 
 def _fail(path: str, message: str) -> None:
@@ -188,14 +230,46 @@ def _validate_file_fixtures(value: Any, path: str) -> None:
         for key in ("filename", "content_type"):
             if not isinstance(fixture[key], str):
                 _fail(f"{item_path}.{key}", "must be a string")
+        try:
+            sanitize_file_filename(fixture["filename"])
+        except ValueError as exc:
+            _fail(f"{item_path}.filename", str(exc))
+        if (
+            not fixture["content_type"].strip()
+            or len(fixture["content_type"]) > 127
+            or any(
+                ord(char) < 32 or ord(char) == 127 for char in fixture["content_type"]
+            )
+        ):
+            _fail(f"{item_path}.content_type", "is invalid")
         content_fields = {
             key for key in ("content_base64", "content_text") if key in fixture
         }
         if len(content_fields) != 1:
             _fail(item_path, "must contain exactly one encoded or text content field")
         content_key = next(iter(content_fields))
-        if not isinstance(fixture[content_key], str):
+        content = fixture[content_key]
+        if not isinstance(content, str):
             _fail(f"{item_path}.{content_key}", "must be a string")
+        if content_key == "content_text":
+            size = len(content.encode("utf-8"))
+        else:
+            max_encoded_size = 4 * ((MAX_SANDBOX_FILE_BYTES + 2) // 3)
+            if len(content) > max_encoded_size:
+                _fail(item_path, "file fixture exceeds sandbox size limit")
+            try:
+                size = len(base64.b64decode(content, validate=True))
+            except (binascii.Error, ValueError):
+                _fail(f"{item_path}.content_base64", "is invalid")
+        if size > MAX_SANDBOX_FILE_BYTES:
+            _fail(item_path, "file fixture exceeds sandbox size limit")
+
+
+@_normalize_recursion_error
+def validate_collection(value: Any, *, path: str = "collection") -> dict[str, Any]:
+    """Validate one collection fixture and return a deep copy."""
+
+    return copy.deepcopy(_validate_collection(value, path))
 
 
 def _validate_collection(value: Any, path: str) -> dict[str, Any]:
@@ -263,6 +337,7 @@ def _validate_collection(value: Any, path: str) -> dict[str, Any]:
     return collection
 
 
+@_normalize_recursion_error
 def validate_payload(value: Any, *, path: str = "payload") -> dict[str, Any]:
     """Validate one baseline/current-state payload and return a deep copy."""
 
@@ -368,6 +443,7 @@ def build_snapshot_document(
     }
 
 
+@_normalize_recursion_error
 def validate_document(value: Any) -> dict[str, Any]:
     """Strictly validate and copy a scenario or snapshot document."""
 

@@ -171,6 +171,58 @@ def test_payload_rejects_invalid_collections(collections, match: str) -> None:
         validate_payload(payload(collections))
 
 
+def test_collection_validation_matches_runtime_file_limits() -> None:
+    too_large = "x" * (2 * 1024 * 1024 + 1)
+    with pytest.raises(SandboxDocumentError, match="size limit"):
+        validate_payload(
+            payload(
+                [
+                    {
+                        "collection_id": 1,
+                        "source_files": [
+                            {
+                                "filename": "x.txt",
+                                "content_type": "text/plain",
+                                "content_text": too_large,
+                            }
+                        ],
+                    }
+                ]
+            )
+        )
+    with pytest.raises(SandboxDocumentError, match="too long"):
+        validate_payload(
+            payload(
+                [
+                    {
+                        "collection_id": 1,
+                        "source_files": [
+                            {
+                                "filename": "x" * 256,
+                                "content_type": "text/plain",
+                                "content_text": "x",
+                            }
+                        ],
+                    }
+                ]
+            )
+        )
+
+
+def test_public_persistence_validation_normalizes_deep_recursion() -> None:
+    nested: dict = {}
+    current = nested
+    for _ in range(2000):
+        child: dict = {}
+        current["child"] = child
+        current = child
+    value = payload()
+    value["suggestion_flags"] = [{"id": 1, "payload": nested}]
+    value["next_suggestion_flag_id"] = 2
+    with pytest.raises(SandboxDocumentError, match="nesting is too deep"):
+        validate_payload(value)
+
+
 def test_payload_rejects_invalid_suggestion_flag_counter() -> None:
     value = payload()
     value["suggestion_flags"] = [{"id": 2, "payload": {}}]
