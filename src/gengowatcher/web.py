@@ -1470,6 +1470,8 @@ async def lifespan(app: FastAPI):
             api_token = secrets.token_urlsafe(32)
             config.set("WebServer", "auth_token", api_token)
             config.save_config()
+            if not Path(AppConfig.CONFIG_FILE).is_file():
+                raise RuntimeError("generated WebServer auth_token was not persisted")
             logger.warning(
                 "No WebServer auth_token found or it was a placeholder. Generated a new one."
             )
@@ -1490,7 +1492,7 @@ async def lifespan(app: FastAPI):
         )
         logger.info("WebAPI started successfully")
     except Exception as e:
-        logger.exception(f"Failed to start WebAPI: {e}")
+        logger.exception("Failed to start WebAPI: %s", e)
         raise
 
     yield
