@@ -59,6 +59,7 @@ class GengoRealtimeGateway:
         self._shutdown_event = asyncio.Event()
         self._last_event: dict | None = None
         self._event_file: Path | None = None
+        self._event_write_count = 0
 
     def _get_event_file(self) -> Path:
         cache_dir = Path.home() / ".cache" / "gengowatcher"
@@ -128,8 +129,12 @@ class GengoRealtimeGateway:
             event_file = self._get_event_file()
             with event_file.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(event) + "\n")
+            self._event_write_count += 1
             # Cap file size: keep last N lines if file is too large
-            if event_file.stat().st_size > 1_000_000:  # 1MB cap
+            if (
+                self._event_write_count % 100 == 0
+                and event_file.stat().st_size > 1_000_000
+            ):
                 with event_file.open("r", encoding="utf-8") as f:
                     lines = f.readlines()
                 temp_file = event_file.with_name(f".{event_file.name}.tmp")

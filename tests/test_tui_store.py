@@ -88,3 +88,30 @@ def test_accepted_jobs_use_collection_id_when_order_id_missing():
 
     active = {job["collection_id"] for job in store.get_active_jobs()}
     assert active == {"collection-1", "collection-2"}
+
+
+def test_active_job_pruning_keeps_insertion_recency_without_timestamp():
+    store = TuiStore()
+    for index in range(51):
+        store.update_from_event(
+            {
+                "type": "job.accepted",
+                "payload": {"collection_id": f"collection-{index}", "accepted": True},
+            }
+        )
+
+    active = {job["collection_id"] for job in store.get_active_jobs()}
+    assert "collection-0" not in active
+    assert "collection-50" in active
+    assert len(active) == 50
+
+
+def test_reset_instance_unregisters_tui_consumer(monkeypatch):
+    unregistered = []
+    monkeypatch.setattr(tui_store, "unregister_consumer", unregistered.append)
+    TuiStore._instance = TuiStore()
+
+    TuiStore.reset_instance()
+
+    assert unregistered == ["tui"]
+    assert TuiStore._instance is None

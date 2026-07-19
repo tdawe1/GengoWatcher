@@ -140,3 +140,26 @@ def test_workbench_start_event_uses_persisted_accepted_at(tmp_path):
     stored = app_state.get_job("123")
     published = publish.call_args.args[0]
     assert published.payload["accepted_at"] == stored["accepted_at"]
+
+
+def test_workbench_start_emits_acceptance_only_on_transition(tmp_path):
+    app_state = _state(tmp_path)
+    initial = EventEnvelope(
+        type="browser.workbench.start_response",
+        source="native_browser_listener",
+        payload={"order_id": "123", "target_text": "first"},
+        collection_id="123",
+    )
+    metadata_update = EventEnvelope(
+        type="browser.workbench.start_response",
+        source="native_browser_listener",
+        payload={"order_id": "123", "target_text": "updated"},
+        collection_id="123",
+    )
+
+    with patch("gengowatcher.state_projector.publish_event") as publish:
+        workbench_start(initial, app_state)
+        workbench_start(metadata_update, app_state)
+
+    publish.assert_called_once()
+    assert app_state.get_job("123")["accepted"] is True

@@ -159,8 +159,10 @@ class TestWatcherInitialization:
                 "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
                 return_value=True,
             ) as launch_debug_browser,
+            patch("gengowatcher.watcher.urlopen") as open_gateway,
             patch("threading.Thread"),
         ):
+            open_gateway.return_value.__enter__.return_value.status = 200
             watcher_instance.run()
 
         launch_debug_browser.assert_called_once_with(
@@ -170,6 +172,25 @@ class TestWatcherInitialization:
         )
         assert watcher_instance.websocket_status == "Gateway Connected"
         assert watcher_instance.native_browser_status == "Started"
+
+    def test_run_rejects_non_http_gateway_scheme(self, watcher_instance):
+        watcher_instance.config.config["WebSocket"].update(
+            {
+                "use_gateway": True,
+                "gateway_url": "file:///tmp/gateway",
+                "enable_websocket": True,
+            }
+        )
+        watcher_instance.shutdown_event.wait = MagicMock(return_value=True)
+
+        with (
+            patch("gengowatcher.watcher.urlopen") as open_gateway,
+            patch("threading.Thread"),
+        ):
+            watcher_instance.run()
+
+        open_gateway.assert_not_called()
+        assert watcher_instance.websocket_status == "Enabled"
 
     def test_initialization_warns_when_browser_session_differs(
         self, mock_config, mock_state

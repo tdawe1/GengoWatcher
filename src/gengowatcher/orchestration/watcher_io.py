@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import threading
 import time
+from contextlib import nullcontext
 
 import feedparser
 
@@ -160,15 +162,17 @@ def handle_exit(watcher):
             "close cancellation session",
         )
 
-    if watcher._all_entries_log_file:
-        try:
-            watcher._all_entries_log_file.flush()
-            watcher._all_entries_log_file.close()
-        except Exception as error:
-            watcher.logger.exception("Failed to close CSV log file: %s", error)
-        finally:
-            watcher._all_entries_log_file = None
-            watcher._csv_writer = None
+    csv_lock = getattr(watcher, "_csv_lock", nullcontext())
+    with csv_lock:
+        if watcher._all_entries_log_file:
+            try:
+                watcher._all_entries_log_file.flush()
+                watcher._all_entries_log_file.close()
+            except Exception as error:
+                watcher.logger.exception("Failed to close CSV log file: %s", error)
+            finally:
+                watcher._all_entries_log_file = None
+                watcher._csv_writer = None
     if watcher._rss_executor is not None:
         try:
             watcher._rss_executor.shutdown(wait=False, cancel_futures=True)
@@ -177,6 +181,23 @@ def handle_exit(watcher):
         watcher._rss_executor = None
     watcher._rss_future = None
     watcher._rss_future_started_at = None
+
+    cancellation_executor = getattr(watcher, "_cancellation_executor", None)
+    if cancellation_executor is not None:
+        cancellation_executor.shutdown(wait=False, cancel_futures=True)
+
+    join_deadline = time.monotonic() + 3.0
+    current_thread = threading.current_thread()
+    for name, thread in list(getattr(watcher, "_monitor_threads", {}).items()):
+        if thread is current_thread or not thread.is_alive():
+            continue
+        remaining = join_deadline - time.monotonic()
+        if remaining <= 0:
+            watcher.logger.warning("Monitor thread still running at shutdown: %s", name)
+            continue
+        thread.join(timeout=min(0.5, remaining))
+        if thread.is_alive():
+            watcher.logger.warning("Monitor thread did not stop cleanly: %s", name)
 
     try:
         watcher.state.save_state()

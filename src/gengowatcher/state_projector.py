@@ -325,26 +325,17 @@ def workbench_start(event: EventEnvelope, state: "AppState") -> None:
         return
 
     current = state.get_job(collection_id) or {}
-    updates: dict[str, Any] = {
-        "acceptance_state": "accepted",
-        "accepted": True,
-    }
-    accepted_at = time.time()
-    if not current.get("accepted"):
-        updates["accepted_at"] = accepted_at
-    else:
-        accepted_at = current.get("accepted_at") or accepted_at
-    changed = state.update_job(collection_id, updates)
-
-    # Also upsert (creates job if not exists, marks accepted via state method)
-    upserted = state.upsert_browser_job_details(
+    was_accepted = bool(current.get("accepted"))
+    changed = state.upsert_browser_job_details(
         collection_id=collection_id,
         workbench_payload=payload,
     )
-    if not changed and not upserted:
+    if not changed:
+        return
+    if was_accepted:
         return
     refreshed = state.get_job(collection_id) or current
-    accepted_at = refreshed.get("accepted_at") or accepted_at
+    accepted_at = refreshed.get("accepted_at") or time.time()
 
     # Emit canonical job.accepted event to bus
     publish_event(

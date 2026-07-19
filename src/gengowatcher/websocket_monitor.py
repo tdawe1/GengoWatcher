@@ -246,9 +246,8 @@ class GengoWebSocketMonitor:
             open_timeout=self._config_int(
                 "WebSocket", "open_timeout", self.defaults.open_timeout
             ),
-            ping_interval=self._config_int(
-                "WebSocket", "heartbeat_sec", self.defaults.heartbeat_sec
-            ),
+            # Manual heartbeat_loop below owns ping timing and metrics.
+            ping_interval=None,
             ping_timeout=self._config_int(
                 "WebSocket", "ping_timeout", self.defaults.ping_timeout
             ),

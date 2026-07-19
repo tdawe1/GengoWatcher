@@ -158,6 +158,7 @@ class AppConfig:
             "download_max_bytes": 52428800,
             "download_allowed_hosts": ["gengo.com", ".gengo.com"],
             "file_text_max_chars": 250000,
+            "file_retention_days": 30,
         },
         "Webhooks": {
             "incoming_enabled": False,
@@ -172,6 +173,7 @@ class AppConfig:
             "audit_log_path": "logs/webhooks.jsonl",
             "audit_max_bytes": 1048576,
             "audit_max_lines": 5000,
+            "audit_retention_days": 30,
             "outbound_enabled": False,
             "outbound_urls": [],
             "outbound_secret": "",
@@ -181,6 +183,7 @@ class AppConfig:
             "outbound_initial_delay_sec": 0.5,
             "outbound_max_delay_sec": 10.0,
             "outbound_verify_tls": True,
+            "outbound_include_customer_content": False,
         },
         "AutoAccept": {
             "enabled": False,
