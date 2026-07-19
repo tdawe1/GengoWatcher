@@ -24,7 +24,7 @@ class JobCancellationManager:
         self.config = config
         self.logger = logger
         self.session: Optional[aiohttp.ClientSession] = None
-        self._lock = threading.Lock()  # Thread safety for state access
+        self._lock = threading.RLock()  # Thread safety for state access
 
         # Browser detector for dynamic User-Agent
         self.browser_detector = BrowserDetector(
@@ -264,11 +264,8 @@ class JobCancellationManager:
                         ):
                             self.logger.info(f"Job {target_job_id} is no longer active")
                             with self._lock:
-                                target_still_current = (
-                                    self.current_job_id == target_job_id
-                                )
-                            if target_still_current:
-                                self.clear_current_job()
+                                if self.current_job_id == target_job_id:
+                                    self.clear_current_job()
                             return True
 
                     # Step 2: Submit cancellation request
@@ -328,11 +325,8 @@ class JobCancellationManager:
 
                                 # Do not clear a newer job that replaced the target.
                                 with self._lock:
-                                    target_still_current = (
-                                        self.current_job_id == target_job_id
-                                    )
-                                if target_still_current:
-                                    self.clear_current_job()
+                                    if self.current_job_id == target_job_id:
+                                        self.clear_current_job()
                                 self._save_job_state()
 
                                 return True
@@ -356,11 +350,8 @@ class JobCancellationManager:
                                 self.stats["total_lost_rewards"] += target_reward
 
                             with self._lock:
-                                target_still_current = (
-                                    self.current_job_id == target_job_id
-                                )
-                            if target_still_current:
-                                self.clear_current_job()
+                                if self.current_job_id == target_job_id:
+                                    self.clear_current_job()
                             self._save_job_state()
 
                             return True

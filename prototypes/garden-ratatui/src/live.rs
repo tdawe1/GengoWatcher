@@ -105,7 +105,7 @@ fn worker_loop(
         match commands.recv_timeout(timeout) {
             Ok(WorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(WorkerCommand::Action(action)) => {
-                let result = execute_action(&client, action.clone());
+                let result = execute_action(&client, &action);
                 if events
                     .send(WorkerEvent::ActionResult { action, result })
                     .is_err()
@@ -140,11 +140,11 @@ fn worker_loop(
     }
 }
 
-fn execute_action(client: &ApiClient, action: UiAction) -> Result<String, String> {
+fn execute_action(client: &ApiClient, action: &UiAction) -> Result<String, String> {
     let response = match action {
         UiAction::Refresh => client.command("check"),
         UiAction::Command(command) => client.command(command),
-        UiAction::AcceptJob(job_id) => client.accept_job(&job_id),
+        UiAction::AcceptJob(job_id) => client.accept_job(job_id),
         UiAction::CancelCurrentJob => client.cancel_current_job(),
     }
     .map_err(|error| error.to_string())?;
