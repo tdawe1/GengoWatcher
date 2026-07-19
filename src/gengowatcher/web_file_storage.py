@@ -50,6 +50,63 @@ class WebFileStorage:
         storage_dir.mkdir(parents=True, exist_ok=True)
         return storage_dir
 
+    def cleanup_expired_files(self) -> int:
+        """Delete stored files and metadata older than configured retention."""
+        try:
+            retention_days = int(
+                self.config.get(
+                    "TranslationWorkflow",
+                    "file_retention_days",
+                    fallback=30,
+                )
+                or 0
+            )
+        except (TypeError, ValueError):
+            retention_days = 30
+        if retention_days <= 0:
+            return 0
+
+        cutoff = time.time() - retention_days * 86400
+        removed = 0
+        storage_dir = self.get_storage_dir()
+        for path in storage_dir.iterdir():
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or path.name.startswith(".")
+                or path.name.endswith(".meta.json")
+            ):
+                continue
+            try:
+                if path.stat().st_mtime >= cutoff:
+                    continue
+                path.unlink()
+                removed += 1
+                metadata_path = self.metadata_path(path)
+                if metadata_path.is_file() and not metadata_path.is_symlink():
+                    metadata_path.unlink()
+                    removed += 1
+            except OSError as exc:
+                self.logger.warning("Failed removing expired file %s: %s", path, exc)
+
+        for metadata_path in storage_dir.glob(".*.meta.json"):
+            if not metadata_path.is_file() or metadata_path.is_symlink():
+                continue
+            primary_name = metadata_path.name[1 : -len(".meta.json")]
+            primary_path = storage_dir / primary_name
+            if primary_path.exists():
+                continue
+            try:
+                metadata_path.unlink()
+                removed += 1
+            except OSError as exc:
+                self.logger.warning(
+                    "Failed removing orphaned file metadata %s: %s",
+                    metadata_path,
+                    exc,
+                )
+        return removed
+
     @staticmethod
     def sanitize_filename(filename: str) -> str:
         base_name = Path(str(filename or "upload.bin")).name.strip()
@@ -207,6 +264,7 @@ class WebFileStorage:
             pass
 
     def list_files(self) -> list[StoredFileEntry]:
+        self.cleanup_expired_files()
         storage_dir = self.get_storage_dir()
         entries: list[StoredFileEntry] = []
         for path in sorted(
@@ -234,6 +292,7 @@ class WebFileStorage:
         word_count: int | None = None,
         value: float | None = None,
     ) -> StoredFileEntry:
+        self.cleanup_expired_files()
         if job_id is not None:
             job_id = str(job_id).strip()
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):

@@ -200,6 +200,23 @@ Example:
 
 All three endpoints require the normal web API bearer token.
 
+### Data Privacy and Retention
+
+Customer source text and raw workbench payloads remain available in memory while
+an active workflow needs them, but they are removed from persisted `state.json`.
+Outbound webhooks also omit customer text and segments by default; set
+`[Webhooks].outbound_include_customer_content = true` only for a trusted target
+that explicitly requires that content.
+
+Webhook audit entries and stored job files default to 30-day retention via
+`[Webhooks].audit_retention_days` and
+`[TranslationWorkflow].file_retention_days`. Set either value to `0` to disable
+age-based cleanup. Size and line caps still apply to the webhook audit log.
+
+Runtime secrets may be supplied through the environment variables documented in
+`.env.example`. When secrets are stored in `config.toml`, GengoWatcher restricts
+the file to user-only permissions (`0600`) on supported platforms.
+
 ## Development
 
 ```bash

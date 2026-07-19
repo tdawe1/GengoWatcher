@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Any
 
-from .event_bus import register_consumer
+from .event_bus import register_consumer, unregister_consumer
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +66,11 @@ class TuiStore:
             )
             if not job_id:
                 return
+            self._active_jobs.pop(job_id, None)
             self._active_jobs[job_id] = payload
             # Prune stale active jobs (keep max 50)
             if len(self._active_jobs) > 50:
-                oldest = sorted(
-                    self._active_jobs.items(), key=lambda x: x[1].get("timestamp", 0)
-                )
-                self._active_jobs = dict(oldest[-50:])
+                self._active_jobs = dict(list(self._active_jobs.items())[-50:])
         elif event_type == "browser.workbench.visible":
             self._update_browser_visible(payload)
         elif event_type == "browser.workbench.status":
@@ -170,6 +168,14 @@ class TuiStore:
             if cls._instance is None:
                 cls._instance = cls()
             return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Release the singleton consumer and discard cached UI state."""
+        with cls._lock:
+            if cls._instance is not None:
+                unregister_consumer("tui")
+                cls._instance = None
 
     def drain_events(self, app_call_from_thread: Any | None = None) -> int:
         """Drain pending events from queue and update store.

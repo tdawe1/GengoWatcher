@@ -2,6 +2,7 @@ from . import __version__
 __release_date__ = "2026-07-08"
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import random
@@ -12,6 +13,7 @@ from typing import Any, Callable, Optional
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
 import websockets
 
@@ -164,9 +166,9 @@ def _redact_config_for_log(value: Any, key: str = "") -> Any:
         if value in (None, ""):
             return value
         text = str(value)
-        if len(text) <= 8:
+        if len(text) < 20:
             return "***"
-        return f"{text[:4]}...{text[-4:]}"
+        return f"{text[:2]}...{text[-2:]}"
     return value
 
 
@@ -265,10 +267,15 @@ class GengoWatcher:
         self._seen_jobs_lock = threading.Lock()
         self._all_entries_log_file = None
         self._csv_writer = None
+        self._csv_lock = threading.Lock()
         self._shutdown_initiated = False
         self._rss_executor = None
         self._rss_future = None
         self._rss_future_started_at = None
+        self._cancellation_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="gengowatcher-cancellation",
+        )
         self._websocket_session_refresh_requested = False
         self._websocket_sync_failed = False
         self._websocket_sync_failure_reason = None
@@ -743,19 +750,52 @@ class GengoWatcher:
         # Check for gateway mode
         use_gateway = self.config.getboolean("WebSocket", "use_gateway", fallback=False)
         if use_gateway:
-            gateway_url = self.config.get(
-                "WebSocket", "gateway_url", fallback="http://127.0.0.1:8000"
+            gateway_url = str(
+                self.config.get(
+                    "WebSocket", "gateway_url", fallback="http://127.0.0.1:8000"
+                )
+                or "http://127.0.0.1:8000"
             )
-            self.websocket_status = "Gateway Connected"
-            self.logger.info(f"WebSocket using external gateway at {gateway_url}")
-        elif self.config.get("WebSocket", "enable_websocket"):
+            parsed_gateway = urlparse(gateway_url)
+            if (
+                parsed_gateway.scheme.lower() not in {"http", "https"}
+                or not parsed_gateway.netloc
+            ):
+                self.logger.warning(
+                    "External WebSocket gateway URL must use http or https: %s; "
+                    "falling back to the embedded monitor",
+                    gateway_url,
+                )
+                use_gateway = False
+            else:
+                health_url = f"{gateway_url.rstrip('/')}/health"
+                try:
+                    with urlopen(health_url, timeout=1.0) as response:
+                        gateway_healthy = response.status == 200
+                except Exception as exc:
+                    gateway_healthy = False
+                    self.logger.warning(
+                        "External WebSocket gateway is unreachable at %s: %s; "
+                        "falling back to the embedded monitor",
+                        gateway_url,
+                        exc,
+                    )
+                if gateway_healthy:
+                    self.websocket_status = "Gateway Connected"
+                    self.logger.info(
+                        "WebSocket using external gateway at %s", gateway_url
+                    )
+                else:
+                    use_gateway = False
+
+        if not use_gateway and self.config.get("WebSocket", "enable_websocket"):
             ws_thread = threading.Thread(
                 target=self._run_websocket_monitor, daemon=True
             )
             ws_thread.start()
             self._monitor_threads["websocket"] = ws_thread
             self.websocket_status = "Enabled"
-        else:
+        elif not use_gateway:
             self.websocket_status = "Disabled"
 
         # Native Browser Listener (replaces WebsiteMonitor)

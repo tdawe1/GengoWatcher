@@ -11,7 +11,7 @@ import queue
 import threading
 
 from .events import EventEnvelope
-from .event_bus import register_consumer
+from .event_bus import register_consumer, unregister_consumer
 from .native_browser_actions import NativeBrowserActions
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ class ComputerUseDriver:
 
     def start(self) -> None:
         """Start consuming commands."""
+        self._command_queue = register_consumer("browser_action")
         self.running = True
         self._thread = threading.Thread(target=self._consume_loop, daemon=True)
         self._thread.start()
@@ -40,6 +41,7 @@ class ComputerUseDriver:
         self.running = False
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+        unregister_consumer("browser_action")
 
     def _consume_loop(self) -> None:
         """Main consumer loop."""
