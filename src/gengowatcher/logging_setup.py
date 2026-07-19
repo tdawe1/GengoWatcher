@@ -101,7 +101,7 @@ class UILoggingHandler(logging.Handler):
             text_obj = Text.from_markup(message, style=style)
         except rich_errors.MarkupError:
             # Strip Rich markup tags using a simple regex
-            sanitized = re.sub(r'\[/?[^\]]+\]', '', message)
+            sanitized = re.sub(r"\[/?[^\]]+\]", "", message)
             text_obj = Text(sanitized, style=style)
 
         self.log_queue.append(text_obj)
@@ -111,10 +111,10 @@ def should_enable_stdio_logging(
     args: argparse.Namespace, config: AppConfig, *, tui_enabled: bool
 ) -> bool:
     """Decide whether raw stderr logging should remain active."""
-    if getattr(args, "stdio_logs", False):
-        return True
     if tui_enabled:
         return False
+    if getattr(args, "stdio_logs", False):
+        return True
     return bool(config.getboolean("Logging", "log_stdio_enabled", fallback=False))
 
 

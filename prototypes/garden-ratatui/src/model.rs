@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Job {
     pub id: String,
     pub title: String,
@@ -15,6 +14,7 @@ pub struct Job {
     pub url: String,
     pub timestamp: f64,
     pub source: String,
+    #[serde(default)]
     pub accepted: bool,
     pub accepted_at: Option<f64>,
     pub accepted_seconds_left: Option<i64>,
@@ -142,9 +142,9 @@ pub enum WorkStage {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct WatcherStatus {
     pub is_running: bool,
+    #[serde(default)]
     pub is_paused: bool,
     pub websocket_status: String,
     pub rss_status: String,
@@ -153,11 +153,11 @@ pub struct WatcherStatus {
     pub session_stats: SessionStats,
     pub failure_count: u64,
     pub cancellation_stats: Option<Value>,
+    #[serde(default)]
     pub health: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct SessionStats {
     pub new_entries: u64,
     pub total_value: f64,
@@ -165,7 +165,6 @@ pub struct SessionStats {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Stats {
     pub total_jobs: usize,
     pub total_value: f64,
@@ -176,7 +175,6 @@ pub struct Stats {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct ApiEvent {
     #[serde(alias = "event_type")]
     pub event_type: String,
@@ -186,14 +184,12 @@ pub struct ApiEvent {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct JobsResponse {
     pub jobs: Vec<Job>,
     pub pagination: Pagination,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct Pagination {
     pub page: usize,
     pub limit: usize,
@@ -202,7 +198,6 @@ pub struct Pagination {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct EventsResponse {
     pub events: Vec<ApiEvent>,
 }
@@ -347,7 +342,6 @@ pub struct CommandRequest<'a> {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
 pub struct CommandResponse {
     pub status: String,
     pub message: String,
@@ -367,6 +361,15 @@ mod tests {
                 .iter()
                 .any(|job| job.work_stage() == WorkStage::Review)
         );
+    }
+
+    #[test]
+    fn missing_required_api_fields_fail_deserialization() {
+        assert!(serde_json::from_str::<Job>(r#"{"title":"Missing id"}"#).is_err());
+        assert!(serde_json::from_str::<WatcherStatus>(r#"{}"#).is_err());
+        assert!(serde_json::from_str::<JobsResponse>(r#"{}"#).is_err());
+        assert!(serde_json::from_str::<EventsResponse>(r#"{}"#).is_err());
+        assert!(serde_json::from_str::<CommandResponse>(r#"{}"#).is_err());
     }
 
     #[test]

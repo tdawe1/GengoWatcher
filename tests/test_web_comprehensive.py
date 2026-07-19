@@ -13,6 +13,7 @@ from gengowatcher.web import (
     ConfigSection,
     CommandRequest,
     PaginationParams,
+    ManagedWebServer,
     run_web_server,
 )
 import gengowatcher.web as web_module
@@ -324,6 +325,36 @@ class TestWebAPIInitialization:
             assert hasattr(api, "_status_lock")
             assert hasattr(api, "_connections_lock")
             assert hasattr(api, "_jobs_lock")
+
+
+class TestManagedWebServer:
+    def test_tui_mode_disables_uvicorn_terminal_logging(self):
+        server = ManagedWebServer(terminal_logging=False)
+
+        with (
+            patch("gengowatcher.web.uvicorn.Config") as config_class,
+            patch("gengowatcher.web.uvicorn.Server"),
+            patch("gengowatcher.web.threading.Thread") as thread_class,
+        ):
+            thread_class.return_value = MagicMock()
+            server.start()
+
+        assert config_class.call_args.kwargs["log_config"] is None
+        assert config_class.call_args.kwargs["access_log"] is False
+
+    def test_web_only_mode_keeps_uvicorn_terminal_logging(self):
+        server = ManagedWebServer(terminal_logging=True)
+
+        with (
+            patch("gengowatcher.web.uvicorn.Config") as config_class,
+            patch("gengowatcher.web.uvicorn.Server"),
+            patch("gengowatcher.web.threading.Thread") as thread_class,
+        ):
+            thread_class.return_value = MagicMock()
+            server.start()
+
+        assert "log_config" not in config_class.call_args.kwargs
+        assert "access_log" not in config_class.call_args.kwargs
 
 
 class TestWebAPIStatus:

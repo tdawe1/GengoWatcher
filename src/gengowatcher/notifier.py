@@ -97,7 +97,13 @@ def send_notification(title: str, message: str, icon_path: str = ""):
             command.extend(["--icon", str(resolved_icon)])
 
     try:
-        subprocess.run(command, check=True, timeout=10)
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
         logger.debug("Notification sent successfully via notify-send.")
     except FileNotFoundError:
         logger.exception(

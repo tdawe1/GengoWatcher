@@ -199,13 +199,17 @@ class JobCancellationManager:
 
     async def cancel_current_job(self) -> bool:
         """Cancel the currently tracked job."""
-        if not self.current_job_id:
+        with self._lock:
+            target_job_id = self.current_job_id
+            target_reward = self.current_job_reward
+            target_start_time = self.job_start_time
+        if not target_job_id:
             self.logger.warning("No current job to cancel")
             return False
 
         self.logger.info(
-            f"🔄 Cancelling job {self.current_job_id} "
-            f"(${self.current_job_reward:.2f}) for better opportunity"
+            f"🔄 Cancelling job {target_job_id} "
+            f"(${target_reward:.2f}) for better opportunity"
         )
 
         try:
@@ -226,7 +230,7 @@ class JobCancellationManager:
                 "Cookie": f"my_gengo_session={user_session}",
                 "User-Agent": self.browser_detector.get_user_agent(),
                 "Origin": "https://gengo.com",
-                "Referer": f"https://gengo.com/t/jobs/details/{self.current_job_id}",
+                "Referer": f"https://gengo.com/t/jobs/details/{target_job_id}",
                 "X-Requested-With": "XMLHttpRequest",
             }
 
@@ -241,7 +245,7 @@ class JobCancellationManager:
             for attempt in range(max_retries):
                 try:
                     # Step 1: Check if job is still active
-                    job_url = f"https://gengo.com/t/jobs/details/{self.current_job_id}"
+                    job_url = f"https://gengo.com/t/jobs/details/{target_job_id}"
 
                     async with session.get(job_url, headers=headers) as response:
                         if response.status != 200:
@@ -258,16 +262,17 @@ class JobCancellationManager:
                             "job not found" in content.lower()
                             or "job completed" in content.lower()
                         ):
-                            self.logger.info(
-                                f"Job {self.current_job_id} is no longer active"
-                            )
-                            self.clear_current_job()
+                            self.logger.info(f"Job {target_job_id} is no longer active")
+                            with self._lock:
+                                target_still_current = (
+                                    self.current_job_id == target_job_id
+                                )
+                            if target_still_current:
+                                self.clear_current_job()
                             return True
 
                     # Step 2: Submit cancellation request
-                    cancel_url = (
-                        f"https://gengo.com/t/jobs/cancel/{self.current_job_id}"
-                    )
+                    cancel_url = f"https://gengo.com/t/jobs/cancel/{target_job_id}"
 
                     # The cancellation likely requires a form submission
                     cancel_data = {
@@ -277,7 +282,7 @@ class JobCancellationManager:
                     }
 
                     self.logger.debug(
-                        f"Submitting cancellation for job {self.current_job_id}"
+                        f"Submitting cancellation for job {target_job_id}"
                     )
 
                     async with session.post(
@@ -300,31 +305,34 @@ class JobCancellationManager:
                                 or "job successfully cancelled" in content.lower()
                             ):
                                 self.logger.info(
-                                    f"✅ Successfully cancelled job {self.current_job_id}"
+                                    f"✅ Successfully cancelled job {target_job_id}"
                                 )
 
                                 # Update stats
                                 with self._lock:
                                     self.stats["successful_cancellations"] += 1
-                                    self.stats[
-                                        "total_lost_rewards"
-                                    ] += self.current_job_reward
+                                    self.stats["total_lost_rewards"] += target_reward
                                     # Record cancellation
                                     self.stats["jobs_saved"].append(
                                         {
-                                            "cancelled_job_id": self.current_job_id,
-                                            "cancelled_reward": self.current_job_reward,
+                                            "cancelled_job_id": target_job_id,
+                                            "cancelled_reward": target_reward,
                                             "timestamp": datetime.now().isoformat(),
                                             "job_duration": (
-                                                time.time() - self.job_start_time
-                                                if self.job_start_time
+                                                time.time() - target_start_time
+                                                if target_start_time
                                                 else 0
                                             ),
                                         }
                                     )
 
-                                # Clear tracking
-                                self.clear_current_job()
+                                # Do not clear a newer job that replaced the target.
+                                with self._lock:
+                                    target_still_current = (
+                                        self.current_job_id == target_job_id
+                                    )
+                                if target_still_current:
+                                    self.clear_current_job()
                                 self._save_job_state()
 
                                 return True
@@ -339,17 +347,20 @@ class JobCancellationManager:
                         elif response.status == 302 or response.status == 303:
                             # Redirect might indicate success
                             self.logger.info(
-                                f"✅ Job {self.current_job_id} cancelled (redirect response)"
+                                f"✅ Job {target_job_id} cancelled (redirect response)"
                             )
 
                             # Update stats
                             with self._lock:
                                 self.stats["successful_cancellations"] += 1
-                                self.stats[
-                                    "total_lost_rewards"
-                                ] += self.current_job_reward
+                                self.stats["total_lost_rewards"] += target_reward
 
-                            self.clear_current_job()
+                            with self._lock:
+                                target_still_current = (
+                                    self.current_job_id == target_job_id
+                                )
+                            if target_still_current:
+                                self.clear_current_job()
                             self._save_job_state()
 
                             return True
@@ -369,7 +380,7 @@ class JobCancellationManager:
                                 continue
                             else:
                                 self.logger.error(
-                                    f"Failed to cancel job {self.current_job_id}, "
+                                    f"Failed to cancel job {target_job_id}, "
                                     f"status: {response.status}"
                                 )
                                 with self._lock:

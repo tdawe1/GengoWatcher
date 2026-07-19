@@ -70,6 +70,7 @@ def test_start_web_server_reuses_runtime_watcher_for_tui_web_mode():
         logger=logger,
         watcher=watcher,
         start_watcher_thread=False,
+        terminal_logging=False,
     )
 
 
@@ -94,6 +95,7 @@ def test_start_web_server_starts_runtime_watcher_for_web_only_mode():
         )
 
     assert mock_start_web_server.call_args.kwargs["start_watcher_thread"] is True
+    assert mock_start_web_server.call_args.kwargs["terminal_logging"] is True
 
 
 def test_start_web_server_is_forced_for_ratatui_on_loopback():
@@ -202,6 +204,7 @@ def test_start_web_server_uses_saved_web_server_config_when_enabled():
         logger=logger,
         watcher=watcher,
         start_watcher_thread=False,
+        terminal_logging=False,
     )
 
 

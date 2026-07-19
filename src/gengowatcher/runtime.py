@@ -183,6 +183,7 @@ def _start_web_server_if_requested(
             logger=logger,
             watcher=watcher,
             start_watcher_thread=bool(getattr(args, "web_only", False)),
+            terminal_logging=bool(getattr(args, "web_only", False)),
         )
         time.sleep(1)
         startup_error = _web_server_startup_error(web_thread)

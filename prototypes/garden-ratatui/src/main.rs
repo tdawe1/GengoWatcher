@@ -42,8 +42,9 @@ fn main() -> io::Result<()> {
         )
     };
     let mut session = TerminalSession::new()?;
-    let result = run(&mut session.terminal, app, worker);
+    let result = run(&mut session.terminal, app, &worker);
     let restore_result = session.restore();
+    drop(worker);
     result.and(restore_result)
 }
 
@@ -186,7 +187,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     mut app: App,
-    worker: Option<LiveWorker>,
+    worker: &Option<LiveWorker>,
 ) -> io::Result<()> {
     while !app.should_quit {
         if let Some(worker) = worker.as_ref() {
@@ -206,11 +207,11 @@ fn run(
         };
         if let Some(action) = action {
             if let Some(worker) = worker.as_ref() {
-                if let Err(error) = worker.send(action) {
-                    app.apply_action_result(Err(error));
+                if let Err(error) = worker.send(action.clone()) {
+                    app.apply_action_result_for(&action, Err(error));
                 }
             } else if app.connection == ConnectionState::Demo {
-                app.apply_action_result(Ok("Demo mode · action was not sent".into()));
+                app.apply_action_result_for(&action, Ok("Demo mode · action was not sent".into()));
             }
         }
     }
@@ -221,7 +222,9 @@ fn drain_worker(worker: &LiveWorker, app: &mut App) {
     loop {
         match worker.try_recv() {
             Ok(Some(WorkerEvent::Snapshot(snapshot))) => app.apply_snapshot(*snapshot),
-            Ok(Some(WorkerEvent::ActionResult(result))) => app.apply_action_result(result),
+            Ok(Some(WorkerEvent::ActionResult { action, result })) => {
+                app.apply_action_result_for(&action, result)
+            }
             Ok(Some(WorkerEvent::ConnectionError(error))) | Err(error) => {
                 app.apply_error(error);
                 break;

@@ -38,11 +38,22 @@ impl fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApiClient {
     client: Client,
     base_url: String,
     token: String,
+}
+
+impl fmt::Debug for ApiClient {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ApiClient")
+            .field("client", &self.client)
+            .field("base_url", &self.base_url)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl ApiClient {
@@ -203,6 +214,16 @@ mod tests {
         net::TcpListener,
         thread,
     };
+
+    #[test]
+    fn debug_output_redacts_bearer_token() {
+        let client =
+            ApiClient::new("http://127.0.0.1:8000", "distinct-secret-token").expect("valid client");
+        let output = format!("{client:?}");
+
+        assert!(!output.contains("distinct-secret-token"));
+        assert!(output.contains("<redacted>"));
+    }
 
     #[test]
     fn rejects_empty_tokens_and_insecure_remote_http() {

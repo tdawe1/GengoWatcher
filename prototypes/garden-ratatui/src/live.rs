@@ -21,7 +21,10 @@ enum WorkerCommand {
 #[derive(Debug)]
 pub enum WorkerEvent {
     Snapshot(Box<DashboardData>),
-    ActionResult(Result<String, String>),
+    ActionResult {
+        action: UiAction,
+        result: Result<String, String>,
+    },
     ConnectionError(String),
 }
 
@@ -102,8 +105,11 @@ fn worker_loop(
         match commands.recv_timeout(timeout) {
             Ok(WorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(WorkerCommand::Action(action)) => {
-                let result = execute_action(&client, action);
-                if events.send(WorkerEvent::ActionResult(result)).is_err() {
+                let result = execute_action(&client, action.clone());
+                if events
+                    .send(WorkerEvent::ActionResult { action, result })
+                    .is_err()
+                {
                     break;
                 }
                 next_poll = Instant::now();

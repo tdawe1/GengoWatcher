@@ -984,8 +984,7 @@ class WebAPI:
             host = urlparse(url).hostname or "" if url else ""
             if self._download_host_allowed(host):
                 headers["Cookie"] = (
-                    f"myG_myGSession_={user_session}; "
-                    f"myG_rdsessID={user_session}"
+                    f"myG_myGSession_={user_session}; " f"myG_rdsessID={user_session}"
                 )
         user_agent = str(
             config_get(self.config, "Network", "browser_user_agent", "") or ""
@@ -1031,9 +1030,7 @@ class WebAPI:
             origin = url_origin(configured)
             # This also applies the browser worker's stricter origin syntax rules
             # (no credentials, path, query, or fragment) to the configured value.
-            if not is_allowed_browser_origin(
-                configured, allowed_origins=(configured,)
-            ):
+            if not is_allowed_browser_origin(configured, allowed_origins=(configured,)):
                 return None
         except ValueError:
             return None
@@ -2168,6 +2165,7 @@ class ManagedWebServer:
         logger: logging.Logger | None = None,
         watcher: GengoWatcher | None = None,
         start_watcher_thread: bool = True,
+        terminal_logging: bool = True,
     ):
         if (config is None) != (state is None):
             raise ValueError("config and state must be supplied together")
@@ -2181,6 +2179,7 @@ class ManagedWebServer:
         self.logger = logger or logging.getLogger("gengowatcher.web")
         self.watcher = watcher
         self.start_watcher_thread = start_watcher_thread
+        self.terminal_logging = terminal_logging
         self.server: uvicorn.Server | None = None
         self.thread: threading.Thread | None = None
         self.startup_error: BaseException | None = None
@@ -2193,13 +2192,15 @@ class ManagedWebServer:
             watcher=self.watcher,
             start_watcher_thread=self.start_watcher_thread,
         )
-        uvicorn_config = uvicorn.Config(
-            app,
-            host=self.host,
-            port=self.port,
-            reload=False,
-            log_level="info",
-        )
+        uvicorn_options: dict[str, Any] = {
+            "host": self.host,
+            "port": self.port,
+            "reload": False,
+            "log_level": "info",
+        }
+        if not self.terminal_logging:
+            uvicorn_options.update(log_config=None, access_log=False)
+        uvicorn_config = uvicorn.Config(app, **uvicorn_options)
         self.server = uvicorn.Server(uvicorn_config)
         self.thread = threading.Thread(
             target=self._run,
@@ -2242,6 +2243,7 @@ def start_web_server_thread(
     logger: Optional[logging.Logger] = None,
     watcher: Optional[GengoWatcher] = None,
     start_watcher_thread: bool = True,
+    terminal_logging: bool = True,
 ) -> threading.Thread:
     """Start the web server in a daemon thread and return the thread handle."""
     server = ManagedWebServer(
@@ -2252,6 +2254,7 @@ def start_web_server_thread(
         logger=logger,
         watcher=watcher,
         start_watcher_thread=start_watcher_thread,
+        terminal_logging=terminal_logging,
     )
     return server.start()
 

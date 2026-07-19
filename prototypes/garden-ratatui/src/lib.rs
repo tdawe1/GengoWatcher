@@ -135,6 +135,7 @@ pub struct App {
     pub connection: ConnectionState,
     ignored_job_ids: HashSet<String>,
     confirmation: Option<Confirmation>,
+    pending_destructive: Option<Confirmation>,
     nav_hitboxes: Vec<(Rect, View)>,
 }
 
@@ -173,6 +174,7 @@ impl App {
             connection,
             ignored_job_ids: HashSet::new(),
             confirmation: None,
+            pending_destructive: None,
             nav_hitboxes: Vec::with_capacity(View::ALL.len()),
         }
     }
@@ -192,11 +194,28 @@ impl App {
     }
 
     pub fn apply_action_result(&mut self, result: Result<String, String>) {
-        self.confirmation = None;
         match result {
             Ok(message) => self.status_message = message,
             Err(message) => self.status_message = format!("Action failed · {message}"),
         }
+    }
+
+    pub fn apply_action_result_for(&mut self, action: &UiAction, result: Result<String, String>) {
+        let matches_pending = matches!(
+            (&self.pending_destructive, action),
+            (Some(Confirmation::Accept(pending_id)), UiAction::AcceptJob(result_id))
+                if pending_id == result_id
+        ) || matches!(
+            (&self.pending_destructive, action),
+            (
+                Some(Confirmation::CancelCurrent),
+                UiAction::CancelCurrentJob
+            )
+        );
+        if matches_pending {
+            self.pending_destructive = None;
+        }
+        self.apply_action_result(result);
     }
 
     #[must_use]
@@ -212,6 +231,7 @@ impl App {
             return match key.code {
                 KeyCode::Char('y') | KeyCode::Enter => {
                     self.confirmation = None;
+                    self.pending_destructive = Some(confirmation.clone());
                     self.status_message = "Action submitted…".into();
                     match confirmation {
                         Confirmation::Accept(job_id) => Some(UiAction::AcceptJob(job_id)),
@@ -260,7 +280,9 @@ impl App {
                     (self.selected_history + 10).min(self.data.jobs.len().saturating_sub(1));
             }
             KeyCode::Char('a') if self.view == View::Jobs => {
-                if let Some(job) = self.selected_available_job() {
+                if self.pending_destructive.is_some() {
+                    self.status_message = "Wait for the pending action to finish…".into();
+                } else if let Some(job) = self.selected_available_job() {
                     self.confirmation = Some(Confirmation::Accept(job.id.clone()));
                 }
             }
@@ -296,7 +318,11 @@ impl App {
                 }));
             }
             KeyCode::Char('x') if self.view == View::Work => {
-                self.confirmation = Some(Confirmation::CancelCurrent);
+                if self.pending_destructive.is_some() {
+                    self.status_message = "Wait for the pending action to finish…".into();
+                } else {
+                    self.confirmation = Some(Confirmation::CancelCurrent);
+                }
             }
             _ => {}
         }
@@ -1321,15 +1347,16 @@ fn state_color(state: &str) -> ratatui::style::Color {
         || state.contains("unhealthy")
     {
         RED
-    } else if state.contains("stale")
-        || state.contains("connect")
-        || state.contains("check")
-        || state.contains("pause")
-        || state.contains("warn")
+    } else if state == "ok"
+        || state.contains("healthy")
+        || state.contains("live")
+        || state.contains("watch")
+        || state.contains("running")
+        || (state.contains("connected") && !state.contains("disconnected"))
     {
-        ORANGE
-    } else {
         LEAF
+    } else {
+        ORANGE
     }
 }
 
@@ -1640,7 +1667,21 @@ mod tests {
         let _ = app.handle_key(key(KeyCode::Char('a')));
         let action = app.handle_key(key(KeyCode::Char('y')));
         assert_eq!(action, Some(UiAction::AcceptJob("481519".into())));
-        assert_eq!(app.handle_key(key(KeyCode::Char('y'))), None);
+        assert_eq!(app.handle_key(key(KeyCode::Char('a'))), None);
+        assert!(app.confirmation.is_none());
+        assert!(app.pending_destructive.is_some());
+        app.apply_action_result_for(&action.expect("submitted action"), Ok("accepted".into()));
+        assert!(app.pending_destructive.is_none());
+    }
+
+    #[test]
+    fn unknown_health_states_are_not_green() {
+        for state in ["", "unknown", "offline", "disconnected", "disabled"] {
+            assert_eq!(state_color(state), ORANGE, "state {state:?}");
+        }
+        for state in ["Live", "Watching", "healthy", "running", "ok", "Connected"] {
+            assert_eq!(state_color(state), LEAF, "state {state:?}");
+        }
     }
 
     #[test]

@@ -22,10 +22,10 @@ coverage:
 	$(PYTHON) -m pytest --cov=.
 
 lint:
-	$(PYTHON) -m flake8 .
+	$(PYTHON) -m flake8 src tests scripts
 
 format:
-	$(PYTHON) -m black .
+	$(PYTHON) -m black src tests scripts
 
 run:
 	PYTHONPATH=src $(PYTHON) -m gengowatcher.main

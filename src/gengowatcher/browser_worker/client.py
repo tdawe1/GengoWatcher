@@ -127,4 +127,5 @@ class BrowserWorkerClient:
             self.send_command,
             payload,
             response_timeout=response_timeout,
+            _result_timeout_sec=response_timeout + 1.0,
         )
