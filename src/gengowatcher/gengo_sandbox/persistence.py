@@ -671,7 +671,7 @@ class AtomicJSONStore:
         finally:
             lock_file.close()
 
-    def __enter__(self) -> AtomicJSONStore:
+    def __enter__(self) -> "AtomicJSONStore":
         self._require_open()
         return self
 
