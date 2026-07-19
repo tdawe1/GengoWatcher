@@ -1,6 +1,6 @@
 # GengoWatcher
 
-> **Latest release: v2.9.4** — see [CHANGELOG.md](CHANGELOG.md) for what changed.
+> **Latest release: v3.0.0** — see [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 A terminal-based monitor for Gengo translation jobs with real-time notifications,
 browser-collected workbench observation, and an optional local web API for
@@ -15,7 +15,8 @@ handoff and integration.
 - **Native browser workbench observation** — watches your real Firefox session via DevTools, projects order/text/time-left/segment counts into state, and fires countdown alerts at 50% / 1h / low-time
 - **Webhook-backed API events** — signed inbound job discovery, signed outbound delivery with retry/backoff, JSONL audit log
 - **CAPTCHA solving** integration (2Captcha, Anti-Captcha)
-- **Modern TUI** built with Textual, with browser / audit / telemetry tabs
+- **Native Ratatui TUI** with live jobs, workflow, history, analytics, health, and event views
+- **Textual fallback** available with `--tui textual`
 - **Local web API** with bearer auth for file transfer, status, and webhook ingest
 
 ## Installation
@@ -23,14 +24,24 @@ handoff and integration.
 ```bash
 git clone https://github.com/tdawe1/GengoWatcher.git
 cd GengoWatcher
-git checkout v2.9.4  # or stay on main for the latest unreleased changes
+git checkout v3.0.0  # or stay on main for the latest unreleased changes
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e .
 ```
 
 That installs `gengowatcher` on your PATH, plus the release-friendly aliases
-`gengo-watcher` and `gengowatcher-browser-worker`.
+`gengo-watcher` and `gengowatcher-browser-worker`. This Python installation is
+sufficient for the legacy Textual interface.
+
+The native Ratatui client is optional. To use it, install Rust/Cargo and run:
+
+```bash
+cargo install --locked --path prototypes/garden-ratatui
+```
+
+That installs `gengowatcher-tui`. When working from a source checkout,
+GengoWatcher can also run the client through Cargo automatically.
 
 If you want a simpler repo-local launcher without relying on Python packaging, install the bundled script into `~/.local/bin`:
 
@@ -62,6 +73,10 @@ Or directly:
 ```
 
 On the first run, you'll be guided through configuration setup.
+The Ratatui interface is selected automatically when its binary or source
+manifest is available; packaged Python-only installs fall back to Textual. The
+Ratatui path starts the authenticated loopback API internally and never places
+the API token in process arguments.
 
 Interactive setup entrypoints:
 
@@ -69,6 +84,7 @@ Interactive setup entrypoints:
 gengowatcher --configure
 gengowatcher --setup-email
 gengowatcher --setup-website
+gengowatcher --tui textual  # use the legacy Textual interface
 ```
 
 Web-only mode (no TUI):
@@ -156,6 +172,19 @@ GET  /api/events/audit         # webhook audit log
 | `help` | Show all commands |
 | `exit` | Save state and quit |
 
+### Ratatui controls
+
+| Key | Action |
+|-----|--------|
+| `1`–`6`, `←` / `→` | Switch workspace |
+| `↑` / `↓` | Select an available job |
+| `a` | Confirm and accept the selected job |
+| `i` | Ignore the selected job for this TUI session |
+| `c` | Trigger an immediate watcher check |
+| `p` | Pause or resume monitoring |
+| `x` | Confirm cancellation of the active job |
+| `q`, `Ctrl+C` | Exit |
+
 ## Web API
 
 The built-in web API exposes status, jobs, events, file transfer, and webhook ingest. Endpoints live under `/api/...` and require a bearer token (auto-generated on first run; see `[WebServer].auth_token`).
@@ -200,6 +229,23 @@ Example:
 
 All three endpoints require the normal web API bearer token.
 
+### Data Privacy and Retention
+
+Customer source text and raw workbench payloads remain available in memory while
+an active workflow needs them, but they are removed from persisted `state.json`.
+Outbound webhooks also omit customer text and segments by default; set
+`[Webhooks].outbound_include_customer_content = true` only for a trusted target
+that explicitly requires that content.
+
+Webhook audit entries and stored job files default to 30-day retention via
+`[Webhooks].audit_retention_days` and
+`[TranslationWorkflow].file_retention_days`. Set either value to `0` to disable
+age-based cleanup. Size and line caps still apply to the webhook audit log.
+
+Runtime secrets may be supplied through the environment variables documented in
+`.env.example`. When secrets are stored in `config.toml`, GengoWatcher restricts
+the file to user-only permissions (`0600`) on supported platforms.
+
 ## Development
 
 ```bash
@@ -220,6 +266,10 @@ python -m flake8 .
 
 # Build a wheel + sdist
 python -m build
+
+# Build and validate the native TUI
+make build-ratatui
+make test-ratatui
 ```
 
 The Makefile wraps the same commands using `.venv/bin/python` when available.

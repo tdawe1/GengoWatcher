@@ -20,7 +20,12 @@ from .flows.accept_flow import (
 )
 from .models import JobIntent, JobSignal
 from .profile import BrowserProfileManager
-from .protocol import decode_message, encode_message
+from .protocol import (
+    canonicalize_job_url,
+    decode_message,
+    encode_message,
+    is_allowed_browser_origin,
+)
 from .registry import JobRegistry
 from .tabs import TabRoles
 from .telemetry import BrowserWorkerTelemetry, TimingEvent
@@ -44,6 +49,7 @@ def default_browser_worker_socket_path() -> Path:
 class BrowserRuntimeConfig:
     profile_path: Path
     headless: bool = False
+    browser_executable_path: Path | None = None
     seed_profile_path: Path | None = None
     socket_path: Path = field(default_factory=default_browser_worker_socket_path)
     artifacts_dir: Path = field(
@@ -51,6 +57,7 @@ class BrowserRuntimeConfig:
     )
     accept_timeout_ms: int = 12000
     auth_token: str = ""
+    sandbox_origin: str = ""
 
 
 class BrowserRuntime:
@@ -75,7 +82,8 @@ class BrowserRuntime:
         self._server: asyncio.AbstractServer | None = None
         self._page_observer_task: asyncio.Task | None = None
         self._captured_workbench_ids: OrderedDict[str, None] = OrderedDict()
-        self._workbench_payload_attempts: dict[str, int] = {}
+        self._workbench_payload_attempts: OrderedDict[str, int] = OrderedDict()
+        self._candidate_origins: OrderedDict[str, str] = OrderedDict()
 
     async def start(self) -> "BrowserRuntime":
         from playwright.async_api import async_playwright
@@ -88,16 +96,20 @@ class BrowserRuntime:
         # is the well-known incognito-mode mitigation; we pair it with an
         # init script that actively overwrites the property on every new
         # document (some page-side detectors re-check after navigation).
-        self.context = await self._playwright.chromium.launch_persistent_context(
-            str(self.config.profile_path),
-            headless=self.config.headless,
-            args=[
+        launch_options: dict[str, Any] = {
+            "headless": self.config.headless,
+            "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=AutomationControlled",
             ],
+        }
+        if self.config.browser_executable_path is not None:
+            launch_options["executable_path"] = str(self.config.browser_executable_path)
+        self.context = await self._playwright.chromium.launch_persistent_context(
+            str(self.config.profile_path),
+            **launch_options,
         )
-        await self.context.add_init_script(
-            """
+        await self.context.add_init_script("""
             (() => {
               const strip = () => {
                 try {
@@ -112,42 +124,11 @@ class BrowserRuntime:
                   window.chrome = window.chrome || {};
                   window.chrome.runtime = window.chrome.runtime || { id: undefined };
                 } catch (_) {}
-                // Hide the Playwright/CDP-specific runtime hooks that some
-                // fingerprinting libraries probe for.
-                try {
-                  delete window.__playwright_run;
-                  delete window.__pwInitScripts;
-                } catch (_) {}
-                // Notification permission defaults to "denied" under automation;
-                // surface "default" instead so it does not look bot-driven.
-                try {
-                  if (window.Notification && Notification.permission === 'denied') {
-                    Object.defineProperty(Notification, 'permission', {
-                      get: () => 'default',
-                      configurable: true,
-                    });
-                  }
-                } catch (_) {}
-                // Plugins / languages: real Firefox exposes a small fixed set;
-                // automate them by adding the standard en-US fallback only if
-                // the navigator already has at least one language.
-                try {
-                  if (navigator.languages && navigator.languages.length === 0) {
-                    Object.defineProperty(navigator, 'languages', {
-                      get: () => ['en-US', 'en'],
-                      configurable: true,
-                    });
-                  }
-                } catch (_) {}
               };
               strip();
               document.addEventListener('DOMContentLoaded', strip, { once: true });
-              // Re-strip on full document loads too (some pages hot-reload and
-              // forget the prior patches).
-              window.addEventListener('load', strip, { once: true });
             })();
-            """
-        )
+            """)
         await self.ensure_tabs()
         self._page_observer_task = asyncio.create_task(
             self._observe_browser_pages(),
@@ -168,14 +149,36 @@ class BrowserRuntime:
         self.tab_roles = TabRoles(hold_page=pages[0], candidate_page=pages[1])
         return self.tab_roles
 
-    async def prepare_candidate(self, intent) -> str:
+    async def prepare_candidate(self, intent: JobIntent) -> str:
         roles = await self.ensure_tabs()
-        self.registry.register(intent)
         await roles.candidate_page.goto(
             intent.canonical_url, wait_until="domcontentloaded"
         )
+        candidate_url = str(roles.candidate_page.url or "")
+        allowed_origins = (
+            (self.config.sandbox_origin,) if self.config.sandbox_origin else ()
+        )
+        try:
+            final_url = canonicalize_job_url(
+                candidate_url,
+                allowed_origins=allowed_origins,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"browser candidate navigation escaped the trusted job URL: {candidate_url}"
+            ) from exc
+        if final_url != intent.canonical_url:
+            raise ValueError(
+                "browser candidate navigation changed the trusted job origin or path: "
+                f"{candidate_url}"
+            )
+        self.registry.register(intent)
+        self._candidate_origins[intent.job_id] = intent.canonical_url
+        self._candidate_origins.move_to_end(intent.job_id)
+        while len(self._candidate_origins) > 200:
+            self._candidate_origins.popitem(last=False)
         self._record_event("candidate_ready", 0.0, job_id=intent.job_id)
-        return roles.candidate_page.url
+        return candidate_url
 
     async def handle_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._authorize_payload(payload)
@@ -188,7 +191,10 @@ class BrowserRuntime:
                 source=str(payload.get("source") or ""),
                 direct_url=str(payload.get("url") or ""),
                 metadata=dict(payload.get("metadata") or {}),
-            )
+            ),
+            allowed_origins=(
+                (self.config.sandbox_origin,) if self.config.sandbox_origin else ()
+            ),
         )
         candidate_url = await self.prepare_candidate(intent)
         response: dict[str, Any] = {
@@ -214,6 +220,7 @@ class BrowserRuntime:
         tracking = await self.wait_for_manual_acceptance_capture(
             intent.job_id,
             timeout_ms=timeout_ms,
+            expected_origin=intent.canonical_url,
         )
         response.update(tracking)
         return response
@@ -236,9 +243,11 @@ class BrowserRuntime:
     async def handle_client(self, reader, writer) -> None:
         response: dict[str, Any] | None = None
         try:
-            raw_payload = await reader.readline()
+            raw_payload = await asyncio.wait_for(reader.readline(), timeout=5.0)
             if not raw_payload:
                 return
+            if len(raw_payload) > 64 * 1024:
+                raise ValueError("browser worker command exceeds 64 KiB")
 
             payload = decode_message(raw_payload)
             response = await self.handle_command(payload)
@@ -257,6 +266,7 @@ class BrowserRuntime:
         self._server = await asyncio.start_unix_server(
             self.handle_client,
             path=str(socket_path),
+            limit=64 * 1024,
         )
         self._secure_socket_file(socket_path)
         self._record_event("server_started", 0.0, socket_path=str(socket_path))
@@ -309,11 +319,17 @@ class BrowserRuntime:
             raise RuntimeError("another acceptance routine is already running")
         try:
             roles = await self.ensure_tabs()
+            expected_origin = self._candidate_origins.get(str(job_id))
+            if expected_origin is None:
+                raise RuntimeError(
+                    f"trusted candidate origin is unavailable for job {job_id}"
+                )
             await roles.candidate_page.click(accept_selector)
             workbench_url = await wait_for_workbench(
                 roles.candidate_page,
                 job_id,
                 timeout_ms=self.config.accept_timeout_ms,
+                expected_origin=expected_origin,
             )
             self._record_event(
                 "accept_succeeded", 0.0, job_id=job_id, url=workbench_url
@@ -341,12 +357,20 @@ class BrowserRuntime:
 
     async def _capture_workbench_page_if_ready(self, page) -> None:
         url = str(getattr(page, "url", "") or "")
+        allowed_origins = (
+            (self.config.sandbox_origin,) if self.config.sandbox_origin else ()
+        )
+        if not is_allowed_browser_origin(url, allowed_origins=allowed_origins):
+            return
         job_id = parse_workbench_job_id(url)
         if not job_id or job_id in self._captured_workbench_ids:
             return
 
         attempts = self._workbench_payload_attempts.get(job_id, 0)
         self._workbench_payload_attempts[job_id] = attempts + 1
+        self._workbench_payload_attempts.move_to_end(job_id)
+        while len(self._workbench_payload_attempts) > 200:
+            self._workbench_payload_attempts.popitem(last=False)
 
         payload = await extract_workbench_payload(page)
         if payload:
@@ -387,6 +411,7 @@ class BrowserRuntime:
         job_id: str,
         *,
         timeout_ms: int,
+        expected_origin: str,
     ) -> dict[str, Any]:
         roles = await self.ensure_tabs()
         try:
@@ -394,6 +419,7 @@ class BrowserRuntime:
                 roles.candidate_page,
                 job_id,
                 timeout_ms=timeout_ms,
+                expected_origin=expected_origin,
             )
         except PlaywrightTimeoutError:
             self._record_event(
