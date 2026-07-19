@@ -13,6 +13,15 @@ import datetime
 class AppState:
     STATE_FILE = "state.json"
     MAX_STORED_JOBS = 5000
+    MAX_SEEN_JOB_IDS = 50000
+    SENSITIVE_PERSISTED_JOB_KEYS = {
+        "_raw",
+        "source_text",
+        "accepted_source_text",
+        "segments",
+        "accepted_segments",
+        "accepted_target_text",
+    }
 
     def __init__(
         self,
@@ -26,7 +35,7 @@ class AppState:
         self.last_seen_rss_link = None  # New variable for RSS tracking
         self.last_seen_link = None  # General last job (for display, optional)
         self.total_new_entries_found = 0
-        self.seen_job_ids = collections.deque()  # Unbounded - no limit
+        self.seen_job_ids = collections.deque(maxlen=self.MAX_SEEN_JOB_IDS)
         self._sparkline_data = []
 
         # Job storage for web API
@@ -59,7 +68,8 @@ class AppState:
                             "total_new_entries_found", 0
                         )
                         self.seen_job_ids = collections.deque(
-                            state_data.get("seen_job_ids", [])
+                            state_data.get("seen_job_ids", []),
+                            maxlen=self.MAX_SEEN_JOB_IDS,
                         )
                         # Persist sparkline data across sessions
                         self._sparkline_data = state_data.get("sparkline_data", [])
@@ -157,7 +167,9 @@ class AppState:
                         "total_new_entries_found": self.total_new_entries_found,
                         "sparkline_data": self._sparkline_data.copy(),
                         "seen_job_ids": list(self.seen_job_ids),
-                        "jobs": self._jobs.copy(),  # Store jobs in state
+                        "jobs": [
+                            self._redact_job_for_persistence(job) for job in self._jobs
+                        ],
                     }
 
                 # Atomic write: write to temp file, then rename
@@ -179,6 +191,19 @@ class AppState:
                     raise
         except IOError as e:
             self.logger.exception(f"Error saving state to {self.STATE_FILE}: {e}")
+
+    @classmethod
+    def _redact_job_for_persistence(cls, value: Any) -> Any:
+        """Remove customer content while retaining workflow metadata."""
+        if isinstance(value, dict):
+            return {
+                key: cls._redact_job_for_persistence(item)
+                for key, item in value.items()
+                if key not in cls.SENSITIVE_PERSISTED_JOB_KEYS
+            }
+        if isinstance(value, list):
+            return [cls._redact_job_for_persistence(item) for item in value]
+        return value
 
     def get_recent_jobs(self, limit: int = 50) -> List[dict[str, Any]]:
         """Get recent jobs from storage."""

@@ -105,6 +105,7 @@ download_timeout_sec = 30.0
 download_max_bytes = 52428800
 download_allowed_hosts = ["gengo.com", ".gengo.com"]
 file_text_max_chars = 250000
+file_retention_days = 30
 
 [Webhooks]
 incoming_enabled = false
@@ -119,6 +120,7 @@ audit_enabled = true
 audit_log_path = "logs/webhooks.jsonl"
 audit_max_bytes = 1048576
 audit_max_lines = 5000
+audit_retention_days = 30
 outbound_enabled = false
 outbound_urls = []
 outbound_secret = ""
@@ -128,6 +130,7 @@ outbound_max_attempts = 3
 outbound_initial_delay_sec = 0.5
 outbound_max_delay_sec = 10.0
 outbound_verify_tls = true
+outbound_include_customer_content = false
 
 [AutoAccept]
 enabled = false

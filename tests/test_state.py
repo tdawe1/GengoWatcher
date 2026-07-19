@@ -328,3 +328,37 @@ def test_add_job_uses_index_and_prunes_old_entries(temp_state_file, monkeypatch)
     recent_ids = [job["id"] for job in app_state.get_recent_jobs(limit=10)]
     assert recent_ids == ["job-4", "job-3", "job-2"]
     assert app_state.add_job({"id": "job-4", "title": "Duplicate"}) is False
+
+
+def test_state_persistence_redacts_customer_content(temp_state_file):
+    app_state = state.AppState(
+        logger=logging.getLogger("test"), state_file_path=temp_state_file
+    )
+    app_state.add_job(
+        {
+            "id": "private-job",
+            "accepted_source_text": "customer source",
+            "source_text": "customer source",
+            "segments": [{"source_content": "customer source"}],
+            "accepted_workbench": {
+                "_raw": {"source_text": "customer source"},
+                "normalized": {"source_text": "customer source"},
+            },
+        }
+    )
+
+    app_state.save_state()
+
+    persisted = temp_state_file.read_text(encoding="utf-8")
+    assert "customer source" not in persisted
+    assert app_state.get_job("private-job")["accepted_source_text"] == "customer source"
+
+
+def test_seen_job_ids_are_bounded(temp_state_file, monkeypatch):
+    monkeypatch.setattr(state.AppState, "MAX_SEEN_JOB_IDS", 3)
+    app_state = state.AppState(
+        logger=logging.getLogger("test"), state_file_path=temp_state_file
+    )
+    app_state.seen_job_ids.extend([1, 2, 3, 4])
+
+    assert list(app_state.seen_job_ids) == [2, 3, 4]

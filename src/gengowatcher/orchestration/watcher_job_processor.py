@@ -190,11 +190,10 @@ def process_new_job(watcher, job_id, title, reward, url, source, source_meta=Non
             watcher.logger.info(
                 "Better opportunity detected - scheduling cancellation of current job before accepting new job"
             )
-            threading.Thread(
-                target=watcher._async_cancel_current_job_wrapper,
-                args=(job_data,),
-                daemon=True,
-            ).start()
+            watcher._cancellation_executor.submit(
+                watcher._async_cancel_current_job_wrapper,
+                job_data,
+            )
     except Exception as e:
         watcher.logger.error(f"Error while evaluating job cancellation: {e}")
 

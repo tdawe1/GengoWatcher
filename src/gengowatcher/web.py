@@ -2194,10 +2194,10 @@ def start_web_server_thread(
     host: str = "127.0.0.1",
     port: int = 8000,
     *,
-    config: Optional[AppConfig] = None,
-    state: Optional[AppState] = None,
-    logger: Optional[logging.Logger] = None,
-    watcher: Optional[GengoWatcher] = None,
+    config: AppConfig | None = None,
+    state: AppState | None = None,
+    logger: logging.Logger | None = None,
+    watcher: GengoWatcher | None = None,
     start_watcher_thread: bool = True,
 ) -> threading.Thread:
     """Start the web server in a daemon thread and return the thread handle."""

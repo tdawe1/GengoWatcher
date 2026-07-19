@@ -403,7 +403,7 @@ def test_run_command_api_status_reports_url():
     app = _make_command_app(values)
     app._api_port_open = MagicMock(return_value=False)
 
-    app._run_command("api status")
+    app._run_api_command(["status"])
 
     app._textual_log_handler.write_log.assert_any_call(
         "API stopped; enabled=False; url=http://127.0.0.1:8765",
@@ -469,7 +469,7 @@ def test_run_command_api_start_saves_config_and_starts_server():
         "gengowatcher.web.start_web_server_thread",
         return_value=api_thread,
     ) as mock_start_web_server:
-        app._run_command("api start")
+        app._run_api_command(["start"])
 
     assert values["WebServer"]["enabled"] is True
     app.config.set.assert_called_with("WebServer", "enabled", True)
@@ -497,7 +497,7 @@ def test_run_command_api_stop_stops_owned_server_and_disables_config():
     app._api_server = api_server
     app._api_thread = MagicMock()
 
-    app._run_command("api stop")
+    app._run_api_command(["stop"])
 
     assert values["WebServer"]["enabled"] is False
     api_server.stop.assert_called_once_with(timeout=5.0)
@@ -505,3 +505,17 @@ def test_run_command_api_stop_stops_owned_server_and_disables_config():
         "API stopped and disabled.",
         logging.INFO,
     )
+
+
+def test_run_command_dispatches_api_work_off_ui_thread():
+    app = _make_command_app(
+        {"WebServer": {"enabled": False, "host": "127.0.0.1", "port": 8765}}
+    )
+
+    with patch("gengowatcher.ui_textual.threading.Thread") as thread_class:
+        app._run_command("api status")
+
+    assert thread_class.call_args.kwargs["target"] == app._run_api_command
+    assert thread_class.call_args.kwargs["args"] == (["status"],)
+    assert thread_class.call_args.kwargs["daemon"] is True
+    thread_class.return_value.start.assert_called_once()

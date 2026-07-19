@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 
 try:
     from ..email_monitor import EmailMonitor
@@ -134,40 +133,45 @@ def run_native_browser_listener(watcher):
     from queue import Empty
 
     watcher.logger.info("Native browser listener starting...")
-    while not watcher.shutdown_event.is_set():
-        try:
-            # Poll native listener (publishes events)
-            if hasattr(watcher, "_native_listener"):
-                watcher._native_listener.run_once()
+    try:
+        while not watcher.shutdown_event.is_set():
+            try:
+                if hasattr(watcher, "_native_listener"):
+                    watcher._native_listener.run_once()
 
-            # Drain events into state projector
-            if hasattr(watcher, "_state_projector"):
-                try:
-                    from ..event_bus import get_native_events_queue
-                    from ..events import EventEnvelope
+                if hasattr(watcher, "_state_projector"):
+                    try:
+                        from ..event_bus import get_native_events_queue
+                        from ..events import EventEnvelope
 
-                    q = get_native_events_queue()
-                    while True:
-                        try:
-                            event_dict = q.get_nowait()
-                            event = EventEnvelope.from_dict(event_dict)
-                            watcher._state_projector.project(event)
-                        except Empty:
-                            break
-                        except Exception as e:
-                            watcher.logger.debug(f"Event projection error: {e}")
-                except Exception as e:
-                    watcher.logger.debug(f"Event bus drain error: {e}")
-
-        except Exception as e:
-            watcher.logger.debug(f"Native browser listener error: {e}")
-        capture_interval = (
-            getattr(watcher, "_native_listener", None).capture_interval
-            if hasattr(watcher, "_native_listener")
-            and hasattr(getattr(watcher, "_native_listener", None), "capture_interval")
-            else 0.75
-        )
-        time.sleep(capture_interval)
+                        q = get_native_events_queue()
+                        while True:
+                            try:
+                                event_dict = q.get_nowait()
+                                event = EventEnvelope.from_dict(event_dict)
+                                watcher._state_projector.project(event)
+                            except Empty:
+                                break
+                            except Exception as exc:
+                                watcher.logger.warning(
+                                    "Event projection error: %s", exc, exc_info=True
+                                )
+                    except Exception as exc:
+                        watcher.logger.warning(
+                            "Event bus drain error: %s", exc, exc_info=True
+                        )
+            except Exception as exc:
+                watcher.logger.warning(
+                    "Native browser listener error: %s", exc, exc_info=True
+                )
+            listener = getattr(watcher, "_native_listener", None)
+            capture_interval = getattr(listener, "capture_interval", 0.75)
+            watcher.shutdown_event.wait(capture_interval)
+    finally:
+        listener = getattr(watcher, "_native_listener", None)
+        close = getattr(listener, "close", None)
+        if callable(close):
+            close()
 
 
 __all__ = [

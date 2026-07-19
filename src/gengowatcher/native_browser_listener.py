@@ -9,13 +9,13 @@ No script injection beyond reading already-loaded page state. No HTTP scraping.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import urllib.parse
 from typing import Any
 
-from . import _async_utils
 from .events import EventEnvelope, EventType
 from .event_bus import publish_native_event
 from .workbench_payload import normalize_workbench_payload
@@ -126,7 +126,7 @@ class _RdpConnection:
             try:
                 await self.client.websocket.close()
             except Exception as e:
-                logger.debug(f"Error closing RDP websocket: {e}")
+                logger.warning("Error closing RDP websocket: %s", e, exc_info=True)
 
     async def list_tabs(self) -> list[dict[str, Any]]:
         response = await _firefox_rdp_list_tabs(self.client)
@@ -191,6 +191,7 @@ class NativeBrowserListener:
         self._last_visible_payload: dict[str, Any] | None = None
         self._last_status_seconds: int | None = None
         self._last_status_collection_id: str | None = None
+        self._runner: asyncio.Runner | None = None
 
     def _reset_workbench_state(self) -> None:
         self._last_collection_id = None
@@ -208,11 +209,19 @@ class NativeBrowserListener:
         self.running = False
         logger.info("Native browser listener stopped")
 
+    def close(self) -> None:
+        """Release the persistent asyncio runner used by synchronous polls."""
+        if self._runner is not None:
+            self._runner.close()
+            self._runner = None
+
     def _poll(self) -> None:
         """Single poll iteration."""
         self.last_poll_ts = time.time()
         try:
-            _async_utils.run_coroutine_sync(self._poll_async)
+            if self._runner is None:
+                self._runner = asyncio.Runner()
+            self._runner.run(asyncio.wait_for(self._poll_async(), timeout=30.0))
             self.last_success_ts = time.time()
             self.last_error = ""
         except Exception as e:
@@ -344,18 +353,18 @@ class NativeBrowserListener:
         """Main listener loop."""
         self.start()
         import random
-        import time
 
-        while self.running:
-            try:
-                self._poll()
-            except Exception as e:
-                logger.error(f"Native browser listener error: {e}", exc_info=True)
-            # Jitter the poll interval ±150ms around the configured value so a
-            # fixed 750ms cadence isn't observable from page-side timing.
-            base = self.capture_interval
-            jitter = random.uniform(-0.15, 0.15)
-            time.sleep(max(0.2, base + jitter))
+        try:
+            while self.running:
+                try:
+                    self._poll()
+                except Exception as e:
+                    logger.error(f"Native browser listener error: {e}", exc_info=True)
+                base = self.capture_interval
+                jitter = random.uniform(-0.15, 0.15)
+                time.sleep(max(0.2, base + jitter))
+        finally:
+            self.close()
 
     def run_once(self) -> None:
         """Single poll - for testing."""

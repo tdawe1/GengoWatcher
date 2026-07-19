@@ -75,7 +75,7 @@ class BrowserRuntime:
         self._server: asyncio.AbstractServer | None = None
         self._page_observer_task: asyncio.Task | None = None
         self._captured_workbench_ids: OrderedDict[str, None] = OrderedDict()
-        self._workbench_payload_attempts: dict[str, int] = {}
+        self._workbench_payload_attempts: OrderedDict[str, int] = OrderedDict()
 
     async def start(self) -> "BrowserRuntime":
         from playwright.async_api import async_playwright
@@ -96,8 +96,7 @@ class BrowserRuntime:
                 "--disable-features=AutomationControlled",
             ],
         )
-        await self.context.add_init_script(
-            """
+        await self.context.add_init_script("""
             (() => {
               const strip = () => {
                 try {
@@ -146,8 +145,7 @@ class BrowserRuntime:
               // forget the prior patches).
               window.addEventListener('load', strip, { once: true });
             })();
-            """
-        )
+            """)
         await self.ensure_tabs()
         self._page_observer_task = asyncio.create_task(
             self._observe_browser_pages(),
@@ -347,6 +345,9 @@ class BrowserRuntime:
 
         attempts = self._workbench_payload_attempts.get(job_id, 0)
         self._workbench_payload_attempts[job_id] = attempts + 1
+        self._workbench_payload_attempts.move_to_end(job_id)
+        while len(self._workbench_payload_attempts) > 200:
+            self._workbench_payload_attempts.popitem(last=False)
 
         payload = await extract_workbench_payload(page)
         if payload:

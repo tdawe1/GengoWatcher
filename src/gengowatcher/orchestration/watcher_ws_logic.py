@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 
 from websockets.asyncio.client import connect
@@ -115,7 +116,8 @@ async def websocket_logic(watcher):
                 ws_url,
                 additional_headers=headers,
                 open_timeout=20,
-                ping_interval=20,
+                # The measured heartbeat below owns ping timing and metrics.
+                ping_interval=None,
                 ping_timeout=10,
             ) as websocket:
                 connected_at = time.time()
@@ -162,10 +164,12 @@ async def websocket_logic(watcher):
                     """
                     while True:
                         try:
-                            watcher.websocket_next_ping_ts = (
-                                time.time() + HEARTBEAT_INTERVAL
+                            interval = max(
+                                1.0,
+                                HEARTBEAT_INTERVAL + random.uniform(-5.0, 5.0),
                             )
-                            await asyncio.sleep(HEARTBEAT_INTERVAL)
+                            watcher.websocket_next_ping_ts = time.time() + interval
+                            await asyncio.sleep(interval)
                             t0 = time.perf_counter()
                             watcher.logger.debug("WebSocket: Sending heartbeat ping...")
                             watcher._capture_raw_ws_message("PING", direction="send")

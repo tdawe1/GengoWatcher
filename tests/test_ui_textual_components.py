@@ -362,6 +362,9 @@ class TestStatusRow:
         )
 
         class TestApp(App):
+            def _api_is_running(self):
+                return True
+
             def compose(self):
                 yield StatusRow(watcher=mock_watcher)
 

@@ -15,6 +15,7 @@ import time
 import os
 import datetime
 import re
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -53,28 +54,30 @@ def log_all_entries(watcher: "GengoWatcher", entries) -> None:
     """
     if not entries:
         return
-    log_file = getattr(watcher, "_all_entries_log_file", None)
-    if log_file is None or log_file.closed:
-        return
-    if not getattr(watcher, "_csv_writer", None):
-        return
-    timestamp = datetime.datetime.now().isoformat()
-    try:
-        for entry in entries:
-            watcher._csv_writer.writerow(
-                [
-                    timestamp,
-                    entry.get("title", "N/A"),
-                    extract_reward(entry),
-                    entry.get("link", "N/A"),
-                    entry.get("summary", "N/A"),
-                ]
+    csv_lock = getattr(watcher, "_csv_lock", nullcontext())
+    with csv_lock:
+        log_file = getattr(watcher, "_all_entries_log_file", None)
+        if log_file is None or log_file.closed:
+            return
+        if not getattr(watcher, "_csv_writer", None):
+            return
+        timestamp = datetime.datetime.now().isoformat()
+        try:
+            for entry in entries:
+                watcher._csv_writer.writerow(
+                    [
+                        timestamp,
+                        entry.get("title", "N/A"),
+                        extract_reward(entry),
+                        entry.get("link", "N/A"),
+                        entry.get("summary", "N/A"),
+                    ]
+                )
+            log_file.flush()
+        except (OSError, ValueError) as error:
+            watcher.logger.debug(
+                "CSV entry logging stopped while the file was closing: %s", error
             )
-        log_file.flush()
-    except (OSError, ValueError) as error:
-        watcher.logger.debug(
-            "CSV entry logging stopped while the file was closing: %s", error
-        )
 
 
 def process_feed_entries(watcher, entries):

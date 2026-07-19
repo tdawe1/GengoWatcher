@@ -320,6 +320,109 @@ def test_webhook_audit_log_rotates_by_size(tmp_path):
     assert len(lines) <= 2
 
 
+def test_webhook_audit_redacts_customer_content(tmp_path):
+    audit = WebhookAuditLogger(
+        path=tmp_path / "webhooks.jsonl",
+        logger=logging.getLogger("test.webhooks.audit"),
+        enabled=True,
+        debug_enabled=True,
+    )
+
+    entry = audit.record(
+        direction="outgoing",
+        stage="queued",
+        payload={
+            "job_id": "123",
+            "source_text": "private customer text",
+            "segments": [{"source_content": "private customer text"}],
+            "accepted_segments": [
+                {
+                    "target_content": "private target text",
+                    "glossary": ["private glossary term"],
+                }
+            ],
+            "accepted_target_text": "private accepted target",
+        },
+        raw_body=json.dumps(
+            {
+                "accepted_target_text": "private accepted target",
+                "source_text": "private customer text",
+                "job_id": "123",
+            }
+        ).encode(),
+    )
+
+    serialized = json.dumps(entry)
+    assert "private customer text" not in serialized
+    assert "private target text" not in serialized
+    assert "private glossary term" not in serialized
+    assert "private accepted target" not in serialized
+    assert entry["payload"] == {"job_id": "123"}
+
+
+def test_webhook_audit_removes_entries_older_than_retention(tmp_path):
+    path = tmp_path / "webhooks.jsonl"
+    now = time.time()
+    path.write_text(
+        json.dumps({"ts": now - 3 * 86400, "event_id": "old"})
+        + "\n"
+        + json.dumps({"ts": now, "event_id": "new"})
+        + "\n",
+        encoding="utf-8",
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("not-json\n")
+        handle.write(json.dumps({"event_id": "unknown-age"}) + "\n")
+    audit = WebhookAuditLogger(
+        path=path,
+        logger=logging.getLogger("test.webhooks.audit"),
+        enabled=True,
+        retention_days=1,
+        _records_since_retention_check=99,
+    )
+
+    audit.record(direction="incoming", stage="received", event_id="latest")
+
+    content = path.read_text(encoding="utf-8")
+    assert '"event_id": "old"' not in content
+    assert '"event_id": "new"' in content
+    assert "not-json" in content
+    assert '"event_id": "unknown-age"' in content
+
+
+def test_outbound_webhook_redacts_customer_content_by_default(tmp_path):
+    audit = WebhookAuditLogger(
+        path=tmp_path / "outbound.jsonl",
+        logger=logging.getLogger("test.webhooks.outbound"),
+        enabled=False,
+    )
+    dispatcher = WebhookDispatcher(
+        targets=[OutboundWebhookTarget(name="target", url="https://example.test")],
+        logger=logging.getLogger("test.webhooks.dispatcher"),
+        audit_logger=audit,
+    )
+    dispatcher._deliver = MagicMock()
+
+    dispatcher.emit(
+        "job.accepted",
+        {
+            "job_id": "123",
+            "source_text": "private customer text",
+            "accepted_segments": [
+                {
+                    "target_content": "private target text",
+                    "glossary": ["private glossary term"],
+                }
+            ],
+            "accepted_target_text": "private accepted target",
+        },
+        background=False,
+    )
+
+    envelope = dispatcher._deliver.call_args.args[2]
+    assert envelope["payload"] == {"job_id": "123"}
+
+
 def test_outbound_dispatcher_signs_delivers_and_audits_response(tmp_path):
     audit = WebhookAuditLogger(
         path=tmp_path / "outbound.jsonl",
