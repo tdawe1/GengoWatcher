@@ -154,7 +154,10 @@ def reconcile_rss_available_jobs(watcher, entries) -> int:
         if not job_id:
             continue
         if job_id in live_ids:
-            if str(job.get("lifecycle_state") or "").strip().lower() == "gone":
+            if (
+                not job.get("accepted")
+                and str(job.get("lifecycle_state") or "").strip().lower() == "gone"
+            ):
                 if update_job(
                     job_id,
                     {
