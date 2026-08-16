@@ -827,10 +827,14 @@ class WebAPI:
             }
 
         except Exception as e:
-            self.logger.exception(f"Error accepting job {job_id}: {e}")
+            self.logger.exception(
+                "Unexpected error accepting job '%s': %s",
+                job_id,
+                e,
+            )
             return {
                 "success": False,
-                "message": f"Failed to accept job {job_id}: {e}",
+                "message": "Internal job acceptance error",
             }
 
     @staticmethod
@@ -1690,8 +1694,12 @@ async def accept_job(job_id: str, authenticated: bool = Depends(verify_auth)):
     except HTTPException:
         raise
     except Exception as e:
-        api_instance.logger.exception(f"Error accepting job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        api_instance.logger.exception(
+            "Unexpected error accepting job '%s': %s",
+            job_id,
+            e,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/jobs/cancel")

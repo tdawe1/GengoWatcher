@@ -854,6 +854,10 @@ class TestEdgeCases:
 
         result = await web_api.accept_job("123")
         assert result is False
+        outcome = await web_api.accept_job_with_reason("123")
+        assert outcome["success"] is False
+        assert outcome["message"] == "Internal job acceptance error"
+        assert "Acceptance error" not in outcome["message"]
 
 
 class TestRegressionCases:
