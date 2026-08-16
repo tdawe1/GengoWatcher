@@ -335,7 +335,7 @@ def _run_ratatui_process(
     console: Console,
     logger: logging.Logger,
 ) -> None:
-    command = _find_ratatui_command()
+    command = _find_ratatui_command(allow_cargo=True)
     if command is None:
         raise RuntimeError(
             "Ratatui TUI binary and Cargo were not found. "
@@ -369,7 +369,7 @@ def _run_ratatui_process(
         raise RuntimeError(f"Ratatui TUI exited with status {result.returncode}")
 
 
-def _find_ratatui_command() -> list[str] | None:
+def _find_ratatui_binary() -> list[str] | None:
     configured = os.getenv("GENGOWATCHER_RATATUI_BIN", "").strip()
     if configured:
         path = Path(configured).expanduser()
@@ -385,8 +385,14 @@ def _find_ratatui_command() -> list[str] | None:
         candidate = target_dir / profile / "gengowatcher-tui"
         if candidate.is_file():
             return [str(candidate)]
+    return None
 
-    cargo = shutil.which("cargo")
-    if cargo and RATATUI_MANIFEST.is_file():
-        return [cargo, "run", "--manifest-path", str(RATATUI_MANIFEST), "--"]
+
+def _find_ratatui_command(*, allow_cargo: bool = False) -> list[str] | None:
+    if command := _find_ratatui_binary():
+        return command
+    if allow_cargo:
+        cargo = shutil.which("cargo")
+        if cargo and RATATUI_MANIFEST.is_file():
+            return [cargo, "run", "--manifest-path", str(RATATUI_MANIFEST), "--"]
     return None

@@ -25,9 +25,10 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   topology, state/event flow, browser boundaries, and persistence invariants.
 
 ### Changed
-- Ratatui is now the preferred terminal interface when its client is available.
-  The Python runtime starts the authenticated loopback API and launches it
-  automatically; Python-only installs fall back to Textual.
+- Ratatui is now the preferred terminal interface when a `gengowatcher-tui`
+  binary is available. The Python runtime starts the authenticated loopback API
+  and launches it automatically; Python-only installs fall back to Textual.
+  `gengowatcher --tui ratatui` may compile through Cargo when no binary exists.
 - The existing Textual interface remains available through `--tui textual`.
 - API status responses now expose the watcher's paused state.
 - Browser-worker command validation now supports an explicitly configured,
@@ -36,6 +37,36 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Browser-worker acceptance tracking captures and normalizes accepted workbench
   payloads for the watcher telemetry path.
 - Python dependencies are locked in `uv.lock` for reproducible environments.
+- `make coverage` sets `PYTHONPATH=src`. `make lint` and `make format`
+  include `prototypes/`.
+
+### Fixed
+- Web-only mode now starts the shared watcher thread. Combined TUI/API
+  execution still avoids a second monitor loop.
+- API startup no longer crashes with `UnboundLocalError` when generating a
+  missing `[WebServer] auth_token` for a shared-watcher runtime.
+- The repo `bin/gengowatcher` launcher sets `PYTHONPATH` to `src` when using
+  `.venv`, so the package is importable without an editable install.
+- RSS jobs that leave the live feed are marked `gone` instead of remaining
+  available forever. The Ratatui client no longer treats `gone`,
+  `unavailable`, or `missed` jobs as open listings.
+- Manual accept through `/api/jobs/{id}/accept` now inspects
+  `AcceptResult.success` instead of treating the result object as success.
+  Gone or otherwise unavailable jobs are rejected with a 409 and a reason
+  the TUI can display.
+- The watcher now forwards `[BrowserWorker].sandbox_origin` into
+  `BrowserWorkerClient`, so sandbox job URLs are canonicalized by the
+  coordinator instead of rejected as unsupported hosts.
+- Ratatui accept/cancel requests use a 20s timeout so they can outlive the
+  default 12s acceptance attempt. Snapshot GETs stay on the 4s timeout.
+- A dropped API connection clears a pending accept/cancel lock so `a`/`x`
+  can be retried after reconnect.
+- Dismissing the overview alert no longer suppresses banners for later
+  newly available jobs.
+- Automatic Ratatui selection no longer treats a source `Cargo.toml` plus
+  `cargo` on PATH as “available”; that path is reserved for `--tui ratatui`.
+- Sandbox `GET /t/workbench/{id}` no longer serves
+  `__GENGO_WORKBENCH_DATA__` for still-available collections.
 
 ### Removed
 ### Security
@@ -45,6 +76,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   addresses.
 - Sandbox servers reject non-loopback binding unless explicitly acknowledged;
   browser connections enforce a matching loopback Origin.
+- `BrowserRuntimeConfig.sandbox_origin` is validated and canonicalized at
+  construction: only HTTP(S) loopback origins without credentials, path,
+  query, or fragment are accepted.
+- Sandbox `AtomicJSONStore` serializes load and write with an instance lock
+  and suppresses `OSError` during temp-file cleanup so the original write
+  failure is re-raised.
 
 ### Tests
 - Added Python coverage for backend selection, Ratatui process lifecycle,
@@ -53,6 +90,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rendering, confirmation flows, and terminal-size variants.
 - Added sandbox route, lifecycle, CAT-service, persistence, origin-validation,
   browser-worker protocol, and opt-in Chromium acceptance coverage.
+- Added RSS feed-reconcile coverage, accept-result and gone-job API tests,
+  sandbox-origin construction tests, and notify-send error-path tests.
 
 ## [2.9.4] - 2026-07-08
 

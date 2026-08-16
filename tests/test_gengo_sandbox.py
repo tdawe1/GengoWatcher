@@ -26,6 +26,15 @@ def make_client() -> httpx.AsyncClient:
 
 
 @pytest.mark.asyncio
+async def test_workbench_html_redirects_available_collections() -> None:
+    async with make_client() as client:
+        response = await client.get("/t/workbench/34176080", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == "/t/jobs/details/34176080"
+        assert "window.__GENGO_WORKBENCH_DATA__" not in response.text
+
+
+@pytest.mark.asyncio
 async def test_available_details_accept_and_workbench_payload_flow() -> None:
     async with make_client() as client:
         available = await client.get("/t/jobs/status/available/realtime")
@@ -489,7 +498,11 @@ async def test_adversarial_custom_text_is_safe_in_html_and_inline_json() -> None
         assert 'title="Japanese to English — &quot; onmouseover=' in listing
         assert 'title="Japanese to English — " onmouseover=' not in listing
 
-        workbench = (await client.get("/t/workbench/9200")).text
+        accepted = await client.post(
+            "/t/jobs/details/9200/accept", follow_redirects=False
+        )
+        assert accepted.status_code == 303
+        workbench = (await client.get(accepted.headers["location"])).text
         script_data = workbench.split("window.__GENGO_WORKBENCH_DATA__=", 1)[1].split(
             ";\n", 1
         )[0]

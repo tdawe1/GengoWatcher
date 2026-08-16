@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gengowatcher.runtime import (
+    _find_ratatui_command,
     _is_tcp_port_available,
     _run_tui,
     _run_web_only,
@@ -459,3 +460,59 @@ def test_run_tui_cleans_up_and_exits_nonzero_when_ratatui_fails():
     assert exit_info.value.code == 1
     watcher.handle_exit.assert_called_once()
     console.print.assert_any_call("[error]Terminal UI failed: binary missing[/]")
+
+
+def test_find_ratatui_command_requires_binary_for_auto_select(tmp_path, monkeypatch):
+    monkeypatch.delenv("GENGOWATCHER_RATATUI_BIN", raising=False)
+    monkeypatch.setattr(
+        "gengowatcher.runtime.shutil.which",
+        lambda name: "/usr/bin/cargo" if name == "cargo" else None,
+    )
+    monkeypatch.setattr(
+        "gengowatcher.runtime.RATATUI_MANIFEST", tmp_path / "Cargo.toml"
+    )
+    (tmp_path / "Cargo.toml").write_text("[package]\nname = 'garden-ratatui'\n")
+
+    assert _find_ratatui_command() is None
+
+    command = _find_ratatui_command(allow_cargo=True)
+    assert command[:3] == ["/usr/bin/cargo", "run", "--manifest-path"]
+    assert command[3] == str(tmp_path / "Cargo.toml")
+    assert command[4] == "--"
+
+
+def test_run_tui_auto_select_uses_textual_when_only_cargo_is_available(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("GENGOWATCHER_RATATUI_BIN", raising=False)
+    monkeypatch.setattr(
+        "gengowatcher.runtime.shutil.which",
+        lambda name: "/usr/bin/cargo" if name == "cargo" else None,
+    )
+    monkeypatch.setattr(
+        "gengowatcher.runtime.RATATUI_MANIFEST", tmp_path / "Cargo.toml"
+    )
+    (tmp_path / "Cargo.toml").write_text("[package]\nname = 'garden-ratatui'\n")
+
+    args = Namespace(tui=None)
+    watcher = MagicMock()
+    watcher.shutdown_event.is_set.return_value = False
+
+    with (
+        patch("gengowatcher.runtime.StatsManager"),
+        patch("gengowatcher.runtime.GengoWatcherApp") as mock_app_class,
+        patch("gengowatcher.runtime.threading.Thread"),
+        patch("gengowatcher.runtime._run_ratatui_process") as mock_ratatui,
+    ):
+        _run_tui(
+            args,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            watcher,
+        )
+
+    mock_app_class.assert_called_once()
+    mock_ratatui.assert_not_called()

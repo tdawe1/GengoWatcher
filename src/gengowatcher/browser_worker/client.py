@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from .._async_utils import run_coroutine_sync
-from .protocol import build_job_url_command, decode_message, encode_message
+from .protocol import (
+    build_job_url_command,
+    decode_message,
+    encode_message,
+    normalize_sandbox_origin,
+)
 
 
 class BrowserWorkerClient:
@@ -23,7 +28,7 @@ class BrowserWorkerClient:
         self.logger = logger or logging.getLogger(__name__)
         self.response_timeout = response_timeout
         self.auth_token = str(auth_token or "")
-        self.sandbox_origin = str(sandbox_origin or "").strip()
+        self.sandbox_origin = normalize_sandbox_origin(sandbox_origin)
 
     def build_job_url_command(
         self,

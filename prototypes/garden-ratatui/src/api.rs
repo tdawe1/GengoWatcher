@@ -15,7 +15,8 @@ use crate::model::{
     WatcherStatus,
 };
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(4);
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(4);
+const ACTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiError {
@@ -86,8 +87,8 @@ impl ApiClient {
         let path = url.path().trim_end_matches('/').to_owned();
         url.set_path(&path);
         let client = Client::builder()
-            .connect_timeout(DEFAULT_TIMEOUT)
-            .timeout(DEFAULT_TIMEOUT)
+            .connect_timeout(SNAPSHOT_TIMEOUT)
+            .timeout(SNAPSHOT_TIMEOUT)
             .build()
             .map_err(|error| ApiError::new(format!("failed to build API client: {error}")))?;
         Ok(Self {
@@ -123,11 +124,15 @@ impl ApiClient {
         {
             return Err(ApiError::new("job ID contains unsupported characters"));
         }
-        self.post_json(&format!("/api/jobs/{job_id}/accept"), &Value::Null)
+        self.post_json_with_timeout(
+            &format!("/api/jobs/{job_id}/accept"),
+            &Value::Null,
+            ACTION_TIMEOUT,
+        )
     }
 
     pub fn cancel_current_job(&self) -> Result<CommandResponse, ApiError> {
-        self.post_json("/api/jobs/cancel", &Value::Null)
+        self.post_json_with_timeout("/api/jobs/cancel", &Value::Null, ACTION_TIMEOUT)
     }
 
     fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
@@ -145,9 +150,19 @@ impl ApiClient {
         path: &str,
         body: &B,
     ) -> Result<T, ApiError> {
+        self.post_json_with_timeout(path, body, SNAPSHOT_TIMEOUT)
+    }
+
+    fn post_json_with_timeout<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+        timeout: Duration,
+    ) -> Result<T, ApiError> {
         let response = self
             .client
             .post(self.endpoint(path))
+            .timeout(timeout)
             .bearer_auth(&self.token)
             .json(body)
             .send()
@@ -237,6 +252,12 @@ mod tests {
         assert!(ApiClient::new("http://127.0.0.1:8000", "token").is_ok());
         assert!(ApiClient::new("http://[::1]:8000", "token").is_ok());
         assert!(ApiClient::new("http://localhost:8000", "token").is_ok());
+    }
+
+    #[test]
+    fn action_timeout_covers_default_accept_attempt() {
+        assert!(ACTION_TIMEOUT > SNAPSHOT_TIMEOUT);
+        assert!(ACTION_TIMEOUT >= Duration::from_secs(12).saturating_add(Duration::from_secs(5)));
     }
 
     #[test]

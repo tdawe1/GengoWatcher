@@ -180,15 +180,28 @@ impl App {
     }
 
     pub fn apply_snapshot(&mut self, data: DashboardData) {
+        let previous_ids: HashSet<String> = self
+            .visible_available_jobs()
+            .into_iter()
+            .map(|job| job.id.clone())
+            .collect();
         self.paused = data.status.is_paused;
         self.data = data;
         self.connection = ConnectionState::Live;
         self.clamp_selection();
         self.status_message = "Live data updated".into();
+        if self
+            .visible_available_jobs()
+            .into_iter()
+            .any(|job| !previous_ids.contains(&job.id))
+        {
+            self.alert_visible = true;
+        }
     }
 
     pub fn apply_error(&mut self, message: impl Into<String>) {
         let message = message.into();
+        self.pending_destructive = None;
         self.connection = ConnectionState::Reconnecting(message.clone());
         self.status_message = format!("API unavailable · {message}");
     }
@@ -220,6 +233,9 @@ impl App {
 
     #[must_use]
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<UiAction> {
+        if key.kind == KeyEventKind::Repeat && !is_repeatable_key(key.code) {
+            return None;
+        }
         if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
             return None;
         }
@@ -381,6 +397,21 @@ impl App {
             .selected_history
             .min(self.data.jobs.len().saturating_sub(1));
     }
+}
+
+fn is_repeatable_key(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::BackTab
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Char('1'..='6')
+    )
 }
 
 const fn contains(area: Rect, (x, y): (u16, u16)) -> bool {
@@ -1774,5 +1805,83 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.view, expected);
+    }
+
+    fn available_job(id: &str) -> Job {
+        Job {
+            id: id.into(),
+            title: "Japanese → English".into(),
+            reward: 12.5,
+            currency: "USD".into(),
+            source: "WebSocket".into(),
+            timestamp: 1_750_000_000.0,
+            ..Job::default()
+        }
+    }
+
+    fn key_repeat(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            kind: KeyEventKind::Repeat,
+            ..key(code)
+        }
+    }
+
+    #[test]
+    fn apply_error_clears_pending_destructive_action() {
+        let mut app = App::new(View::Jobs);
+        let _ = app.handle_key(key(KeyCode::Char('a')));
+        let action = app.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(action, Some(UiAction::AcceptJob("481516".into())));
+        assert!(app.pending_destructive.is_some());
+
+        app.apply_error("timed out");
+
+        assert!(app.pending_destructive.is_none());
+        let _ = app.handle_key(key(KeyCode::Char('a')));
+        assert!(app.confirmation.is_some());
+    }
+
+    #[test]
+    fn apply_snapshot_restores_alert_for_newly_available_jobs() {
+        let mut app = App::default();
+        let _ = app.handle_key(key(KeyCode::Char('d')));
+        assert!(!app.alert_visible);
+
+        let mut data = app.data.clone();
+        app.apply_snapshot(data.clone());
+        assert!(!app.alert_visible);
+
+        data.jobs.push(available_job("481700"));
+        app.apply_snapshot(data);
+        assert!(app.alert_visible);
+    }
+
+    #[test]
+    fn apply_snapshot_does_not_restore_alert_for_ignored_jobs() {
+        let mut app = App::new(View::Jobs);
+        let ignored_id = app.selected_available_job().expect("demo job").id.clone();
+        let _ = app.handle_key(key(KeyCode::Char('i')));
+        app.switch_to(View::Overview);
+        let _ = app.handle_key(key(KeyCode::Char('d')));
+        assert!(!app.alert_visible);
+
+        let mut data = DashboardData::default();
+        data.jobs.push(available_job(&ignored_id));
+        app.apply_snapshot(data);
+        assert!(!app.alert_visible);
+    }
+
+    #[test]
+    fn key_repeat_moves_selection_but_does_not_fire_actions() {
+        let mut app = App::new(View::Jobs);
+        assert_eq!(app.handle_key(key_repeat(KeyCode::Char('c'))), None);
+        assert_eq!(app.handle_key(key_repeat(KeyCode::Char('p'))), None);
+        assert_eq!(app.handle_key(key_repeat(KeyCode::Char('a'))), None);
+        assert!(app.confirmation.is_none());
+
+        let _ = app.handle_key(key_repeat(KeyCode::Down));
+        assert_eq!(app.selected_job, 1);
+        let _ = app.handle_key(key_repeat(KeyCode::Char('2')));
+        assert_eq!(app.view, View::Jobs);
     }
 }

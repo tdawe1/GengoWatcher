@@ -769,9 +769,20 @@ def create_app(state: SandboxState | None = None) -> FastAPI:
                 )
         return RedirectResponse(f"/t/workbench/{collection_id}#!/", status_code=303)
 
-    @app.get("/t/workbench/{collection_id:int}", response_class=HTMLResponse)
-    async def workbench(collection_id: int, request: Request) -> str:
+    @app.get("/t/workbench/{collection_id:int}", response_model=None)
+    async def workbench(
+        collection_id: int, request: Request
+    ) -> HTMLResponse | RedirectResponse:
         item = sandbox.get(collection_id)
+        if item.status == "available":
+            return RedirectResponse(f"/t/jobs/details/{collection_id}", status_code=303)
+        if item.status not in {"incomplete", "reviewable", "complete"}:
+            return HTMLResponse(
+                _layout(
+                    "Job unavailable",
+                    "<h1>This job is no longer available.</h1>",
+                )
+            )
         payload = _safe_inline_json(_payload_for_request(item, request))
         body = f"""<h1>Workbench</h1><section class="panel"><p id="source">{html.escape(item.source, quote=True)}</p>
 <label for="target">English translation</label><textarea id="target">{html.escape(item.target_content, quote=True)}</textarea>
@@ -785,7 +796,7 @@ document.querySelector('#start').onclick=()=>action('start');
 document.querySelector('#save').onclick=()=>action('save',{{jobs:[{{id:{item.job_id},segments:[{{segment_id:'{item.job_id}',target_content:document.querySelector('#target').value}}]}}]}});
 document.querySelector('#submit').onclick=()=>action('submit');
 document.querySelector('#decline').onclick=async()=>{{await action('decline');location.href='/t/jobs/status/available';}};</script>"""
-        return _layout(f"Workbench {collection_id}", body, script=script)
+        return HTMLResponse(_layout(f"Workbench {collection_id}", body, script=script))
 
     @app.get("/t/workbench/collection/{collection_id}")
     async def get_collection(

@@ -40,8 +40,11 @@ The native Ratatui client is optional. To use it, install Rust/Cargo and run:
 cargo install --locked --path prototypes/garden-ratatui
 ```
 
-That installs `gengowatcher-tui`. When working from a source checkout,
-GengoWatcher can also run the client through Cargo automatically.
+That installs `gengowatcher-tui`. Automatic TUI selection requires this
+binary (or `GENGOWATCHER_RATATUI_BIN` / a built
+`prototypes/garden-ratatui/target/{release,debug}/gengowatcher-tui`).
+`gengowatcher --tui ratatui` can still compile and run the client through
+Cargo from a source checkout.
 
 If you want a simpler repo-local launcher without relying on Python packaging, install the bundled script into `~/.local/bin`:
 
@@ -73,8 +76,8 @@ Or directly:
 ```
 
 On the first run, you'll be guided through configuration setup.
-The Ratatui interface is selected automatically when its binary or source
-manifest is available; packaged Python-only installs fall back to Textual. The
+The Ratatui interface is selected automatically when a `gengowatcher-tui`
+binary is available; packaged Python-only installs fall back to Textual. The
 Ratatui path starts the authenticated loopback API internally and never places
 the API token in process arguments.
 
