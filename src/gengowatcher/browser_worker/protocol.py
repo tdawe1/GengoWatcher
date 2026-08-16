@@ -45,6 +45,26 @@ def _origin_tuple(value: str) -> tuple[str, str, int | None]:
     return parts.scheme, hostname, parts.port
 
 
+def normalize_sandbox_origin(value: str) -> str:
+    """Validate and canonicalize an optional HTTP(S) loopback sandbox origin.
+
+    Empty values stay empty. Any other value must be an HTTP(S) loopback
+    origin without credentials, path, query, or fragment — the same rules
+    ``_origin_tuple`` / ``WebAPI._sandbox_download_origin`` enforce.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    scheme, hostname, port = _origin_tuple(text)
+    if ":" in hostname:
+        netloc = f"[{hostname}]"
+    else:
+        netloc = hostname
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return urlunsplit((scheme, netloc, "", "", ""))
+
+
 def url_origin(value: str) -> tuple[str, str, int | None]:
     parts = urlsplit(str(value or "").strip())
     if (

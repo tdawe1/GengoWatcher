@@ -25,6 +25,7 @@ from .protocol import (
     decode_message,
     encode_message,
     is_allowed_browser_origin,
+    normalize_sandbox_origin,
 )
 from .registry import JobRegistry
 from .tabs import TabRoles
@@ -58,6 +59,9 @@ class BrowserRuntimeConfig:
     accept_timeout_ms: int = 12000
     auth_token: str = ""
     sandbox_origin: str = ""
+
+    def __post_init__(self) -> None:
+        self.sandbox_origin = normalize_sandbox_origin(self.sandbox_origin)
 
 
 class BrowserRuntime:

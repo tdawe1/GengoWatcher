@@ -20,7 +20,8 @@ import re
 import stat
 import sys
 import tempfile
-from typing import Any, Callable, TypeVar
+import threading
+from typing import Any, Callable, NoReturn, TypeVar
 
 try:  # pragma: no cover - platform dependent
     import fcntl
@@ -133,7 +134,7 @@ def _normalize_recursion_error(
     return wrapped
 
 
-def _fail(path: str, message: str) -> None:
+def _fail(path: str, message: str) -> NoReturn:
     raise SandboxDocumentError(f"{path}: {message}")
 
 
@@ -399,10 +400,9 @@ def validate_payload(value: Any, *, path: str = "payload") -> dict[str, Any]:
     return copy.deepcopy(payload)
 
 
-def scenario_digest(baseline: dict[str, Any]) -> str:
-    """Return the stable SHA-256 digest of a validated scenario baseline."""
+def _digest_validated_baseline(validated: dict[str, Any]) -> str:
+    """Hash an already-validated baseline without calling validate_payload."""
 
-    validated = validate_payload(baseline, path="baseline")
     encoded = json.dumps(
         validated,
         ensure_ascii=False,
@@ -413,6 +413,13 @@ def scenario_digest(baseline: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def scenario_digest(baseline: dict[str, Any]) -> str:
+    """Return the stable SHA-256 digest of a validated scenario baseline."""
+
+    validated = validate_payload(baseline, path="baseline")
+    return _digest_validated_baseline(validated)
+
+
 def build_scenario_document(baseline: dict[str, Any]) -> dict[str, Any]:
     """Build a validated version-one scenario document."""
 
@@ -421,7 +428,7 @@ def build_scenario_document(baseline: dict[str, Any]) -> dict[str, Any]:
         "format": DOCUMENT_FORMAT,
         "schema_version": SCHEMA_VERSION,
         "document_type": "scenario",
-        "scenario_digest": scenario_digest(validated),
+        "scenario_digest": _digest_validated_baseline(validated),
         "baseline": validated,
     }
 
@@ -437,7 +444,7 @@ def build_snapshot_document(
         "format": DOCUMENT_FORMAT,
         "schema_version": SCHEMA_VERSION,
         "document_type": "snapshot",
-        "scenario_digest": scenario_digest(validated_baseline),
+        "scenario_digest": _digest_validated_baseline(validated_baseline),
         "baseline": validated_baseline,
         "state": validated_state,
     }
@@ -475,7 +482,7 @@ def validate_document(value: Any) -> dict[str, Any]:
     if not isinstance(document["scenario_digest"], str):
         _fail("document.scenario_digest", "must be a string")
     baseline = validate_payload(document["baseline"], path="document.baseline")
-    expected_digest = scenario_digest(baseline)
+    expected_digest = _digest_validated_baseline(baseline)
     if document["scenario_digest"] != expected_digest:
         _fail("document.scenario_digest", "does not match the baseline")
     if document_type == "snapshot":
@@ -555,6 +562,7 @@ class AtomicJSONStore:
         self.lock_path = self.path.with_suffix(f"{self.path.suffix}.lock")
         self._lock_file: Any | None = None
         self._closed = False
+        self._io_lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._acquire_lock()
 
@@ -593,47 +601,49 @@ class AtomicJSONStore:
     def load(self) -> dict[str, Any]:
         """Load and validate the current document."""
 
-        self._require_open()
-        try:
-            with self.path.open("rb") as handle:
-                data = handle.read(MAX_DOCUMENT_BYTES + 1)
-        except OSError as exc:
-            raise SandboxDocumentError(f"cannot read {self.path}: {exc}") from exc
-        if len(data) > MAX_DOCUMENT_BYTES:
-            raise SandboxDocumentError(
-                f"document exceeds {MAX_DOCUMENT_BYTES} byte size limit"
-            )
-        return decode_document(data)
+        with self._io_lock:
+            self._require_open()
+            try:
+                with self.path.open("rb") as handle:
+                    data = handle.read(MAX_DOCUMENT_BYTES + 1)
+            except OSError as exc:
+                raise SandboxDocumentError(f"cannot read {self.path}: {exc}") from exc
+            if len(data) > MAX_DOCUMENT_BYTES:
+                raise SandboxDocumentError(
+                    f"document exceeds {MAX_DOCUMENT_BYTES} byte size limit"
+                )
+            return decode_document(data)
 
     def write(self, document: dict[str, Any]) -> None:
         """Atomically replace the file with a validated document."""
 
-        self._require_open()
-        data = encode_document(document)
-        temp_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=self.path.parent,
-                prefix=f".{self.path.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as temp_file:
-                temp_path = Path(temp_file.name)
-                temp_file.write(data)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)
-            os.replace(temp_path, self.path)
-            temp_path = None
-            self._fsync_parent_directory()
-        except Exception:
-            if temp_path is not None:
-                try:
-                    temp_path.unlink()
-                except FileNotFoundError:
-                    pass
-            raise
+        with self._io_lock:
+            self._require_open()
+            data = encode_document(document)
+            temp_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    dir=self.path.parent,
+                    prefix=f".{self.path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temp_file:
+                    temp_path = Path(temp_file.name)
+                    temp_file.write(data)
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)
+                os.replace(temp_path, self.path)
+                temp_path = None
+                self._fsync_parent_directory()
+            except Exception:
+                if temp_path is not None:
+                    try:
+                        temp_path.unlink()
+                    except OSError:
+                        pass
+                raise
 
     def _fsync_parent_directory(self) -> None:
         if os.name != "posix":  # pragma: no cover - Windows

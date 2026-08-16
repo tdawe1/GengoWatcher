@@ -26,13 +26,13 @@ smoke-e2e:
 	PYTHONPATH=src $(PYTHON) -m pytest -m e2e -q
 
 coverage:
-	$(PYTHON) -m pytest --cov=.
+	PYTHONPATH=src $(PYTHON) -m pytest --cov=.
 
 lint:
-	$(PYTHON) -m flake8 src tests scripts
+	$(PYTHON) -m flake8 src tests scripts prototypes
 
 format:
-	$(PYTHON) -m black src tests scripts
+	$(PYTHON) -m black src tests scripts prototypes
 
 run:
 	PYTHONPATH=src $(PYTHON) -m gengowatcher.main

@@ -19,6 +19,32 @@ def test_runtime_defaults_to_headed_mode():
 
     assert config.headless is False
     assert config.browser_executable_path is None
+    assert config.sandbox_origin == ""
+
+
+def test_runtime_normalizes_loopback_sandbox_origin():
+    config = BrowserRuntimeConfig(
+        profile_path=Path("/tmp/profile"),
+        sandbox_origin="http://127.0.0.1:8765/",
+    )
+
+    assert config.sandbox_origin == "http://127.0.0.1:8765"
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://example.test:8765",
+        "http://user:pass@127.0.0.1:8765",
+        "http://127.0.0.1:8765/t/jobs",
+        "http://127.0.0.1:8765?x=1",
+        "http://127.0.0.1:8765#frag",
+        "ftp://127.0.0.1:8765",
+    ],
+)
+def test_runtime_rejects_invalid_sandbox_origins(origin):
+    with pytest.raises(ValueError):
+        BrowserRuntimeConfig(profile_path=Path("/tmp/profile"), sandbox_origin=origin)
 
 
 def test_runtime_uses_default_socket_path_inside_tmp():
