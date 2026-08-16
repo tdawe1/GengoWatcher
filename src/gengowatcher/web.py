@@ -129,7 +129,11 @@ class WebAPI:
             )
         )
         self._webhook_event_lock = threading.RLock()
-        self._manage_watcher_lifecycle = watcher is None and start_watcher_thread
+        # Honor the explicit flag. Web-only runtime passes a shared watcher
+        # *and* start_watcher_thread=True because the TUI path is skipped.
+        # Combined TUI+API passes start_watcher_thread=False to avoid a
+        # second monitor loop.
+        self._manage_watcher_lifecycle = start_watcher_thread
 
         # Thread safety for shared state access
         self._status_lock = threading.RLock()  # Reentrant lock for better safety
@@ -1446,8 +1450,6 @@ async def lifespan(app: FastAPI):
             )
         else:
             # Check if config exists, create it if needed
-            from pathlib import Path
-
             config_path = Path(AppConfig.CONFIG_FILE)
             if not config_path.exists():
                 logger.info("Creating default %s for web API", AppConfig.CONFIG_FILE)

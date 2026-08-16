@@ -259,6 +259,28 @@ class TestWebAPIInitialization:
         mock_watcher_class.assert_not_called()
         mock_thread.assert_not_called()
 
+    def test_web_api_starts_shared_watcher_when_requested(
+        self, mock_config, mock_state, mock_logger
+    ):
+        """Web-only mode passes a shared watcher and still needs the monitor loop."""
+        shared_watcher = MagicMock()
+
+        with patch("gengowatcher.web.GengoWatcher") as mock_watcher_class:
+            with patch("threading.Thread") as mock_thread:
+                api = WebAPI(
+                    mock_config,
+                    mock_state,
+                    mock_logger,
+                    watcher=shared_watcher,
+                    start_watcher_thread=True,
+                )
+                mock_thread.assert_called_once()
+                mock_thread.return_value.start.assert_called_once()
+
+        assert api.watcher is shared_watcher
+        assert api._manage_watcher_lifecycle is True
+        mock_watcher_class.assert_not_called()
+
     def test_shutdown_does_not_stop_shared_watcher(
         self, mock_config, mock_state, mock_logger
     ):
