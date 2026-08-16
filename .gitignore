@@ -99,6 +99,9 @@ flake8-report.txt
 *.dmg
 *.app
 
+# Rust / Cargo
+target/
+
 # Firebase
 firebase-debug.log
 
