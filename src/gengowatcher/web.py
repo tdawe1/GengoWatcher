@@ -737,21 +737,51 @@ class WebAPI:
         except Exception as e:
             self.logger.exception(f"Error adding job to storage: {e}")
 
+    _UNAVAILABLE_JOB_STATES = {
+        "gone",
+        "expired",
+        "cancelled",
+        "completed",
+        "rejected",
+        "unavailable",
+    }
+
+    @staticmethod
+    def _accept_attempt_succeeded(result: Any) -> tuple[bool, str | None]:
+        """Interpret engine results. AcceptResult is always truthy as an object."""
+        if result is None:
+            return False, "no_result"
+        success_attr = getattr(result, "success", None)
+        if isinstance(success_attr, bool):
+            reason = getattr(result, "reason", None)
+            return success_attr, None if success_attr else str(reason or "rejected")
+        if isinstance(result, bool):
+            return result, None if result else "rejected"
+        return False, "invalid_accept_result"
+
     async def accept_job(self, job_id: str) -> bool:
         """Accept a job by ID using the job acceptance engine."""
+        outcome = await self.accept_job_with_reason(job_id)
+        return bool(outcome["success"])
+
+    async def accept_job_with_reason(self, job_id: str) -> dict[str, Any]:
+        """Accept a job and return success plus a user-visible reason."""
         try:
-            # Check if the watcher has a job acceptance engine
             if not hasattr(self.watcher, "job_acceptance_engine"):
                 self.logger.error("Job acceptance engine not available")
-                return False
+                return {
+                    "success": False,
+                    "message": f"Failed to accept job {job_id}: engine unavailable",
+                }
 
-            # Find the job in the state
-            jobs_result = self.get_recent_jobs(limit=1000)  # Get all jobs to search
+            jobs_result = self.get_recent_jobs(limit=1000)
             jobs = jobs_result["jobs"]
             target_job = None
+            job_entry = None
 
             for job in jobs:
                 if str(job.id) == str(job_id):
+                    job_entry = job
                     target_job = {
                         "id": job.id,
                         "title": job.title,
@@ -763,17 +793,49 @@ class WebAPI:
 
             if not target_job:
                 self.logger.error(f"Job {job_id} not found")
-                return False
+                return {
+                    "success": False,
+                    "message": f"Failed to accept job {job_id}: not found",
+                }
 
-            # Attempt to accept the job
-            success = await self.watcher.job_acceptance_engine._attempt_job_acceptance(
+            job_states = {
+                str(getattr(job_entry, "lifecycle_state", None) or "").strip().lower(),
+                str(getattr(job_entry, "workflow_state", None) or "").strip().lower(),
+            }
+            if job_states & self._UNAVAILABLE_JOB_STATES:
+                self.logger.warning(
+                    "Refusing to accept job %s because it is no longer available (%s)",
+                    job_id,
+                    ",".join(sorted(state for state in job_states if state)),
+                )
+                return {
+                    "success": False,
+                    "message": f"Job {job_id} is no longer available",
+                }
+
+            result = await self.watcher.job_acceptance_engine._attempt_job_acceptance(
                 target_job
             )
-            return success
+            success, reason = self._accept_attempt_succeeded(result)
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Job {job_id} accepted successfully",
+                }
+            self.logger.warning(
+                "Job %s acceptance attempt failed: %s", job_id, reason
+            )
+            return {
+                "success": False,
+                "message": f"Failed to accept job {job_id}: {reason}",
+            }
 
         except Exception as e:
             self.logger.exception(f"Error accepting job {job_id}: {e}")
-            return False
+            return {
+                "success": False,
+                "message": f"Failed to accept job {job_id}: {e}",
+            }
 
     @staticmethod
     def _json_safe(value: Any) -> Any:
@@ -1616,17 +1678,18 @@ async def accept_job(job_id: str, authenticated: bool = Depends(verify_auth)):
         raise HTTPException(status_code=503, detail="API not initialized")
 
     try:
-        success = await api_instance.accept_job(job_id)
+        outcome = await api_instance.accept_job_with_reason(job_id)
 
-        if success:
+        if outcome.get("success"):
             return {
                 "status": "success",
-                "message": f"Job {job_id} accepted successfully",
+                "message": outcome.get("message")
+                or f"Job {job_id} accepted successfully",
             }
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to accept job {job_id}"
-            )
+        raise HTTPException(
+            status_code=409,
+            detail=outcome.get("message") or f"Failed to accept job {job_id}",
+        )
 
     except HTTPException:
         raise

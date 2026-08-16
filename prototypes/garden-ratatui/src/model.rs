@@ -104,7 +104,13 @@ impl Job {
             && self.accepted_expired != Some(true)
             && !matches!(
                 self.display_status().to_ascii_lowercase().as_str(),
-                "expired" | "cancelled" | "rejected" | "completed"
+                "expired"
+                    | "cancelled"
+                    | "rejected"
+                    | "completed"
+                    | "gone"
+                    | "unavailable"
+                    | "missed"
             )
     }
 
@@ -383,5 +389,24 @@ mod tests {
         assert_eq!(job.display_time_left(), "00:00");
         job.accepted_expired = Some(true);
         assert_eq!(job.display_time_left(), "expired");
+    }
+
+    #[test]
+    fn gone_jobs_are_not_available() {
+        let available = Job {
+            id: "1".into(),
+            title: "Open".into(),
+            ..Job::default()
+        };
+        let gone = Job {
+            id: "2".into(),
+            title: "Left the board".into(),
+            lifecycle_state: Some("gone".into()),
+            workflow_state: Some("gone".into()),
+            ..Job::default()
+        };
+        assert!(available.is_available());
+        assert!(!gone.is_available());
+        assert_eq!(gone.display_status(), "gone");
     }
 }

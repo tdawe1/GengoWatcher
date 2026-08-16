@@ -558,6 +558,51 @@ class TestWebAPIJobManagement:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_accept_job_treats_failed_accept_result_as_failure(self, web_api):
+        from gengowatcher.job_acceptance import AcceptResult
+
+        web_api.watcher.job_acceptance_engine = MagicMock()
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(
+            return_value=AcceptResult(
+                success=False, path="http", reason="captcha_required"
+            )
+        )
+
+        result = await web_api.accept_job("123")
+        assert result is False
+        outcome = await web_api.accept_job_with_reason("123")
+        assert outcome["success"] is False
+        assert "captcha_required" in outcome["message"]
+
+    @pytest.mark.asyncio
+    async def test_accept_job_rejects_gone_listings(self, web_api):
+        web_api.get_recent_jobs = MagicMock(
+            return_value={
+                "jobs": [
+                    JobEntry(
+                        id="123",
+                        title="Stale job",
+                        reward=1.0,
+                        url="https://gengo.com/t/jobs/details/123",
+                        timestamp=1.0,
+                        source="RSS",
+                        lifecycle_state="gone",
+                        workflow_state="gone",
+                    )
+                ]
+            }
+        )
+        web_api.watcher.job_acceptance_engine = MagicMock()
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(
+            return_value=True
+        )
+
+        outcome = await web_api.accept_job_with_reason("123")
+        assert outcome["success"] is False
+        assert "no longer available" in outcome["message"]
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_accept_job_not_found(self, web_api):
         """Test job acceptance when job not found."""
         web_api.state.get_recent_jobs.return_value = []
