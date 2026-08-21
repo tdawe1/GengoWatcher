@@ -3,14 +3,9 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from ..protocol import has_same_origin
-
-if TYPE_CHECKING:
-    from playwright.async_api import Page
-
 
 WORKBENCH_RE = re.compile(r"^/t/workbench/(?P<job_id>\d+)/?$")
 

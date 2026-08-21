@@ -170,6 +170,89 @@ async def test_prepare_candidate_rejects_redirect_to_another_job_path(tmp_path):
     with pytest.raises(ValueError, match="changed the trusted job origin or path"):
         await runtime.prepare_candidate(intent)
 
+    assert runtime.registry.get("123") is None
+    assert "123" not in runtime._candidate_origins
+
+
+@pytest.mark.asyncio
+async def test_prepare_candidate_accepts_trusted_host_redirect(tmp_path):
+    class RedirectedPage:
+        url = "https://www.gengo.com/t/jobs/details/123"
+
+        async def goto(self, _url, wait_until):
+            assert wait_until == "domcontentloaded"
+
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile")
+    )
+    runtime.ensure_tabs = AsyncMock(
+        return_value=TabRoles(hold_page=object(), candidate_page=RedirectedPage())
+    )
+    intent = JobIntent(
+        job_id="123",
+        canonical_url="https://gengo.com/t/jobs/details/123",
+        source="rss",
+    )
+
+    landed = await runtime.prepare_candidate(intent)
+
+    assert landed == "https://www.gengo.com/t/jobs/details/123"
+    assert (
+        runtime._candidate_origins["123"] == "https://www.gengo.com/t/jobs/details/123"
+    )
+    assert runtime.registry.get("123") is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_tracks_acceptance_against_landed_origin(tmp_path):
+    accepted_payload = {
+        "source": "window.__GENGO_WORKBENCH_DATA__",
+        "payload": {
+            "summary": {
+                "order_id": 123,
+                "expire_time": 1782760306560,
+                "seconds_left": 6344,
+            },
+            "jobs": [{"id": 98936958}],
+        },
+    }
+
+    class FakePage:
+        url = "https://www.gengo.com/t/jobs/details/123"
+
+        async def goto(self, _url, wait_until):
+            assert wait_until == "domcontentloaded"
+
+        async def wait_for_url(self, predicate, timeout):
+            self.url = "https://www.gengo.com/t/workbench/123"
+            assert timeout == 180000
+            assert predicate(self.url) is True
+
+        async def evaluate(self, _script):
+            return accepted_payload
+
+    runtime = BrowserRuntime(
+        config=BrowserRuntimeConfig(profile_path=tmp_path / "profile"),
+        telemetry=BrowserWorkerTelemetry(tmp_path / "worker.jsonl"),
+    )
+    runtime.ensure_tabs = AsyncMock(
+        return_value=TabRoles(hold_page=object(), candidate_page=FakePage())
+    )
+
+    response = await runtime.handle_command(
+        {
+            "type": "job_url",
+            "url": "https://gengo.com/t/jobs/details/123",
+            "source": "rss",
+            "track_acceptance": True,
+            "acceptance_timeout_ms": 180000,
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["accepted"] is True
+    assert response["workbench_url"] == "https://www.gengo.com/t/workbench/123"
+
 
 @pytest.mark.asyncio
 async def test_runtime_rejects_command_with_invalid_auth_token(tmp_path):

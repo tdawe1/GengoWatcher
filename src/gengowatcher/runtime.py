@@ -153,12 +153,9 @@ def _start_web_server_if_requested(
     if not (cli_requested or config_enabled or ratatui_requested):
         return None
 
-    if cli_requested:
+    if cli_requested or ratatui_requested:
         host = "127.0.0.1"
         port = int(getattr(args, "web_port", 8000) or 8000)
-    elif ratatui_requested:
-        host = "127.0.0.1"
-        port = int(config.getint("WebServer", "port", fallback=8000) or 8000)
     else:
         host = str(config.get("WebServer", "host", fallback="127.0.0.1") or "127.0.0.1")
         port = int(config.getint("WebServer", "port", fallback=8000) or 8000)
@@ -347,11 +344,7 @@ def _run_ratatui_process(
     if not token or token.startswith("REPLACE_WITH_"):
         raise RuntimeError("Web API token was not initialized for the Ratatui TUI")
 
-    port = (
-        int(getattr(args, "web_port", 8000) or 8000)
-        if getattr(args, "web", False)
-        else int(config.getint("WebServer", "port", fallback=8000) or 8000)
-    )
+    port = int(getattr(args, "web_port", 8000) or 8000)
     api_url = f"http://127.0.0.1:{port}"
     environment = os.environ.copy()
     environment["GENGOWATCHER_API_TOKEN"] = token

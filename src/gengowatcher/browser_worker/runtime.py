@@ -24,6 +24,7 @@ from .protocol import (
     canonicalize_job_url,
     decode_message,
     encode_message,
+    extract_job_id,
     is_allowed_browser_origin,
     normalize_sandbox_origin,
 )
@@ -171,13 +172,13 @@ class BrowserRuntime:
             raise ValueError(
                 f"browser candidate navigation escaped the trusted job URL: {candidate_url}"
             ) from exc
-        if final_url != intent.canonical_url:
+        if extract_job_id(final_url) != intent.job_id:
             raise ValueError(
                 "browser candidate navigation changed the trusted job origin or path: "
                 f"{candidate_url}"
             )
         self.registry.register(intent)
-        self._candidate_origins[intent.job_id] = intent.canonical_url
+        self._candidate_origins[intent.job_id] = final_url
         self._candidate_origins.move_to_end(intent.job_id)
         while len(self._candidate_origins) > 200:
             self._candidate_origins.popitem(last=False)
@@ -224,7 +225,9 @@ class BrowserRuntime:
         tracking = await self.wait_for_manual_acceptance_capture(
             intent.job_id,
             timeout_ms=timeout_ms,
-            expected_origin=intent.canonical_url,
+            expected_origin=self._candidate_origins.get(
+                intent.job_id, intent.canonical_url
+            ),
         )
         response.update(tracking)
         return response

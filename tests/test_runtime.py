@@ -133,7 +133,7 @@ def test_start_web_server_is_forced_for_ratatui_on_loopback():
 
     assert result is web_thread
     assert mock_start_web_server.call_args.kwargs["host"] == "127.0.0.1"
-    assert mock_start_web_server.call_args.kwargs["port"] == 48222
+    assert mock_start_web_server.call_args.kwargs["port"] == 37181
     assert mock_start_web_server.call_args.kwargs["start_watcher_thread"] is False
 
 
@@ -398,7 +398,7 @@ def test_run_tui_passes_api_thread_to_app_when_available():
 
 
 def test_run_tui_launches_ratatui_with_token_in_environment_only():
-    args = Namespace(tui="ratatui", web=False, web_port=8000)
+    args = Namespace(tui="ratatui", web=False, web_port=9000)
     console = MagicMock()
     logger = MagicMock()
     ui_handler = MagicMock()
@@ -428,7 +428,7 @@ def test_run_tui_launches_ratatui_with_token_in_environment_only():
     environment = mock_run.call_args.kwargs["env"]
     assert "secret-token" not in command
     assert environment["GENGOWATCHER_API_TOKEN"] == "secret-token"
-    assert environment["GENGOWATCHER_API_URL"] == "http://127.0.0.1:48222"
+    assert environment["GENGOWATCHER_API_URL"] == "http://127.0.0.1:9000"
 
 
 def test_run_tui_cleans_up_and_exits_nonzero_when_ratatui_fails():

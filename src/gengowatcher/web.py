@@ -40,7 +40,7 @@ import requests
 import uvicorn
 
 from .config import AppConfig
-from .browser_worker.protocol import is_allowed_browser_origin, url_origin
+from .browser_worker.protocol import normalize_sandbox_origin, url_origin
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
@@ -1093,22 +1093,9 @@ class WebAPI:
             return None
 
         try:
-            origin = url_origin(configured)
-            # This also applies the browser worker's stricter origin syntax rules
-            # (no credentials, path, query, or fragment) to the configured value.
-            if not is_allowed_browser_origin(configured, allowed_origins=(configured,)):
-                return None
+            return url_origin(normalize_sandbox_origin(configured))
         except ValueError:
             return None
-
-        _, host, _ = origin
-        if host == "localhost":
-            return origin
-        try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
-            return None
-        return origin if address.is_loopback else None
 
     def _download_matches_sandbox_origin(self, url: str) -> bool:
         sandbox_origin = self._sandbox_download_origin()

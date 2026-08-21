@@ -117,11 +117,7 @@ impl ApiClient {
     }
 
     pub fn accept_job(&self, job_id: &str) -> Result<CommandResponse, ApiError> {
-        if job_id.is_empty()
-            || !job_id
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
-        {
+        if !is_safe_job_id(job_id) {
             return Err(ApiError::new("job ID contains unsupported characters"));
         }
         self.post_json_with_timeout(
@@ -203,6 +199,15 @@ fn status_label(status: StatusCode) -> String {
         .map_or_else(|| "request failed".into(), str::to_owned)
 }
 
+fn is_safe_job_id(job_id: &str) -> bool {
+    let mut characters = job_id.chars();
+    match characters.next() {
+        Some(first) if first.is_ascii_alphanumeric() => characters
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_')),
+        _ => false,
+    }
+}
+
 fn is_loopback_host(host: Option<&str>) -> bool {
     match host {
         Some("localhost") => true,
@@ -263,8 +268,19 @@ mod tests {
     #[test]
     fn job_ids_are_restricted_before_becoming_url_paths() {
         let client = ApiClient::new("http://127.0.0.1:9", "token").expect("valid client");
-        let error = client.accept_job("../../config").expect_err("invalid ID");
-        assert_eq!(error.to_string(), "job ID contains unsupported characters");
+        for job_id in ["../../config", "..", ".", "../", "-1", "_id", ""] {
+            let error = client.accept_job(job_id).expect_err("invalid ID");
+            assert_eq!(
+                error.to_string(),
+                "job ID contains unsupported characters",
+                "{job_id}"
+            );
+        }
+        assert!(is_safe_job_id("12345"));
+        assert!(is_safe_job_id("job-1"));
+        assert!(is_safe_job_id("job_1"));
+        assert!(!is_safe_job_id(".."));
+        assert!(!is_safe_job_id("."));
     }
 
     #[test]
