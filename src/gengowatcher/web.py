@@ -40,6 +40,7 @@ import requests
 import uvicorn
 
 from .config import AppConfig
+from .browser_worker.protocol import normalize_sandbox_origin, url_origin
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
@@ -128,7 +129,7 @@ class WebAPI:
             )
         )
         self._webhook_event_lock = threading.RLock()
-        self._manage_watcher_lifecycle = watcher is None and start_watcher_thread
+        self._manage_watcher_lifecycle = start_watcher_thread
 
         # Thread safety for shared state access
         self._status_lock = threading.RLock()  # Reentrant lock for better safety
@@ -182,6 +183,7 @@ class WebAPI:
 
             return WatcherStatus(
                 is_running=not self.watcher.shutdown_event.is_set(),
+                is_paused=os.path.exists(self.watcher.PAUSE_FILE),
                 websocket_status=self.watcher.websocket_status,
                 rss_status=self.watcher.rss_action,
                 last_check_time=last_check,
@@ -731,21 +733,51 @@ class WebAPI:
         except Exception as e:
             self.logger.exception(f"Error adding job to storage: {e}")
 
+    _UNAVAILABLE_JOB_STATES = {
+        "gone",
+        "expired",
+        "cancelled",
+        "completed",
+        "rejected",
+        "unavailable",
+    }
+
+    @staticmethod
+    def _accept_attempt_succeeded(result: Any) -> tuple[bool, str | None]:
+        """Interpret engine results. AcceptResult is always truthy as an object."""
+        if result is None:
+            return False, "no_result"
+        success_attr = getattr(result, "success", None)
+        if isinstance(success_attr, bool):
+            reason = getattr(result, "reason", None)
+            return success_attr, None if success_attr else str(reason or "rejected")
+        if isinstance(result, bool):
+            return result, None if result else "rejected"
+        return False, "invalid_accept_result"
+
     async def accept_job(self, job_id: str) -> bool:
         """Accept a job by ID using the job acceptance engine."""
+        outcome = await self.accept_job_with_reason(job_id)
+        return bool(outcome["success"])
+
+    async def accept_job_with_reason(self, job_id: str) -> dict[str, Any]:
+        """Accept a job and return success plus a user-visible reason."""
         try:
-            # Check if the watcher has a job acceptance engine
             if not hasattr(self.watcher, "job_acceptance_engine"):
                 self.logger.error("Job acceptance engine not available")
-                return False
+                return {
+                    "success": False,
+                    "message": f"Failed to accept job {job_id}: engine unavailable",
+                }
 
-            # Find the job in the state
-            jobs_result = self.get_recent_jobs(limit=1000)  # Get all jobs to search
+            jobs_result = self.get_recent_jobs(limit=1000)
             jobs = jobs_result["jobs"]
             target_job = None
+            job_entry = None
 
             for job in jobs:
                 if str(job.id) == str(job_id):
+                    job_entry = job
                     target_job = {
                         "id": job.id,
                         "title": job.title,
@@ -757,17 +789,53 @@ class WebAPI:
 
             if not target_job:
                 self.logger.error(f"Job {job_id} not found")
-                return False
+                return {
+                    "success": False,
+                    "message": f"Failed to accept job {job_id}: not found",
+                }
 
-            # Attempt to accept the job
-            success = await self.watcher.job_acceptance_engine._attempt_job_acceptance(
+            job_states = {
+                str(getattr(job_entry, "lifecycle_state", None) or "").strip().lower(),
+                str(getattr(job_entry, "workflow_state", None) or "").strip().lower(),
+            }
+            if job_states & self._UNAVAILABLE_JOB_STATES:
+                self.logger.warning(
+                    "Refusing to accept job %s because it is no longer available (%s)",
+                    job_id,
+                    ",".join(sorted(state for state in job_states if state)),
+                )
+                return {
+                    "success": False,
+                    "message": f"Job {job_id} is no longer available",
+                }
+
+            result = await self.watcher.job_acceptance_engine._attempt_job_acceptance(
                 target_job
             )
-            return success
+            success, reason = self._accept_attempt_succeeded(result)
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Job {job_id} accepted successfully",
+                }
+            self.logger.warning(
+                "Job %s acceptance attempt failed: %s", job_id, reason
+            )
+            return {
+                "success": False,
+                "message": f"Failed to accept job {job_id}: {reason}",
+            }
 
         except Exception as e:
-            self.logger.exception(f"Error accepting job {job_id}: {e}")
-            return False
+            self.logger.exception(
+                "Unexpected error accepting job '%s': %s",
+                job_id,
+                e,
+            )
+            return {
+                "success": False,
+                "message": "Internal job acceptance error",
+            }
 
     @staticmethod
     def _json_safe(value: Any) -> Any:
@@ -981,7 +1049,9 @@ class WebAPI:
         if user_session and not user_session.startswith("REPLACE_WITH"):
             host = urlparse(url).hostname or "" if url else ""
             if self._download_host_allowed(host):
-                headers["Cookie"] = f"my_gengo_session={user_session}"
+                headers["Cookie"] = (
+                    f"myG_myGSession_={user_session}; " f"myG_rdsessID={user_session}"
+                )
         user_agent = str(
             config_get(self.config, "Network", "browser_user_agent", "") or ""
         ).strip()
@@ -1015,6 +1085,27 @@ class WebAPI:
             for allowed in self._download_allowed_hosts()
         )
 
+    def _sandbox_download_origin(self) -> tuple[str, str, int | None] | None:
+        configured = str(
+            config_get(self.config, "BrowserWorker", "sandbox_origin", "") or ""
+        ).strip()
+        if not configured:
+            return None
+
+        try:
+            return url_origin(normalize_sandbox_origin(configured))
+        except ValueError:
+            return None
+
+    def _download_matches_sandbox_origin(self, url: str) -> bool:
+        sandbox_origin = self._sandbox_download_origin()
+        if sandbox_origin is None:
+            return False
+        try:
+            return url_origin(url) == sandbox_origin
+        except ValueError:
+            return False
+
     def _validate_download_url(self, url: str) -> str:
         parsed = urlparse(str(url or "").strip())
         if parsed.scheme not in {"http", "https"}:
@@ -1022,6 +1113,8 @@ class WebAPI:
         host = (parsed.hostname or "").strip().lower()
         if not host:
             raise ValueError("Download URL must include a host")
+        if self._download_matches_sandbox_origin(parsed.geturl()):
+            return parsed.geturl()
         try:
             ip = ipaddress.ip_address(host)
         except ValueError:
@@ -1406,8 +1499,6 @@ async def lifespan(app: FastAPI):
             )
         else:
             # Check if config exists, create it if needed
-            from pathlib import Path
-
             config_path = Path(AppConfig.CONFIG_FILE)
             if not config_path.exists():
                 logger.info("Creating default %s for web API", AppConfig.CONFIG_FILE)
@@ -1430,6 +1521,8 @@ async def lifespan(app: FastAPI):
             api_token = secrets.token_urlsafe(32)
             config.set("WebServer", "auth_token", api_token)
             config.save_config()
+            if not Path(AppConfig.CONFIG_FILE).is_file():
+                raise RuntimeError("generated WebServer auth_token was not persisted")
             logger.warning(
                 "No WebServer auth_token found or it was a placeholder. Generated a new one."
             )
@@ -1450,7 +1543,7 @@ async def lifespan(app: FastAPI):
         )
         logger.info("WebAPI started successfully")
     except Exception as e:
-        logger.exception(f"Failed to start WebAPI: {e}")
+        logger.exception("Failed to start WebAPI: %s", e)
         raise
 
     yield
@@ -1572,23 +1665,28 @@ async def accept_job(job_id: str, authenticated: bool = Depends(verify_auth)):
         raise HTTPException(status_code=503, detail="API not initialized")
 
     try:
-        success = await api_instance.accept_job(job_id)
+        outcome = await api_instance.accept_job_with_reason(job_id)
 
-        if success:
+        if outcome.get("success"):
             return {
                 "status": "success",
-                "message": f"Job {job_id} accepted successfully",
+                "message": outcome.get("message")
+                or f"Job {job_id} accepted successfully",
             }
-        else:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to accept job {job_id}"
-            )
+        raise HTTPException(
+            status_code=409,
+            detail=outcome.get("message") or f"Failed to accept job {job_id}",
+        )
 
     except HTTPException:
         raise
     except Exception as e:
-        api_instance.logger.exception(f"Error accepting job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        api_instance.logger.exception(
+            "Unexpected error accepting job '%s': %s",
+            job_id,
+            e,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/jobs/cancel")
@@ -2125,6 +2223,7 @@ class ManagedWebServer:
         logger: logging.Logger | None = None,
         watcher: GengoWatcher | None = None,
         start_watcher_thread: bool = True,
+        terminal_logging: bool = True,
     ):
         if (config is None) != (state is None):
             raise ValueError("config and state must be supplied together")
@@ -2138,6 +2237,7 @@ class ManagedWebServer:
         self.logger = logger or logging.getLogger("gengowatcher.web")
         self.watcher = watcher
         self.start_watcher_thread = start_watcher_thread
+        self.terminal_logging = terminal_logging
         self.server: uvicorn.Server | None = None
         self.thread: threading.Thread | None = None
         self.startup_error: BaseException | None = None
@@ -2150,13 +2250,15 @@ class ManagedWebServer:
             watcher=self.watcher,
             start_watcher_thread=self.start_watcher_thread,
         )
-        uvicorn_config = uvicorn.Config(
-            app,
-            host=self.host,
-            port=self.port,
-            reload=False,
-            log_level="info",
-        )
+        uvicorn_options: dict[str, Any] = {
+            "host": self.host,
+            "port": self.port,
+            "reload": False,
+            "log_level": "info",
+        }
+        if not self.terminal_logging:
+            uvicorn_options.update(log_config=None, access_log=False)
+        uvicorn_config = uvicorn.Config(app, **uvicorn_options)
         self.server = uvicorn.Server(uvicorn_config)
         self.thread = threading.Thread(
             target=self._run,
@@ -2199,6 +2301,7 @@ def start_web_server_thread(
     logger: logging.Logger | None = None,
     watcher: GengoWatcher | None = None,
     start_watcher_thread: bool = True,
+    terminal_logging: bool = True,
 ) -> threading.Thread:
     """Start the web server in a daemon thread and return the thread handle."""
     server = ManagedWebServer(
@@ -2209,6 +2312,7 @@ def start_web_server_thread(
         logger=logger,
         watcher=watcher,
         start_watcher_thread=start_watcher_thread,
+        terminal_logging=terminal_logging,
     )
     return server.start()
 

@@ -14,9 +14,11 @@ async def test_run_forever_serves_until_stopped():
     runtime.stop = AsyncMock()
     args = Namespace(
         profile_path="profiles/browser-worker",
+        browser_executable_path="/usr/bin/chromium",
         seed_profile_path="",
         socket_path="/tmp/gengowatcher.sock",
         auth_token="token-123",
+        sandbox_origin="http://127.0.0.1:8765",
         headless=False,
     )
 
@@ -33,15 +35,19 @@ async def test_run_forever_serves_until_stopped():
 def test_build_runtime_config_includes_auth_token():
     args = Namespace(
         profile_path="profiles/browser-worker",
+        browser_executable_path="/usr/bin/chromium",
         seed_profile_path="",
         socket_path="/tmp/gengowatcher.sock",
         auth_token="token-123",
+        sandbox_origin="http://127.0.0.1:8765",
         headless=False,
     )
 
     config = build_runtime_config(args)
 
     assert config.auth_token == "token-123"
+    assert config.sandbox_origin == "http://127.0.0.1:8765"
+    assert config.browser_executable_path.as_posix() == "/usr/bin/chromium"
 
 
 def test_main_handles_keyboard_interrupt():

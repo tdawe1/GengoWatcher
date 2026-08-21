@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gengowatcher"
-version = "2.9.4"
+version = "3.0.0"
 description = "Terminal monitor for Gengo translation jobs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,10 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic",
     "python-multipart",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "pypdf>=5.0.0",
+    "reportlab>=4.0.0",
     "cryptography>=3.4.8",
     "requests>=2.25.1",
     "imapclient>=2.3.0",
@@ -31,6 +35,7 @@ dependencies = [
 gengowatcher = "gengowatcher.main:run"
 gengo-watcher = "gengowatcher.main:run"
 gengowatcher-browser-worker = "gengowatcher.browser_worker.main:main"
+gengowatcher-gengo-sandbox = "gengowatcher.gengo_sandbox.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -44,6 +49,7 @@ gengowatcher = ["gengo_watcher.tcss"]
 
 [tool.black]
 line-length = 88
+target-version = ["py311"]
 extend-exclude = '''
 /\.worktrees/
 '''

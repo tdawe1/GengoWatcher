@@ -37,3 +37,11 @@ def test_browser_session_flags_map_to_lightweight_commands():
     assert should_handle_lightweight_command(sync_args) is True
     assert should_handle_lightweight_command(check_args) is True
     assert should_handle_lightweight_command(firefox_args) is True
+
+
+def test_tui_backend_auto_selects_and_explicit_choices_remain_available():
+    parser = build_argument_parser()
+
+    assert parser.parse_args([]).tui is None
+    assert parser.parse_args(["--tui", "ratatui"]).tui == "ratatui"
+    assert parser.parse_args(["--tui", "textual"]).tui == "textual"

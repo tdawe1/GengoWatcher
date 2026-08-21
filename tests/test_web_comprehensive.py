@@ -13,6 +13,7 @@ from gengowatcher.web import (
     ConfigSection,
     CommandRequest,
     PaginationParams,
+    ManagedWebServer,
     run_web_server,
 )
 import gengowatcher.web as web_module
@@ -258,6 +259,28 @@ class TestWebAPIInitialization:
         mock_watcher_class.assert_not_called()
         mock_thread.assert_not_called()
 
+    def test_web_api_starts_shared_watcher_when_requested(
+        self, mock_config, mock_state, mock_logger
+    ):
+        """Web-only mode passes a shared watcher and still needs the monitor loop."""
+        shared_watcher = MagicMock()
+
+        with patch("gengowatcher.web.GengoWatcher") as mock_watcher_class:
+            with patch("threading.Thread") as mock_thread:
+                api = WebAPI(
+                    mock_config,
+                    mock_state,
+                    mock_logger,
+                    watcher=shared_watcher,
+                    start_watcher_thread=True,
+                )
+                mock_thread.assert_called_once()
+                mock_thread.return_value.start.assert_called_once()
+
+        assert api.watcher is shared_watcher
+        assert api._manage_watcher_lifecycle is True
+        mock_watcher_class.assert_not_called()
+
     def test_shutdown_does_not_stop_shared_watcher(
         self, mock_config, mock_state, mock_logger
     ):
@@ -324,6 +347,36 @@ class TestWebAPIInitialization:
             assert hasattr(api, "_status_lock")
             assert hasattr(api, "_connections_lock")
             assert hasattr(api, "_jobs_lock")
+
+
+class TestManagedWebServer:
+    def test_tui_mode_disables_uvicorn_terminal_logging(self):
+        server = ManagedWebServer(terminal_logging=False)
+
+        with (
+            patch("gengowatcher.web.uvicorn.Config") as config_class,
+            patch("gengowatcher.web.uvicorn.Server"),
+            patch("gengowatcher.web.threading.Thread") as thread_class,
+        ):
+            thread_class.return_value = MagicMock()
+            server.start()
+
+        assert config_class.call_args.kwargs["log_config"] is None
+        assert config_class.call_args.kwargs["access_log"] is False
+
+    def test_web_only_mode_keeps_uvicorn_terminal_logging(self):
+        server = ManagedWebServer(terminal_logging=True)
+
+        with (
+            patch("gengowatcher.web.uvicorn.Config") as config_class,
+            patch("gengowatcher.web.uvicorn.Server"),
+            patch("gengowatcher.web.threading.Thread") as thread_class,
+        ):
+            thread_class.return_value = MagicMock()
+            server.start()
+
+        assert "log_config" not in config_class.call_args.kwargs
+        assert "access_log" not in config_class.call_args.kwargs
 
 
 class TestWebAPIStatus:
@@ -503,6 +556,51 @@ class TestWebAPIJobManagement:
 
         result = await web_api.accept_job("123")
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_accept_job_treats_failed_accept_result_as_failure(self, web_api):
+        from gengowatcher.job_acceptance import AcceptResult
+
+        web_api.watcher.job_acceptance_engine = MagicMock()
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(
+            return_value=AcceptResult(
+                success=False, path="http", reason="captcha_required"
+            )
+        )
+
+        result = await web_api.accept_job("123")
+        assert result is False
+        outcome = await web_api.accept_job_with_reason("123")
+        assert outcome["success"] is False
+        assert "captcha_required" in outcome["message"]
+
+    @pytest.mark.asyncio
+    async def test_accept_job_rejects_gone_listings(self, web_api):
+        web_api.get_recent_jobs = MagicMock(
+            return_value={
+                "jobs": [
+                    JobEntry(
+                        id="123",
+                        title="Stale job",
+                        reward=1.0,
+                        url="https://gengo.com/t/jobs/details/123",
+                        timestamp=1.0,
+                        source="RSS",
+                        lifecycle_state="gone",
+                        workflow_state="gone",
+                    )
+                ]
+            }
+        )
+        web_api.watcher.job_acceptance_engine = MagicMock()
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance = AsyncMock(
+            return_value=True
+        )
+
+        outcome = await web_api.accept_job_with_reason("123")
+        assert outcome["success"] is False
+        assert "no longer available" in outcome["message"]
+        web_api.watcher.job_acceptance_engine._attempt_job_acceptance.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_accept_job_not_found(self, web_api):
@@ -756,6 +854,10 @@ class TestEdgeCases:
 
         result = await web_api.accept_job("123")
         assert result is False
+        outcome = await web_api.accept_job_with_reason("123")
+        assert outcome["success"] is False
+        assert outcome["message"] == "Internal job acceptance error"
+        assert "Acceptance error" not in outcome["message"]
 
 
 class TestRegressionCases:

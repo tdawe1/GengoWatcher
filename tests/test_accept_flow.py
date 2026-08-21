@@ -13,6 +13,38 @@ def test_is_workbench_url_detects_success_destination():
     assert is_workbench_url("https://gengo.com/t/jobs/details/34046576") is False
 
 
+def test_is_workbench_url_requires_expected_origin():
+    expected = "http://127.0.0.1:8765/t/jobs/details/34046576"
+
+    assert (
+        is_workbench_url(
+            "http://127.0.0.1:8765/t/workbench/34046576#!/",
+            expected_job_id="34046576",
+            expected_origin=expected,
+        )
+        is True
+    )
+    assert (
+        is_workbench_url(
+            "https://evil.example/t/workbench/34046576#!/",
+            expected_job_id="34046576",
+            expected_origin=expected,
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gengo.com/prefix/t/workbench/34046576",
+        "https://gengo.com/t/workbench/34046576/suffix",
+    ],
+)
+def test_parse_workbench_job_id_rejects_non_exact_paths(url):
+    assert parse_workbench_job_id(url) is None
+
+
 def test_parse_workbench_job_id_extracts_expected_identifier():
     assert (
         parse_workbench_job_id("https://gengo.com/t/workbench/34046576#!/")

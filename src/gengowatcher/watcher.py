@@ -379,10 +379,14 @@ class GengoWatcher:
         auth_token = str(
             self.config.get("BrowserWorker", "auth_token", fallback="") or ""
         )
+        sandbox_origin = str(
+            self.config.get("BrowserWorker", "sandbox_origin", fallback="") or ""
+        )
         return BrowserWorkerClient(
             socket_path=socket_path,
             logger=self.logger,
             auth_token=auth_token,
+            sandbox_origin=sandbox_origin,
         )
 
     def _browser_worker_telemetry_path(self) -> Path:

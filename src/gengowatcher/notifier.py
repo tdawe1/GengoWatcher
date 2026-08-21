@@ -97,16 +97,31 @@ def send_notification(title: str, message: str, icon_path: str = ""):
             command.extend(["--icon", str(resolved_icon)])
 
     try:
-        subprocess.run(command, check=True, timeout=10)
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            text=True,
+        )
         logger.debug("Notification sent successfully via notify-send.")
     except FileNotFoundError:
         logger.exception(
             "`notify-send` command not found. Please ensure it is installed and in your PATH."
         )
+    except OSError:
+        logger.exception(
+            "Failed to run notify-send due to an operating system error"
+        )
     except subprocess.TimeoutExpired:
         logger.warning("notify-send timed out after 10 seconds")
-    except subprocess.CalledProcessError:
-        logger.exception("Failed to send notification")
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        if stderr:
+            logger.exception("Failed to send notification: %s", stderr)
+        else:
+            logger.exception("Failed to send notification")
 
 
 def show_notification(

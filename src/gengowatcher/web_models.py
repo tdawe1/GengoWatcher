@@ -88,6 +88,7 @@ class JobEntry(BaseModel):
 
 class WatcherStatus(BaseModel):
     is_running: bool
+    is_paused: bool = False
     websocket_status: str
     rss_status: str
     last_check_time: float | None

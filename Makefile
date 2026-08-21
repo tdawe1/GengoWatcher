@@ -5,7 +5,10 @@ FIREFOX_DEBUG_PROFILE ?= profiles/firefox-debug
 FIREFOX_DEBUG_SEED_PROFILE ?=
 FIREFOX_DEBUG_AUTO_LAUNCH ?= true
 
-.PHONY: build test smoke-e2e coverage lint format run run-web run-web-only firefox-debug firefox-debug-bootstrap install-user
+.PHONY: build build-ratatui test test-ratatui smoke-e2e coverage lint format run run-textual run-ratatui run-web run-web-only firefox-debug firefox-debug-bootstrap install-user install-ratatui
+
+build-ratatui:
+	cargo build --release --manifest-path prototypes/garden-ratatui/Cargo.toml
 
 build:
 	@echo "Compiling Python files..."
@@ -15,20 +18,34 @@ build:
 test:
 	$(PYTHON) -m pytest
 
+test-ratatui:
+	cargo test --manifest-path prototypes/garden-ratatui/Cargo.toml
+	cargo clippy --manifest-path prototypes/garden-ratatui/Cargo.toml --all-targets -- -D warnings
+
 smoke-e2e:
 	PYTHONPATH=src $(PYTHON) -m pytest -m e2e -q
 
 coverage:
-	$(PYTHON) -m pytest --cov=.
+	PYTHONPATH=src $(PYTHON) -m pytest --cov=.
 
 lint:
-	$(PYTHON) -m flake8 .
+	$(PYTHON) -m flake8 src tests scripts prototypes
 
 format:
-	$(PYTHON) -m black .
+	$(PYTHON) -m black src tests scripts prototypes
 
 run:
 	PYTHONPATH=src $(PYTHON) -m gengowatcher.main
+
+run-textual:
+	PYTHONPATH=src $(PYTHON) -m gengowatcher.main --tui textual
+
+run-ratatui:
+	PYTHONPATH=src $(PYTHON) -m gengowatcher.main --tui ratatui
+
+install-ratatui:
+	cargo install --locked --path prototypes/garden-ratatui --root "$(HOME)/.local"
+
 
 run-web:
 	PYTHONPATH=src $(PYTHON) -m gengowatcher.main --web

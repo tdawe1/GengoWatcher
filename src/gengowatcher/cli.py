@@ -63,6 +63,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Port for web server (default: 8000)",
     )
     parser.add_argument(
+        "--tui",
+        choices=("ratatui", "textual"),
+        default=None,
+        help="Terminal UI backend (default: Ratatui when a gengowatcher-tui binary is available, otherwise Textual)",
+    )
+    parser.add_argument(
         "--sync-session-from-browser",
         action="store_true",
         help="Sync WebSocket session values from the live browser session",

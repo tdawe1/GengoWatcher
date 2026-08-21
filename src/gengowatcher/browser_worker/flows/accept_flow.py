@@ -3,19 +3,28 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
+from ..protocol import has_same_origin
 
-WORKBENCH_RE = re.compile(r"/t/workbench/(?P<job_id>\d+)")
+WORKBENCH_RE = re.compile(r"^/t/workbench/(?P<job_id>\d+)/?$")
 
 
 def parse_workbench_job_id(url: str) -> str | None:
-    match = WORKBENCH_RE.search(url)
+    match = WORKBENCH_RE.fullmatch(urlsplit(url).path)
     if not match:
         return None
     return match.group("job_id")
 
 
-def is_workbench_url(url: str, *, expected_job_id: str | None = None) -> bool:
+def is_workbench_url(
+    url: str,
+    *,
+    expected_job_id: str | None = None,
+    expected_origin: str | None = None,
+) -> bool:
+    if expected_origin is not None and not has_same_origin(url, expected_origin):
+        return False
     job_id = parse_workbench_job_id(url)
     if job_id is None:
         return False
@@ -28,9 +37,19 @@ def workbench_url_for_job(job_id: str) -> str:
     return f"https://gengo.com/t/workbench/{job_id}"
 
 
-async def wait_for_workbench(page, job_id: str, timeout_ms: int = 12000) -> str:
+async def wait_for_workbench(
+    page,
+    job_id: str,
+    timeout_ms: int = 12000,
+    *,
+    expected_origin: str | None = None,
+) -> str:
     def is_expected(url: str) -> bool:
-        return is_workbench_url(url, expected_job_id=job_id)
+        return is_workbench_url(
+            url,
+            expected_job_id=job_id,
+            expected_origin=expected_origin,
+        )
 
     await page.wait_for_url(is_expected, timeout=timeout_ms)
     return page.url

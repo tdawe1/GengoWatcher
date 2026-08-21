@@ -192,6 +192,8 @@ class GengoRealtimeGateway:
                             break
                         try:
                             data = json.loads(msg)
+                            if not isinstance(data, dict):
+                                continue
                             if data.get("type") == "available_collection":
                                 collection = data.get("collection")
                                 jobs = (
