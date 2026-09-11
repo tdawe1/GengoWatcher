@@ -309,10 +309,11 @@ class WebFileStorage:
             raise ValueError("Invalid stored filename")
         safe_leaf_name = Path(safe_name).name
         destination = self.ensure_within_storage_dir(storage_dir / safe_leaf_name)
+        safe_leaf_path = Path(safe_leaf_name)
+        stem = safe_leaf_path.stem
+        suffix = safe_leaf_path.suffix
         counter = 1
         while destination.exists():
-            stem = Path(safe_leaf_name).stem
-            suffix = Path(safe_leaf_name).suffix
             candidate_name = f"{stem}-{counter}{suffix}"
             if not self.is_valid_stored_name(candidate_name):
                 raise ValueError("Invalid stored filename")
