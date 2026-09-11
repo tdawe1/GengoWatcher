@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+# gengo — single-keypress CLI wrapper for translate-gengo.sh
+# - [F] file = most recent in ~/Downloads (Y confirm / N next)
+# - [T] paste text (Ctrl+D to finish) / [P] clipboard / args / stdin pipe
+# Delegates actual work to scripts/translate-gengo.sh (never fails hard per-model).
+set -u
+set -o pipefail
+
+# Resolve repo-relative core: bin/gengo -> ../scripts/translate-gengo.sh.
+# Fall back to $HOME/translate-gengo.sh and PATH for standalone installs.
+_BIN_SRC="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_BIN_SRC" ]; do
+  _BIN_DIR="$(CDPATH= cd -- "$(dirname -- "$_BIN_SRC")" && pwd)"
+  _BIN_LINK="$(readlink "$_BIN_SRC")"
+  case "$_BIN_LINK" in /*) _BIN_SRC="$_BIN_LINK";; *) _BIN_SRC="$_BIN_DIR/$_BIN_LINK";; esac
+done
+_BIN_DIR="$(CDPATH= cd -- "$(dirname -- "$_BIN_SRC")" && pwd)"
+if [ -x "$_BIN_DIR/../scripts/translate-gengo.sh" ]; then
+  CORE="$_BIN_DIR/../scripts/translate-gengo.sh"
+elif [ -x "$HOME/translate-gengo.sh" ]; then
+  CORE="$HOME/translate-gengo.sh"
+else
+  CORE="translate-gengo.sh"
+fi
+unset _BIN_SRC _BIN_DIR _BIN_LINK
+OUTBASE="$HOME/gengo-output"
+DOWNLOADS="$HOME/Downloads"
+TIMEOUT=300
+ONLY="grok,opencode,codex,claude"
+SKIP_REVIEW=0
+ASSUME_YES=0
+LATEST_N=""
+MODE=""
+TEXT_ARGS=()
+
+usage() {
+  cat <<'USAGE'
+gengo — Gengo translate CLI (single-keypress)
+
+Interactive (no args, needs a TTY):
+  gengo
+    [F] file = latest in ~/Downloads ([Y] use / [N] next / [R] rescan)
+    [T] paste text (end with Ctrl+D)
+    [P] clipboard
+    [Q] quit
+  Then: [1] all models [2] opencode only [3] pick — all single keys.
+
+Non-interactive:
+  gengo --latest [--latest-n 2] [--only opencode] [-y]
+  gengo --list-downloads [N]
+  gengo --paste            # read multiline stdin until Ctrl+D
+  gengo --clipboard
+  gengo "pasted text here"
+  echo "text" | gengo
+  gengo -l -y -t 120 -o ~/gengo-output
+
+Options:
+  -l, --latest            use most recent file in Downloads
+  --latest-n N            Nth most recent (1=latest, with --latest)
+  --list-downloads [N]    list N recent downloads, exit
+  -p, --paste             read pasted text from stdin (Ctrl+D ends)
+  --clipboard             read X/Wayland clipboard
+  -i, --interactive       force single-key interactive menu
+  -o, --out-dir DIR       output base (default ~/gengo-output)
+  -t, --timeout SECS      per-model per-phase (default 300)
+  --only LIST             grok,opencode,codex,claude subset
+  --skip-review|--no-review  skip review pass
+  --review                force review pass
+  -y, --yes               skip confirmations
+  -h, --help
+USAGE
+}
+
+# ---------- helpers ----------
+have() { command -v "$1" >/dev/null 2>&1; }
+is_tty() { [[ -t 0 && -t 1 ]]; }
+
+# Single keypress. Usage: key=$(keypress "prompt [y/n]: " "ynq"); echo $key
+keypress() {
+  local prompt="${1:-press a key: }" valid="${2:-}" k=""
+  if ! is_tty; then
+    # non-tty: read a line, take first char
+    printf "%s" "$prompt" >&2
+    IFS= read -r line || line=""
+    k="$(printf "%s" "$line" | cut -c1 | tr '[:upper:]' '[:lower:]')"
+    printf "%s\n" "$k" >&2
+    printf "%s" "$k"
+    return 0
+  fi
+  while true; do
+    printf "%s" "$prompt" >&2
+    IFS= read -rsn1 k >&2 || k=""
+    # Enter gives empty; normalize to "enter"
+    if [[ -z "$k" ]]; then k="enter"; fi
+    k="$(printf "%s" "$k" | tr '[:upper:]' '[:lower:]')"
+    printf "%s\n" "$k" >&2
+    if [[ -z "$valid" ]]; then printf "%s" "$k"; return 0; fi
+    # valid is like "ft pq" or "ynrq" — allow chars + enter
+    if [[ "$valid" == *"enter"* && "$k" == "enter" ]]; then printf "%s" "$k"; return 0; fi
+    if [[ "$valid" == *"$k"* ]]; then printf "%s" "$k"; return 0; fi
+    printf "  (press one of [%s])\n" "$valid" >&2
+  done
+}
+
+latest_download() {
+  local n="${1:-1}"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=1
+  [[ -d "$DOWNLOADS" ]] || return 1
+  # most-recent regular files only, skip partials
+  find "$DOWNLOADS" -maxdepth 1 -type f \
+    ! -name '*.part' ! -name '*.crdownload' ! -name '*.tmp' -printf '%T@ %p\n' 2>/dev/null \
+    | sort -rn | sed -n "${n}p" | cut -d' ' -f2-
+}
+
+list_downloads() {
+  local n="${1:-10}"
+  find "$DOWNLOADS" -maxdepth 1 -type f \
+    ! -name '*.part' ! -name '*.crdownload' ! -name '*.tmp' -printf '%T@ %p\n' 2>/dev/null \
+    | sort -rn | head -n "$n" | cut -d' ' -f2- | while IFS= read -r f; do
+        printf "%s  (%s, %s)\n" "$f" "$(du -h "$f" 2>/dev/null | cut -f1)" "$(stat -c %y "$f" 2>/dev/null | cut -d. -f1)"
+      done
+}
+
+clipboard_text() {
+  if have wl-paste && [[ -n "${WAYLAND_DISPLAY:-}" ]]; then wl-paste 2>/dev/null && return 0; fi
+  if have xclip; then xclip -o -selection clipboard 2>/dev/null && return 0; fi
+  if have wl-paste; then wl-paste 2>/dev/null && return 0; fi
+  return 1
+}
+
+# ---------- arg parse ----------
+LIST_ONLY=0
+LIST_N=10
+PASTE_MODE=0
+CLIP_MODE=0
+LATEST_FLAG=0
+FORCE_INTERACTIVE=0
+OUT_SET=0
+PASTE_TMP=""
+EDIT_TMP=""
+cleanup_tmp() {
+  if [[ -n "${PASTE_TMP:-}" ]]; then rm -f "$PASTE_TMP"; fi
+  if [[ -n "${EDIT_TMP:-}" ]]; then rm -f "$EDIT_TMP"; fi
+}
+trap cleanup_tmp EXIT HUP INT TERM
+need_arg() { # need_arg OPTION "${NEXT:-}"; $2 empty/missing -> exit 2
+  if [[ -z "${2:-}" ]]; then
+    echo "$1 requires a value" >&2; exit 2
+  fi
+}
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0;;
+    -l|--latest) LATEST_FLAG=1; MODE="file"; shift;;
+    --latest-n) need_arg "$1" "${2:-}"; LATEST_N="$2"; LATEST_FLAG=1; MODE="file"; shift 2;;
+    --list-downloads) LIST_ONLY=1; [[ "${2:-}" =~ ^[0-9]+$ ]] && { LIST_N="$2"; shift 2; } || shift;;
+    -p|--paste) PASTE_MODE=1; MODE="text-paste"; shift;;
+    --clipboard) CLIP_MODE=1; MODE="text-clip"; shift;;
+    -i|--interactive) FORCE_INTERACTIVE=1; shift;;
+    -o|--out-dir) need_arg "$1" "${2:-}"; OUTBASE="$2"; OUT_SET=1; shift 2;;
+    -t|--timeout) need_arg "$1" "${2:-}"; TIMEOUT="$2"; shift 2;;
+    --only) need_arg "$1" "${2:-}"; ONLY="$2"; shift 2;;
+    --skip-review|--no-review) SKIP_REVIEW=1; shift;;
+    --review) SKIP_REVIEW=0; shift;;
+    -y|--yes) ASSUME_YES=1; shift;;
+    --) shift; while [[ $# -gt 0 ]]; do TEXT_ARGS+=("$1"); shift; done; break;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 2;;
+    *) TEXT_ARGS+=("$1"); shift;;
+  esac
+done
+
+if [[ "$LIST_ONLY" -eq 1 ]]; then list_downloads "$LIST_N"; exit 0; fi
+[[ -n "$LATEST_N" && "$LATEST_FLAG" -eq 0 ]] && { LATEST_FLAG=1; MODE="file"; }
+if [[ ! -x "$CORE" ]]; then echo "Missing core: $CORE (expected translate-gengo.sh)" >&2; exit 1; fi
+
+# piped stdin counts as pasted text (unless explicit mode)
+if [[ ! -t 0 && "$PASTE_MODE" -eq 0 && "$CLIP_MODE" -eq 0 && "$LATEST_FLAG" -eq 0 && ${#TEXT_ARGS[@]} -eq 0 ]]; then
+  MODE="text-pipe"
+  PASTE_TMP="$(mktemp)"
+  cat > "$PASTE_TMP"
+  if [[ ! -s "$PASTE_TMP" ]]; then echo "Empty stdin." >&2; exit 2; fi
+fi
+
+# ---------- interactive single-key menu (no args, tty) ----------
+CHOSEN_FILE=""; CHOSEN_TEXT=""
+if [[ "$FORCE_INTERACTIVE" -eq 1 || ( -z "$MODE" && ${#TEXT_ARGS[@]} -eq 0 && -t 0 ) ]]; then
+  # force menu even if --only etc. were given, as long as no input resolved yet
+  if [[ -z "$MODE" && ${#TEXT_ARGS[@]} -eq 0 ]]; then
+    echo "=== gengo — Gengo translate ==="
+    k="$(keypress "[F]ile=latest Downloads  [T] paste text  [P] clipboard  [Q]uit: " "ftpq")"
+    case "$k" in
+      q) echo "Bye."; exit 0;;
+      f) MODE="file";;
+      t) MODE="text-paste";;
+      p) MODE="text-clip";;
+    esac
+  fi
+fi
+
+# ---------- resolve FILE mode (latest in Downloads, N = next) ----------
+if [[ "$MODE" == "file" ]]; then
+  idx="${LATEST_N:-1}"
+  [[ "$idx" =~ ^[0-9]+$ ]] || idx=1
+  if [[ "$ASSUME_YES" -eq 0 && -t 0 && "$LATEST_FLAG" -eq 0 ]]; then
+    # interactive cycle
+    while true; do
+      f="$(latest_download "$idx")"
+      if [[ -z "$f" ]]; then echo "No files in $DOWNLOADS." >&2; exit 1; fi
+      echo "Latest #$idx: $f"
+      echo "  ($(du -h "$f" 2>/dev/null | cut -f1), $(stat -c %y "$f" 2>/dev/null | cut -d. -f1))"
+      k="$(keypress "[Y] use  [N] next  [R] rescan  [T] paste instead  [Q]uit: " "ynrtq")"
+      case "$k" in
+        y|enter) CHOSEN_FILE="$f"; break;;
+        n) idx=$((idx+1));;
+        r) idx=1;;
+        t) MODE="text-paste"; break;;
+        q) echo "Bye."; exit 0;;
+      esac
+    done
+  else
+    CHOSEN_FILE="$(latest_download "$idx")"
+    if [[ -z "$CHOSEN_FILE" ]]; then echo "No files in $DOWNLOADS." >&2; exit 1; fi
+    echo "Using latest #$idx: $CHOSEN_FILE"
+  fi
+fi
+
+# ---------- resolve TEXT modes ----------
+if [[ "$MODE" == "text-pipe" ]]; then
+  CHOSEN_TEXT="$(cat "$PASTE_TMP"; rm -f "$PASTE_TMP")"
+elif [[ "$MODE" == "text-clip" || "$CLIP_MODE" -eq 1 ]]; then
+  if ! CHOSEN_TEXT="$(clipboard_text)"; then echo "Clipboard empty/unreadable (xclip/wl-paste)." >&2; exit 1; fi
+  if [[ -z "$CHOSEN_TEXT" ]]; then echo "Clipboard empty." >&2; exit 1; fi
+  echo "Got $(printf "%s" "$CHOSEN_TEXT" | wc -c) bytes from clipboard."
+elif [[ "$MODE" == "text-paste" || "$PASTE_MODE" -eq 1 ]]; then
+  if [[ -t 0 ]]; then
+    echo "Paste now, finish with single Ctrl+D (or type a lone . line):"
+    PASTE_TMP="$(mktemp)"
+    # cat until EOF; also stop on lone "." line for convenience
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" == "." ]] && break
+      printf "%s\n" "$line" >> "$PASTE_TMP"
+    done
+    CHOSEN_TEXT="$(cat "$PASTE_TMP"; rm -f "$PASTE_TMP")"
+    if [[ -z "$CHOSEN_TEXT" ]]; then echo "Empty input, aborted." >&2; exit 1; fi
+    echo "Got $(printf "%s" "$CHOSEN_TEXT" | wc -c) bytes, $(printf "%s" "$CHOSEN_TEXT" | wc -l) lines."
+    if [[ "$ASSUME_YES" -eq 0 ]]; then
+      k="$(keypress "[Enter] run  [E]dit  [R]edo  [Q]uit: " "eerqenter")"
+      case "$k" in
+        q) echo "Bye."; exit 0;;
+        r) echo "Redo: restart gengo and paste again."; exit 0;;
+        e) EDIT_TMP="$(mktemp --suffix=.txt)"; printf "%s\n" "$CHOSEN_TEXT" > "$EDIT_TMP"
+           "${EDITOR:-vi}" "$EDIT_TMP"; CHOSEN_TEXT="$(cat "$EDIT_TMP")"; rm -f "$EDIT_TMP"; EDIT_TMP="";;
+      esac
+    fi
+  else
+    CHOSEN_TEXT="$(cat)"  # piped paste
+  fi
+elif [[ ${#TEXT_ARGS[@]} -gt 0 ]]; then
+  # single existing file arg = file mode, else joined text
+  if [[ ${#TEXT_ARGS[@]} -eq 1 && -f "${TEXT_ARGS[0]}" ]]; then
+    MODE="file"; CHOSEN_FILE="${TEXT_ARGS[0]}"
+  else
+    MODE="text"; CHOSEN_TEXT="${TEXT_ARGS[*]}"
+  fi
+fi
+
+# ---------- model + review single-key picks (interactive only) ----------
+if [[ -t 1 && "$ASSUME_YES" -eq 0 && -z "${ONLY_SET:-}" ]]; then
+  # only ask if user didn't pass --only and we're interactive-ish
+  if [[ -z "$MODE" || "$MODE" == "" ]]; then :; fi
+fi
+if is_tty && [[ "$ASSUME_YES" -eq 0 && "${ONLY}" == "grok,opencode,codex,claude" ]]; then
+  # default full set — offer one-key shortcut; Enter = keep all
+  echo "Models: all = grok,opencode,codex,claude"
+  k="$(keypress "[Enter] all  [2] opencode-only  [3] pick toggles  [Q]uit: " "23qenter")"
+  case "$k" in
+    q) echo "Bye."; exit 0;;
+    2) ONLY="opencode";;
+    3)
+      sel=""; for m in grok opencode codex claude; do
+        kk="$(keypress "Run $m? [Y]/[n]: " "ynenter")"
+        [[ "$kk" == "n" ]] || sel+="$m,"
+      done
+      ONLY="${sel%,}"; [[ -z "$ONLY" ]] && { echo "Nothing selected." >&2; exit 1; }
+      ;;
+  esac
+  echo "Only: $ONLY"
+  k="$(keypress "Review pass? [Y]es/[N]o (default Y): " "ynenter")"
+  [[ "$k" == "n" ]] && SKIP_REVIEW=1 || SKIP_REVIEW=0
+fi
+
+# ---------- dispatch to core ----------
+mkdir -p "$OUTBASE"
+CORE_ARGS=(-o "$OUTBASE" -t "$TIMEOUT" --only "$ONLY")
+[[ "$SKIP_REVIEW" -eq 1 ]] && CORE_ARGS+=(--skip-review)
+
+echo "--- run: models=[$ONLY] review=$([[ $SKIP_REVIEW -eq 1 ]] && echo off || echo on) timeout=${TIMEOUT}s ---"
+if [[ -n "$CHOSEN_FILE" ]]; then
+  echo "Input file: $CHOSEN_FILE"
+  exec "$CORE" "${CORE_ARGS[@]}" "$CHOSEN_FILE"
+elif [[ -n "${CHOSEN_TEXT:-}" ]]; then
+  # Via stdin so customer text never appears in the process argument vector.
+  printf "%s" "$CHOSEN_TEXT" | exec "$CORE" "${CORE_ARGS[@]}"
+else
+  echo "Nothing to translate." >&2; usage >&2; exit 2
+fi

@@ -140,6 +140,17 @@ class AppConfig:
             "timeout_sec": 5.0,
             "verify_tls": True,
         },
+        "TranslateFanout": {
+            "enabled": False,
+            "models": "grok,opencode,codex,claude",
+            "timeout_s": 300,
+            "out_dir": "data/translate-fanout",
+            "max_chars": 50000,
+            "max_concurrency": 2,
+            "max_active_runs": 3,
+            "allow_binary": False,
+            "preview_chars": 500,
+        },
         "TranslationWorkflow": {
             "enabled": False,
             "file_mode": "user",

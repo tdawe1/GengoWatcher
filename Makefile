@@ -69,3 +69,4 @@ install-user:
 	ln -sf "$(CURDIR)/bin/gengowatcher" "$(HOME)/.local/bin/gengowatcher"
 	ln -sf "$(CURDIR)/bin/gengo-watcher" "$(HOME)/.local/bin/gengo-watcher"
 	ln -sf "$(CURDIR)/bin/gengowatcher-browser-worker" "$(HOME)/.local/bin/gengowatcher-browser-worker"
+	ln -sf "$(CURDIR)/bin/gengo" "$(HOME)/.local/bin/gengo"

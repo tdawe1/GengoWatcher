@@ -10,7 +10,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{UiAction, api::ApiClient, model::DashboardData};
+use crate::{
+    UiAction,
+    api::ApiClient,
+    model::{DashboardData, TranslateRunDetail, TranslateRunSummary},
+};
 
 #[derive(Debug)]
 enum WorkerCommand {
@@ -25,6 +29,8 @@ pub enum WorkerEvent {
         action: UiAction,
         result: Result<String, String>,
     },
+    TranslateList(Vec<TranslateRunSummary>),
+    TranslateDetail(Box<TranslateRunDetail>),
     ConnectionError(String),
 }
 
@@ -105,14 +111,85 @@ fn worker_loop(
         match commands.recv_timeout(timeout) {
             Ok(WorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(WorkerCommand::Action(action)) => {
-                let result = execute_action(&client, &action);
-                if events
-                    .send(WorkerEvent::ActionResult { action, result })
-                    .is_err()
-                {
-                    break;
+                // Translate reads are lazy (only while the Translate view is
+                // active) so the 2s snapshot loop stays small. Detail fetches
+                // read retained files server-side and respect snapshot timeout.
+                match &action {
+                    UiAction::RefreshTranslate => {
+                        match client.list_translate_runs() {
+                            Ok(runs) => {
+                                let count = runs.len();
+                                if events.send(WorkerEvent::TranslateList(runs)).is_err() {
+                                    break;
+                                }
+                                if events
+                                    .send(WorkerEvent::ActionResult {
+                                        action: action.clone(),
+                                        result: Ok(format!("Translate runs updated · {count}")),
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                if events
+                                    .send(WorkerEvent::ActionResult {
+                                        action: action.clone(),
+                                        result: Err(error.to_string()),
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        next_poll = Instant::now();
+                    }
+                    UiAction::GetTranslateDetail(run_id) => {
+                        match client.get_translate_run(run_id) {
+                            Ok(detail) => {
+                                if events
+                                    .send(WorkerEvent::TranslateDetail(Box::new(detail)))
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                if events
+                                    .send(WorkerEvent::ActionResult {
+                                        action: action.clone(),
+                                        result: Ok(format!("Translate detail loaded · {run_id}")),
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                if events
+                                    .send(WorkerEvent::ActionResult {
+                                        action: action.clone(),
+                                        result: Err(error.to_string()),
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        next_poll = Instant::now();
+                    }
+                    _ => {
+                        let result = execute_action(&client, &action);
+                        if events
+                            .send(WorkerEvent::ActionResult { action, result })
+                            .is_err()
+                        {
+                            break;
+                        }
+                        next_poll = Instant::now();
+                    }
                 }
-                next_poll = Instant::now();
             }
             Err(RecvTimeoutError::Timeout) => match client.fetch_snapshot() {
                 Ok(snapshot) => {
@@ -146,6 +223,9 @@ fn execute_action(client: &ApiClient, action: &UiAction) -> Result<String, Strin
         UiAction::Command(command) => client.command(command),
         UiAction::AcceptJob(job_id) => client.accept_job(job_id),
         UiAction::CancelCurrentJob => client.cancel_current_job(),
+        UiAction::RefreshTranslate | UiAction::GetTranslateDetail(_) => {
+            return Err("Translate reads use dedicated worker events".into());
+        }
     }
     .map_err(|error| error.to_string())?;
     if response.status.eq_ignore_ascii_case("success") {

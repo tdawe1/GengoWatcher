@@ -208,6 +208,205 @@ pub struct EventsResponse {
     pub events: Vec<ApiEvent>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TranslatePerModel {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub bytes: usize,
+    #[serde(default)]
+    pub ms: u64,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TranslateRunSummary {
+    pub run_id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub char_count: usize,
+    #[serde(default)]
+    pub with_review: bool,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub created_at: f64,
+    #[serde(default)]
+    pub finished_at: Option<f64>,
+    #[serde(default)]
+    pub finished: bool,
+    #[serde(default)]
+    pub per_model: BTreeMap<String, TranslatePerModel>,
+    #[serde(default)]
+    pub input_preview: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TranslateResult {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub translation: String,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default, alias = "final")]
+    pub final_text: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TranslateRunDetail {
+    #[serde(flatten)]
+    pub summary: TranslateRunSummary,
+    #[serde(default)]
+    pub source_text: String,
+    #[serde(default)]
+    pub original_name: String,
+    #[serde(default)]
+    pub results: BTreeMap<String, TranslateResult>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TranslateListResponse {
+    #[serde(default)]
+    pub runs: Vec<TranslateRunSummary>,
+}
+
+impl TranslateRunSummary {
+    #[must_use]
+    pub fn display_status(&self) -> &str {
+        if !self.finished {
+            return "running";
+        }
+        if self.per_model.values().any(|state| state.status == "ok") {
+            "ok"
+        } else if self
+            .per_model
+            .values()
+            .any(|state| state.status == "skipped")
+        {
+            "skipped"
+        } else if self
+            .per_model
+            .values()
+            .any(|state| state.status == "failed")
+        {
+            "failed"
+        } else {
+            "done"
+        }
+    }
+
+    #[must_use]
+    pub fn demo_list() -> Vec<Self> {
+        vec![
+            Self {
+                run_id: "20260911-120000-a1b2c3d4".into(),
+                kind: "text".into(),
+                char_count: 42,
+                with_review: true,
+                models: vec!["opencode".into(), "claude".into()],
+                created_at: 1_750_000_000.0,
+                finished_at: Some(1_750_000_120.0),
+                finished: true,
+                per_model: BTreeMap::from([
+                    (
+                        "opencode".into(),
+                        TranslatePerModel {
+                            status: "ok".into(),
+                            bytes: 128,
+                            ms: 12_000,
+                            error: String::new(),
+                        },
+                    ),
+                    (
+                        "claude".into(),
+                        TranslatePerModel {
+                            status: "skipped".into(),
+                            bytes: 0,
+                            ms: 800,
+                            error: "no sub / auth / quota".into(),
+                        },
+                    ),
+                ]),
+                input_preview: "こんにちは、製品アップデートのお知らせ…".into(),
+            },
+            Self {
+                run_id: "20260911-121500-e5f6a7b8".into(),
+                kind: "file".into(),
+                char_count: 1_240,
+                with_review: true,
+                models: vec!["grok".into(), "opencode".into()],
+                created_at: 1_750_000_100.0,
+                finished_at: None,
+                finished: false,
+                per_model: BTreeMap::from([
+                    (
+                        "grok".into(),
+                        TranslatePerModel {
+                            status: "running".into(),
+                            bytes: 0,
+                            ms: 0,
+                            error: String::new(),
+                        },
+                    ),
+                    (
+                        "opencode".into(),
+                        TranslatePerModel {
+                            status: "queued".into(),
+                            bytes: 0,
+                            ms: 0,
+                            error: String::new(),
+                        },
+                    ),
+                ]),
+                input_preview: "ReleaseNotes.txt · 1,240 chars…".into(),
+            },
+        ]
+    }
+}
+
+impl TranslateRunDetail {
+    #[must_use]
+    pub fn demo(run_id: &str) -> Self {
+        let summary = Self::demo_summaries()
+            .into_iter()
+            .find(|item| item.run_id == run_id)
+            .unwrap_or_else(|| Self::demo_summaries().remove(0));
+        let results = BTreeMap::from([
+            (
+                "opencode".into(),
+                TranslateResult {
+                    status: "ok".into(),
+                    translation: "Hello, product update notice…".into(),
+                    final_text: "Hello, product update notice…".into(),
+                    error: String::new(),
+                },
+            ),
+            (
+                "claude".into(),
+                TranslateResult {
+                    status: "skipped".into(),
+                    translation: String::new(),
+                    final_text: "SKIPPED: claude has no active subscription.".into(),
+                    error: "no sub / auth / quota".into(),
+                },
+            ),
+        ]);
+        Self {
+            summary,
+            source_text: "こんにちは、製品アップデートのお知らせ…".into(),
+            original_name: String::new(),
+            results,
+        }
+    }
+
+    fn demo_summaries() -> Vec<TranslateRunSummary> {
+        TranslateRunSummary::demo_list()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DashboardData {
     pub status: WatcherStatus,
@@ -408,5 +607,64 @@ mod tests {
         assert!(available.is_available());
         assert!(!gone.is_available());
         assert_eq!(gone.display_status(), "gone");
+    }
+
+    #[test]
+    fn translate_demo_list_covers_finished_and_running() {
+        let runs = TranslateRunSummary::demo_list();
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().any(|run| run.finished));
+        assert!(runs.iter().any(|run| !run.finished));
+        assert_eq!(runs[0].display_status(), "ok");
+        assert_eq!(runs[1].display_status(), "running");
+    }
+
+    #[test]
+    fn translate_list_response_tolerates_missing_fields() {
+        let response: TranslateListResponse =
+            serde_json::from_str(r#"{"runs":[]}"#).expect("empty list");
+        assert!(response.runs.is_empty());
+        let run: TranslateRunSummary =
+            serde_json::from_str(r#"{"run_id":"20260911-120000-a1b2c3d4"}"#).expect("minimal run");
+        assert_eq!(run.run_id, "20260911-120000-a1b2c3d4");
+        assert_eq!(run.display_status(), "running");
+    }
+
+    #[test]
+    fn translate_detail_deserializes_final_alias() {
+        let detail: TranslateRunDetail = serde_json::from_str(
+            r#"{"run_id":"r1","results":{"opencode":{"status":"ok","final":"done"}}}"#,
+        )
+        .expect("detail with final alias");
+        assert_eq!(
+            detail.results["opencode"].final_text, "done",
+            "serde `final` alias must map to final_text"
+        );
+    }
+
+    #[test]
+    fn all_skipped_models_display_as_skipped() {
+        let run = TranslateRunSummary {
+            run_id: "20260911-120000-a1b2c3d4".into(),
+            finished: true,
+            per_model: BTreeMap::from([
+                (
+                    "grok".into(),
+                    TranslatePerModel {
+                        status: "skipped".into(),
+                        ..TranslatePerModel::default()
+                    },
+                ),
+                (
+                    "claude".into(),
+                    TranslatePerModel {
+                        status: "skipped".into(),
+                        ..TranslatePerModel::default()
+                    },
+                ),
+            ]),
+            ..TranslateRunSummary::default()
+        };
+        assert_eq!(run.display_status(), "skipped");
     }
 }

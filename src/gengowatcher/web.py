@@ -34,13 +34,14 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from prometheus_client import Gauge, make_asgi_app
 import requests
 import uvicorn
 
 from .config import AppConfig
 from .browser_worker.protocol import normalize_sandbox_origin, url_origin
+from .orchestration.translate_fanout import TranslateBusyError, TranslateFanoutService
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
@@ -70,6 +71,9 @@ from .web_models import (
     JobEntry,
     PaginationParams,  # noqa: F401 - compatibility re-export
     SECURITY,
+    TranslateRunDetail,
+    TranslateRunSummary,
+    TranslateStartRequest,
     WatcherStatus,
 )
 
@@ -112,6 +116,12 @@ class WebAPI:
         self.state = state
         self.logger = logger
         self.file_storage = WebFileStorage(config, logger)
+        self.translate_fanout = TranslateFanoutService(
+            config,
+            logger,
+            file_storage=self.file_storage,
+            event_callback=self.publish_api_event,
+        )
 
         self.watcher = (
             watcher if watcher is not None else GengoWatcher(config, state, logger)
@@ -507,6 +517,27 @@ class WebAPI:
     def get_file_entry(self, stored_name: str) -> StoredFileEntry | None:
         return self.file_storage.get_file_entry(stored_name)
 
+    def start_translate_run(self, payload: TranslateStartRequest) -> str:
+        """Validate and start a translate fan-out run; returns run_id."""
+        if payload.text is not None and payload.file_ref is not None:
+            raise ValueError("Provide exactly one of text or file_ref")
+        return self.translate_fanout.start_run(
+            text=payload.text,
+            file_ref=payload.file_ref,
+            models=payload.models,
+            with_review=payload.with_review,
+        )
+
+    def list_translate_runs(self) -> list[TranslateRunSummary]:
+        runs = self.translate_fanout.list_runs()
+        return [TranslateRunSummary(**item) for item in runs]
+
+    def get_translate_run(self, run_id: str) -> TranslateRunDetail | None:
+        detail = self.translate_fanout.get_run(run_id)
+        if detail is None:
+            return None
+        return TranslateRunDetail(**detail)
+
     @staticmethod
     def _normalize_tier(
         tier: str | None,
@@ -818,9 +849,7 @@ class WebAPI:
                     "success": True,
                     "message": f"Job {job_id} accepted successfully",
                 }
-            self.logger.warning(
-                "Job %s acceptance attempt failed: %s", job_id, reason
-            )
+            self.logger.warning("Job %s acceptance attempt failed: %s", job_id, reason)
             return {
                 "success": False,
                 "message": f"Failed to accept job {job_id}: {reason}",
@@ -1977,6 +2006,69 @@ async def download_file(
     if not path.exists() or not path.is_file() or path.is_symlink():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(str(path), filename=entry.original_name)
+
+
+@app.post("/api/translate", status_code=202)
+async def start_translate(
+    payload: TranslateStartRequest,
+    authenticated: bool = Depends(verify_auth),
+):
+    """Start a translate fan-out run (text or stored file_ref)."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        run_id = api_instance.start_translate_run(payload)
+        return {"run_id": run_id}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except TranslateBusyError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    except Exception as e:
+        api_instance.logger.exception(f"Error starting translate run: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/translate")
+async def list_translate_runs(
+    authenticated: bool = Depends(verify_auth),
+):
+    """List translate fan-out run summaries (truncated preview only)."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        runs = api_instance.list_translate_runs()
+        return JSONResponse(
+            content={"runs": [run.model_dump() for run in runs]},
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        api_instance.logger.exception(f"Error listing translate runs: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/translate/{run_id}")
+async def get_translate_run(
+    run_id: str,
+    authenticated: bool = Depends(verify_auth),
+):
+    """Get one translate fan-out run with retained source and results."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        detail = api_instance.get_translate_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as e:
+        api_instance.logger.exception(f"Error getting translate run: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Translate run not found")
+    return JSONResponse(
+        content=detail.model_dump(),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.websocket("/ws/status")

@@ -7,6 +7,8 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
+from .orchestration.translate_fanout import SUPPORTED_MODELS
+
 SECURITY = HTTPBearer(auto_error=False)
 
 
@@ -149,3 +151,74 @@ class PaginationParams(BaseModel):
     MAX_LIMIT: ClassVar[int] = 100
     page: int = Field(default=1, ge=1)
     limit: int = Field(default=50, ge=1, le=MAX_LIMIT)
+
+
+class TranslateStartRequest(BaseModel):
+    text: str | None = None
+    file_ref: str | None = None
+    models: list[str] | None = None
+    with_review: bool = True
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def validate_text(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("Text must be a string")
+        if not value.strip():
+            raise ValueError("Text must not be empty")
+        return value
+
+    @field_validator("file_ref", mode="before")
+    @classmethod
+    def validate_file_ref(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("file_ref must be a non-empty string")
+        return value.strip()
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def validate_models(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = [item.strip() for item in value.split(",") if item.strip()]
+        if not isinstance(value, list):
+            raise ValueError("models must be a list of model names")
+        cleaned = [str(item).strip().lower() for item in value if str(item).strip()]
+        if not cleaned:
+            raise ValueError("models must not be empty")
+        allowed = set(SUPPORTED_MODELS)
+        unknown = [item for item in cleaned if item not in allowed]
+        if unknown:
+            raise ValueError(f"Unknown models: {', '.join(unknown)}")
+        return cleaned
+
+
+class TranslatePerModelStatus(BaseModel):
+    status: str
+    bytes: int = 0
+    ms: int = 0
+    error: str = ""
+
+
+class TranslateRunSummary(BaseModel):
+    run_id: str
+    kind: str
+    char_count: int
+    with_review: bool
+    models: list[str]
+    created_at: float
+    finished_at: float | None = None
+    finished: bool = False
+    per_model: dict[str, TranslatePerModelStatus] = Field(default_factory=dict)
+    input_preview: str = ""
+
+
+class TranslateRunDetail(TranslateRunSummary):
+    source_text: str = ""
+    original_name: str = ""
+    results: dict[str, dict[str, str]] = Field(default_factory=dict)
