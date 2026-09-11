@@ -1,4 +1,8 @@
-use std::{io, path::PathBuf, time::Duration};
+use std::{
+    io,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -189,9 +193,31 @@ fn run(
     mut app: App,
     worker: &Option<LiveWorker>,
 ) -> io::Result<()> {
+    // Slow-cadence translate refresh while the Translate view is active, so
+    // running fan-out jobs show live progress without loading the 2s
+    // snapshot loop. Reset whenever the user leaves the view.
+    let translate_poll_interval = Duration::from_secs(5);
+    let mut last_translate_poll = Instant::now();
     while !app.should_quit {
         if let Some(worker) = worker.as_ref() {
             drain_worker(worker, &mut app);
+        }
+        if app.view == View::Translate {
+            if last_translate_poll.elapsed() >= translate_poll_interval {
+                let actions = app.translate_auto_poll();
+                if !actions.is_empty() {
+                    last_translate_poll = Instant::now();
+                }
+                for action in actions {
+                    if let Some(worker) = worker.as_ref()
+                        && let Err(error) = worker.send(action.clone())
+                    {
+                        app.apply_action_result_for(&action, Err(error));
+                    }
+                }
+            }
+        } else {
+            last_translate_poll = Instant::now();
         }
         terminal.draw(|frame| render(frame, &mut app))?;
         if !event::poll(Duration::from_millis(250))? {
@@ -224,6 +250,12 @@ fn drain_worker(worker: &LiveWorker, app: &mut App) {
             Ok(Some(WorkerEvent::Snapshot(snapshot))) => app.apply_snapshot(*snapshot),
             Ok(Some(WorkerEvent::TranslateList(runs))) => app.apply_translate_list(runs),
             Ok(Some(WorkerEvent::TranslateDetail(detail))) => app.apply_translate_detail(*detail),
+            Ok(Some(WorkerEvent::TranslateModels(models))) => {
+                app.apply_translate_models(models);
+            }
+            Ok(Some(WorkerEvent::TranslateStarted(run_id))) => {
+                app.apply_translate_started(run_id);
+            }
             Ok(Some(WorkerEvent::ActionResult { action, result })) => {
                 app.apply_action_result_for(&action, result)
             }
