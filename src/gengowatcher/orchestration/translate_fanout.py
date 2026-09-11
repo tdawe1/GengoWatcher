@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -55,6 +56,22 @@ REVIEW_INSTRUCTION = (
     "triple brackets [[[x]]] preserved exactly, paragraph/line breaks match "
     "original, en dash for ranges)."
 )
+
+# Deny-all tool policy for opencode translation runs. Prompts embed
+# customer-controlled source text, so the model must not be able to invoke
+# shell, file, web, or MCP tools with the caller's permissions. Applied via
+# OPENCODE_CONFIG (verified against opencode 1.18.30: config accepted,
+# plain answers unaffected, injected shell command never executed).
+OPENCODE_DENY_CONFIG = """{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "deny",
+    "question": "deny",
+    "doom_loop": "deny",
+    "external_directory": "deny"
+  }
+}
+"""
 
 # Ported from is_auth_or_quota_failure() in scripts/translate-gengo.sh.
 _SKIP_PATTERN = (
@@ -243,6 +260,9 @@ class TranslateFanoutService:
         self._event_callback = event_callback
         self._lock = threading.RLock()
         self._runs: dict[str, TranslateRunRecord] = {}
+        # Runtime-only capacity set: unlike finished_at, it never survives a
+        # restart, so interrupted runs cannot wedge the service at 429.
+        self._active_runs: set[str] = set()
         self._out_dir = self._resolve_out_dir()
         self._ready = False
         # Don't create the output dir or scan disk when the feature was
@@ -390,29 +410,31 @@ class TranslateFanoutService:
                 raise ValueError("No supported models selected")
 
         with self._lock:
-            active = sum(
-                1 for record in self._runs.values() if record.finished_at is None
-            )
-            if active >= self._max_active_runs():
+            if len(self._active_runs) >= self._max_active_runs():
                 raise TranslateBusyError(
-                    f"Too many active translate runs ({active}); "
+                    f"Too many active translate runs ({len(self._active_runs)}); "
                     "wait for one to finish and retry"
                 )
+            run_id = utc_run_id()
+            self._active_runs.add(run_id)
+        try:
+            run_dir = self._run_dir_for_id(run_id)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "prompts").mkdir(parents=True, exist_ok=True)
 
-        run_id = utc_run_id()
-        run_dir = self._run_dir_for_id(run_id)
-        run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "prompts").mkdir(parents=True, exist_ok=True)
-
-        content_bytes = source_text.encode("utf-8")
-        (run_dir / "original.txt").write_bytes(content_bytes)
-        translate_prompt = build_translate_prompt(source_text, kind)
-        (run_dir / "prompts" / "translate.prompt.txt").write_text(
-            translate_prompt, encoding="utf-8"
-        )
-        (run_dir / "prompts" / "translate.instructions.txt").write_text(
-            TRANSLATE_INSTRUCTIONS + "\n", encoding="utf-8"
-        )
+            content_bytes = source_text.encode("utf-8")
+            (run_dir / "original.txt").write_bytes(content_bytes)
+            translate_prompt = build_translate_prompt(source_text, kind)
+            (run_dir / "prompts" / "translate.prompt.txt").write_text(
+                translate_prompt, encoding="utf-8"
+            )
+            (run_dir / "prompts" / "translate.instructions.txt").write_text(
+                TRANSLATE_INSTRUCTIONS + "\n", encoding="utf-8"
+            )
+        except Exception:
+            with self._lock:
+                self._active_runs.discard(run_id)
+            raise
 
         record = TranslateRunRecord(
             run_id=run_id,
@@ -637,19 +659,25 @@ class TranslateFanoutService:
 
     def _background_entry(self, run_id: str) -> None:
         try:
-            asyncio.run(self._run_fanout(run_id))
-        except Exception:
-            self.logger.exception("Translate fan-out run %s crashed", run_id)
+            try:
+                asyncio.run(self._run_fanout(run_id))
+            except Exception:
+                self.logger.exception("Translate fan-out run %s crashed", run_id)
+                with self._lock:
+                    record = self._runs.get(run_id)
+                    if record is not None and record.finished_at is None:
+                        record.finished_at = time.time()
+                        for state in record.per_model.values():
+                            if state.status in {"queued", "running"}:
+                                state.status = "failed"
+                                state.error = state.error or "runner crashed"
+                        self._write_run_json(record)
+                self._emit("translate.run.completed", {"run_id": run_id})
+        finally:
+            # Runtime-only slot: always released, including early exits
+            # (e.g. missing original.txt) and crashes.
             with self._lock:
-                record = self._runs.get(run_id)
-                if record is not None and record.finished_at is None:
-                    record.finished_at = time.time()
-                    for state in record.per_model.values():
-                        if state.status in {"queued", "running"}:
-                            state.status = "failed"
-                            state.error = state.error or "runner crashed"
-                    self._write_run_json(record)
-            self._emit("translate.run.completed", {"run_id": run_id})
+                self._active_runs.discard(run_id)
 
     async def _run_fanout(self, run_id: str) -> None:
         with self._lock:
@@ -737,11 +765,11 @@ class TranslateFanoutService:
 
         translate_prompt_file = run_dir / "prompts" / "translate.prompt.txt"
         started = time.monotonic()
-        argv, stdin_bytes = self._build_phase_argv(
+        argv, stdin_bytes, spawn = self._build_phase_argv(
             model, binary_path, translate_prompt_file, run_dir, phase="translate"
         )
         rc, stdout, stderr, timed_out = await self._execute_phase(
-            argv, stdin_bytes, timeout_s
+            argv, stdin_bytes, timeout_s, **spawn
         )
         elapsed_ms = int((time.monotonic() - started) * 1000)
         out_path.write_bytes(stdout)
@@ -825,12 +853,12 @@ class TranslateFanoutService:
             "translate.run.progress",
             {"run_id": run_id, "model": model, "phase": "review", "status": "running"},
         )
-        review_argv, review_stdin = self._build_phase_argv(
+        review_argv, review_stdin, review_spawn = self._build_phase_argv(
             model, binary_path, review_prompt_file, run_dir, phase="review"
         )
         review_started = time.monotonic()
         rrc, rstdout, rstderr, rtimed_out = await self._execute_phase(
-            review_argv, review_stdin, timeout_s
+            review_argv, review_stdin, timeout_s, **review_spawn
         )
         review_ms = int((time.monotonic() - review_started) * 1000)
         review_out.write_bytes(rstdout)
@@ -941,7 +969,8 @@ class TranslateFanoutService:
         run_dir: Path,
         *,
         phase: str,
-    ) -> tuple[list[str], bytes | None]:
+    ) -> tuple[list[str], bytes | None, dict[str, Any]]:
+        """Build argv, stdin bytes, and extra spawn kwargs for one phase."""
         prompt_text = prompt_file.read_text(encoding="utf-8", errors="replace")
         if model == "grok":
             return (
@@ -953,11 +982,17 @@ class TranslateFanoutService:
                     "plain",
                 ],
                 None,
+                {},
             )
         if model == "opencode":
             # opencode appends piped stdin to the run message; keep customer
             # text out of argv (visible via local process inspection).
-            return ([binary_path, "run"], prompt_text.encode("utf-8"))
+            # Launched under the deny-all tool policy in an isolated cwd.
+            return (
+                [binary_path, "run"],
+                prompt_text.encode("utf-8"),
+                self._opencode_spawn(run_dir),
+            )
         if model == "codex":
             suffix = "translation" if phase == "translate" else "review"
             lastmsg = run_dir / f"codex.{suffix}.lastmsg.txt"
@@ -975,6 +1010,7 @@ class TranslateFanoutService:
                     "-",
                 ],
                 prompt_text.encode("utf-8"),
+                {},
             )
         # claude: -p is the established non-interactive prompt interface;
         # plain stdin piping is not a documented prompt mechanism, so the
@@ -991,7 +1027,19 @@ class TranslateFanoutService:
                 "10",
             ],
             None,
+            {},
         )
+
+    def _opencode_spawn(self, run_dir: Path) -> dict[str, Any]:
+        """Isolated cwd + deny-all tool policy for an opencode invocation."""
+        workdir = run_dir / "opencode-workdir"
+        workdir.mkdir(parents=True, exist_ok=True)
+        config_path = workdir / "opencode.json"
+        if not config_path.is_file():
+            config_path.write_text(OPENCODE_DENY_CONFIG, encoding="utf-8")
+        env = dict(os.environ)
+        env["OPENCODE_CONFIG"] = str(config_path)
+        return {"cwd": str(workdir), "env": env}
 
     @staticmethod
     def _prefer_clean_output(
@@ -1016,7 +1064,11 @@ class TranslateFanoutService:
         return None
 
     async def _execute_phase(
-        self, argv: list[str], stdin_bytes: bytes | None, timeout_s: float
+        self,
+        argv: list[str],
+        stdin_bytes: bytes | None,
+        timeout_s: float,
+        **spawn: Any,
     ) -> tuple[int, bytes, bytes, bool]:
         """Run one LLM phase without a shell; returns (rc, out, err, timed_out)."""
         try:
@@ -1025,6 +1077,8 @@ class TranslateFanoutService:
                 stdin=asyncio.subprocess.PIPE if stdin_bytes is not None else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=spawn.get("cwd"),
+                env=spawn.get("env"),
             )
         except FileNotFoundError as exc:
             return 127, b"", str(exc).encode("utf-8"), False

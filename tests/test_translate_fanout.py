@@ -251,7 +251,7 @@ def test_run_one_model_ok_path_with_review(tmp_path):
         run_id = service.start_run(text="テスト", models=["opencode"])
     calls = {"count": 0}
 
-    async def fake_execute(argv, stdin_bytes, timeout_s):
+    async def fake_execute(argv, stdin_bytes, timeout_s, **spawn):
         calls["count"] += 1
         if calls["count"] == 1:
             return 0, "translated text".encode(), b"", False
@@ -334,7 +334,7 @@ def test_opencode_prompt_goes_through_stdin_not_argv(tmp_path):
     ):
         run_id = service.start_run(text="テスト", models=["opencode"])
     run_dir = tmp_path / "translate-fanout" / f"{run_id}-gengo"
-    argv, stdin_bytes = service._build_phase_argv(
+    argv, stdin_bytes, spawn = service._build_phase_argv(
         "opencode",
         "/usr/bin/opencode",
         run_dir / "prompts" / "translate.prompt.txt",
@@ -344,6 +344,23 @@ def test_opencode_prompt_goes_through_stdin_not_argv(tmp_path):
     assert argv == ["/usr/bin/opencode", "run"]
     assert stdin_bytes is not None
     assert "テスト" in stdin_bytes.decode("utf-8")
+    assert spawn["cwd"] == str(run_dir / "opencode-workdir")
+    assert spawn["env"]["OPENCODE_CONFIG"] == str(
+        run_dir / "opencode-workdir" / "opencode.json"
+    )
+
+
+def test_opencode_deny_config_denies_all_tools(tmp_path):
+    service, _ = _make_service(tmp_path)
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        run_id = service.start_run(text="テスト", models=["opencode"])
+    run_dir = tmp_path / "translate-fanout" / f"{run_id}-gengo"
+    service._opencode_spawn(run_dir)
+    config_path = run_dir / "opencode-workdir" / "opencode.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["permission"]["*"] == "deny"
 
 
 def test_start_run_rejects_when_max_active_runs_reached(tmp_path):
@@ -360,6 +377,39 @@ def test_disabled_service_does_not_create_out_dir(tmp_path):
     out_dir = tmp_path / "translate-fanout"
     _make_service(tmp_path, {("TranslateFanout", "enabled"): False})
     assert not out_dir.exists()
+
+
+def test_restarted_service_recovers_capacity(tmp_path):
+    service, _ = _make_service(tmp_path, {("TranslateFanout", "max_active_runs"): 1})
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        service.start_run(text="interrupted", models=["opencode"])
+    # Simulate a restart: a fresh service over the same out_dir must not
+    # treat the interrupted run as occupying capacity (no 429 forever).
+    restarted, _ = _make_service(tmp_path, {("TranslateFanout", "max_active_runs"): 1})
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        restarted.start_run(text="after restart", models=["opencode"])
+
+
+def test_finished_run_releases_capacity_slot(tmp_path):
+    service, _ = _make_service(tmp_path, {("TranslateFanout", "max_active_runs"): 1})
+
+    async def fake_execute(argv, stdin_bytes, timeout_s, **spawn):
+        return 0, b"translated", b"", False
+
+    with patch.object(service, "_execute_phase", side_effect=fake_execute):
+        run_id = service.start_run(text="first", models=["opencode"])
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            detail = service.get_run(run_id)
+            if detail is not None and detail["finished"]:
+                break
+            time.sleep(0.05)
+        assert service.get_run(run_id)["finished"]
+        service.start_run(text="second", models=["opencode"])
 
 
 def test_run_one_model_marks_timeout_and_keeps_partial(tmp_path):
@@ -490,10 +540,12 @@ def test_translate_endpoints_require_auth_and_validate(tmp_path, monkeypatch):
 
     listed = client.get("/api/translate", headers=headers)
     assert listed.status_code == 200
+    assert listed.headers.get("cache-control") == "no-store"
     assert len(listed.json()["runs"]) == 1
 
     detail = client.get(f"/api/translate/{run_id}", headers=headers)
     assert detail.status_code == 200
+    assert detail.headers.get("cache-control") == "no-store"
     assert detail.json()["source_text"] == "hello"
 
     missing = client.get("/api/translate/nope", headers=headers)

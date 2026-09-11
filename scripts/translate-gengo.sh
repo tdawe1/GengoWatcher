@@ -41,12 +41,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+INPUT_STDIN=0
+STDIN_TMP=""
 if [[ ${#INPUT_ARGS[@]} -eq 0 ]]; then
   if [[ ! -t 0 ]]; then
     # Piped stdin (e.g. from bin/gengo, which keeps customer text out of
-    # argv) counts as a single text input.
-    INPUT_ARGS+=("$(cat)")
-    [[ -n "${INPUT_ARGS[0]}" ]] || { echo "Empty stdin." >&2; exit 2; }
+    # argv) counts as a single text input. Captured to a temp file so the
+    # bytes survive verbatim: command substitution would strip trailing
+    # newlines, and the text must bypass -f path detection below (piped
+    # text matching an existing path, e.g. "README.md", is literal text).
+    STDIN_TMP="$(mktemp)"
+    trap 'rm -f "${STDIN_TMP:-}"' EXIT
+    cat > "$STDIN_TMP"
+    [[ -s "$STDIN_TMP" ]] || { echo "Empty stdin." >&2; exit 2; }
+    INPUT_STDIN=1
   else
     usage >&2; exit 2
   fi
@@ -73,7 +81,10 @@ INPUT_MODE="text"
 INPUT_DESC=""
 ORIG_BASENAME="input.txt"
 CONTENT_FILE=""
-if [[ ${#INPUT_ARGS[@]} -eq 1 && -f "${INPUT_ARGS[0]}" ]]; then
+if [[ "$INPUT_STDIN" -eq 1 ]]; then
+  INPUT_MODE="text"
+  INPUT_DESC="text: <stdin>"
+elif [[ ${#INPUT_ARGS[@]} -eq 1 && -f "${INPUT_ARGS[0]}" ]]; then
   INPUT_MODE="file"
   SRC_FILE="${INPUT_ARGS[0]}"
   ORIG_BASENAME="$(basename "$SRC_FILE")"
@@ -90,6 +101,10 @@ mkdir -p "$RUN_DIR" "$PROMPT_DIR"
 if [[ "$INPUT_MODE" == "file" ]]; then
   cp -- "$SRC_FILE" "$RUN_DIR/original.$ORIG_BASENAME" 2>/dev/null || cp -- "$SRC_FILE" "$RUN_DIR/original.txt"
   cp -- "$SRC_FILE" "$RUN_DIR/original.txt" 2>/dev/null || true
+  CONTENT_FILE="$RUN_DIR/original.txt"
+elif [[ "$INPUT_STDIN" -eq 1 ]]; then
+  cp -- "$STDIN_TMP" "$RUN_DIR/original.txt"
+  rm -f "$STDIN_TMP"
   CONTENT_FILE="$RUN_DIR/original.txt"
 else
   printf "%s" "${INPUT_ARGS[*]}" > "$RUN_DIR/original.txt"
@@ -171,12 +186,28 @@ run_opencode() {
   # Prompt via stdin (argv would strip trailing newlines, risk ARG_MAX,
   # and leak prompt in ps). Isolate cwd so the build agent cannot
   # read/edit the caller's repo; allow model pinning via OPENCODE_MODEL.
+  # Deny-all tool policy: prompts embed customer-controlled source text,
+  # so the model must not reach shell, files, web, or MCP tools.
   local workdir="$RUN_DIR/opencode-workdir"
+  local denycfg="$workdir/opencode.json"
   mkdir -p "$workdir"
+  if [[ ! -f "$denycfg" ]]; then
+    cat > "$denycfg" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "deny",
+    "question": "deny",
+    "doom_loop": "deny",
+    "external_directory": "deny"
+  }
+}
+JSON
+  fi
   if [[ -n "${OPENCODE_MODEL:-}" ]]; then
-    timeout "$TIMEOUT" opencode run -m "$OPENCODE_MODEL" --dir "$workdir" <"$pf" >"$out" 2>"$err"
+    OPENCODE_CONFIG="$denycfg" timeout "$TIMEOUT" opencode run -m "$OPENCODE_MODEL" --dir "$workdir" <"$pf" >"$out" 2>"$err"
   else
-    timeout "$TIMEOUT" opencode run --dir "$workdir" <"$pf" >"$out" 2>"$err"
+    OPENCODE_CONFIG="$denycfg" timeout "$TIMEOUT" opencode run --dir "$workdir" <"$pf" >"$out" 2>"$err"
   fi
   return $?
 }

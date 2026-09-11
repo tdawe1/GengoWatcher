@@ -34,7 +34,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from prometheus_client import Gauge, make_asgi_app
 import requests
 import uvicorn
@@ -2039,7 +2039,10 @@ async def list_translate_runs(
         raise HTTPException(status_code=503, detail="API not initialized")
     try:
         runs = api_instance.list_translate_runs()
-        return {"runs": [run.model_dump() for run in runs]}
+        return JSONResponse(
+            content={"runs": [run.model_dump() for run in runs]},
+            headers={"Cache-Control": "no-store"},
+        )
     except Exception as e:
         api_instance.logger.exception(f"Error listing translate runs: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -2062,7 +2065,10 @@ async def get_translate_run(
         raise HTTPException(status_code=500, detail="Internal server error")
     if detail is None:
         raise HTTPException(status_code=404, detail="Translate run not found")
-    return detail.model_dump()
+    return JSONResponse(
+        content=detail.model_dump(),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.websocket("/ws/status")
