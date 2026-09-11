@@ -106,6 +106,7 @@ timeout_s = 300
 out_dir = "data/translate-fanout"
 max_chars = 50000
 max_concurrency = 2
+max_active_runs = 3
 allow_binary = false
 preview_chars = 500
 

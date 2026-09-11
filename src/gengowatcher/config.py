@@ -147,6 +147,7 @@ class AppConfig:
             "out_dir": "data/translate-fanout",
             "max_chars": 50000,
             "max_concurrency": 2,
+            "max_active_runs": 3,
             "allow_binary": False,
             "preview_chars": 500,
         },

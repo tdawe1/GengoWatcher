@@ -112,6 +112,22 @@ def is_skip_output(combined_output: str) -> bool:
     return SKIP_RE.search(combined_output) is not None
 
 
+def is_auth_or_quota_error(returncode: int, stdout: bytes, stderr: bytes) -> bool:
+    """Decide whether a phase failed on auth/quota/subscription grounds.
+
+    Only stderr is trusted unconditionally: translated stdout may itself
+    mention words like "quota" or "billing". Stdout is consulted only when
+    the process exited non-zero, i.e. it produced no usable translation.
+    """
+    stderr_text = stderr.decode("utf-8", errors="replace")
+    if is_skip_output(stderr_text):
+        return True
+    if returncode != 0:
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        return is_skip_output(stdout_text)
+    return False
+
+
 def contains_binary(content: bytes) -> bool:
     return b"\x00" in content
 
@@ -184,8 +200,8 @@ class TranslateRunRecord:
     per_model: dict[str, PerModelState] = field(default_factory=dict)
     input_preview: str = ""
 
-    def to_summary(self, include_text: bool = False) -> dict[str, Any]:
-        summary: dict[str, Any] = {
+    def to_summary(self) -> dict[str, Any]:
+        return {
             "run_id": self.run_id,
             "kind": self.kind,
             "char_count": self.char_count,
@@ -205,9 +221,10 @@ class TranslateRunRecord:
             },
             "input_preview": self.input_preview,
         }
-        if include_text:
-            summary["input_preview"] = self.input_preview
-        return summary
+
+
+class TranslateBusyError(RuntimeError):
+    """Raised when too many translate fan-out runs are already active."""
 
 
 class TranslateFanoutService:
@@ -227,8 +244,20 @@ class TranslateFanoutService:
         self._lock = threading.RLock()
         self._runs: dict[str, TranslateRunRecord] = {}
         self._out_dir = self._resolve_out_dir()
+        self._ready = False
+        # Don't create the output dir or scan disk when the feature was
+        # never enabled; still pick up pre-existing runs if the dir exists.
+        if self.is_enabled() or self._out_dir.is_dir():
+            self._ensure_ready()
+
+    def _ensure_ready(self) -> None:
+        """Create the output dir and load retained runs, exactly once."""
         self._out_dir.mkdir(parents=True, exist_ok=True)
-        self._load_existing_runs()
+        with self._lock:
+            if self._ready:
+                return
+            self._load_existing_runs()
+            self._ready = True
 
     # -- config ---------------------------------------------------------
 
@@ -281,6 +310,13 @@ class TranslateFanoutService:
             limit = 2
         return max(1, min(limit, len(SUPPORTED_MODELS)))
 
+    def _max_active_runs(self) -> int:
+        try:
+            limit = int(self._cfg("max_active_runs", 3))
+        except (TypeError, ValueError):
+            limit = 3
+        return max(1, limit)
+
     def _allow_binary(self) -> bool:
         value = self._cfg("allow_binary", False)
         if isinstance(value, bool):
@@ -320,6 +356,7 @@ class TranslateFanoutService:
             raise PermissionError(
                 "Translate fan-out is disabled (enable [TranslateFanout])"
             )
+        self._ensure_ready()
         max_chars = self._max_chars()
         kind = ""
         source_text = ""
@@ -351,6 +388,16 @@ class TranslateFanoutService:
             selected = parse_models(list(models), fallback="")
             if not selected:
                 raise ValueError("No supported models selected")
+
+        with self._lock:
+            active = sum(
+                1 for record in self._runs.values() if record.finished_at is None
+            )
+            if active >= self._max_active_runs():
+                raise TranslateBusyError(
+                    f"Too many active translate runs ({active}); "
+                    "wait for one to finish and retry"
+                )
 
         run_id = utc_run_id()
         run_dir = self._run_dir_for_id(run_id)
@@ -408,22 +455,24 @@ class TranslateFanoutService:
         thread.start()
         return run_id
 
-    def list_runs(self, include_text: bool = False) -> list[dict[str, Any]]:
+    def list_runs(self) -> list[dict[str, Any]]:
+        self._ensure_ready()
         with self._lock:
             records = sorted(
                 self._runs.values(), key=lambda item: item.created_at, reverse=True
             )
-            return [item.to_summary(include_text=include_text) for item in records]
+            return [item.to_summary() for item in records]
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         cleaned = str(run_id or "").strip()
         if not SAFE_RUN_ID_RE.fullmatch(cleaned):
             return None
+        self._ensure_ready()
         with self._lock:
             record = self._runs.get(cleaned)
         if record is None:
             return None
-        detail = record.to_summary(include_text=True)
+        detail = record.to_summary()
         run_dir = self._run_dir_for_id(cleaned)
         try:
             detail["source_text"] = (run_dir / "original.txt").read_text(
@@ -510,7 +559,7 @@ class TranslateFanoutService:
     def _write_run_json(self, record: TranslateRunRecord) -> None:
         try:
             run_dir = self._run_dir_for_id(record.run_id)
-            payload = record.to_summary(include_text=False)
+            payload = record.to_summary()
             payload.update(
                 {
                     "source_hash": record.source_hash,
@@ -716,8 +765,7 @@ class TranslateFanoutService:
             self._write_run_json(self._runs[run_id])
             return
 
-        combined = (stdout + b"\n" + stderr).decode("utf-8", errors="replace")
-        if is_skip_output(combined):
+        if is_auth_or_quota_error(rc, stdout, stderr):
             status_path.write_text(
                 f"SKIPPED (no active subscription / auth / quota).\nExit code: {rc}\n",
                 encoding="utf-8",
@@ -808,8 +856,7 @@ class TranslateFanoutService:
             self._write_run_json(self._runs[run_id])
             return
 
-        rcombined = (rstdout + b"\n" + rstderr).decode("utf-8", errors="replace")
-        if is_skip_output(rcombined):
+        if is_auth_or_quota_error(rrc, rstdout, rstderr):
             final_path.write_bytes(stdout)
             status_path.write_text(
                 status_path.read_text(encoding="utf-8", errors="replace")
@@ -908,7 +955,9 @@ class TranslateFanoutService:
                 None,
             )
         if model == "opencode":
-            return ([binary_path, "run", prompt_text], None)
+            # opencode appends piped stdin to the run message; keep customer
+            # text out of argv (visible via local process inspection).
+            return ([binary_path, "run"], prompt_text.encode("utf-8"))
         if model == "codex":
             suffix = "translation" if phase == "translate" else "review"
             lastmsg = run_dir / f"codex.{suffix}.lastmsg.txt"
@@ -927,7 +976,10 @@ class TranslateFanoutService:
                 ],
                 prompt_text.encode("utf-8"),
             )
-        # claude
+        # claude: -p is the established non-interactive prompt interface;
+        # plain stdin piping is not a documented prompt mechanism, so the
+        # prompt stays in argv (same exposure class as the loopback API
+        # token in the child environment on this single-user host).
         return (
             [
                 binary_path,
@@ -1071,10 +1123,12 @@ __all__ = [
     "SUPPORTED_MODELS",
     "TRANSLATE_INSTRUCTIONS",
     "TranslateFanoutService",
+    "TranslateBusyError",
     "TranslateRunRecord",
     "build_review_prompt",
     "build_translate_prompt",
     "decode_file_bytes",
+    "is_auth_or_quota_error",
     "is_skip_output",
     "parse_models",
     "source_hash_hex",

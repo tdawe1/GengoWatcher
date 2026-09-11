@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gengowatcher.orchestration.translate_fanout import (
+    TranslateBusyError,
     TranslateFanoutService,
     build_review_prompt,
     build_translate_prompt,
@@ -288,6 +289,79 @@ def test_run_one_model_skips_on_auth_failure(tmp_path):
     assert "SKIPPED" in detail["results"]["claude"]["final"]
 
 
+def test_translation_mentioning_quota_is_not_skipped(tmp_path):
+    service, _ = _make_service(tmp_path)
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        run_id = service.start_run(text="テスト", models=["grok"], with_review=False)
+    stdout = "The quarterly quota report shows billing increased.".encode()
+    fake = AsyncMock(return_value=(0, stdout, b"", False))
+    with patch.object(service, "_execute_phase", fake):
+        asyncio.run(
+            service._run_one_model(
+                run_id, "grok", "テスト", "/usr/bin/grok", 5.0, False
+            )
+        )
+    detail = service.get_run(run_id)
+    assert detail is not None
+    assert detail["per_model"]["grok"]["status"] == "ok"
+    assert "quota" in detail["results"]["grok"]["final"]
+
+
+def test_stdout_skip_pattern_with_nonzero_exit_still_skips(tmp_path):
+    service, _ = _make_service(tmp_path)
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        run_id = service.start_run(text="テスト", models=["grok"], with_review=False)
+    fake = AsyncMock(return_value=(1, b"quota exhausted", b"", False))
+    with patch.object(service, "_execute_phase", fake):
+        asyncio.run(
+            service._run_one_model(
+                run_id, "grok", "テスト", "/usr/bin/grok", 5.0, False
+            )
+        )
+    detail = service.get_run(run_id)
+    assert detail is not None
+    assert detail["per_model"]["grok"]["status"] == "skipped"
+
+
+def test_opencode_prompt_goes_through_stdin_not_argv(tmp_path):
+    service, _ = _make_service(tmp_path)
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        run_id = service.start_run(text="テスト", models=["opencode"])
+    run_dir = tmp_path / "translate-fanout" / f"{run_id}-gengo"
+    argv, stdin_bytes = service._build_phase_argv(
+        "opencode",
+        "/usr/bin/opencode",
+        run_dir / "prompts" / "translate.prompt.txt",
+        run_dir,
+        phase="translate",
+    )
+    assert argv == ["/usr/bin/opencode", "run"]
+    assert stdin_bytes is not None
+    assert "テスト" in stdin_bytes.decode("utf-8")
+
+
+def test_start_run_rejects_when_max_active_runs_reached(tmp_path):
+    service, _ = _make_service(tmp_path, {("TranslateFanout", "max_active_runs"): 1})
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        service.start_run(text="first", models=["opencode"])
+        with pytest.raises(TranslateBusyError, match="Too many active"):
+            service.start_run(text="second", models=["opencode"])
+
+
+def test_disabled_service_does_not_create_out_dir(tmp_path):
+    out_dir = tmp_path / "translate-fanout"
+    _make_service(tmp_path, {("TranslateFanout", "enabled"): False})
+    assert not out_dir.exists()
+
+
 def test_run_one_model_marks_timeout_and_keeps_partial(tmp_path):
     service, _ = _make_service(tmp_path)
     with patch.object(
@@ -449,6 +523,23 @@ def test_translate_start_returns_403_when_disabled(tmp_path, monkeypatch):
     headers = {"Authorization": f"Bearer {authenticator.get_api_key()}"}
     response = client.post("/api/translate", json={"text": "hello"}, headers=headers)
     assert response.status_code == 403
+
+
+def test_translate_start_returns_429_when_busy(tmp_path, monkeypatch):
+    api = _make_web_api(tmp_path, monkeypatch)
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        with patch.object(api.translate_fanout, "_max_active_runs", return_value=1):
+            api.start_translate_run(
+                TranslateStartRequest(text="first", models=["opencode"])
+            )
+            client = TestClient(app)
+            headers = {"Authorization": f"Bearer {authenticator.get_api_key()}"}
+            response = client.post(
+                "/api/translate", json={"text": "second"}, headers=headers
+            )
+    assert response.status_code == 429
 
 
 def test_existing_runs_are_reloaded_from_disk(tmp_path):

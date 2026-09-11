@@ -7,6 +7,8 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
+from .orchestration.translate_fanout import SUPPORTED_MODELS
+
 SECURITY = HTTPBearer(auto_error=False)
 
 
@@ -189,7 +191,7 @@ class TranslateStartRequest(BaseModel):
         cleaned = [str(item).strip().lower() for item in value if str(item).strip()]
         if not cleaned:
             raise ValueError("models must not be empty")
-        allowed = {"grok", "opencode", "codex", "claude"}
+        allowed = set(SUPPORTED_MODELS)
         unknown = [item for item in cleaned if item not in allowed]
         if unknown:
             raise ValueError(f"Unknown models: {', '.join(unknown)}")

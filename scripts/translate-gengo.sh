@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # translate-gengo.sh — fan-out Gengo-style translation to grok, opencode, codex, claude
-# Usage: translate-gengo.sh [-o OUTDIR] [-t SECONDS] [--only a,b,c] [--skip-review] <file|text...>
+# Usage: translate-gengo.sh [-o OUTDIR] [-t SECONDS] [--only a,b,c] [--skip-review] <file|text...> | <stdin>
 # Never fails hard if a model is missing/unsubscribed — it records SKIP and continues.
 set -u
 set -o pipefail
@@ -13,10 +13,11 @@ INPUT_ARGS=()
 
 usage() {
   cat <<'USAGE'
-Usage: translate-gengo.sh [OPTIONS] <input-file | text...>
+Usage: translate-gengo.sh [OPTIONS] <input-file | text...> | <stdin>
 
   Translate a file (if path exists) or raw text via grok, opencode, codex, claude
   per Gengo Style Guide, then run a review pass, then collate.
+  With no arguments and piped stdin, the piped text is translated.
 
 Options:
   -o, --out-dir DIR     Output base dir (default: ./gengo-output)
@@ -41,7 +42,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ${#INPUT_ARGS[@]} -eq 0 ]]; then
-  usage >&2; exit 2
+  if [[ ! -t 0 ]]; then
+    # Piped stdin (e.g. from bin/gengo, which keeps customer text out of
+    # argv) counts as a single text input.
+    INPUT_ARGS+=("$(cat)")
+    [[ -n "${INPUT_ARGS[0]}" ]] || { echo "Empty stdin." >&2; exit 2; }
+  else
+    usage >&2; exit 2
+  fi
 fi
 
 # ---------- notifications ----------
@@ -160,8 +168,16 @@ run_grok() {
 }
 run_opencode() {
   local pf="$1" out="$2" err="$3"
-  # opencode run takes message as arg; no prompt-file flag
-  timeout "$TIMEOUT" opencode run "$(cat "$pf")" >"$out" 2>"$err"
+  # Prompt via stdin (argv would strip trailing newlines, risk ARG_MAX,
+  # and leak prompt in ps). Isolate cwd so the build agent cannot
+  # read/edit the caller's repo; allow model pinning via OPENCODE_MODEL.
+  local workdir="$RUN_DIR/opencode-workdir"
+  mkdir -p "$workdir"
+  if [[ -n "${OPENCODE_MODEL:-}" ]]; then
+    timeout "$TIMEOUT" opencode run -m "$OPENCODE_MODEL" --dir "$workdir" <"$pf" >"$out" 2>"$err"
+  else
+    timeout "$TIMEOUT" opencode run --dir "$workdir" <"$pf" >"$out" 2>"$err"
+  fi
   return $?
 }
 run_codex() {
@@ -221,8 +237,13 @@ run_one_model() {
     return 0
   fi
 
-  # auth/quota/subscription failure? check both stdout+stderr
-  cat "$t_out" "$t_err" > "$RUN_DIR/.${model}.combined.tmp" 2>/dev/null || true
+  # auth/quota/subscription failure? stderr is authoritative: translated
+  # stdout may itself mention words like "quota" or "billing". Stdout is
+  # only consulted when the phase exited non-zero (no usable translation).
+  cat "$t_err" > "$RUN_DIR/.${model}.combined.tmp" 2>/dev/null || true
+  if [[ $rc -ne 0 ]]; then
+    cat "$t_out" >> "$RUN_DIR/.${model}.combined.tmp" 2>/dev/null || true
+  fi
   if is_auth_or_quota_failure "$RUN_DIR/.${model}.combined.tmp"; then
     {
       echo "SKIPPED (no active subscription / auth / quota)."
@@ -280,7 +301,10 @@ run_one_model() {
     notify "[$model] review timeout" "kept translation as final" critical
     return 0
   fi
-  cat "$r_out" "$r_err" > "$RUN_DIR/.${model}.combined2.tmp" 2>/dev/null || true
+  cat "$r_err" > "$RUN_DIR/.${model}.combined2.tmp" 2>/dev/null || true
+  if [[ $rc -ne 0 ]]; then
+    cat "$r_out" >> "$RUN_DIR/.${model}.combined2.tmp" 2>/dev/null || true
+  fi
   if is_auth_or_quota_failure "$RUN_DIR/.${model}.combined2.tmp"; then
     echo "review SKIPPED (auth/quota mid-run); falling back to translation as final" >> "$status"
     cp -- "$t_out" "$final"

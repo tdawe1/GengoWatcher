@@ -41,7 +41,7 @@ import uvicorn
 
 from .config import AppConfig
 from .browser_worker.protocol import normalize_sandbox_origin, url_origin
-from .orchestration.translate_fanout import TranslateFanoutService
+from .orchestration.translate_fanout import TranslateBusyError, TranslateFanoutService
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
@@ -528,10 +528,8 @@ class WebAPI:
             with_review=payload.with_review,
         )
 
-    def list_translate_runs(
-        self, include_text: bool = False
-    ) -> list[TranslateRunSummary]:
-        runs = self.translate_fanout.list_runs(include_text=include_text)
+    def list_translate_runs(self) -> list[TranslateRunSummary]:
+        runs = self.translate_fanout.list_runs()
         return [TranslateRunSummary(**item) for item in runs]
 
     def get_translate_run(self, run_id: str) -> TranslateRunDetail | None:
@@ -2025,6 +2023,8 @@ async def start_translate(
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except TranslateBusyError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     except Exception as e:
         api_instance.logger.exception(f"Error starting translate run: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -2032,14 +2032,13 @@ async def start_translate(
 
 @app.get("/api/translate")
 async def list_translate_runs(
-    include_text: bool = Query(False),
     authenticated: bool = Depends(verify_auth),
 ):
-    """List translate fan-out summaries (no full source unless requested)."""
+    """List translate fan-out run summaries (truncated preview only)."""
     if not api_instance:
         raise HTTPException(status_code=503, detail="API not initialized")
     try:
-        runs = api_instance.list_translate_runs(include_text=include_text)
+        runs = api_instance.list_translate_runs()
         return {"runs": [run.model_dump() for run in runs]}
     except Exception as e:
         api_instance.logger.exception(f"Error listing translate runs: {e}")

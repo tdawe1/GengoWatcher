@@ -136,18 +136,30 @@ CLIP_MODE=0
 LATEST_FLAG=0
 FORCE_INTERACTIVE=0
 OUT_SET=0
+PASTE_TMP=""
+EDIT_TMP=""
+cleanup_tmp() {
+  if [[ -n "${PASTE_TMP:-}" ]]; then rm -f "$PASTE_TMP"; fi
+  if [[ -n "${EDIT_TMP:-}" ]]; then rm -f "$EDIT_TMP"; fi
+}
+trap cleanup_tmp EXIT HUP INT TERM
+need_arg() { # need_arg OPTION "${NEXT:-}"; $2 empty/missing -> exit 2
+  if [[ -z "${2:-}" ]]; then
+    echo "$1 requires a value" >&2; exit 2
+  fi
+}
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0;;
     -l|--latest) LATEST_FLAG=1; MODE="file"; shift;;
-    --latest-n) LATEST_N="$2"; LATEST_FLAG=1; MODE="file"; shift 2;;
+    --latest-n) need_arg "$1" "${2:-}"; LATEST_N="$2"; LATEST_FLAG=1; MODE="file"; shift 2;;
     --list-downloads) LIST_ONLY=1; [[ "${2:-}" =~ ^[0-9]+$ ]] && { LIST_N="$2"; shift 2; } || shift;;
     -p|--paste) PASTE_MODE=1; MODE="text-paste"; shift;;
     --clipboard) CLIP_MODE=1; MODE="text-clip"; shift;;
     -i|--interactive) FORCE_INTERACTIVE=1; shift;;
-    -o|--out-dir) OUTBASE="$2"; OUT_SET=1; shift 2;;
-    -t|--timeout) TIMEOUT="$2"; shift 2;;
-    --only) ONLY="$2"; shift 2;;
+    -o|--out-dir) need_arg "$1" "${2:-}"; OUTBASE="$2"; OUT_SET=1; shift 2;;
+    -t|--timeout) need_arg "$1" "${2:-}"; TIMEOUT="$2"; shift 2;;
+    --only) need_arg "$1" "${2:-}"; ONLY="$2"; shift 2;;
     --skip-review|--no-review) SKIP_REVIEW=1; shift;;
     --review) SKIP_REVIEW=0; shift;;
     -y|--yes) ASSUME_YES=1; shift;;
@@ -236,8 +248,8 @@ elif [[ "$MODE" == "text-paste" || "$PASTE_MODE" -eq 1 ]]; then
       case "$k" in
         q) echo "Bye."; exit 0;;
         r) echo "Redo: restart gengo and paste again."; exit 0;;
-        e) tmp="$(mktemp --suffix=.txt)"; printf "%s\n" "$CHOSEN_TEXT" > "$tmp"
-           "${EDITOR:-vi}" "$tmp"; CHOSEN_TEXT="$(cat "$tmp")"; rm -f "$tmp";;
+        e) EDIT_TMP="$(mktemp --suffix=.txt)"; printf "%s\n" "$CHOSEN_TEXT" > "$EDIT_TMP"
+           "${EDITOR:-vi}" "$EDIT_TMP"; CHOSEN_TEXT="$(cat "$EDIT_TMP")"; rm -f "$EDIT_TMP"; EDIT_TMP="";;
       esac
     fi
   else
@@ -287,7 +299,8 @@ if [[ -n "$CHOSEN_FILE" ]]; then
   echo "Input file: $CHOSEN_FILE"
   exec "$CORE" "${CORE_ARGS[@]}" "$CHOSEN_FILE"
 elif [[ -n "${CHOSEN_TEXT:-}" ]]; then
-  exec "$CORE" "${CORE_ARGS[@]}" "$CHOSEN_TEXT"
+  # Via stdin so customer text never appears in the process argument vector.
+  printf "%s" "$CHOSEN_TEXT" | exec "$CORE" "${CORE_ARGS[@]}"
 else
   echo "Nothing to translate." >&2; usage >&2; exit 2
 fi
