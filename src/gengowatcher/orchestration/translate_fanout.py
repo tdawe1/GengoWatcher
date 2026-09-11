@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import threading
 import time
 import uuid
@@ -31,6 +32,10 @@ from typing import Any, Callable, Mapping
 
 SUPPORTED_MODELS = ("grok", "opencode", "codex", "claude")
 DEFAULT_MODELS_STR = "grok,opencode,codex,claude"
+
+# Upper bound for draining pipes after a timeout kill. A descendant that
+# retains a pipe could otherwise stall communicate() indefinitely.
+_DRAIN_TIMEOUT_S = 10.0
 
 TRANSLATE_INSTRUCTIONS = """You are a professional Japanese-to-English translator following the Gengo.com Style Guide (American English).
 MUST follow:
@@ -655,6 +660,16 @@ class TranslateFanoutService:
                     per_model=per_model,
                     input_preview=str(data.get("input_preview") or ""),
                 )
+                if finished is None:
+                    # No worker survives a restart: an unfinished record would
+                    # otherwise report finished=false indefinitely (and the TUI
+                    # would poll it forever). Fail it and persist the repair.
+                    self._mark_run_failed(run_id, "interrupted by restart")
+                    self._write_run_json(self._runs[run_id])
+                    self.logger.warning(
+                        "Translate run %s interrupted by restart; marked failed",
+                        run_id,
+                    )
         except OSError as exc:
             self.logger.warning("Failed to load existing translate runs: %s", exc)
 
@@ -1038,9 +1053,12 @@ class TranslateFanoutService:
                 {},
             )
         # claude: -p is the established non-interactive prompt interface;
-        # plain stdin piping is not a documented prompt mechanism, so the
-        # prompt stays in argv (same exposure class as the loopback API
-        # token in the child environment on this single-user host).
+        # the deployed CLI (2.x) documents [prompt] positionally with no
+        # stdin prompt mechanism, so the prompt stays in argv (same exposure
+        # class as the loopback API token in the child environment on this
+        # single-user host). Tool execution is locked down instead: dontAsk
+        # denies prompts and --tools "" disables all tools (translation
+        # needs none), so customer text cannot trigger tool use.
         return (
             [
                 binary_path,
@@ -1050,6 +1068,10 @@ class TranslateFanoutService:
                 "text",
                 "--max-turns",
                 "10",
+                "--permission-mode",
+                "dontAsk",
+                "--tools",
+                "",
             ],
             None,
             {},
@@ -1104,6 +1126,10 @@ class TranslateFanoutService:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=spawn.get("cwd"),
                 env=spawn.get("env"),
+                # Own process group so a timeout terminates descendants too;
+                # proc.kill() alone leaves children holding pipes, which can
+                # stall the post-kill communicate() drain forever.
+                **({"start_new_session": True} if os.name == "posix" else {}),
             )
         except FileNotFoundError as exc:
             return 127, b"", str(exc).encode("utf-8"), False
@@ -1115,15 +1141,28 @@ class TranslateFanoutService:
             )
             return proc.returncode or 0, stdout or b"", stderr or b"", False
         except asyncio.TimeoutError:
+            self._kill_process_tree(proc)
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            try:
-                stdout, stderr = await proc.communicate()
-            except Exception:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=_DRAIN_TIMEOUT_S
+                )
+            except (asyncio.TimeoutError, Exception):
                 stdout, stderr = b"", b""
             return 124, stdout or b"", stderr or b"", True
+
+    @staticmethod
+    def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+        """SIGKILL the whole process group when available, else the process."""
+        if os.name == "posix" and proc.pid is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+                return
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
 
     def _write_collation(self, run_id: str, source_text: str) -> None:
         try:

@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -385,10 +388,15 @@ def test_restarted_service_recovers_capacity(tmp_path):
     with patch.object(
         TranslateFanoutService, "_background_entry", lambda self, run_id: None
     ):
-        service.start_run(text="interrupted", models=["opencode"])
+        interrupted_id = service.start_run(text="interrupted", models=["opencode"])
     # Simulate a restart: a fresh service over the same out_dir must not
     # treat the interrupted run as occupying capacity (no 429 forever).
     restarted, _ = _make_service(tmp_path, {("TranslateFanout", "max_active_runs"): 1})
+    # The interrupted run is repaired to a terminal state on reload.
+    repaired = restarted.get_run(interrupted_id)
+    assert repaired is not None
+    assert repaired["finished"] is True
+    assert repaired["per_model"]["opencode"]["status"] == "failed"
     with patch.object(
         TranslateFanoutService, "_background_entry", lambda self, run_id: None
     ):
