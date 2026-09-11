@@ -439,14 +439,12 @@ impl App {
             return Vec::new();
         }
         let mut actions = vec![UiAction::RefreshTranslate];
-        if let Some(run) = self.selected_translate_run() {
-            let detail_current = self
-                .translate_detail
-                .as_ref()
-                .is_some_and(|detail| detail.summary.run_id == run.run_id);
-            if !run.finished && !detail_current {
-                actions.push(UiAction::GetTranslateDetail(run.run_id.clone()));
-            }
+        // The list refresh never updates the cached detail, so an unfinished
+        // selection refetches its detail on every poll until it finishes.
+        if let Some(run) = self.selected_translate_run()
+            && !run.finished
+        {
+            actions.push(UiAction::GetTranslateDetail(run.run_id.clone()));
         }
         actions
     }
@@ -618,7 +616,8 @@ impl App {
             KeyCode::Char('e') if self.view == View::Translate => {
                 self.editing_draft = true;
                 self.draft_cursor = self.translate_draft.chars().count();
-                self.status_message = "Editing draft · type text, enter done, esc cancel".into();
+                self.status_message =
+                    "Editing draft · type text, enter done, alt+enter newline, esc cancel".into();
             }
             KeyCode::Char('s') if self.view == View::Translate => {
                 return self.open_translate_modal();
@@ -809,6 +808,11 @@ impl App {
 
     fn handle_draft_edit_key(&mut self, key: KeyEvent) {
         match key.code {
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                let byte = draft_byte_index(&self.translate_draft, self.draft_cursor);
+                self.translate_draft.insert(byte, '\n');
+                self.draft_cursor += 1;
+            }
             KeyCode::Esc | KeyCode::Enter => {
                 self.editing_draft = false;
                 let chars = self.translate_draft.chars().count();
@@ -2909,12 +2913,30 @@ mod tests {
                 UiAction::GetTranslateDetail(run_id.clone()),
             ]
         );
-        // Once the detail is current, only the list refreshes.
+        // Once the detail is current, the unfinished run still refetches
+        // each poll (the list refresh never updates cached detail).
         running.apply_translate_detail(TranslateRunDetail::demo(&run_id));
         assert_eq!(
             running.translate_auto_poll(),
-            vec![UiAction::RefreshTranslate]
+            vec![
+                UiAction::RefreshTranslate,
+                UiAction::GetTranslateDetail(run_id.clone()),
+            ]
         );
+    }
+
+    #[test]
+    fn draft_editing_inserts_newline_on_alt_enter() {
+        let mut app = App::live(View::Translate);
+        let _ = app.handle_key(key(KeyCode::Char('e')));
+        let _ = app.handle_key(key(KeyCode::Char('a')));
+        let mut alt_enter = key(KeyCode::Enter);
+        alt_enter.modifiers = KeyModifiers::ALT;
+        assert_eq!(app.handle_key(alt_enter), None);
+        assert!(app.editing_draft, "newline must not exit editing");
+        assert_eq!(app.translate_draft, "a\n");
+        assert_eq!(app.handle_key(key(KeyCode::Enter)), None);
+        assert!(!app.editing_draft);
     }
 
     #[test]
