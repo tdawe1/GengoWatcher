@@ -412,6 +412,42 @@ def test_finished_run_releases_capacity_slot(tmp_path):
         service.start_run(text="second", models=["opencode"])
 
 
+def test_thread_start_failure_releases_slot_and_marks_failed(tmp_path):
+    service, _ = _make_service(tmp_path, {("TranslateFanout", "max_active_runs"): 1})
+    with patch("threading.Thread", side_effect=RuntimeError("no threads")):
+        with pytest.raises(RuntimeError, match="no threads"):
+            service.start_run(text="doomed", models=["opencode"])
+    # Slot released: a new run fits; the failed run is persisted as failed.
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        retry_id = service.start_run(text="retry", models=["opencode"])
+    assert retry_id
+    failed = [
+        run
+        for run in service.list_runs()
+        if run["finished"] and run["run_id"] != retry_id
+    ]
+    assert len(failed) == 1
+    assert failed[0]["per_model"]["opencode"]["status"] == "failed"
+
+
+def test_missing_source_marks_run_finished_failed(tmp_path):
+    service, events = _make_service(tmp_path)
+    with patch.object(
+        TranslateFanoutService, "_background_entry", lambda self, run_id: None
+    ):
+        run_id = service.start_run(text="ghost", models=["opencode"])
+    run_dir = tmp_path / "translate-fanout" / f"{run_id}-gengo"
+    (run_dir / "original.txt").unlink()
+    asyncio.run(service._run_fanout(run_id))
+    detail = service.get_run(run_id)
+    assert detail is not None
+    assert detail["finished"] is True
+    assert detail["per_model"]["opencode"]["status"] == "failed"
+    assert any(event == "translate.run.completed" for event, _ in events)
+
+
 def test_run_one_model_marks_timeout_and_keeps_partial(tmp_path):
     service, _ = _make_service(tmp_path)
     with patch.object(

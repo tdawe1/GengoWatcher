@@ -468,13 +468,23 @@ class TranslateFanoutService:
             record.char_count,
             ",".join(selected),
         )
-        thread = threading.Thread(
-            target=self._background_entry,
-            args=(run_id,),
-            daemon=True,
-            name=f"TranslateFanout-{run_id}",
-        )
-        thread.start()
+        try:
+            thread = threading.Thread(
+                target=self._background_entry,
+                args=(run_id,),
+                daemon=True,
+                name=f"TranslateFanout-{run_id}",
+            )
+            thread.start()
+        except Exception:
+            per_model = self._mark_run_failed(run_id, "failed to start runner")
+            with self._lock:
+                self._active_runs.discard(run_id)
+            self._emit(
+                "translate.run.completed",
+                {"run_id": run_id, "per_model": per_model},
+            )
+            raise
         return run_id
 
     def list_runs(self) -> list[dict[str, Any]]:
@@ -657,22 +667,32 @@ class TranslateFanoutService:
         except Exception:
             self.logger.debug("Translate fan-out event callback failed", exc_info=True)
 
+    def _mark_run_failed(self, run_id: str, error: str) -> dict[str, str]:
+        """Persist a run as failed/finished; returns per-model statuses."""
+        with self._lock:
+            record = self._runs.get(run_id)
+            if record is None:
+                return {}
+            if record.finished_at is None:
+                record.finished_at = time.time()
+            for state in record.per_model.values():
+                if state.status in {"queued", "running"}:
+                    state.status = "failed"
+                    state.error = state.error or error
+            self._write_run_json(record)
+            return {name: state.status for name, state in record.per_model.items()}
+
     def _background_entry(self, run_id: str) -> None:
         try:
             try:
                 asyncio.run(self._run_fanout(run_id))
             except Exception:
                 self.logger.exception("Translate fan-out run %s crashed", run_id)
-                with self._lock:
-                    record = self._runs.get(run_id)
-                    if record is not None and record.finished_at is None:
-                        record.finished_at = time.time()
-                        for state in record.per_model.values():
-                            if state.status in {"queued", "running"}:
-                                state.status = "failed"
-                                state.error = state.error or "runner crashed"
-                        self._write_run_json(record)
-                self._emit("translate.run.completed", {"run_id": run_id})
+                per_model = self._mark_run_failed(run_id, "runner crashed")
+                self._emit(
+                    "translate.run.completed",
+                    {"run_id": run_id, "per_model": per_model},
+                )
         finally:
             # Runtime-only slot: always released, including early exits
             # (e.g. missing original.txt) and crashes.
@@ -693,6 +713,11 @@ class TranslateFanoutService:
             )
         except OSError:
             self.logger.error("Translate run %s missing original.txt", run_id)
+            per_model = self._mark_run_failed(run_id, "missing original.txt")
+            self._emit(
+                "translate.run.completed",
+                {"run_id": run_id, "per_model": per_model},
+            )
             return
         binaries = self.resolve_binaries()
         semaphore = asyncio.Semaphore(self._max_concurrency())
