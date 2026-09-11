@@ -12,7 +12,8 @@ use serde_json::Value;
 
 use crate::model::{
     CommandRequest, CommandResponse, DashboardData, EventsResponse, JobsResponse, Stats,
-    TranslateListResponse, TranslateRunDetail, TranslateRunSummary, WatcherStatus,
+    TranslateListResponse, TranslateModelsResponse, TranslateRunDetail, TranslateRunSummary,
+    TranslateStartRequest, TranslateStartResponse, WatcherStatus,
 };
 
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(4);
@@ -143,6 +144,36 @@ impl ApiClient {
             ));
         }
         self.get::<TranslateRunDetail>(&format!("/api/translate/{run_id}"))
+    }
+
+    pub fn list_translate_models(&self) -> Result<Vec<String>, ApiError> {
+        let response = self.get::<TranslateModelsResponse>("/api/translate/models")?;
+        if response.models.is_empty() {
+            return Err(ApiError::new("translate models list was empty"));
+        }
+        Ok(response.models)
+    }
+
+    pub fn start_translate(
+        &self,
+        text: &str,
+        models: Option<Vec<String>>,
+        with_review: bool,
+    ) -> Result<String, ApiError> {
+        let body = TranslateStartRequest {
+            text: text.to_owned(),
+            models,
+            with_review,
+        };
+        let response = self.post_json_with_timeout::<TranslateStartResponse, _>(
+            "/api/translate",
+            &body,
+            ACTION_TIMEOUT,
+        )?;
+        if response.run_id.trim().is_empty() {
+            return Err(ApiError::new("translate submit returned an empty run ID"));
+        }
+        Ok(response.run_id)
     }
 
     fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
@@ -382,6 +413,164 @@ mod tests {
 
         assert_eq!(detail.summary.run_id, "20260911-120000-a1b2c3d4");
         assert_eq!(detail.results["opencode"].final_text, "done");
+        server.join().expect("test server joined");
+    }
+
+    #[test]
+    fn start_translate_posts_text_models_review_and_returns_run_id() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = vec![0_u8; 16_384];
+            let bytes = stream.read(&mut request).expect("read request");
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.starts_with("POST /api/translate HTTP/1.1"));
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-token")
+            );
+            let body = request.split("\r\n\r\n").nth(1).expect("request body");
+            let payload: Value = serde_json::from_str(body).expect("valid JSON body");
+            assert_eq!(payload["text"], "hello world");
+            assert_eq!(payload["models"], Value::from(vec!["opencode", "codex"]));
+            assert_eq!(payload["with_review"], Value::from(false));
+            let body = r#"{"run_id":"20260911-120000-a1b2c3d4"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+        });
+        let client =
+            ApiClient::new(&format!("http://{address}"), "test-token").expect("valid client");
+
+        let run_id = client
+            .start_translate(
+                "hello world",
+                Some(vec!["opencode".into(), "codex".into()]),
+                false,
+            )
+            .expect("run submitted");
+
+        assert_eq!(run_id, "20260911-120000-a1b2c3d4");
+        server.join().expect("test server joined");
+    }
+
+    #[test]
+    fn start_translate_omits_models_when_all_are_selected() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = vec![0_u8; 16_384];
+            let bytes = stream.read(&mut request).expect("read request");
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            let body = request.split("\r\n\r\n").nth(1).expect("request body");
+            let payload: Value = serde_json::from_str(body).expect("valid JSON body");
+            assert!(payload.get("models").is_none(), "{payload}");
+            let body = r#"{"run_id":"20260911-120000-a1b2c3d4"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+        });
+        let client =
+            ApiClient::new(&format!("http://{address}"), "test-token").expect("valid client");
+
+        let run_id = client
+            .start_translate("hello", None, true)
+            .expect("run submitted");
+
+        assert_eq!(run_id, "20260911-120000-a1b2c3d4");
+        server.join().expect("test server joined");
+    }
+
+    fn serve_once(status: &str, body: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test address");
+        let body = body.to_owned();
+        let status = status.to_owned();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = vec![0_u8; 8_192];
+            let bytes = stream.read(&mut request).expect("read request");
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.starts_with("POST /api/translate HTTP/1.1"));
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            )
+            .expect("write response");
+        });
+        format!("http://{address}")
+    }
+
+    #[test]
+    fn start_translate_surfaces_busy_detail_from_server() {
+        let base_url = serve_once(
+            "429 Too Many Requests",
+            r#"{"detail":"Too many active translate runs (3)"}"#,
+        );
+        let client = ApiClient::new(&base_url, "test-token").expect("valid client");
+
+        let error = client
+            .start_translate("hello", None, true)
+            .expect_err("busy rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "API returned 429 Too Many Requests: Too many active translate runs (3)"
+        );
+    }
+
+    #[test]
+    fn start_translate_rejects_empty_run_id() {
+        let base_url = serve_once("202 Accepted", "{}");
+        let client = ApiClient::new(&base_url, "test-token").expect("valid client");
+
+        let error = client
+            .start_translate("hello", None, true)
+            .expect_err("empty run ID rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "translate submit returned an empty run ID"
+        );
+    }
+
+    #[test]
+    fn list_translate_models_decodes_supported_names() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = vec![0_u8; 8_192];
+            let bytes = stream.read(&mut request).expect("read request");
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.starts_with("GET /api/translate/models HTTP/1.1"));
+            let body = r#"{"models":["grok","opencode","codex","claude"]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+        });
+        let client =
+            ApiClient::new(&format!("http://{address}"), "test-token").expect("valid client");
+
+        let models = client.list_translate_models().expect("models listed");
+
+        assert_eq!(models, vec!["grok", "opencode", "codex", "claude"]);
         server.join().expect("test server joined");
     }
 

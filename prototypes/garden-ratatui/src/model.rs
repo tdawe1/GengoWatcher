@@ -273,6 +273,26 @@ pub struct TranslateListResponse {
     pub runs: Vec<TranslateRunSummary>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TranslateStartRequest {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<String>>,
+    pub with_review: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TranslateStartResponse {
+    #[serde(default)]
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TranslateModelsResponse {
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
 impl TranslateRunSummary {
     #[must_use]
     pub fn display_status(&self) -> &str {

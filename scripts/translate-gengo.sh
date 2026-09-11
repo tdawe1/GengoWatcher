@@ -90,11 +90,18 @@ elif [[ ${#INPUT_ARGS[@]} -eq 1 && -f "${INPUT_ARGS[0]}" ]]; then
   ORIG_BASENAME="$(basename "$SRC_FILE")"
   INPUT_DESC="file: $SRC_FILE"
 else
-  INPUT_DESC="text: ${INPUT_ARGS[*]:0:80}"
+  # Never interpolate customer text: it would reach terminal output and
+  # notify-send via INPUT_DESC. An arg count keeps the mode identifiable.
+  INPUT_DESC="text: ${#INPUT_ARGS[@]} arg(s)"
 fi
 
 RUN_TS="$(date +%Y%m%d-%H%M%S)"
-RUN_DIR="$OUTDIR/$RUN_TS-gengo"
+# Unique per invocation (timestamps collide within the same second); the
+# -gengo suffix is kept so tooling can keep globbing "*-gengo" run dirs.
+# mktemp creates the directory mode 700, keeping run artefacts private.
+mkdir -p "$OUTDIR"
+RUN_DIR="$(mktemp -d "$OUTDIR/$RUN_TS-XXXXXX")-gengo"
+mv -- "${RUN_DIR%-gengo}" "$RUN_DIR"
 PROMPT_DIR="$RUN_DIR/prompts"
 mkdir -p "$RUN_DIR" "$PROMPT_DIR"
 
@@ -226,7 +233,10 @@ run_codex() {
 run_claude() {
   local pf="$1" out="$2" err="$3"
   local rc
-  timeout "$TIMEOUT" claude -p "$(cat "$pf")" --output-format text --max-turns 10 >"$out" 2>"$err"
+  # The prompt stays in argv: claude 2.x documents [prompt] positionally
+  # with no stdin prompt mechanism (stdin only appends). Tool execution is
+  # locked down instead: dontAsk denies prompts, --tools "" disables tools.
+  timeout "$TIMEOUT" claude -p "$(cat "$pf")" --output-format text --max-turns 10 --permission-mode dontAsk --tools "" >"$out" 2>"$err"
   rc=$?
   return $rc
 }

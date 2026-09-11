@@ -113,6 +113,12 @@ pub enum UiAction {
     CancelCurrentJob,
     RefreshTranslate,
     GetTranslateDetail(String),
+    FetchTranslateModels,
+    StartTranslate {
+        text: String,
+        models: Option<Vec<String>>,
+        with_review: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +148,16 @@ pub struct App {
     pub translate_detail: Option<TranslateRunDetail>,
     pub translate_loading: bool,
     pending_translate_detail: Option<String>,
+    pub translate_draft: String,
+    draft_cursor: usize,
+    pub editing_draft: bool,
+    pub translate_modal: bool,
+    pub translate_models: Vec<String>,
+    translate_models_selected: Vec<bool>,
+    pub translate_with_review: bool,
+    translate_models_loading: bool,
+    pub submit_pending: bool,
+    pending_select_run: Option<String>,
     pub status_message: String,
     pub data: DashboardData,
     pub connection: ConnectionState,
@@ -195,6 +211,16 @@ impl App {
             translate_detail,
             translate_loading: false,
             pending_translate_detail: None,
+            translate_draft: String::new(),
+            draft_cursor: 0,
+            editing_draft: false,
+            translate_modal: false,
+            translate_models: Vec::new(),
+            translate_models_selected: Vec::new(),
+            translate_with_review: true,
+            translate_models_loading: false,
+            submit_pending: false,
+            pending_select_run: None,
             status_message: if is_demo {
                 "Demo data · no API actions are sent".into()
             } else {
@@ -232,6 +258,12 @@ impl App {
     pub fn apply_error(&mut self, message: impl Into<String>) {
         let message = message.into();
         self.pending_destructive = None;
+        // A dead worker must not wedge in-flight translate flags: without
+        // this the auto-poll skips forever and the submit modal refuses to
+        // refetch models. Local compose state (draft/modal) is preserved.
+        self.translate_loading = false;
+        self.translate_models_loading = false;
+        self.submit_pending = false;
         self.connection = ConnectionState::Reconnecting(message.clone());
         self.status_message = format!("API unavailable · {message}");
     }
@@ -271,13 +303,69 @@ impl App {
             }
             return;
         }
+        if matches!(action, UiAction::FetchTranslateModels) {
+            self.translate_models_loading = false;
+            self.apply_action_result(result);
+            return;
+        }
+        if matches!(action, UiAction::StartTranslate { .. }) {
+            if result.is_err() {
+                self.submit_pending = false;
+                self.translate_loading = false;
+            }
+            self.apply_action_result(result);
+            return;
+        }
         self.apply_action_result(result);
+    }
+
+    pub fn apply_translate_models(&mut self, models: Vec<String>) {
+        // Preserve per-model toggles across refetches by name; a first load
+        // selects every model (server default is all).
+        let had_models = !self.translate_models.is_empty();
+        let previously_selected: HashSet<&str> = self
+            .translate_models
+            .iter()
+            .zip(self.translate_models_selected.iter())
+            .filter(|(_, selected)| **selected)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        self.translate_models_selected = models
+            .iter()
+            .map(|name| {
+                if had_models {
+                    previously_selected.contains(name.as_str())
+                } else {
+                    true
+                }
+            })
+            .collect();
+        self.translate_models = models;
+        self.translate_models_loading = false;
+        self.status_message = format!("Translate models loaded · {}", self.translate_models.len());
+    }
+
+    pub fn apply_translate_started(&mut self, run_id: String) {
+        self.submit_pending = false;
+        self.translate_loading = true;
+        self.pending_select_run = Some(run_id.clone());
+        self.status_message = format!("Translate run submitted · {run_id}");
     }
 
     pub fn apply_translate_list(&mut self, runs: Vec<TranslateRunSummary>) {
         self.translate_runs = runs;
         self.translate_loading = false;
         self.clamp_translate_selection();
+        // A fresh submit selects its own run once the chained list arrives.
+        if let Some(pending) = self.pending_select_run.clone()
+            && let Some(index) = self
+                .translate_runs
+                .iter()
+                .position(|run| run.run_id == pending)
+        {
+            self.selected_translate = index;
+            self.pending_select_run = None;
+        }
         self.status_message = format!("Translate runs updated · {}", self.translate_runs.len());
     }
 
@@ -335,18 +423,56 @@ impl App {
         self.translate_detail = None;
         self.pending_translate_detail = None;
         self.translate_loading = false;
+        // Manual navigation wins over a pending post-submit selection.
+        self.pending_select_run = None;
+    }
+
+    /// Actions the event loop should send while the Translate view is active.
+    /// Live progress without loading the 2s snapshot loop: refresh the list
+    /// and, when the selected run is still unfinished, its detail.
+    #[must_use]
+    pub fn translate_auto_poll(&self) -> Vec<UiAction> {
+        if self.view != View::Translate || self.connection == ConnectionState::Demo {
+            return Vec::new();
+        }
+        if self.translate_loading || self.submit_pending || self.translate_models_loading {
+            return Vec::new();
+        }
+        let mut actions = vec![UiAction::RefreshTranslate];
+        // The list refresh never updates the cached detail, so an unfinished
+        // selection refetches its detail on every poll until it finishes.
+        if let Some(run) = self.selected_translate_run()
+            && !run.finished
+        {
+            actions.push(UiAction::GetTranslateDetail(run.run_id.clone()));
+        }
+        actions
     }
 
     #[must_use]
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<UiAction> {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return None;
+        }
+        // Compose modes run before the repeat gate so held editing keys
+        // (backspace, arrows, characters) repeat naturally. The confirmation
+        // modal below stays unreachable while composing: its keys never enter
+        // these modes, and composing keys never open a confirmation.
+        if self.translate_modal || self.editing_draft {
+            if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+                return None;
+            }
+            if self.translate_modal {
+                return self.handle_translate_modal_key(key);
+            }
+            self.handle_draft_edit_key(key);
+            return None;
+        }
         if key.kind == KeyEventKind::Repeat && !is_repeatable_key(key.code) {
             return None;
         }
         if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
-            return None;
-        }
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            self.should_quit = true;
             return None;
         }
         if let Some(confirmation) = self.confirmation.clone() {
@@ -459,7 +585,42 @@ impl App {
                 }
             }
             KeyCode::Char('t') if matches!(self.view, View::Jobs | View::Work) => {
-                return self.switch_to_translate();
+                // Draft-only: copies the job title for translation. This never
+                // accepts the job — acceptance stays on `a` + confirm.
+                let drafted = if self.view == View::Jobs {
+                    self.selected_available_job()
+                        .map(|job| (job.id.clone(), job.display_title().to_owned()))
+                } else {
+                    self.data
+                        .active_jobs()
+                        .first()
+                        .map(|job| (job.id.clone(), job.display_title().to_owned()))
+                };
+                let action = self.switch_to_translate();
+                if let Some((id, title)) = drafted {
+                    self.translate_draft = title;
+                    self.draft_cursor = self.translate_draft.chars().count();
+                    self.editing_draft = false;
+                    if self.connection == ConnectionState::Demo {
+                        self.status_message = format!(
+                            "Demo data · draft filled from order {id} (NOT accepted) — e edits, s previews submit"
+                        );
+                    } else {
+                        self.status_message = format!(
+                            "Draft filled from order {id} · NOT accepted — e edits, s submits"
+                        );
+                    }
+                }
+                return action;
+            }
+            KeyCode::Char('e') if self.view == View::Translate => {
+                self.editing_draft = true;
+                self.draft_cursor = self.translate_draft.chars().count();
+                self.status_message =
+                    "Editing draft · type text, enter done, alt+enter newline, esc cancel".into();
+            }
+            KeyCode::Char('s') if self.view == View::Translate => {
+                return self.open_translate_modal();
             }
             KeyCode::Char('r') if self.view == View::Translate => {
                 if self.connection == ConnectionState::Demo {
@@ -520,6 +681,178 @@ impl App {
         Some(UiAction::RefreshTranslate)
     }
 
+    fn open_translate_modal(&mut self) -> Option<UiAction> {
+        if self.translate_draft.trim().is_empty() {
+            self.status_message = "Draft is empty · e edits, t fills from a job".into();
+            return None;
+        }
+        self.editing_draft = false;
+        self.translate_modal = true;
+        if self.connection == ConnectionState::Demo {
+            self.status_message = "Submit preview · demo data, submit disabled".into();
+            return None;
+        }
+        if !self.translate_models.is_empty() || self.translate_models_loading {
+            self.status_message =
+                "Submit modal · 1-9 toggle models, r review, enter submits".into();
+            return None;
+        }
+        self.translate_models_loading = true;
+        self.status_message = "Translate models requested…".into();
+        Some(UiAction::FetchTranslateModels)
+    }
+
+    fn handle_translate_modal_key(&mut self, key: KeyEvent) -> Option<UiAction> {
+        // Held keys must not flicker toggles.
+        if key.kind == KeyEventKind::Repeat {
+            return None;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
+                self.translate_modal = false;
+                self.status_message = "Translate submit cancelled".into();
+                None
+            }
+            KeyCode::Enter | KeyCode::Char('y') => self.confirm_translate_submit(),
+            KeyCode::Char('r') => {
+                self.translate_with_review = !self.translate_with_review;
+                self.status_message = format!(
+                    "Review pass {}",
+                    if self.translate_with_review {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                );
+                None
+            }
+            KeyCode::Char('a') => {
+                if self.translate_models.is_empty() {
+                    self.status_message = "No models loaded · esc then s to retry".into();
+                } else {
+                    self.translate_models_selected.fill(true);
+                    self.status_message = "All models selected".into();
+                }
+                None
+            }
+            KeyCode::Char(character) if character.is_ascii_digit() => {
+                self.toggle_translate_model(character);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn toggle_translate_model(&mut self, digit: char) {
+        if self.translate_models.is_empty() {
+            self.status_message = "No models loaded · esc then s to retry".into();
+            return;
+        }
+        let index = (digit as usize).saturating_sub('0' as usize);
+        if index == 0 || index > self.translate_models.len() {
+            self.status_message = "No model at that number".into();
+            return;
+        }
+        let slot = &mut self.translate_models_selected[index - 1];
+        *slot = !*slot;
+        let name = self.translate_models[index - 1].clone();
+        self.status_message = format!(
+            "Model {name} {}",
+            if *slot { "selected" } else { "skipped" }
+        );
+    }
+
+    fn confirm_translate_submit(&mut self) -> Option<UiAction> {
+        if self.connection == ConnectionState::Demo {
+            self.translate_modal = false;
+            self.status_message = "Demo data · submit is disabled".into();
+            return None;
+        }
+        if self.submit_pending {
+            self.status_message = "Submit already in flight…".into();
+            return None;
+        }
+        if self.translate_draft.trim().is_empty() {
+            self.translate_modal = false;
+            self.status_message = "Draft is empty · submit cancelled".into();
+            return None;
+        }
+        let selected: Vec<String> = self
+            .translate_models
+            .iter()
+            .zip(self.translate_models_selected.iter())
+            .filter(|(_, selected)| **selected)
+            .map(|(name, _)| name.clone())
+            .collect();
+        if !self.translate_models.is_empty() && selected.is_empty() {
+            self.status_message = "Select at least one model · 1-9 toggle, a all".into();
+            return None;
+        }
+        // All (or unknown, when the models fetch failed) means server default.
+        let models = if selected.len() == self.translate_models.len() {
+            None
+        } else {
+            Some(selected)
+        };
+        self.translate_modal = false;
+        self.editing_draft = false;
+        self.submit_pending = true;
+        self.translate_loading = true;
+        self.status_message = "Translate run submitting…".into();
+        Some(UiAction::StartTranslate {
+            text: self.translate_draft.clone(),
+            models,
+            with_review: self.translate_with_review,
+        })
+    }
+
+    fn handle_draft_edit_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                let byte = draft_byte_index(&self.translate_draft, self.draft_cursor);
+                self.translate_draft.insert(byte, '\n');
+                self.draft_cursor += 1;
+            }
+            KeyCode::Esc | KeyCode::Enter => {
+                self.editing_draft = false;
+                let chars = self.translate_draft.chars().count();
+                self.status_message = format!("Draft updated · {chars} chars · s submits");
+            }
+            KeyCode::Left => {
+                self.draft_cursor = self.draft_cursor.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                let end = self.translate_draft.chars().count();
+                self.draft_cursor = (self.draft_cursor + 1).min(end);
+            }
+            KeyCode::Home => self.draft_cursor = 0,
+            KeyCode::End => self.draft_cursor = self.translate_draft.chars().count(),
+            KeyCode::Backspace if self.draft_cursor > 0 => {
+                let byte = draft_byte_index(&self.translate_draft, self.draft_cursor - 1);
+                self.translate_draft.remove(byte);
+                self.draft_cursor -= 1;
+            }
+            KeyCode::Backspace => {}
+            KeyCode::Delete => {
+                let end = self.translate_draft.chars().count();
+                if self.draft_cursor < end {
+                    let byte = draft_byte_index(&self.translate_draft, self.draft_cursor);
+                    self.translate_draft.remove(byte);
+                }
+            }
+            KeyCode::Char(character)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                let byte = draft_byte_index(&self.translate_draft, self.draft_cursor);
+                self.translate_draft.insert(byte, character);
+                self.draft_cursor += 1;
+            }
+            _ => {}
+        }
+        let end = self.translate_draft.chars().count();
+        self.draft_cursor = self.draft_cursor.min(end);
+    }
+
     fn set_selected_translate_status(&mut self) {
         if let Some(run) = self.selected_translate_run() {
             self.status_message = format!(
@@ -565,6 +898,12 @@ impl App {
             .min(self.data.jobs.len().saturating_sub(1));
         self.clamp_translate_selection();
     }
+}
+
+fn draft_byte_index(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .nth(cursor)
+        .map_or(text.len(), |(index, _)| index)
 }
 
 fn is_repeatable_key(code: KeyCode) -> bool {
@@ -1396,6 +1735,7 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     let rows = Layout::vertical([
         Constraint::Length(4),
         Constraint::Length(1),
+        Constraint::Length(5),
         Constraint::Min(8),
     ])
     .split(area);
@@ -1405,7 +1745,7 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     let hint = if app.translate_loading {
         "Loading…"
     } else {
-        "↑/↓ select · enter detail · r refresh"
+        "↑/↓ select · enter detail · e edit draft · s submit · r refresh"
     };
     frame.render_widget(
         Paragraph::new(hint).style(Style::default().fg(MUTED)),
@@ -1425,7 +1765,7 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         .alignment(Alignment::Right),
         toolbar[1],
     );
-    let columns = Layout::horizontal([Constraint::Min(62), Constraint::Length(36)]).split(rows[2]);
+    let columns = Layout::horizontal([Constraint::Min(62), Constraint::Length(36)]).split(rows[3]);
     let header = Row::new(["RUN ID", "KIND", "CHARS", "STATUS"]).style(
         Style::default()
             .fg(WHITE)
@@ -1472,8 +1812,8 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                 Text::from(vec![
                     Line::from("No translate runs yet"),
                     Line::from(""),
-                    Line::from("POST /api/translate to start a fan-out run."),
-                    Line::from("Submit-from-TUI arrives in Phase 3."),
+                    Line::from("e edit draft · s submit a run from the TUI,"),
+                    Line::from("or POST /api/translate to start a fan-out run."),
                 ])
             } else if let Some(run) = app.selected_translate_run() {
                 Text::from(vec![
@@ -1528,6 +1868,121 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
             .style(Style::default().fg(INK).bg(PAPER))
             .wrap(Wrap { trim: true }),
         inset_left(columns[1]),
+    );
+    render_translate_compose(frame, rows[2], app);
+    if app.translate_modal {
+        render_translate_modal(frame, area, app);
+    }
+}
+
+fn render_translate_compose(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let chars = app.translate_draft.chars().count();
+    let draft_text = if app.translate_draft.trim().is_empty() {
+        "(empty) · e edit · t on a job fills from title".to_owned()
+    } else if app.editing_draft {
+        let cursor = app.draft_cursor.min(chars);
+        let head: String = app.translate_draft.chars().take(cursor).collect();
+        let tail: String = app.translate_draft.chars().skip(cursor).collect();
+        format!("{head}▏{tail}")
+    } else {
+        app.translate_draft.clone()
+    };
+    let models_text = if app.translate_models.is_empty() {
+        "all (default)".to_owned()
+    } else {
+        let selected: Vec<&str> = app
+            .translate_models
+            .iter()
+            .zip(app.translate_models_selected.iter())
+            .filter(|(_, selected)| **selected)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        if selected.len() == app.translate_models.len() {
+            "all".to_owned()
+        } else if selected.is_empty() {
+            "none".to_owned()
+        } else {
+            selected.join("+")
+        }
+    };
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                if app.editing_draft {
+                    "DRAFT [editing] "
+                } else {
+                    "DRAFT "
+                },
+                Style::default().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(truncate(&draft_text, 110)),
+        ]),
+        Line::from(format!(
+            "{chars} chars · models: {models_text} · review: {} · e edit · s submit",
+            if app.translate_with_review {
+                "on"
+            } else {
+                "off"
+            }
+        )),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(titled_panel("COMPOSE"))
+            .style(Style::default().fg(INK).bg(PAPER))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn render_translate_modal(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let chars = app.translate_draft.chars().count();
+    let height = (app.translate_models.len().max(1) + 9) as u16;
+    let modal = centered_rect(60, height, area);
+    frame.render_widget(Clear, modal);
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "SUBMIT TRANSLATE RUN",
+            Style::default().fg(ORANGE).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(format!(
+            "{chars} chars · review {} (r toggles)",
+            if app.translate_with_review {
+                "on"
+            } else {
+                "off"
+            }
+        )),
+    ];
+    if app.translate_models.is_empty() {
+        lines.push(Line::from("Models loading… (submit uses server defaults)"));
+    } else {
+        for (index, name) in app.translate_models.iter().enumerate() {
+            let mark = if app.translate_models_selected[index] {
+                "x"
+            } else {
+                " "
+            };
+            lines.push(Line::from(format!("[{mark}] {} {name}", index + 1)));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" enter/y submit ", Style::default().fg(GROUND).bg(LEAF)),
+        Span::raw(" "),
+        Span::styled(" esc/n cancel ", Style::default().fg(INK).bg(CANOPY)),
+    ]));
+    lines.push(Line::from("1-9 toggle · a all · r review"));
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double)
+                .border_style(Style::default().fg(ORANGE))
+                .style(Style::default().bg(PAPER)),
+        ),
+        modal,
     );
 }
 
@@ -2219,7 +2674,269 @@ mod tests {
             action.is_none(),
             "demo mode must not emit worker actions for read-only view"
         );
-        assert!(app.status_message.contains("demo"));
+        assert!(app.status_message.contains("Demo"));
+    }
+
+    #[test]
+    fn translate_shortcut_fills_draft_without_accepting() {
+        let mut app = App::live(View::Jobs);
+        app.data.jobs = DashboardData::demo().jobs;
+        let action = app.handle_key(key(KeyCode::Char('s')));
+        assert!(action.is_none(), "unrelated key sends nothing");
+
+        let action = app.handle_key(key(KeyCode::Char('t')));
+        assert_eq!(action, Some(UiAction::RefreshTranslate));
+        assert_eq!(app.view, View::Translate);
+        assert!(
+            !app.translate_draft.is_empty(),
+            "draft prefilled from the selected job title"
+        );
+        assert!(
+            app.status_message.contains("NOT accepted"),
+            "prefill must never imply job acceptance"
+        );
+        assert!(app.pending_destructive.is_none());
+        assert!(app.confirmation.is_none());
+    }
+
+    #[test]
+    fn draft_editing_types_deletes_and_exits() {
+        let mut app = App::live(View::Translate);
+        assert_eq!(app.handle_key(key(KeyCode::Char('e'))), None);
+        assert!(app.editing_draft);
+        for character in ['h', 'i'] {
+            assert_eq!(app.handle_key(key(KeyCode::Char(character))), None);
+        }
+        assert_eq!(app.translate_draft, "hi");
+        // The quit key types text while editing instead of quitting.
+        assert_eq!(app.handle_key(key(KeyCode::Char('q'))), None);
+        assert!(!app.should_quit);
+        assert_eq!(app.translate_draft, "hiq");
+        assert_eq!(app.handle_key(key(KeyCode::Backspace)), None);
+        assert_eq!(app.translate_draft, "hi");
+        assert_eq!(app.handle_key(key(KeyCode::Enter)), None);
+        assert!(!app.editing_draft);
+        assert!(app.status_message.contains("2 chars"));
+    }
+
+    #[test]
+    fn held_editing_keys_repeat_while_modal_toggles_do_not() {
+        let mut app = App::live(View::Translate);
+        app.translate_draft = "hey".into();
+        let _ = app.handle_key(key(KeyCode::Char('e')));
+
+        let mut repeat_backspace = key(KeyCode::Backspace);
+        repeat_backspace.kind = KeyEventKind::Repeat;
+        assert_eq!(app.handle_key(repeat_backspace), None);
+        assert_eq!(app.translate_draft, "he");
+
+        let mut repeat_char = key(KeyCode::Char('y'));
+        repeat_char.kind = KeyEventKind::Repeat;
+        assert_eq!(app.handle_key(repeat_char), None);
+        assert_eq!(app.translate_draft, "hey");
+
+        let _ = app.handle_key(key(KeyCode::Enter));
+        app.translate_modal = true;
+        app.apply_translate_models(vec!["grok".into(), "opencode".into()]);
+        let mut repeat_digit = key(KeyCode::Char('1'));
+        repeat_digit.kind = KeyEventKind::Repeat;
+        assert_eq!(app.handle_key(repeat_digit), None);
+        match app.handle_key(key(KeyCode::Char('q'))) {
+            None => assert!(!app.translate_modal, "q cancels like the confirm modal"),
+            other => panic!("expected cancel, got {other:?}"),
+        }
+    }
+    #[test]
+    fn submit_modal_requires_nonempty_draft() {
+        let mut app = App::live(View::Translate);
+        assert_eq!(app.handle_key(key(KeyCode::Char('s'))), None);
+        assert!(!app.translate_modal);
+        assert!(app.status_message.contains("empty"));
+    }
+
+    #[test]
+    fn submit_flow_toggles_models_review_and_posts() {
+        let mut app = App::live(View::Translate);
+        app.translate_draft = "hello".into();
+        let action = app.handle_key(key(KeyCode::Char('s')));
+        assert_eq!(action, Some(UiAction::FetchTranslateModels));
+        assert!(app.translate_modal);
+
+        app.apply_translate_models(vec![
+            "grok".into(),
+            "opencode".into(),
+            "codex".into(),
+            "claude".into(),
+        ]);
+        // First load selects every model.
+        assert_eq!(app.handle_key(key(KeyCode::Char('1'))), None);
+        assert_eq!(app.handle_key(key(KeyCode::Char('r'))), None);
+        assert!(!app.translate_with_review);
+
+        match app.handle_key(key(KeyCode::Enter)) {
+            Some(UiAction::StartTranslate {
+                text,
+                models,
+                with_review,
+            }) => {
+                assert_eq!(text, "hello");
+                assert_eq!(
+                    models,
+                    Some(vec!["opencode".into(), "codex".into(), "claude".into()])
+                );
+                assert!(!with_review);
+            }
+            other => panic!("expected StartTranslate, got {other:?}"),
+        }
+        assert!(!app.translate_modal);
+        assert!(app.submit_pending);
+    }
+
+    #[test]
+    fn submit_with_all_models_selected_sends_server_default() {
+        let mut app = App::live(View::Translate);
+        app.translate_draft = "hello".into();
+        let _ = app.handle_key(key(KeyCode::Char('s')));
+        app.apply_translate_models(vec!["grok".into(), "opencode".into()]);
+        match app.handle_key(key(KeyCode::Char('y'))) {
+            Some(UiAction::StartTranslate { models, .. }) => {
+                assert_eq!(models, None);
+            }
+            other => panic!("expected StartTranslate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn submit_requires_at_least_one_model() {
+        let mut app = App::live(View::Translate);
+        app.translate_draft = "hello".into();
+        let _ = app.handle_key(key(KeyCode::Char('s')));
+        app.apply_translate_models(vec!["grok".into()]);
+        let _ = app.handle_key(key(KeyCode::Char('1')));
+        assert_eq!(app.handle_key(key(KeyCode::Enter)), None);
+        assert!(app.translate_modal, "modal stays open");
+        assert!(app.status_message.contains("at least one model"));
+    }
+
+    #[test]
+    fn submit_modal_cancel_and_demo_guard() {
+        let mut app = App::live(View::Translate);
+        app.translate_draft = "hello".into();
+        let _ = app.handle_key(key(KeyCode::Char('s')));
+        assert_eq!(app.handle_key(key(KeyCode::Esc)), None);
+        assert!(!app.translate_modal);
+
+        let mut demo = App::new(View::Translate);
+        demo.translate_draft = "hello".into();
+        assert_eq!(demo.handle_key(key(KeyCode::Char('s'))), None);
+        assert!(demo.translate_modal, "demo still previews the modal");
+        assert_eq!(demo.handle_key(key(KeyCode::Enter)), None);
+        assert!(!demo.translate_modal);
+        assert!(demo.status_message.contains("Demo"));
+    }
+
+    #[test]
+    fn submit_selects_new_run_when_list_arrives() {
+        let mut app = App::live(View::Translate);
+        app.apply_translate_list(TranslateRunSummary::demo_list());
+        app.apply_translate_started("20260911-120000-newrun".into());
+        assert!(!app.submit_pending);
+        assert!(app.status_message.contains("20260911-120000-newrun"));
+
+        let mut runs = TranslateRunSummary::demo_list();
+        let mut extra = runs[0].clone();
+        extra.run_id = "20260911-120000-newrun".into();
+        runs.push(extra);
+        app.apply_translate_list(runs);
+        assert_eq!(
+            app.translate_runs[app.selected_translate].run_id,
+            "20260911-120000-newrun"
+        );
+    }
+
+    #[test]
+    fn submit_failure_clears_pending_flags() {
+        let mut app = App::live(View::Translate);
+        app.submit_pending = true;
+        app.translate_loading = true;
+        let action = UiAction::StartTranslate {
+            text: "hello".into(),
+            models: None,
+            with_review: true,
+        };
+        app.apply_action_result_for(&action, Err("busy".into()));
+        assert!(!app.submit_pending);
+        assert!(!app.translate_loading);
+        assert!(app.status_message.contains("busy"));
+    }
+
+    #[test]
+    fn translate_auto_poll_covers_view_mode_and_progress() {
+        let demo = App::new(View::Translate);
+        assert!(demo.translate_auto_poll().is_empty(), "demo never polls");
+
+        let other = App::live(View::Overview);
+        assert!(
+            other.translate_auto_poll().is_empty(),
+            "other views never poll"
+        );
+
+        let mut loading = App::live(View::Translate);
+        loading.translate_loading = true;
+        assert!(
+            loading.translate_auto_poll().is_empty(),
+            "in-flight requests are not stacked"
+        );
+
+        let mut finished = App::live(View::Translate);
+        let mut runs = TranslateRunSummary::demo_list();
+        for run in &mut runs {
+            run.finished = true;
+        }
+        finished.apply_translate_list(runs);
+        assert_eq!(
+            finished.translate_auto_poll(),
+            vec![UiAction::RefreshTranslate]
+        );
+
+        let mut running = App::live(View::Translate);
+        let mut runs = TranslateRunSummary::demo_list();
+        for run in &mut runs {
+            run.finished = false;
+        }
+        running.apply_translate_list(runs);
+        let run_id = running.translate_runs[0].run_id.clone();
+        assert_eq!(
+            running.translate_auto_poll(),
+            vec![
+                UiAction::RefreshTranslate,
+                UiAction::GetTranslateDetail(run_id.clone()),
+            ]
+        );
+        // Once the detail is current, the unfinished run still refetches
+        // each poll (the list refresh never updates cached detail).
+        running.apply_translate_detail(TranslateRunDetail::demo(&run_id));
+        assert_eq!(
+            running.translate_auto_poll(),
+            vec![
+                UiAction::RefreshTranslate,
+                UiAction::GetTranslateDetail(run_id.clone()),
+            ]
+        );
+    }
+
+    #[test]
+    fn draft_editing_inserts_newline_on_alt_enter() {
+        let mut app = App::live(View::Translate);
+        let _ = app.handle_key(key(KeyCode::Char('e')));
+        let _ = app.handle_key(key(KeyCode::Char('a')));
+        let mut alt_enter = key(KeyCode::Enter);
+        alt_enter.modifiers = KeyModifiers::ALT;
+        assert_eq!(app.handle_key(alt_enter), None);
+        assert!(app.editing_draft, "newline must not exit editing");
+        assert_eq!(app.translate_draft, "a\n");
+        assert_eq!(app.handle_key(key(KeyCode::Enter)), None);
+        assert!(!app.editing_draft);
     }
 
     #[test]
@@ -2293,5 +3010,42 @@ mod tests {
         assert!(content.contains("TRANSLATE"));
         assert!(content.contains("20260911-120000-a1b2c3d4"));
         assert!(content.contains("SELECTED RUN"));
+    }
+
+    #[test]
+    fn translate_compose_and_modal_render_without_panic() {
+        let backend = TestBackend::new(150, 44);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = App::new(View::Translate);
+        app.translate_draft = "hello world".into();
+        app.editing_draft = true;
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("compose renders");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("COMPOSE"));
+        assert!(content.contains("hello world"));
+
+        app.editing_draft = false;
+        app.apply_translate_models(vec!["grok".into(), "opencode".into()]);
+        app.translate_modal = true;
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("modal renders");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("SUBMIT TRANSLATE RUN"));
+        assert!(content.contains("grok"));
     }
 }

@@ -142,7 +142,10 @@ cleanup_tmp() {
   if [[ -n "${PASTE_TMP:-}" ]]; then rm -f "$PASTE_TMP"; fi
   if [[ -n "${EDIT_TMP:-}" ]]; then rm -f "$EDIT_TMP"; fi
 }
-trap cleanup_tmp EXIT HUP INT TERM
+trap cleanup_tmp EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 need_arg() { # need_arg OPTION "${NEXT:-}"; $2 empty/missing -> exit 2
   if [[ -z "${2:-}" ]]; then
     echo "$1 requires a value" >&2; exit 2
