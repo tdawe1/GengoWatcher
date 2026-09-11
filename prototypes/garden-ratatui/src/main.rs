@@ -74,7 +74,7 @@ fn parse_mode() -> io::Result<Mode> {
                 let value = args.next().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "--view requires a value")
                 })?;
-                view = View::from_slug(&value).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("unknown view {value:?}; use overview, jobs, work, history, analytics, or system")))?;
+                view = View::from_slug(&value).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("unknown view {value:?}; use overview, jobs, work, history, analytics, system, or translate")))?;
             }
             "--demo" => demo = true,
             "--api-url" => {
@@ -108,7 +108,7 @@ fn parse_mode() -> io::Result<Mode> {
             }
             "-h" | "--help" => {
                 println!(
-                    "GengoWatcher Ratatui TUI\n\nUsage:\n  cargo run -- [--view VIEW] [--api-url URL] [--poll-ms 2000]\n  cargo run -- --demo [--view VIEW]\n  cargo run -- --render OUTPUT_DIR\n\nLive mode reads the bearer token from GENGOWATCHER_API_TOKEN.\nViews: overview, jobs, work, history, analytics, system"
+                    "GengoWatcher Ratatui TUI\n\nUsage:\n  cargo run -- [--view VIEW] [--api-url URL] [--poll-ms 2000]\n  cargo run -- --demo [--view VIEW]\n  cargo run -- --render OUTPUT_DIR\n\nLive mode reads the bearer token from GENGOWATCHER_API_TOKEN.\nViews: overview, jobs, work, history, analytics, system, translate"
                 );
                 std::process::exit(0);
             }
@@ -222,6 +222,8 @@ fn drain_worker(worker: &LiveWorker, app: &mut App) {
     loop {
         match worker.try_recv() {
             Ok(Some(WorkerEvent::Snapshot(snapshot))) => app.apply_snapshot(*snapshot),
+            Ok(Some(WorkerEvent::TranslateList(runs))) => app.apply_translate_list(runs),
+            Ok(Some(WorkerEvent::TranslateDetail(detail))) => app.apply_translate_detail(*detail),
             Ok(Some(WorkerEvent::ActionResult { action, result })) => {
                 app.apply_action_result_for(&action, result)
             }

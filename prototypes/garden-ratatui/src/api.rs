@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::model::{
     CommandRequest, CommandResponse, DashboardData, EventsResponse, JobsResponse, Stats,
-    WatcherStatus,
+    TranslateListResponse, TranslateRunDetail, TranslateRunSummary, WatcherStatus,
 };
 
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(4);
@@ -131,6 +131,20 @@ impl ApiClient {
         self.post_json_with_timeout("/api/jobs/cancel", &Value::Null, ACTION_TIMEOUT)
     }
 
+    pub fn list_translate_runs(&self) -> Result<Vec<TranslateRunSummary>, ApiError> {
+        let response = self.get::<TranslateListResponse>("/api/translate")?;
+        Ok(response.runs)
+    }
+
+    pub fn get_translate_run(&self, run_id: &str) -> Result<TranslateRunDetail, ApiError> {
+        if !is_safe_run_id(run_id) {
+            return Err(ApiError::new(
+                "translate run ID contains unsupported characters",
+            ));
+        }
+        self.get::<TranslateRunDetail>(&format!("/api/translate/{run_id}"))
+    }
+
     fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         let response = self
             .client
@@ -208,6 +222,13 @@ fn is_safe_job_id(job_id: &str) -> bool {
     }
 }
 
+fn is_safe_run_id(run_id: &str) -> bool {
+    if run_id.len() > 64 {
+        return false;
+    }
+    is_safe_job_id(run_id)
+}
+
 fn is_loopback_host(host: Option<&str>) -> bool {
     match host {
         Some("localhost") => true,
@@ -281,6 +302,87 @@ mod tests {
         assert!(is_safe_job_id("job_1"));
         assert!(!is_safe_job_id(".."));
         assert!(!is_safe_job_id("."));
+    }
+
+    #[test]
+    fn translate_run_ids_are_restricted_before_becoming_url_paths() {
+        let client = ApiClient::new("http://127.0.0.1:9", "token").expect("valid client");
+        for run_id in ["../run", "..", ".", "", "-lead", "_lead"] {
+            let error = client.get_translate_run(run_id).expect_err("invalid ID");
+            assert_eq!(
+                error.to_string(),
+                "translate run ID contains unsupported characters",
+                "{run_id}"
+            );
+        }
+        assert!(is_safe_run_id("20260911-120000-a1b2c3d4"));
+        assert!(!is_safe_run_id(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn list_translate_runs_reads_bearer_authenticated_endpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = vec![0_u8; 8_192];
+            let bytes = stream.read(&mut request).expect("read request");
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.starts_with("GET /api/translate HTTP/1.1"));
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-token")
+            );
+            let body = r#"{"runs":[{"run_id":"20260911-120000-a1b2c3d4","kind":"text","char_count":42,"with_review":true,"models":["opencode"],"created_at":1000,"finished":true,"per_model":{"opencode":{"status":"ok"}},"input_preview":"hello"}]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+        });
+        let client =
+            ApiClient::new(&format!("http://{address}"), "test-token").expect("valid client");
+
+        let runs = client.list_translate_runs().expect("runs listed");
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, "20260911-120000-a1b2c3d4");
+        assert_eq!(runs[0].per_model["opencode"].status, "ok");
+        server.join().expect("test server joined");
+    }
+
+    #[test]
+    fn get_translate_run_decodes_detail_with_final_alias() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = vec![0_u8; 8_192];
+            let bytes = stream.read(&mut request).expect("read request");
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.starts_with("GET /api/translate/20260911-120000-a1b2c3d4 HTTP/1.1"));
+            let body = r#"{"run_id":"20260911-120000-a1b2c3d4","source_text":"source","results":{"opencode":{"status":"ok","final":"done"}}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+        });
+        let client =
+            ApiClient::new(&format!("http://{address}"), "test-token").expect("valid client");
+
+        let detail = client
+            .get_translate_run("20260911-120000-a1b2c3d4")
+            .expect("detail fetched");
+
+        assert_eq!(detail.summary.run_id, "20260911-120000-a1b2c3d4");
+        assert_eq!(detail.results["opencode"].final_text, "done");
+        server.join().expect("test server joined");
     }
 
     #[test]

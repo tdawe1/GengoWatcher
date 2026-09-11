@@ -28,7 +28,7 @@ pub mod model;
 pub mod preview;
 pub mod theme;
 
-use model::{DashboardData, Job, WorkStage};
+use model::{DashboardData, Job, TranslateRunDetail, TranslateRunSummary, WorkStage};
 use theme::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,16 +39,18 @@ pub enum View {
     History,
     Analytics,
     System,
+    Translate,
 }
 
 impl View {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Overview,
         Self::Jobs,
         Self::Work,
         Self::History,
         Self::Analytics,
         Self::System,
+        Self::Translate,
     ];
 
     #[must_use]
@@ -60,6 +62,7 @@ impl View {
             Self::History => "History",
             Self::Analytics => "Analytics",
             Self::System => "System",
+            Self::Translate => "Translate",
         }
     }
 
@@ -72,6 +75,7 @@ impl View {
             Self::History => "history",
             Self::Analytics => "analytics",
             Self::System => "system",
+            Self::Translate => "translate",
         }
     }
 
@@ -88,6 +92,7 @@ impl View {
             Self::History => 3,
             Self::Analytics => 4,
             Self::System => 5,
+            Self::Translate => 6,
         }
     }
 
@@ -106,6 +111,8 @@ pub enum UiAction {
     Command(&'static str),
     AcceptJob(String),
     CancelCurrentJob,
+    RefreshTranslate,
+    GetTranslateDetail(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +137,10 @@ pub struct App {
     pub alert_visible: bool,
     pub selected_job: usize,
     pub selected_history: usize,
+    pub selected_translate: usize,
+    pub translate_runs: Vec<TranslateRunSummary>,
+    pub translate_detail: Option<TranslateRunDetail>,
+    pub translate_loading: bool,
     pub status_message: String,
     pub data: DashboardData,
     pub connection: ConnectionState,
@@ -158,6 +169,19 @@ impl App {
 
     fn with_data(view: View, data: DashboardData, connection: ConnectionState) -> Self {
         let paused = data.status.is_paused;
+        let is_demo = connection == ConnectionState::Demo;
+        let translate_runs = if is_demo {
+            TranslateRunSummary::demo_list()
+        } else {
+            Vec::new()
+        };
+        let translate_detail = if is_demo {
+            translate_runs
+                .first()
+                .map(|run| TranslateRunDetail::demo(&run.run_id))
+        } else {
+            None
+        };
         Self {
             view,
             should_quit: false,
@@ -165,7 +189,11 @@ impl App {
             alert_visible: true,
             selected_job: 0,
             selected_history: 0,
-            status_message: if connection == ConnectionState::Demo {
+            selected_translate: 0,
+            translate_runs,
+            translate_detail,
+            translate_loading: false,
+            status_message: if is_demo {
                 "Demo data · no API actions are sent".into()
             } else {
                 "Connecting to GengoWatcher API…".into()
@@ -228,7 +256,56 @@ impl App {
         if matches_pending {
             self.pending_destructive = None;
         }
+        if matches!(
+            action,
+            UiAction::RefreshTranslate | UiAction::GetTranslateDetail(_)
+        ) {
+            match &result {
+                Ok(message) => self.status_message = message.clone(),
+                Err(message) => {
+                    self.translate_loading = false;
+                    self.status_message = format!("Translate failed · {message}");
+                }
+            }
+            return;
+        }
         self.apply_action_result(result);
+    }
+
+    pub fn apply_translate_list(&mut self, runs: Vec<TranslateRunSummary>) {
+        self.translate_runs = runs;
+        self.translate_loading = false;
+        self.clamp_translate_selection();
+        self.status_message = format!("Translate runs updated · {}", self.translate_runs.len());
+    }
+
+    pub fn apply_translate_detail(&mut self, detail: TranslateRunDetail) {
+        self.translate_detail = Some(detail);
+        self.translate_loading = false;
+        self.status_message = "Translate detail loaded".into();
+    }
+
+    #[must_use]
+    pub fn selected_translate_run(&self) -> Option<&TranslateRunSummary> {
+        self.translate_runs.get(self.selected_translate)
+    }
+
+    fn clamp_translate_selection(&mut self) {
+        self.selected_translate = self
+            .selected_translate
+            .min(self.translate_runs.len().saturating_sub(1));
+        if let Some(selected) = self.selected_translate_run() {
+            let selected_id = selected.run_id.clone();
+            let detail_matches = self
+                .translate_detail
+                .as_ref()
+                .is_some_and(|detail| detail.summary.run_id == selected_id);
+            if !detail_matches {
+                self.translate_detail = None;
+            }
+        } else {
+            self.translate_detail = None;
+        }
     }
 
     #[must_use]
@@ -270,6 +347,7 @@ impl App {
             KeyCode::Char('4') => self.switch_to(View::History),
             KeyCode::Char('5') => self.switch_to(View::Analytics),
             KeyCode::Char('6') => self.switch_to(View::System),
+            KeyCode::Char('7') => return self.switch_to_translate(),
             KeyCode::Left | KeyCode::BackTab => self.switch_to(self.view.previous()),
             KeyCode::Right | KeyCode::Tab => self.switch_to(self.view.next()),
             KeyCode::Up if self.view == View::Jobs => {
@@ -294,6 +372,17 @@ impl App {
             KeyCode::PageDown if self.view == View::History => {
                 self.selected_history =
                     (self.selected_history + 10).min(self.data.jobs.len().saturating_sub(1));
+            }
+            KeyCode::Up if self.view == View::Translate => {
+                self.selected_translate = self.selected_translate.saturating_sub(1);
+                self.translate_detail = None;
+                self.set_selected_translate_status();
+            }
+            KeyCode::Down if self.view == View::Translate => {
+                self.selected_translate =
+                    (self.selected_translate + 1).min(self.translate_runs.len().saturating_sub(1));
+                self.translate_detail = None;
+                self.set_selected_translate_status();
             }
             KeyCode::Char('a') if self.view == View::Jobs => {
                 if self.pending_destructive.is_some() {
@@ -340,6 +429,31 @@ impl App {
                     self.confirmation = Some(Confirmation::CancelCurrent);
                 }
             }
+            KeyCode::Char('t') if matches!(self.view, View::Jobs | View::Work) => {
+                return self.switch_to_translate();
+            }
+            KeyCode::Char('r') if self.view == View::Translate => {
+                if self.connection == ConnectionState::Demo {
+                    self.status_message = "Demo data · translate list is static".into();
+                    return None;
+                }
+                self.translate_loading = true;
+                self.status_message = "Translate runs requested…".into();
+                return Some(UiAction::RefreshTranslate);
+            }
+            KeyCode::Enter if self.view == View::Translate => {
+                if let Some(run) = self.selected_translate_run() {
+                    let run_id = run.run_id.clone();
+                    if self.connection == ConnectionState::Demo {
+                        self.translate_detail = Some(TranslateRunDetail::demo(&run_id));
+                        self.status_message = "Translate detail loaded · demo".into();
+                        return None;
+                    }
+                    self.translate_loading = true;
+                    self.status_message = "Translate detail requested…".into();
+                    return Some(UiAction::GetTranslateDetail(run_id));
+                }
+            }
             _ => {}
         }
         None
@@ -362,6 +476,29 @@ impl App {
     fn switch_to(&mut self, view: View) {
         self.view = view;
         self.status_message = format!("{} workspace", view.label());
+    }
+
+    fn switch_to_translate(&mut self) -> Option<UiAction> {
+        self.view = View::Translate;
+        self.clamp_translate_selection();
+        if self.connection == ConnectionState::Demo {
+            self.status_message = "Translate workspace · demo data".into();
+            return None;
+        }
+        self.translate_loading = true;
+        self.status_message = "Translate runs requested…".into();
+        Some(UiAction::RefreshTranslate)
+    }
+
+    fn set_selected_translate_status(&mut self) {
+        if let Some(run) = self.selected_translate_run() {
+            self.status_message = format!(
+                "Selected run {} · {} · {} chars",
+                run.run_id, run.kind, run.char_count
+            );
+        } else {
+            self.status_message = "No translate runs yet".into();
+        }
     }
 
     fn set_selected_job_status(&mut self) {
@@ -396,6 +533,7 @@ impl App {
         self.selected_history = self
             .selected_history
             .min(self.data.jobs.len().saturating_sub(1));
+        self.clamp_translate_selection();
     }
 }
 
@@ -410,7 +548,7 @@ fn is_repeatable_key(code: KeyCode) -> bool {
             | KeyCode::Down
             | KeyCode::PageUp
             | KeyCode::PageDown
-            | KeyCode::Char('1'..='6')
+            | KeyCode::Char('1'..='7')
     )
 }
 
@@ -516,6 +654,7 @@ fn render_nav(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Length(3),
+        Constraint::Length(3),
         Constraint::Min(1),
         Constraint::Length(6),
     ])
@@ -570,7 +709,7 @@ fn render_nav(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         ])
         .block(panel_block())
         .style(Style::default().fg(MUTED).bg(PAPER)),
-        rows[8],
+        rows[9],
     );
 }
 
@@ -632,6 +771,7 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         View::History => render_history(frame, parts[1], app),
         View::Analytics => render_analytics(frame, parts[1], app),
         View::System => render_system(frame, parts[1], app),
+        View::Translate => render_translate(frame, parts[1], app),
     }
 }
 
@@ -1222,6 +1362,145 @@ fn render_system(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
+fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    let rows = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Length(1),
+        Constraint::Min(8),
+    ])
+    .split(area);
+    let toolbar = Layout::horizontal([Constraint::Min(40), Constraint::Length(34)])
+        .split(rows[0].inner(Margin::new(1, 1)));
+    frame.render_widget(panel_block(), rows[0]);
+    let hint = if app.translate_loading {
+        "Loading…"
+    } else {
+        "↑/↓ select · enter detail · r refresh"
+    };
+    frame.render_widget(
+        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        toolbar[0],
+    );
+    frame.render_widget(
+        Paragraph::new(format!(
+            "{} runs · {}",
+            app.translate_runs.len(),
+            if app.translate_detail.is_some() {
+                "detail loaded"
+            } else {
+                "no detail"
+            }
+        ))
+        .style(Style::default().fg(LEAF).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Right),
+        toolbar[1],
+    );
+    let columns = Layout::horizontal([Constraint::Min(62), Constraint::Length(36)]).split(rows[2]);
+    let header = Row::new(["RUN ID", "KIND", "CHARS", "STATUS"]).style(
+        Style::default()
+            .fg(WHITE)
+            .bg(BLUE)
+            .add_modifier(Modifier::BOLD),
+    );
+    let table_rows = app
+        .translate_runs
+        .iter()
+        .map(|run| {
+            Row::new([
+                Cell::from(truncate(&run.run_id, 22)),
+                Cell::from(run.kind.clone()),
+                Cell::from(run.char_count.to_string()),
+                Cell::from(run.display_status().to_owned()),
+            ])
+            .height(2)
+        })
+        .collect::<Vec<_>>();
+    let table = Table::new(
+        table_rows,
+        [
+            Constraint::Min(20),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(10),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .bg(SELECTION)
+            .fg(INK)
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("▶ ")
+    .block(counted_panel("TRANSLATE RUNS", app.translate_runs.len()))
+    .column_spacing(2);
+    let mut state = TableState::default().with_selected(Some(app.selected_translate));
+    frame.render_stateful_widget(table, inset_right(columns[0]), &mut state);
+    let detail = app.translate_detail.as_ref().map_or_else(
+        || {
+            if app.translate_runs.is_empty() {
+                Text::from(vec![
+                    Line::from("No translate runs yet"),
+                    Line::from(""),
+                    Line::from("POST /api/translate to start a fan-out run."),
+                    Line::from("Submit-from-TUI arrives in Phase 3."),
+                ])
+            } else if let Some(run) = app.selected_translate_run() {
+                Text::from(vec![
+                    Line::from(Span::styled(
+                        truncate(&run.run_id, 30),
+                        Style::default().fg(INK).add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(truncate(&run.input_preview, 60)),
+                    Line::from(""),
+                    Line::from("Press enter to load detail."),
+                ])
+            } else {
+                Text::from("No run selected")
+            }
+        },
+        |detail| {
+            let mut lines = vec![
+                Line::from(Span::styled(
+                    truncate(&detail.summary.run_id, 30),
+                    Style::default().fg(INK).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(truncate(&detail.summary.input_preview, 60)),
+                Line::from(""),
+            ];
+            let mut models: Vec<_> = detail.summary.per_model.iter().collect();
+            models.sort_by_key(|(name, _)| (*name).clone());
+            for (name, state) in models.iter().take(4) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{name:<10}"),
+                        Style::default().fg(BLUE).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(state.status.clone()),
+                ]));
+            }
+            lines.push(Line::from(""));
+            if let Some((name, result)) = detail.results.iter().next() {
+                lines.push(Line::from(Span::styled(
+                    format!("{name} final:"),
+                    Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(truncate(&result.final_text, 120)));
+            } else {
+                lines.push(Line::from("No model results yet"));
+            }
+            Text::from(lines)
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(detail)
+            .block(titled_panel("SELECTED RUN"))
+            .style(Style::default().fg(INK).bg(PAPER))
+            .wrap(Wrap { trim: true }),
+        inset_left(columns[1]),
+    );
+}
+
 fn render_info_panel(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -1287,7 +1566,7 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
     frame.render_widget(
         Paragraph::new(
-            "  1–6 workspace   ←/→ switch   ↑/↓ select   a accept   i ignore   c check   p pause   x cancel   q quit",
+            "  1–7 workspace   ←/→ switch   ↑/↓ select   a accept   i ignore   t translate   r refresh   q quit",
         )
         .style(Style::default().fg(MUTED).bg(GROUND)),
         area,
@@ -1680,6 +1959,7 @@ mod tests {
             ('4', View::History),
             ('5', View::Analytics),
             ('6', View::System),
+            ('7', View::Translate),
         ] {
             let _ = app.handle_key(key(KeyCode::Char(code)));
             assert_eq!(app.view, expected);
@@ -1883,5 +2163,73 @@ mod tests {
         assert_eq!(app.selected_job, 1);
         let _ = app.handle_key(key_repeat(KeyCode::Char('2')));
         assert_eq!(app.view, View::Jobs);
+    }
+
+    #[test]
+    fn translate_workspace_loads_demo_list_and_detail() {
+        let mut app = App::new(View::Translate);
+        assert_eq!(app.translate_runs.len(), 2);
+        assert!(app.translate_detail.is_some());
+
+        let _ = app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.selected_translate, 1);
+        assert!(app.translate_detail.is_none());
+
+        let action = app.handle_key(key(KeyCode::Enter));
+        assert!(action.is_none(), "demo detail loads without worker");
+        assert!(app.translate_detail.is_some());
+    }
+
+    #[test]
+    fn translate_shortcut_from_jobs_is_read_only() {
+        let mut app = App::new(View::Jobs);
+        let action = app.handle_key(key(KeyCode::Char('t')));
+        assert_eq!(app.view, View::Translate);
+        assert!(
+            action.is_none(),
+            "demo mode must not emit worker actions for read-only view"
+        );
+        assert!(app.status_message.contains("demo"));
+    }
+
+    #[test]
+    fn translate_list_update_clamps_selection_and_clears_stale_detail() {
+        let mut app = App::new(View::Translate);
+        let _ = app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.selected_translate, 1);
+
+        app.apply_translate_list(vec![]);
+        assert_eq!(app.selected_translate, 0);
+        assert!(app.translate_detail.is_none());
+        assert!(app.status_message.contains('0'));
+    }
+
+    #[test]
+    fn translate_refresh_failure_clears_loading_flag() {
+        let mut app = App::live(View::Translate);
+        app.translate_loading = true;
+        app.apply_action_result_for(&UiAction::RefreshTranslate, Err("offline".into()));
+        assert!(!app.translate_loading);
+        assert!(app.status_message.contains("Translate failed"));
+    }
+
+    #[test]
+    fn translate_view_renders_runs_and_selected_detail() {
+        let backend = TestBackend::new(150, 44);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = App::new(View::Translate);
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("TRANSLATE"));
+        assert!(content.contains("20260911-120000-a1b2c3d4"));
+        assert!(content.contains("SELECTED RUN"));
     }
 }
