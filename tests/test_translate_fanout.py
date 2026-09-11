@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gengowatcher.orchestration.translate_fanout import (
+    SUPPORTED_MODELS,
     TranslateBusyError,
     TranslateFanoutService,
     build_review_prompt,
@@ -600,6 +601,19 @@ def test_translate_endpoints_require_auth_and_validate(tmp_path, monkeypatch):
         headers=headers,
     )
     assert both.status_code == 400
+
+
+def test_translate_models_endpoint_lists_supported_models(tmp_path, monkeypatch):
+    _make_web_api(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    denied = client.get("/api/translate/models")
+    assert denied.status_code == 401
+
+    headers = {"Authorization": f"Bearer {authenticator.get_api_key()}"}
+    response = client.get("/api/translate/models", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"models": list(SUPPORTED_MODELS)}
 
 
 def test_translate_start_returns_403_when_disabled(tmp_path, monkeypatch):

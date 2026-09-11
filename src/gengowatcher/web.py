@@ -41,7 +41,11 @@ import uvicorn
 
 from .config import AppConfig
 from .browser_worker.protocol import normalize_sandbox_origin, url_origin
-from .orchestration.translate_fanout import TranslateBusyError, TranslateFanoutService
+from .orchestration.translate_fanout import (
+    SUPPORTED_MODELS,
+    TranslateBusyError,
+    TranslateFanoutService,
+)
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
@@ -2046,6 +2050,14 @@ async def list_translate_runs(
     except Exception as e:
         api_instance.logger.exception(f"Error listing translate runs: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/translate/models")
+async def list_translate_models(
+    authenticated: bool = Depends(verify_auth),
+):
+    """List supported translate fan-out models (drives the TUI picker)."""
+    return {"models": list(SUPPORTED_MODELS)}
 
 
 @app.get("/api/translate/{run_id}")
