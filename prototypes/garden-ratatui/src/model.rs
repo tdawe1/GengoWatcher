@@ -279,10 +279,13 @@ impl TranslateRunSummary {
         if !self.finished {
             return "running";
         }
-        let mut iter = self.per_model.values().map(|state| state.status.as_str());
-        if iter.any(|status| status == "ok") {
+        if self.per_model.values().any(|state| state.status == "ok") {
             "ok"
-        } else if iter.any(|status| status == "skipped") {
+        } else if self
+            .per_model
+            .values()
+            .any(|state| state.status == "skipped")
+        {
             "skipped"
         } else if self
             .per_model
@@ -637,5 +640,31 @@ mod tests {
             detail.results["opencode"].final_text, "done",
             "serde `final` alias must map to final_text"
         );
+    }
+
+    #[test]
+    fn all_skipped_models_display_as_skipped() {
+        let run = TranslateRunSummary {
+            run_id: "20260911-120000-a1b2c3d4".into(),
+            finished: true,
+            per_model: BTreeMap::from([
+                (
+                    "grok".into(),
+                    TranslatePerModel {
+                        status: "skipped".into(),
+                        ..TranslatePerModel::default()
+                    },
+                ),
+                (
+                    "claude".into(),
+                    TranslatePerModel {
+                        status: "skipped".into(),
+                        ..TranslatePerModel::default()
+                    },
+                ),
+            ]),
+            ..TranslateRunSummary::default()
+        };
+        assert_eq!(run.display_status(), "skipped");
     }
 }

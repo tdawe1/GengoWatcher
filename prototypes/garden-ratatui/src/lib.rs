@@ -141,6 +141,7 @@ pub struct App {
     pub translate_runs: Vec<TranslateRunSummary>,
     pub translate_detail: Option<TranslateRunDetail>,
     pub translate_loading: bool,
+    pending_translate_detail: Option<String>,
     pub status_message: String,
     pub data: DashboardData,
     pub connection: ConnectionState,
@@ -193,6 +194,7 @@ impl App {
             translate_runs,
             translate_detail,
             translate_loading: false,
+            pending_translate_detail: None,
             status_message: if is_demo {
                 "Demo data · no API actions are sent".into()
             } else {
@@ -280,7 +282,18 @@ impl App {
     }
 
     pub fn apply_translate_detail(&mut self, detail: TranslateRunDetail) {
+        let selected_matches = self
+            .selected_translate_run()
+            .is_some_and(|run| run.run_id == detail.summary.run_id);
+        let pending_matches = self
+            .pending_translate_detail
+            .as_deref()
+            .is_none_or(|pending| pending == detail.summary.run_id);
+        if !(selected_matches && pending_matches) {
+            return;
+        }
         self.translate_detail = Some(detail);
+        self.pending_translate_detail = None;
         self.translate_loading = false;
         self.status_message = "Translate detail loaded".into();
     }
@@ -303,9 +316,25 @@ impl App {
             if !detail_matches {
                 self.translate_detail = None;
             }
+            let pending_matches = self
+                .pending_translate_detail
+                .as_deref()
+                .is_none_or(|pending| pending == selected_id);
+            if !pending_matches {
+                self.pending_translate_detail = None;
+                self.translate_loading = false;
+            }
         } else {
             self.translate_detail = None;
+            self.pending_translate_detail = None;
+            self.translate_loading = false;
         }
+    }
+
+    fn clear_translate_selection_state(&mut self) {
+        self.translate_detail = None;
+        self.pending_translate_detail = None;
+        self.translate_loading = false;
     }
 
     #[must_use]
@@ -375,13 +404,13 @@ impl App {
             }
             KeyCode::Up if self.view == View::Translate => {
                 self.selected_translate = self.selected_translate.saturating_sub(1);
-                self.translate_detail = None;
+                self.clear_translate_selection_state();
                 self.set_selected_translate_status();
             }
             KeyCode::Down if self.view == View::Translate => {
                 self.selected_translate =
                     (self.selected_translate + 1).min(self.translate_runs.len().saturating_sub(1));
-                self.translate_detail = None;
+                self.clear_translate_selection_state();
                 self.set_selected_translate_status();
             }
             KeyCode::Char('a') if self.view == View::Jobs => {
@@ -451,6 +480,7 @@ impl App {
                     }
                     self.translate_loading = true;
                     self.status_message = "Translate detail requested…".into();
+                    self.pending_translate_detail = Some(run_id.clone());
                     return Some(UiAction::GetTranslateDetail(run_id));
                 }
             }
@@ -2203,7 +2233,6 @@ mod tests {
         assert!(app.translate_detail.is_none());
         assert!(app.status_message.contains('0'));
     }
-
     #[test]
     fn translate_refresh_failure_clears_loading_flag() {
         let mut app = App::live(View::Translate);
@@ -2211,6 +2240,39 @@ mod tests {
         app.apply_action_result_for(&UiAction::RefreshTranslate, Err("offline".into()));
         assert!(!app.translate_loading);
         assert!(app.status_message.contains("Translate failed"));
+    }
+
+    #[test]
+    fn stale_translate_detail_response_is_ignored() {
+        let mut app = App::live(View::Translate);
+        app.apply_translate_list(TranslateRunSummary::demo_list());
+        let first_id = app.translate_runs[0].run_id.clone();
+        let second_id = app.translate_runs[1].run_id.clone();
+
+        // Request detail for the first run, then move selection away.
+        app.pending_translate_detail = Some(first_id.clone());
+        app.translate_loading = true;
+        app.selected_translate = 1;
+        app.clear_translate_selection_state();
+
+        // Late response for the deselected run must not clobber state.
+        app.apply_translate_detail(TranslateRunDetail::demo(&first_id));
+        assert!(app.translate_detail.is_none());
+        assert!(!app.translate_loading);
+
+        // A response matching the current selection still applies.
+        app.pending_translate_detail = Some(second_id.clone());
+        app.translate_loading = true;
+        app.apply_translate_detail(TranslateRunDetail::demo(&second_id));
+        assert_eq!(
+            app.translate_detail
+                .as_ref()
+                .expect("detail")
+                .summary
+                .run_id,
+            second_id
+        );
+        assert!(!app.translate_loading);
     }
 
     #[test]
