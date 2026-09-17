@@ -5,7 +5,7 @@ FIREFOX_DEBUG_PROFILE ?= profiles/firefox-debug
 FIREFOX_DEBUG_SEED_PROFILE ?=
 FIREFOX_DEBUG_AUTO_LAUNCH ?= true
 
-.PHONY: build build-ratatui test test-ratatui smoke-e2e coverage lint format run run-textual run-ratatui run-web run-web-only firefox-debug firefox-debug-bootstrap install-user install-ratatui
+.PHONY: build build-ratatui test test-ratatui smoke-e2e coverage lint format format-check run run-textual run-ratatui run-web run-web-only firefox-debug firefox-debug-bootstrap install-user install-ratatui
 
 build-ratatui:
 	cargo build --release --manifest-path prototypes/garden-ratatui/Cargo.toml
@@ -16,7 +16,7 @@ build:
 	@echo "Build successful!"
 
 test:
-	$(PYTHON) -m pytest
+	PYTHONPATH=src $(PYTHON) -m pytest
 
 test-ratatui:
 	cargo test --manifest-path prototypes/garden-ratatui/Cargo.toml
@@ -26,13 +26,16 @@ smoke-e2e:
 	PYTHONPATH=src $(PYTHON) -m pytest -m e2e -q
 
 coverage:
-	PYTHONPATH=src $(PYTHON) -m pytest --cov=.
+	PYTHONPATH=src $(PYTHON) -m pytest --cov=src/gengowatcher --cov-report=term-missing
 
 lint:
 	$(PYTHON) -m flake8 src tests scripts prototypes
 
 format:
 	$(PYTHON) -m black src tests scripts prototypes
+
+format-check:
+	$(PYTHON) -m black --check src tests scripts prototypes
 
 run:
 	PYTHONPATH=src $(PYTHON) -m gengowatcher.main
