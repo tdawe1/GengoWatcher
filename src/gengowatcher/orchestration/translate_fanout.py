@@ -603,9 +603,18 @@ class TranslateFanoutService:
                     "original_name": record.original_name,
                 }
             )
-            (run_dir / "run.json").write_text(
+            target = run_dir / "run.json"
+            tmp_path = target.with_suffix(".json.tmp")
+            tmp_path.write_text(
                 json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
             )
+            with open(tmp_path, "r+b") as f:
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            tmp_path.replace(target)
         except (OSError, ValueError) as exc:
             self.logger.warning(
                 "Failed to persist translate run %s: %s", record.run_id, exc

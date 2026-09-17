@@ -16,6 +16,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .browser_session import (
     build_browser_aligned_websocket_headers,
+    build_websocket_auth_payload,
     fetch_browser_session_snapshot_sync,
     format_cookies_as_header,
     pick_rotating_user_agent,
@@ -60,12 +61,13 @@ class WebSocketConfig:
     accept_language: str = "en-US,en;q=0.9"
 
 
-def _build_auth_payload(user_id: str, session_token: str, user_key: str = "") -> dict:
-    """Build the Gengo WebSocket authentication payload."""
-    payload = {"userId": user_id, "sessionToken": session_token}
-    if user_key:
-        payload["userKey"] = user_key
-    return payload
+def _build_auth_payload(
+    user_id: Any, session_token: str, user_key: str = ""
+) -> dict[str, Any]:
+    """Build the Gengo WebSocket authentication payload (browser-aligned)."""
+    # user_key is legacy config only, never sent (see websocket-contract.md).
+    # Kept as an accepted kwarg for back-compat; ignored on the wire.
+    return build_websocket_auth_payload(user_id=user_id, session_token=session_token)
 
 
 class GengoWebSocketMonitor:
@@ -312,25 +314,32 @@ class GengoWebSocketMonitor:
         ws_url = self.config.get("WebSocket", "wss_url") or self.defaults.wss_url
         user_id = self.config.get("WebSocket", "user_id")
         session_token = self.config.get("WebSocket", "user_session")
-        user_key = self.config.get("WebSocket", "user_key", "")
-        user_key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
-
-        # Fail-closed: Gengo's realtime endpoint rejects auth payloads missing
-        # userKey. Previously the monitor silently looped with bad auth.
-        if not user_key or user_key == user_key_placeholder:
+        session_placeholder = "REPLACE_WITH_YOUR_SESSION_TOKEN"
+        if not session_token or session_token == session_placeholder:
             self._websocket_sync_failed = True
             self._websocket_sync_failure_reason = (
-                "user_key missing or placeholder; refusing to connect"
+                "user_session missing or placeholder; refusing to connect"
             )
             self.metrics.sync_failed = True
             self.metrics.sync_failure_reason = self._websocket_sync_failure_reason
             self.logger.error(
-                "WebSocket: user_key missing or placeholder; "
-                "Gengo realtime handshake requires userKey. "
-                "Set [WebSocket].user_key in config.toml to a real value."
+                "WebSocket: user_session missing or placeholder; "
+                "set [WebSocket].user_session to your live Gengo session token."
             )
             return
-
+        uid_str = str(user_id if user_id is not None else "").strip()
+        if uid_str in ("", "0", "0.0", "None"):
+            self._websocket_sync_failed = True
+            self._websocket_sync_failure_reason = (
+                "user_id missing or zero; refusing to connect"
+            )
+            self.metrics.sync_failed = True
+            self.metrics.sync_failure_reason = self._websocket_sync_failure_reason
+            self.logger.error(
+                "WebSocket: user_id missing or zero; "
+                "set [WebSocket].user_id to your numeric Gengo user ID."
+            )
+            return
         headers = self._build_headers()
 
         try:
@@ -340,7 +349,7 @@ class GengoWebSocketMonitor:
                 self.metrics.last_close_reason = None
                 self.logger.info(f"WebSocket: Connected to {ws_url}")
 
-                auth = _build_auth_payload(user_id, session_token, user_key)
+                auth = _build_auth_payload(user_id, session_token)
                 self._capture_raw_ws_message(json.dumps(auth), direction="send")
                 await ws.send(json.dumps(auth))
                 self.logger.debug("WebSocket: Auth sent")

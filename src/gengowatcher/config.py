@@ -354,8 +354,13 @@ class AppConfig:
         log_dir = Path(str(migrated["Paths"]["log_file"])).parent
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+        config_path = Path(self.CONFIG_FILE)
+        tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(self._dump_toml(migrated))
+            f.flush()
+            os.fsync(f.fileno())
+        tmp_path.replace(config_path)
         try:
             os.chmod(self.CONFIG_FILE, 0o600)
         except OSError:
@@ -414,8 +419,13 @@ class AppConfig:
         log_dir = Path(self.DEFAULT_CONFIG["Paths"]["log_file"]).parent
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+        config_path = Path(self.CONFIG_FILE)
+        tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(self._dump_toml(self.DEFAULT_CONFIG))
+            f.flush()
+            os.fsync(f.fileno())
+        tmp_path.replace(config_path)
         try:
             os.chmod(self.CONFIG_FILE, 0o600)
         except OSError:
@@ -480,7 +490,6 @@ class AppConfig:
                 self._backfill_from_legacy_config()
                 # Validate auto-accept configuration after backfill
                 self._validate_auto_accept_config()
-                self._backfill_from_legacy_config()
                 self._validate_native_browser_config()
 
             except (tomllib.TOMLDecodeError, ValueError) as e:

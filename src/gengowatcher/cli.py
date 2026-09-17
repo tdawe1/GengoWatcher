@@ -20,6 +20,12 @@ from .browser_debug_launcher import (
 )
 from .browser_session import BrowserSessionSnapshot
 from .config import AppConfig, PLACEHOLDER_CONFIG_VALUES
+from .orchestration.watcher_config_values import SENSITIVE_KEYWORDS
+
+
+def _is_sensitive_option(option: str) -> bool:
+    lowered = str(option or "").lower()
+    return any(keyword in lowered for keyword in SENSITIVE_KEYWORDS)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -357,13 +363,15 @@ def handle_cli_config_commands(
         value = _coerce_cli_value(raw_value, expected_type)
         config.set(section, option, value)
         config.save_config()
-        print(f"Set [{section}] {option} = {value}")
+        display_value = "******" if _is_sensitive_option(option) else value
+        print(f"Set [{section}] {option} = {display_value}")
         return True
 
     if args.get:
         section, option = args.get
         value = config.get(section, option)
-        print(f"[{section}] {option} = {value}")
+        display_value = "******" if _is_sensitive_option(option) else value
+        print(f"[{section}] {option} = {display_value}")
         return True
 
     if args.list:
@@ -371,20 +379,8 @@ def handle_cli_config_commands(
         for section, options in all_values.items():
             print(f"[{section}]")
             for option, value in options.items():
-                # Redact sensitive values
-                option_lower = option.lower()
-                is_sensitive = any(
-                    keyword in option_lower
-                    for keyword in [
-                        "token",
-                        "secret",
-                        "key",
-                        "password",
-                        "oauth",
-                        "api",
-                    ]
-                )
-                if is_sensitive:
+                # Redact sensitive values (session/cookie/auth included)
+                if _is_sensitive_option(option):
                     display_value = "******"
                 else:
                     display_value = value
