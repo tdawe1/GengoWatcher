@@ -10,6 +10,7 @@ import pytest
 from gengowatcher.runtime import (
     _find_ratatui_command,
     _is_tcp_port_available,
+    _ratatui_layout,
     _run_tui,
     _run_web_only,
     _start_web_server_if_requested,
@@ -516,3 +517,89 @@ def test_run_tui_auto_select_uses_textual_when_only_cargo_is_available(
 
     mock_app_class.assert_called_once()
     mock_ratatui.assert_not_called()
+
+
+def test_ratatui_layout_prefers_cli_over_environment(monkeypatch):
+    logger = MagicMock()
+    monkeypatch.setenv("GENGOWATCHER_RATATUI_LAYOUT", "dense")
+    assert _ratatui_layout(Namespace(tui_layout="beacon"), logger) == "beacon"
+    assert _ratatui_layout(Namespace(tui_layout=None), logger) == "dense"
+    monkeypatch.delenv("GENGOWATCHER_RATATUI_LAYOUT")
+    assert _ratatui_layout(Namespace(tui_layout=None), logger) is None
+
+
+def test_ratatui_layout_rejects_unknown_cli_value():
+    with pytest.raises(RuntimeError, match="Unknown Ratatui layout"):
+        _ratatui_layout(Namespace(tui_layout="nope"), MagicMock())
+
+
+def test_ratatui_layout_warns_and_ignores_unknown_env_value(monkeypatch):
+    logger = MagicMock()
+    monkeypatch.setenv("GENGOWATCHER_RATATUI_LAYOUT", "nope")
+    assert _ratatui_layout(Namespace(tui_layout=None), logger) is None
+    logger.warning.assert_called_once()
+
+
+def test_run_tui_passes_layout_flag_to_binary():
+    args = Namespace(tui="ratatui", tui_layout="beacon", web=False, web_port=9000)
+    config = MagicMock()
+    config.get.return_value = "secret-token"
+    watcher = MagicMock()
+    watcher.shutdown_event.is_set.return_value = False
+
+    with (
+        patch("gengowatcher.runtime.StatsManager"),
+        patch("gengowatcher.runtime.GengoWatcherApp"),
+        patch("gengowatcher.runtime.threading.Thread"),
+        patch(
+            "gengowatcher.runtime._find_ratatui_command",
+            return_value=["/tmp/gengowatcher-tui"],
+        ),
+        patch("gengowatcher.runtime.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 0
+        _run_tui(
+            args,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            config,
+            MagicMock(),
+            watcher,
+        )
+
+    command = mock_run.call_args.args[0]
+    assert command[-2:] == ["--layout", "beacon"]
+
+
+def test_run_tui_omits_layout_flag_by_default(monkeypatch):
+    monkeypatch.delenv("GENGOWATCHER_RATATUI_LAYOUT", raising=False)
+    args = Namespace(tui="ratatui", tui_layout=None, web=False, web_port=9000)
+    config = MagicMock()
+    config.get.return_value = "secret-token"
+    watcher = MagicMock()
+    watcher.shutdown_event.is_set.return_value = False
+
+    with (
+        patch("gengowatcher.runtime.StatsManager"),
+        patch("gengowatcher.runtime.GengoWatcherApp"),
+        patch("gengowatcher.runtime.threading.Thread"),
+        patch(
+            "gengowatcher.runtime._find_ratatui_command",
+            return_value=["/tmp/gengowatcher-tui"],
+        ),
+        patch("gengowatcher.runtime.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 0
+        _run_tui(
+            args,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            config,
+            MagicMock(),
+            watcher,
+        )
+
+    command = mock_run.call_args.args[0]
+    assert "--layout" not in command

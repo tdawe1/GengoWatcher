@@ -326,6 +326,35 @@ def _run_tui(
         raise SystemExit(1)
 
 
+RATATUI_LAYOUTS = ("classic", "beacon", "dense")
+
+
+def _ratatui_layout(args: argparse.Namespace, logger: logging.Logger) -> str | None:
+    """Resolve the requested Ratatui layout, if any.
+
+    Explicit ``--tui-layout`` wins; otherwise ``GENGOWATCHER_RATATUI_LAYOUT``
+    is honored. ``None`` keeps the binary default (classic). An invalid CLI
+    value fails fast; an invalid env value warns and is ignored.
+    """
+    cli_layout = str(getattr(args, "tui_layout", "") or "").strip().lower()
+    if cli_layout:
+        if cli_layout not in RATATUI_LAYOUTS:
+            raise RuntimeError(
+                f"Unknown Ratatui layout {cli_layout!r}; "
+                f"use one of: {', '.join(RATATUI_LAYOUTS)}"
+            )
+        return cli_layout
+    env_layout = os.getenv("GENGOWATCHER_RATATUI_LAYOUT", "").strip().lower()
+    if env_layout and env_layout not in RATATUI_LAYOUTS:
+        logger.warning(
+            "Ignoring unknown GENGOWATCHER_RATATUI_LAYOUT=%r; use one of: %s",
+            env_layout,
+            ", ".join(RATATUI_LAYOUTS),
+        )
+        return None
+    return env_layout or None
+
+
 def _run_ratatui_process(
     args: argparse.Namespace,
     config: AppConfig,
@@ -351,8 +380,12 @@ def _run_ratatui_process(
     environment["GENGOWATCHER_API_URL"] = api_url
 
     logger.info("Starting Ratatui TUI connected to %s", api_url)
+    command_args = [*command, "--api-url", api_url]
+    if layout := _ratatui_layout(args, logger):
+        logger.info("Using Ratatui layout: %s", layout)
+        command_args += ["--layout", layout]
     result = subprocess.run(
-        [*command, "--api-url", api_url],
+        command_args,
         cwd=PROJECT_ROOT,
         env=environment,
         check=False,
