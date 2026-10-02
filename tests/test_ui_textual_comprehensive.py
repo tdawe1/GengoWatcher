@@ -807,7 +807,7 @@ class TestGengoWatcherApp:
             logging.INFO,
             __file__,
             1,
-            "WebSocket: Connection established and authenticated.",
+            "WebSocket: Connection established; auth payload sent, awaiting server confirmation.",
             (),
             None,
         )
@@ -834,7 +834,7 @@ class TestGengoWatcherApp:
             assert len(replay_calls) == 2
             assert replay_calls[0].args[0] == "#activity-log"
             assert replay_calls[1].args[0] == "#output-log"
-            assert "WebSocket: Connection established and authenticated." in str(
+            assert "WebSocket: Connection established; auth payload sent" in str(
                 replay_calls[0].args[1]
             )
             assert app._buffered_logs_replayed is True

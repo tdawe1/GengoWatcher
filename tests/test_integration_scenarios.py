@@ -84,6 +84,7 @@ class TestJobProcessingPipeline:
         }
 
         full_system.job_acceptance_engine.is_job_eligible = MagicMock(return_value=True)
+        full_system.show_notification = MagicMock()
 
         full_system._process_new_job(
             job_data["id"],
@@ -116,10 +117,10 @@ class TestCancellationWorkflow:
     def test_cancellation_triggered_for_better_job(self, watcher_with_cancellation):
         """Test that cancellation is triggered when a better job arrives."""
         # Set current job
-        watcher_with_cancellation.cancellation_manager.set_current_job("12345", 25.0)
         watcher_with_cancellation.cancellation_manager.should_cancel_for_job = (
             MagicMock(return_value=True)
         )
+        watcher_with_cancellation.show_notification = MagicMock()
         watcher_with_cancellation.cancel_current_job_sync = MagicMock(return_value=True)
 
         # New better job arrives

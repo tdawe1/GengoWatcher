@@ -43,7 +43,6 @@ def run_websocket_monitor(watcher) -> None:
         "Network", "reconnect_jitter_max", fallback=5
     )
     session_placeholder = "REPLACE_WITH_YOUR_SESSION_TOKEN"
-    key_placeholder = "REPLACE_WITH_YOUR_USER_KEY"
     while not watcher.shutdown_event.is_set():
         watcher._websocket_session_refresh_requested = False
         watcher._websocket_sync_failed = False
@@ -67,28 +66,27 @@ def run_websocket_monitor(watcher) -> None:
         session_token = str(
             watcher.config.get("WebSocket", "user_session", fallback="") or ""
         ).strip()
-        user_key = str(
-            watcher.config.get("WebSocket", "user_key", fallback="") or ""
-        ).strip()
         user_id_value = watcher.config.get("WebSocket", "user_id", fallback=None)
         if not session_token or session_token == session_placeholder:
             watcher.logger.warning(
-                "WebSocket session token missing; WebSocket disabled."
+                "WebSocket [WebSocket] user_session is missing or the placeholder "
+                "in config.toml; set it to your live Gengo session token (or set "
+                "[WebSocket] browser_debug_url so browser sync can fill it). "
+                "WebSocket disabled."
             )
             watcher.websocket_status = "Disabled"
             watcher.shutdown_event.wait(timeout=5)
             continue
-        if not user_id_value:
-            watcher.logger.warning("WebSocket user_id missing; WebSocket disabled.")
-            watcher.websocket_status = "Disabled"
-            watcher.shutdown_event.wait(timeout=5)
-            continue
-        if not user_key or user_key == key_placeholder:
+        uid_str = str(user_id_value if user_id_value is not None else "").strip()
+        user_id_missing = uid_str in ("", "0", "0.0", "None")
+        if user_id_missing:
             watcher.logger.warning(
-                "WebSocket user key missing. Authentication will rely only on session token."
+                "WebSocket [WebSocket] user_id is missing or 0 in config.toml; "
+                "set it to your numeric Gengo user ID. WebSocket disabled."
             )
-            watcher.logger.info("Authentication will rely only on session token.")
-
+            watcher.websocket_status = "Disabled"
+            watcher.shutdown_event.wait(timeout=5)
+            continue
         try:
             watcher.logger.debug("Running websocket logic (asyncio.run)")
             watcher.websocket_last_close_code = None

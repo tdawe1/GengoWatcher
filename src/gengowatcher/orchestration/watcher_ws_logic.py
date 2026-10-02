@@ -140,7 +140,8 @@ async def websocket_logic(watcher):
 
                 watcher.websocket_status = "Live"
                 watcher.logger.info(
-                    "WebSocket: Connection established and authenticated."
+                    "WebSocket: Connection established; auth payload sent, "
+                    "awaiting server confirmation."
                 )
 
                 sync_fail_hard = watcher.config.getboolean(

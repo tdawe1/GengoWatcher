@@ -390,3 +390,93 @@ def test_run_once_clears_visibility_and_status_cache_when_tab_missing():
     assert listener._last_visible_payload is None
     assert listener._last_status_collection_id is None
     assert listener._last_status_seconds is None
+
+
+def test_down_poll_warns_once_without_traceback(caplog):
+    listener = NativeBrowserListener(debug_url="ws://127.0.0.1:6000")
+    with (
+        patch(
+            "gengowatcher.native_browser_listener._open_firefox_rdp_client",
+            side_effect=ConnectionRefusedError(111, "Connection refused"),
+        ),
+        caplog.at_level(logging.DEBUG, logger="gengowatcher.native_browser_listener"),
+    ):
+        listener.run_once()
+    assert listener.last_error.startswith("debug server unavailable at ")
+    assert listener._consecutive_down == 1
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "retrying quietly" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "Traceback" not in caplog.text
+
+
+def test_consecutive_down_polls_throttle_warning_and_back_off(caplog):
+    listener = NativeBrowserListener(debug_url="ws://127.0.0.1:6000")
+    delays = []
+    with (
+        patch(
+            "gengowatcher.native_browser_listener._open_firefox_rdp_client",
+            side_effect=ConnectionRefusedError(111, "Connection refused"),
+        ),
+        caplog.at_level(logging.DEBUG, logger="gengowatcher.native_browser_listener"),
+    ):
+        for _ in range(3):
+            listener.run_once()
+            delays.append(listener.next_poll_delay())
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "retrying quietly" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert listener._consecutive_down == 3
+    assert delays[0] >= 5.0
+    assert all(d <= 30.0 for d in delays)
+    assert delays[0] < delays[1] < delays[2]
+
+
+def test_successful_poll_resets_consecutive_down():
+    listener = NativeBrowserListener(debug_url="ws://127.0.0.1:6000")
+    with patch(
+        "gengowatcher.native_browser_listener._open_firefox_rdp_client",
+        side_effect=ConnectionRefusedError(111, "Connection refused"),
+    ):
+        listener.run_once()
+    assert listener._consecutive_down == 1
+
+    async def open_client(debug_url):
+        return _FakeRdpClient([])
+
+    async def list_tabs(client):
+        return {"tabs": []}
+
+    with (
+        patch(
+            "gengowatcher.native_browser_listener._open_firefox_rdp_client",
+            side_effect=open_client,
+        ),
+        patch(
+            "gengowatcher.native_browser_listener._firefox_rdp_list_tabs",
+            side_effect=list_tabs,
+        ),
+    ):
+        listener.run_once()
+    assert listener._consecutive_down == 0
+    assert listener.last_error == ""
+
+
+def test_unexpected_error_still_logs_traceback(caplog):
+    listener = NativeBrowserListener(debug_url="ws://127.0.0.1:6000")
+    with (
+        patch(
+            "gengowatcher.native_browser_listener._open_firefox_rdp_client",
+            side_effect=RuntimeError("boom"),
+        ),
+        caplog.at_level(logging.DEBUG, logger="gengowatcher.native_browser_listener"),
+    ):
+        listener.run_once()
+    assert listener._consecutive_down == 0
+    assert listener.last_error == "boom"
+    assert "Poll iteration failed" in caplog.text
+    assert "Traceback" in caplog.text

@@ -2301,7 +2301,16 @@ def build_websocket_auth_payload(
     user_id: Any,
     session_token: str,
 ) -> dict[str, Any]:
+    # Match the realtime page's own client exactly: on open it sends
+    # {"user_id": <int>, "user_session": <token>} (snake_case, numeric id,
+    # no userKey). Verified 2026-09-17 against the live page source and a
+    # live dial: the camelCase shape is 1000-closed ~1s after auth with no
+    # message, while this shape stays open awaiting events.
+    try:
+        user_id_value: Any = int(str(user_id).strip())
+    except (TypeError, ValueError):
+        user_id_value = user_id
     return {
-        "user_id": user_id,
+        "user_id": user_id_value,
         "user_session": session_token,
     }

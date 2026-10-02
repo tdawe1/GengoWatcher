@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .browser_session import (
     build_browser_aligned_websocket_headers,
+    build_websocket_auth_payload,
     fetch_browser_session_snapshot_sync,
     format_cookies_as_header,
 )
@@ -172,19 +173,14 @@ class GengoRealtimeGateway:
                     backoff = 5.0
 
                     user_id = self.config.get("WebSocket", "user_id", "")
-                    user_key = self.config.get("WebSocket", "user_key", "")
                     cookie = headers.get("Cookie", "")
                     session = _extract_session_token(cookie)
-                    # Gengo's realtime WS expects the same field shape as the
-                    # browser-aligned in-process monitor: userId / sessionToken /
-                    # userKey. Sending user_id / user_session (snake_case) silently
-                    # fails the handshake.
-                    auth: dict[str, str] = {
-                        "userId": str(user_id or ""),
-                        "sessionToken": session,
-                    }
-                    if user_key:
-                        auth["userKey"] = str(user_key)
+                    # Same frame as the realtime page's own client:
+                    # {"user_id": <int>, "user_session": <token>}.
+                    auth = build_websocket_auth_payload(
+                        user_id=user_id,
+                        session_token=session,
+                    )
                     await ws.send(json.dumps(auth))
 
                     async for msg in ws:
