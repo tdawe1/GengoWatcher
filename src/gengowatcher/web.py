@@ -46,6 +46,7 @@ from .orchestration.translate_fanout import (
     TranslateBusyError,
     TranslateFanoutService,
 )
+from .orchestration.watcher_config_values import SENSITIVE_KEYWORDS
 from .prom_metrics import ensure_watcher_metrics_registered
 from .state import AppState
 from .watcher import GengoWatcher
@@ -88,6 +89,61 @@ DEFAULT_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024
 
 
 DEFAULT_DOWNLOAD_ALLOWED_HOSTS = ("gengo.com", ".gengo.com")
+
+
+# Sections whose values control auth, network targets, or local execution.
+# Writes via the bearer-auth API are rejected to prevent token/URL/path hijack
+# with a stolen token. Secrets remain settable via CLI/interactive configure.
+CONFIG_WRITE_BLOCKED_SECTIONS = frozenset(
+    {
+        "webserver",
+        "webhooks",
+        "translationapp",
+        "translationworkflow",
+        "browserworker",
+        "browser",
+        "paths",
+        "emailmonitor",
+        "websitemonitor",
+        "websocket",
+        "metrics",
+    }
+)
+
+CONFIG_WRITE_BLOCKED_SUBSTRINGS = frozenset(
+    set(SENSITIVE_KEYWORDS)
+    | {
+        "url",
+        "host",
+        "origin",
+        "endpoint",
+        "gateway",
+        "socket",
+        "profile",
+        "browser",
+        "executable",
+        "binary",
+        "command",
+        "path",
+        "dir",
+        "file",
+    }
+)
+
+
+def _is_config_option_sensitive(option: str) -> bool:
+    lowered = str(option or "").lower()
+    return any(keyword in lowered for keyword in SENSITIVE_KEYWORDS)
+
+
+def _is_config_write_blocked(section: str, option: str) -> bool:
+    section_lower = str(section or "").strip().lower()
+    option_lower = str(option or "").strip().lower()
+    if not section_lower or not option_lower:
+        return True
+    if section_lower in CONFIG_WRITE_BLOCKED_SECTIONS:
+        return True
+    return any(sub in option_lower for sub in CONFIG_WRITE_BLOCKED_SUBSTRINGS)
 
 
 class WebAPI:
@@ -1384,12 +1440,15 @@ class WebAPI:
         return workflow
 
     def get_config(self) -> List[ConfigSection]:
-        """Get current configuration."""
+        """Get current configuration with secrets redacted."""
         sections = []
         # Use the proper config access methods
         for section_name in self.config.config.keys():
             section_data = {}
             for key in self.config.config[section_name].keys():
+                if _is_config_option_sensitive(key):
+                    section_data[key] = "<redacted>"
+                    continue
                 try:
                     # Try to get the value using the appropriate method based on type
                     default_val = self.config.config[section_name][key]
@@ -1409,7 +1468,14 @@ class WebAPI:
         return sections
 
     def update_config(self, section: str, option: str, value: str) -> bool:
-        """Update configuration value."""
+        """Update configuration value via the API (non-sensitive keys only)."""
+        if _is_config_write_blocked(section, option):
+            self.logger.warning(
+                "Rejected API config write to [%s] %s: blocked key",
+                section,
+                option,
+            )
+            return False
         try:
             self.watcher.set_config_value(section, option, value)
             return True

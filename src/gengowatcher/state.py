@@ -30,6 +30,7 @@ class AppState:
     ):
         self.logger = logger
         self._lock = threading.RLock()  # Reentrant lock for better safety
+        self._persist_lock = threading.Lock()  # Serializes save_state end-to-end
         self.state_file_path = pathlib.Path(state_file_path or self.STATE_FILE)
 
         self.last_seen_rss_link = None  # New variable for RSS tracking
@@ -61,6 +62,8 @@ class AppState:
             if self.state_file_path.is_file():
                 with open(self.state_file_path, "r", encoding="utf-8") as f:
                     state_data = json.load(f)
+                    if not isinstance(state_data, dict):
+                        raise ValueError("Top-level state JSON must be an object")
                     with self._lock:
                         self.last_seen_rss_link = state_data.get("last_seen_rss_link")
                         self.last_seen_link = state_data.get("last_seen_link")
@@ -86,9 +89,27 @@ class AppState:
                             )
                             self._prune_jobs_unlocked()
                             self._rebuild_job_ids_unlocked()
-        except (json.JSONDecodeError, IOError) as e:
+        except (OSError, ValueError) as e:
+            self._quarantine_corrupt_state_file()
             self.logger.exception(
                 f"Could not load state file. Starting fresh. Error: {e}"
+            )
+
+    def _quarantine_corrupt_state_file(self) -> None:
+        """Rename an unreadable state file aside so it is not overwritten."""
+        try:
+            if not self.state_file_path.is_file():
+                return
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            backup = self.state_file_path.with_name(
+                f"{self.state_file_path.name}.corrupt.{stamp}"
+            )
+            os.replace(self.state_file_path, backup)
+        except OSError:
+            self.logger.warning(
+                "Failed to quarantine corrupt state file %s",
+                self.state_file_path,
+                exc_info=True,
             )
 
     def load_jobs_from_csv(self, csv_path: str):
@@ -157,31 +178,48 @@ class AppState:
             self.logger.error(f"Error loading jobs from CSV: {e}")
 
     def save_state(self):
-        """Save state atomically - write to temp file then rename."""
+        """Save state atomically - snapshot under lock, write outside it."""
         try:
-            with self._lock:
-                with self._jobs_lock:
-                    state_data = {
-                        "last_seen_rss_link": self.last_seen_rss_link,
-                        "last_seen_link": self.last_seen_link,
-                        "total_new_entries_found": self.total_new_entries_found,
-                        "sparkline_data": self._sparkline_data.copy(),
-                        "seen_job_ids": list(self.seen_job_ids),
-                        "jobs": [
-                            self._redact_job_for_persistence(job) for job in self._jobs
-                        ],
-                    }
+            # Serialize concurrent writers end-to-end so an older snapshot
+            # cannot replace a newer state file out of order.
+            with self._persist_lock:
+                with self._lock:
+                    with self._jobs_lock:
+                        state_data = {
+                            "last_seen_rss_link": self.last_seen_rss_link,
+                            "last_seen_link": self.last_seen_link,
+                            "total_new_entries_found": self.total_new_entries_found,
+                            "sparkline_data": self._sparkline_data.copy(),
+                            "seen_job_ids": list(self.seen_job_ids),
+                            "jobs": [
+                                self._redact_job_for_persistence(job)
+                                for job in self._jobs
+                            ],
+                        }
 
-                # Atomic write: write to temp file, then rename
+                # Write outside the data locks so slow fs I/O never blocks
+                # readers; concurrent writers are still ordered by _persist_lock.
                 dir_path = self.state_file_path.parent
+                dir_path.mkdir(parents=True, exist_ok=True)
                 fd, temp_path = tempfile.mkstemp(
                     suffix=".tmp", prefix="state_", dir=dir_path
                 )
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         json.dump(state_data, f, indent=4)
+                        f.flush()
+                        os.fsync(f.fileno())
                     # Atomic rename (on POSIX systems)
                     os.replace(temp_path, self.state_file_path)
+                    try:
+                        dir_fd = os.open(dir_path, os.O_DIRECTORY)
+                    except OSError:
+                        dir_fd = None
+                    else:
+                        try:
+                            os.fsync(dir_fd)
+                        finally:
+                            os.close(dir_fd)
                 except Exception:
                     # Clean up temp file on error
                     try:
@@ -189,7 +227,7 @@ class AppState:
                     except OSError:
                         pass
                     raise
-        except IOError as e:
+        except OSError as e:
             self.logger.exception(f"Error saving state to {self.STATE_FILE}: {e}")
 
     @classmethod

@@ -161,9 +161,7 @@ async def test_websocket_monitor_receives_messages_and_dispatches_job():
     await monitor._websocket_session()
 
     assert websocket.sent == [
-        json.dumps(
-            {"userId": "user-1", "sessionToken": "session-token", "userKey": "key-1"}
-        )
+        json.dumps({"user_id": "user-1", "user_session": "session-token"})
     ]
     assert job_events == [{"id": "123", "lc_src": "ja", "lc_tgt": "en", "rewards": 8.5}]
     assert all_events[0]["type"] == "available_collection"

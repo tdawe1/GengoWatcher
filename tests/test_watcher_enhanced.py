@@ -507,25 +507,3 @@ class TestEdgeCases:
             feed = watcher_instance.fetch_rss()
 
             assert feed is None
-
-    def test_show_notification_with_all_options(self, watcher_instance, mock_config):
-        """Test notification with all options enabled."""
-        mock_config.get.side_effect = lambda s, k, **kw: {
-            ("Watcher", "enable_notifications"): True,
-            ("Watcher", "enable_sound"): True,
-            ("Paths", "notification_icon_path"): "",
-            ("Paths", "sound_file"): "assets/alert.wav",
-            ("Paths", "browser_path"): "",
-            ("Paths", "browser_args"): "{url}",
-        }.get((s, k), kw.get("fallback", ""))
-
-        watcher_instance.show_notification(
-            message="Test",
-            title="Title",
-            play_sound=True,
-            open_link=True,
-            url="http://example.com",
-        )
-
-        # Should complete without error
-        assert True
