@@ -1,7 +1,7 @@
 # Formatting and Style
 
 ## Formatting and Lint
-- Black: configured in pyproject.toml (line-length = 88, excludes .worktrees/). setup.cfg no longer exists, so flake8/pycodestyle are not project-configured here.
+- Black: configured in pyproject.toml (line-length = 88, excludes .worktrees/). flake8 is configured in setup.cfg (max-line-length = 88, E203 ignored).
 - Format with Black before broad edits. Avoid manual alignment that fights Black.
 - Imports: stdlib, third-party, then local gengowatcher.*; one blank line between groups; parenthesized multi-line imports are normal in main.py and watcher.py. There is no isort config; do not churn import order unless you are touching imports anyway.
 

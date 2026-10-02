@@ -263,6 +263,16 @@ class WebFileStorage:
         except FileNotFoundError:
             pass
 
+    @staticmethod
+    def new_staged_temp(path: Path) -> Path:
+        """Create an empty temp file staged next to its final destination."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+        )
+        os.close(fd)
+        return Path(temp_name)
+
     def list_files(self) -> list[StoredFileEntry]:
         self.cleanup_expired_files()
         storage_dir = self.get_storage_dir()
@@ -292,6 +302,63 @@ class WebFileStorage:
         word_count: int | None = None,
         value: float | None = None,
     ) -> StoredFileEntry:
+        destination, metadata, metadata_path = self._prepare_upload(
+            filename=filename,
+            job_id=job_id,
+            tier=tier,
+            word_count=word_count,
+            value=value,
+            content_type=content_type,
+        )
+        content_temp = self._stage_atomic_file(destination, content)
+        return self._publish_upload(
+            destination,
+            metadata,
+            metadata_path,
+            content_temp,
+            filename=filename,
+            content_type=content_type,
+        )
+
+    def save_staged_upload(
+        self,
+        staged_temp: Path,
+        filename: str,
+        *,
+        content_type: str | None = None,
+        job_id: str | None = None,
+        tier: str | None = None,
+        word_count: int | None = None,
+        value: float | None = None,
+    ) -> StoredFileEntry:
+        """Publish a caller-staged temp file as an upload (bounded memory)."""
+        destination, metadata, metadata_path = self._prepare_upload(
+            filename=filename,
+            job_id=job_id,
+            tier=tier,
+            word_count=word_count,
+            value=value,
+            content_type=content_type,
+        )
+        return self._publish_upload(
+            destination,
+            metadata,
+            metadata_path,
+            Path(staged_temp),
+            filename=filename,
+            content_type=content_type,
+        )
+
+    def _prepare_upload(
+        self,
+        *,
+        filename: str,
+        job_id: str | None,
+        tier: str | None,
+        word_count: int | None,
+        value: float | None,
+        content_type: str | None,
+    ) -> tuple[Path, dict, Path]:
         self.cleanup_expired_files()
         if job_id is not None:
             job_id = str(job_id).strip()
@@ -318,7 +385,9 @@ class WebFileStorage:
             if not self.is_valid_stored_name(candidate_name):
                 raise ValueError("Invalid stored filename")
             candidate_leaf_name = Path(candidate_name).name
-            destination = self.ensure_within_storage_dir(storage_dir / candidate_leaf_name)
+            destination = self.ensure_within_storage_dir(
+                storage_dir / candidate_leaf_name
+            )
             counter += 1
         metadata = {
             "original_name": filename or destination.name,
@@ -330,7 +399,18 @@ class WebFileStorage:
             "value": float(value) if value is not None else None,
         }
         metadata_path = self.metadata_path(destination)
-        content_temp = self._stage_atomic_file(destination, content)
+        return destination, metadata, metadata_path
+
+    def _publish_upload(
+        self,
+        destination: Path,
+        metadata: dict,
+        metadata_path: Path,
+        content_temp: Path,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> StoredFileEntry:
         metadata_temp = self._stage_atomic_file(
             metadata_path,
             json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8"),

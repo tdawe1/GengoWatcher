@@ -568,6 +568,34 @@ class WebAPI:
             value=value,
         )
 
+    def new_upload_staging(self) -> Path:
+        """Create a temp file for streaming an upload with bounded memory."""
+        return WebFileStorage.new_staged_temp(self.file_storage.get_storage_dir())
+
+    def save_staged_upload(
+        self,
+        staged_temp: Path,
+        filename: str,
+        *,
+        content_type: str | None = None,
+        job_id: str | None = None,
+        tier: str | None = None,
+        word_count: int | None = None,
+        value: float | None = None,
+    ) -> StoredFileEntry:
+        return self.file_storage.save_staged_upload(
+            staged_temp,
+            filename,
+            content_type=content_type,
+            job_id=job_id,
+            tier=tier,
+            word_count=word_count,
+            value=value,
+        )
+
+    def discard_upload_staging(self, staged_temp: Path | None) -> None:
+        WebFileStorage._cleanup_staged_file(staged_temp)
+
     def _resolve_stored_file_path(self, stored_name: str) -> Path | None:
         return self.file_storage.resolve_stored_file_path(stored_name)
 
@@ -1997,6 +2025,8 @@ async def list_uploaded_files(authenticated: bool = Depends(verify_auth)):
 
 
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_CONCURRENT_UPLOADS = 2
+_UPLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_UPLOADS)
 
 
 @app.post("/api/files/upload", response_model=StoredFileUploadResponse)
@@ -2011,48 +2041,63 @@ async def upload_file(
     """Store an uploaded file in the local file transfer directory."""
     if not api_instance:
         raise HTTPException(status_code=503, detail="API not initialized")
-    try:
-        # Read file in chunks to avoid loading entire file into memory
-        content = b""
-        chunk_size = 1024 * 1024  # 1 MB chunks
-        while True:
-            read_all_at_once = False
-            try:
-                chunk = await file.read(chunk_size)
-            except TypeError:
-                chunk = await file.read()
-                read_all_at_once = True
-            if not chunk:
-                break
-            content += chunk
-            if len(content) > MAX_UPLOAD_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE} bytes",
-                )
-            if read_all_at_once:
-                break
+    async with _UPLOAD_SEMAPHORE:
+        staging: Path | None = None
+        try:
+            # Stream to a staged temp file so per-request memory stays flat
+            # (one chunk) regardless of file size; cap enforced while writing.
+            staging = api_instance.new_upload_staging()
+            total_bytes = 0
+            chunk_size = 1024 * 1024  # 1 MB chunks
+            with open(staging, "wb") as staged:
+                while True:
+                    read_all_at_once = False
+                    try:
+                        chunk = await file.read(chunk_size)
+                    except TypeError:
+                        chunk = await file.read()
+                        read_all_at_once = True
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_UPLOAD_SIZE:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "File too large. Maximum size is "
+                                f"{MAX_UPLOAD_SIZE} bytes"
+                            ),
+                        )
+                    staged.write(chunk)
+                    if read_all_at_once:
+                        break
+                staged.flush()
+                os.fsync(staged.fileno())
 
-        entry = api_instance.save_uploaded_file(
-            file.filename or "upload.bin",
-            content,
-            content_type=file.content_type,
-            job_id=job_id,
-            tier=tier,
-            word_count=word_count,
-            value=value,
-        )
-        api_instance._handle_stored_file_for_job(
-            entry,
-            content=content,
-            mode="user",
-        )
-        return StoredFileUploadResponse(status="success", file=entry)
-    except HTTPException:
-        raise
-    except Exception as e:
-        api_instance.logger.exception(f"Error uploading file: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+            entry = api_instance.save_staged_upload(
+                staging,
+                file.filename or "upload.bin",
+                content_type=file.content_type,
+                job_id=job_id,
+                tier=tier,
+                word_count=word_count,
+                value=value,
+            )
+            staging = None
+            api_instance._handle_stored_file_for_job(
+                entry,
+                content=None,
+                mode="user",
+            )
+            return StoredFileUploadResponse(status="success", file=entry)
+        except HTTPException:
+            raise
+        except Exception as e:
+            api_instance.logger.exception(f"Error uploading file: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error") from e
+        finally:
+            if staging is not None:
+                api_instance.discard_upload_staging(staging)
 
 
 @app.get("/api/files/{stored_name}")
@@ -2156,9 +2201,20 @@ async def websocket_status(websocket: WebSocket):
         await websocket.close(code=1011)  # Internal error
         return
 
-    # Simple authentication via query parameter
-    api_key = websocket.query_params.get("api_key")
-    if not api_key or api_key != authenticator.get_api_key():
+    # Prefer Authorization header (Bearer), fall back to ?api_key= for
+    # back-compat. Query tokens leak into logs/history; header is preferred.
+    supplied_key = ""
+    auth_header = websocket.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        supplied_key = auth_header[7:].strip()
+    if not supplied_key:
+        supplied_key = websocket.query_params.get("api_key", "")
+    expected_key = authenticator.get_api_key() or ""
+    if (
+        not supplied_key
+        or not expected_key
+        or not secrets.compare_digest(supplied_key, expected_key)
+    ):
         await websocket.close(code=1008)  # Policy violation
         return
 

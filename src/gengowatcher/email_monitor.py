@@ -35,6 +35,7 @@ class EmailMonitor:
     GMAIL_IMAP_PORT = 993
     GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
     IDLE_TIMEOUT = 29 * 60
+    IDLE_READ_TIMEOUT_SEC = 10.0
     TOKEN_REFRESH_BUFFER = 300  # Refresh token 5 minutes before expiry
     MAX_SEEN_EMAILS = 10000  # Prune seen emails set when it exceeds this
 
@@ -176,6 +177,12 @@ class EmailMonitor:
         folder = self.config.get("EmailMonitor", "folder") or "INBOX"
 
         self._imap = imaplib.IMAP4_SSL(self.GMAIL_IMAP_HOST, self.GMAIL_IMAP_PORT)
+        # Bound blocking reads so IDLE shutdown/timeout handling cannot park
+        # a to_thread worker forever; wait_for() alone cannot cancel them.
+        try:
+            self._imap.socket().settimeout(self.IDLE_READ_TIMEOUT_SEC)
+        except (AttributeError, OSError) as exc:
+            self.logger.debug("Could not set IMAP socket timeout: %s", exc)
 
         auth_string = self._build_oauth2_string(email_addr, self._access_token)
         self._imap.authenticate("XOAUTH2", lambda x: auth_string.encode())
@@ -194,6 +201,18 @@ class EmailMonitor:
 
     def _build_oauth2_string(self, user: str, token: str) -> str:
         return f"user={user}\x01auth=Bearer {token}\x01\x01"
+
+    async def _wait_for_shutdown(self, timeout: float) -> bool:
+        """Sleep up to timeout seconds; return True if shutdown was requested."""
+        # Poll in 1s increments (via asyncio.sleep so tests can stub timing)
+        # instead of one long sleep, keeping shutdown latency under a second.
+        remaining = max(0.0, float(timeout))
+        while remaining > 0:
+            if self.shutdown_event.is_set():
+                return True
+            await asyncio.sleep(min(1.0, remaining))
+            remaining -= 1.0
+        return self.shutdown_event.is_set()
 
     async def _idle_loop(self):
         self.logger.debug("Starting IMAP IDLE loop")
@@ -224,7 +243,9 @@ class EmailMonitor:
                         )
                         break
 
-                    # Use asyncio.to_thread to avoid blocking the event loop
+                    # Use asyncio.to_thread to avoid blocking the event loop.
+                    # The socket timeout bounds the in-thread read so a
+                    # wait_for() timeout cannot park the worker forever.
                     try:
                         line = await asyncio.wait_for(
                             asyncio.to_thread(self._imap._get_line), timeout=5.0
@@ -240,16 +261,16 @@ class EmailMonitor:
                     except asyncio.TimeoutError:
                         # No data within 5 seconds, continue waiting
                         continue
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self.logger.debug("IDLE read failed: %s", exc)
 
                 self._imap.send(b"DONE\r\n")
                 try:
                     await asyncio.to_thread(
                         self._imap._get_line
                     )  # consume tagged response
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.logger.debug("IDLE DONE response unreadable: %s", exc)
                 await asyncio.to_thread(self._imap.noop)
 
             except imaplib.IMAP4.abort:
@@ -258,7 +279,7 @@ class EmailMonitor:
             except Exception as e:
                 self.logger.error(f"IDLE error: {e}")
                 self.status = "Error"
-                await asyncio.sleep(poll_interval)
+                await self._wait_for_shutdown(poll_interval)
 
     async def _poll_loop(self):
         poll_interval = self.config.get("EmailMonitor", "poll_fallback_interval") or 60
@@ -272,7 +293,8 @@ class EmailMonitor:
                 self.logger.error(f"Poll error: {e}")
                 self.status = "Error"
 
-            await asyncio.sleep(poll_interval)
+            if await self._wait_for_shutdown(poll_interval):
+                break
 
     async def _check_existing_emails(self):
         """Mark existing unread emails as seen without processing them."""

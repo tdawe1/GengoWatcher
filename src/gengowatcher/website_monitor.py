@@ -162,6 +162,18 @@ class WebsiteMonitor:
 
         self.logger.info("Successfully authenticated to Gengo website")
 
+    async def _wait_for_shutdown(self, timeout: float) -> bool:
+        """Sleep up to timeout seconds; return True if shutdown was requested."""
+        # Poll in 1s increments (via asyncio.sleep so tests can stub timing)
+        # instead of one long sleep, keeping shutdown latency under a second.
+        remaining = max(0.0, float(timeout))
+        while remaining > 0:
+            if self.shutdown_event.is_set():
+                return True
+            await asyncio.sleep(min(1.0, remaining))
+            remaining -= 1.0
+        return self.shutdown_event.is_set()
+
     async def _monitor_loop(self):
         check_min = self.config.get("WebsiteMonitor", "check_interval_min") or 120
         check_max = self.config.get("WebsiteMonitor", "check_interval_max") or 300
@@ -186,9 +198,7 @@ class WebsiteMonitor:
                 interval = random.uniform(check_min, check_max)
                 self.logger.debug(f"Next check in {interval:.0f}s")
 
-                await asyncio.sleep(interval)
-
-                if self.shutdown_event.is_set():
+                if await self._wait_for_shutdown(interval):
                     break
 
                 self.status = "Scraping"
@@ -222,7 +232,7 @@ class WebsiteMonitor:
             except Exception as e:
                 self.status = "Error"
                 self.logger.error(f"Monitor loop error: {e}")
-                await asyncio.sleep(60)
+                await self._wait_for_shutdown(60)
 
     async def _scrape_job_ids(self) -> set[str]:
         job_ids = set()
