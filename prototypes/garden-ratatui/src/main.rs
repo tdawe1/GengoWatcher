@@ -22,10 +22,13 @@ fn main() -> io::Result<()> {
     let mode = parse_mode()?;
     if let Mode::Render(output_dir, render_layout) = mode {
         let paths = match render_layout.as_deref() {
-            Some("all") => [LayoutKind::Classic, LayoutKind::Beacon, LayoutKind::Dense]
-                .into_iter()
-                .flat_map(|layout| render_previews_for(&output_dir, layout).unwrap_or_default())
-                .collect(),
+            Some("all") => {
+                let mut all = Vec::new();
+                for layout in [LayoutKind::Classic, LayoutKind::Beacon, LayoutKind::Dense] {
+                    all.extend(render_previews_for(&output_dir, layout)?);
+                }
+                all
+            }
             Some(slug) => {
                 let layout = LayoutKind::from_slug(slug).ok_or_else(|| {
                     io::Error::new(

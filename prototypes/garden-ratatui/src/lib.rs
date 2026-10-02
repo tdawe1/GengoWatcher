@@ -1066,11 +1066,13 @@ fn render_tabbar(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     let mut spans = Vec::new();
     let mut hitboxes: Vec<(Rect, View)> = Vec::new();
     let mut cursor = area.x.saturating_add(1);
+    let mut omitted = false;
     for (index, view) in View::ALL.into_iter().enumerate() {
         let selected = app.view == view;
         let text = format!(" {} {} ", index + 1, view.label());
         let width = text.chars().count() as u16;
         if cursor + width > area.x + area.width.saturating_sub(42) {
+            omitted = true;
             break;
         }
         let style = if selected {
@@ -1090,6 +1092,11 @@ fn render_tabbar(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         spans.push(Span::raw(" "));
         hitboxes.push((Rect::new(cursor, area.y, width.saturating_add(1), 1), view));
         cursor += width + 1;
+    }
+    if omitted {
+        // Tabs that don't fit stay reachable via 1-7/arrow keys; the marker
+        // keeps their existence visible instead of silently dropping them.
+        spans.push(Span::styled("… ", Style::default().fg(MUTED)));
     }
     app.nav_hitboxes.clear();
     app.nav_hitboxes.extend(hitboxes);
@@ -3147,6 +3154,27 @@ mod tests {
             assert_eq!(app.nav_hitboxes.len(), View::ALL.len());
             assert!(app.nav_hitboxes.iter().any(|(_, view)| *view == View::Jobs));
         }
+    }
+
+    #[test]
+    fn narrow_tab_bar_marks_omitted_tabs_with_ellipsis() {
+        // 140 columns fit six tabs but not Translate; the marker must show.
+        let backend = TestBackend::new(140, 44);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = App::with_layout(View::Overview, LayoutKind::Beacon);
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("…"));
+        assert!(!content.contains("7 Translate"));
+        assert!(app.nav_hitboxes.len() < View::ALL.len());
     }
 
     #[test]

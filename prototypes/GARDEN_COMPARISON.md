@@ -46,12 +46,12 @@ cargo run --manifest-path prototypes/garden-ratatui/Cargo.toml -- \
 
 | Workspace | Textual | Ratatui |
 | --- | --- | --- |
-| Overview | [Open Textual preview](garden-previews/garden-textual-overview.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-overview.svg) |
-| Available Jobs | [Open Textual preview](garden-previews/garden-textual-jobs.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-jobs.svg) |
-| Active Work | [Open Textual preview](garden-previews/garden-textual-work.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-work.svg) |
-| History | [Open Textual preview](garden-previews/garden-textual-history.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-history.svg) |
-| Analytics | [Open Textual preview](garden-previews/garden-textual-analytics.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-analytics.svg) |
-| System | [Open Textual preview](garden-previews/garden-textual-system.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-system.svg) |
+| Overview | [Open Textual preview](garden-previews/garden-textual-overview.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-classic-overview.svg) |
+| Available Jobs | [Open Textual preview](garden-previews/garden-textual-jobs.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-classic-jobs.svg) |
+| Active Work | [Open Textual preview](garden-previews/garden-textual-work.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-classic-work.svg) |
+| History | [Open Textual preview](garden-previews/garden-textual-history.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-classic-history.svg) |
+| Analytics | [Open Textual preview](garden-previews/garden-textual-analytics.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-classic-analytics.svg) |
+| System | [Open Textual preview](garden-previews/garden-textual-system.svg) | [Open Ratatui preview](garden-ratatui-previews/garden-ratatui-classic-system.svg) |
 
 The Overview is the primary comparison screen. It exposes the current alert,
 available queue, active workflow, session metrics, system health, and recent
