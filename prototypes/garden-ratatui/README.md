@@ -30,6 +30,28 @@ cargo run --manifest-path prototypes/garden-ratatui/Cargo.toml -- \
   --render prototypes/garden-ratatui-previews
 ```
 
+## Layouts
+
+Three chrome variants share the same views and keybindings:
+
+- `classic` (default): sidebar workspace navigation.
+- `beacon`: top tab bar with live session totals, a hero opportunity card,
+  queue table, and ACT/WORK/HEALTH action rail on Overview.
+- `dense`: top tab bar with full-width views and single-row tables.
+
+Select one for a session:
+
+```bash
+cargo run --manifest-path prototypes/garden-ratatui/Cargo.toml -- \
+  --demo --layout beacon
+```
+
+or press `v` inside the TUI to cycle classic → beacon → dense. In live
+mode the Python entrypoint forwards the choice: `--tui-layout`,
+`GENGOWATCHER_RATATUI_LAYOUT`, or the `[UI] ratatui_layout` config value.
+Time-left values encode urgency everywhere (red under 5 minutes, orange
+under 15). Render every layout's previews with `--render DIR --layout all`.
+
 Security properties:
 
 - the bearer token is read from `GENGOWATCHER_API_TOKEN`, never a CLI flag;

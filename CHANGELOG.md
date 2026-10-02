@@ -3,6 +3,20 @@
 All notable changes to GengoWatcher are documented in this file.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Ratatui `beacon` layout: top tab bar with live session totals, hero
+  opportunity card with inline accept/ignore, queue table, and
+  ACT/WORK/HEALTH action rail on Overview.
+- Ratatui `dense` layout: top tab bar with full-width views and
+  single-row tables.
+- Layout selection via `--layout` (binary), `v` to cycle live,
+  `--tui-layout` / `GENGOWATCHER_RATATUI_LAYOUT` / `[UI] ratatui_layout`
+  in live mode, and per-layout SVG previews (`--render DIR --layout all`).
+- Urgency-encoded time-left across tables, queue, cards, and hero
+  (red under 5 minutes, orange under 15).
+
 ## [3.0.1] - 2026-10-02
 
 ### Security
