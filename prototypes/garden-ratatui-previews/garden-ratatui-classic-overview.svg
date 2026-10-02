@@ -415,11 +415,11 @@
 <text x="520" y="175" fill="#a6a69c">e</text>
 <text x="530" y="175" fill="#a6a69c">t</text>
 <text x="560" y="175" fill="#a6a69c">·</text>
-<text x="590" y="175" fill="#a6a69c">0</text>
-<text x="600" y="175" fill="#a6a69c">4</text>
-<text x="610" y="175" fill="#a6a69c">:</text>
-<text x="620" y="175" fill="#a6a69c">0</text>
-<text x="630" y="175" fill="#a6a69c">3</text>
+<text x="590" y="175" fill="#e46876" font-weight="700">0</text>
+<text x="600" y="175" fill="#e46876" font-weight="700">4</text>
+<text x="610" y="175" fill="#e46876" font-weight="700">:</text>
+<text x="620" y="175" fill="#e46876" font-weight="700">0</text>
+<text x="630" y="175" fill="#e46876" font-weight="700">3</text>
 <text x="650" y="175" fill="#a6a69c">r</text>
 <text x="660" y="175" fill="#a6a69c">e</text>
 <text x="670" y="175" fill="#a6a69c">m</text>
@@ -743,11 +743,11 @@
 <text x="610" y="275" fill="#c5c9c5">c</text>
 <text x="620" y="275" fill="#c5c9c5">t</text>
 <text x="640" y="275" fill="#c5c9c5">…</text>
-<text x="670" y="275" fill="#a6a69c">0</text>
-<text x="680" y="275" fill="#a6a69c">4</text>
-<text x="690" y="275" fill="#a6a69c">:</text>
-<text x="700" y="275" fill="#a6a69c">0</text>
-<text x="710" y="275" fill="#a6a69c">3</text>
+<text x="670" y="275" fill="#e46876" font-weight="700">0</text>
+<text x="680" y="275" fill="#e46876" font-weight="700">4</text>
+<text x="690" y="275" fill="#e46876" font-weight="700">:</text>
+<text x="700" y="275" fill="#e46876" font-weight="700">0</text>
+<text x="710" y="275" fill="#e46876" font-weight="700">3</text>
 <text x="740" y="275" fill="#a6a69c">W</text>
 <text x="750" y="275" fill="#a6a69c">e</text>
 <text x="760" y="275" fill="#a6a69c">b</text>
@@ -809,11 +809,11 @@
 <text x="620" y="295" fill="#c5c9c5">e</text>
 <text x="630" y="295" fill="#c5c9c5">n</text>
 <text x="640" y="295" fill="#c5c9c5">…</text>
-<text x="670" y="295" fill="#a6a69c">0</text>
-<text x="680" y="295" fill="#a6a69c">1</text>
-<text x="690" y="295" fill="#a6a69c">:</text>
-<text x="700" y="295" fill="#a6a69c">3</text>
-<text x="710" y="295" fill="#a6a69c">0</text>
+<text x="670" y="295" fill="#e46876" font-weight="700">0</text>
+<text x="680" y="295" fill="#e46876" font-weight="700">1</text>
+<text x="690" y="295" fill="#e46876" font-weight="700">:</text>
+<text x="700" y="295" fill="#e46876" font-weight="700">3</text>
+<text x="710" y="295" fill="#e46876" font-weight="700">0</text>
 <text x="740" y="295" fill="#a6a69c">W</text>
 <text x="750" y="295" fill="#a6a69c">e</text>
 <text x="760" y="295" fill="#a6a69c">b</text>
@@ -1879,18 +1879,25 @@
 <text x="730" y="875" fill="#a6a69c">a</text>
 <text x="740" y="875" fill="#a6a69c">t</text>
 <text x="750" y="875" fill="#a6a69c">e</text>
-<text x="790" y="875" fill="#c5c9c5" font-weight="700">r</text>
-<text x="810" y="875" fill="#a6a69c">r</text>
-<text x="820" y="875" fill="#a6a69c">e</text>
-<text x="830" y="875" fill="#a6a69c">f</text>
-<text x="840" y="875" fill="#a6a69c">r</text>
-<text x="850" y="875" fill="#a6a69c">e</text>
-<text x="860" y="875" fill="#a6a69c">s</text>
-<text x="870" y="875" fill="#a6a69c">h</text>
-<text x="910" y="875" fill="#c5c9c5" font-weight="700">q</text>
-<text x="930" y="875" fill="#a6a69c">q</text>
-<text x="940" y="875" fill="#a6a69c">u</text>
-<text x="950" y="875" fill="#a6a69c">i</text>
-<text x="960" y="875" fill="#a6a69c">t</text>
+<text x="790" y="875" fill="#c5c9c5" font-weight="700">v</text>
+<text x="810" y="875" fill="#a6a69c">l</text>
+<text x="820" y="875" fill="#a6a69c">a</text>
+<text x="830" y="875" fill="#a6a69c">y</text>
+<text x="840" y="875" fill="#a6a69c">o</text>
+<text x="850" y="875" fill="#a6a69c">u</text>
+<text x="860" y="875" fill="#a6a69c">t</text>
+<text x="900" y="875" fill="#c5c9c5" font-weight="700">r</text>
+<text x="920" y="875" fill="#a6a69c">r</text>
+<text x="930" y="875" fill="#a6a69c">e</text>
+<text x="940" y="875" fill="#a6a69c">f</text>
+<text x="950" y="875" fill="#a6a69c">r</text>
+<text x="960" y="875" fill="#a6a69c">e</text>
+<text x="970" y="875" fill="#a6a69c">s</text>
+<text x="980" y="875" fill="#a6a69c">h</text>
+<text x="1020" y="875" fill="#c5c9c5" font-weight="700">q</text>
+<text x="1040" y="875" fill="#a6a69c">q</text>
+<text x="1050" y="875" fill="#a6a69c">u</text>
+<text x="1060" y="875" fill="#a6a69c">i</text>
+<text x="1070" y="875" fill="#a6a69c">t</text>
 </g>
 </svg>
