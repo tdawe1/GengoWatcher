@@ -1048,12 +1048,14 @@ fn render_tabbed(frame: &mut Frame<'_>, app: &mut App) {
     .split(frame.area());
     render_header(frame, shell[0], app);
     render_tabbar(frame, shell[1], app);
+    // One breathing row between the tab bar and the body.
+    let body = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(shell[2])[1];
     if frame.area().width < 110 || frame.area().height < 30 {
-        render_compact(frame, shell[2], app);
+        render_compact(frame, body, app);
     } else if app.layout == LayoutKind::Beacon {
-        render_beacon_body(frame, shell[2], app);
+        render_beacon_body(frame, body, app);
     } else {
-        render_dense_body(frame, shell[2], app);
+        render_dense_body(frame, body, app);
     }
     render_status(frame, shell[3], app);
     render_footer(frame, shell[4]);
@@ -1425,8 +1427,13 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
 /// Beacon ops screen: one hero opportunity, the live queue, and an action
 /// rail. Everything the accept/ignore loop needs, no view switching.
 fn render_ops(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    let hero_height = if app.alert_visible && !app.visible_available_jobs().is_empty() {
+        6
+    } else {
+        3
+    };
     let rows = Layout::vertical([
-        Constraint::Length(6),
+        Constraint::Length(hero_height),
         Constraint::Min(8),
         Constraint::Length(2),
     ])
@@ -1440,7 +1447,11 @@ fn render_ops(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
 
 fn render_hero(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let available = app.visible_available_jobs();
-    let Some(job) = available.first().copied() else {
+    let hero = app
+        .alert_visible
+        .then(|| available.first().copied())
+        .flatten();
+    let Some(job) = hero else {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 format!(
@@ -2609,17 +2620,24 @@ fn value_style() -> Style {
 }
 
 /// Time-left with urgency encoding: expired/imminent (<5m) is red, tight
-/// (<15m) is orange, everything else stays quiet. String-sourced times
-/// without a numeric reading render quiet.
+/// (<15m) is orange, everything else stays quiet. Falls back to parsing the
+/// `MM:SS` display text when no numeric reading is attached.
 fn time_left_span(job: &Job) -> Span<'static> {
     let text = job.display_time_left();
-    let style = match job.accepted_seconds_left {
-        Some(seconds) if seconds <= 0 || job.accepted_expired == Some(true) => {
-            Style::default().fg(RED).add_modifier(Modifier::BOLD)
+    let expired = job.accepted_expired == Some(true) || text == "expired";
+    let seconds = job.accepted_seconds_left.or_else(|| {
+        let (minutes, rest) = text.split_once(':')?;
+        Some(minutes.parse::<i64>().ok()? * 60 + rest.parse::<i64>().ok()?)
+    });
+    let style = if expired {
+        Style::default().fg(RED).add_modifier(Modifier::BOLD)
+    } else {
+        match seconds {
+            Some(s) if s <= 0 => Style::default().fg(RED).add_modifier(Modifier::BOLD),
+            Some(s) if s < 300 => Style::default().fg(RED).add_modifier(Modifier::BOLD),
+            Some(s) if s < 900 => Style::default().fg(ORANGE),
+            _ => Style::default().fg(MUTED),
         }
-        Some(seconds) if seconds < 300 => Style::default().fg(RED).add_modifier(Modifier::BOLD),
-        Some(seconds) if seconds < 900 => Style::default().fg(ORANGE),
-        _ => Style::default().fg(MUTED),
     };
     Span::styled(text, style)
 }
@@ -3156,6 +3174,7 @@ mod tests {
     fn time_left_encodes_urgency() {
         let mut job = available_job("1");
         job.accepted_seconds_left = None;
+        job.accepted_time_left = None;
         assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
         job.accepted_seconds_left = Some(2400);
         assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
@@ -3165,6 +3184,50 @@ mod tests {
         assert_eq!(time_left_span(&job).style.fg, Some(RED));
         job.accepted_expired = Some(true);
         assert_eq!(time_left_span(&job).style.fg, Some(RED));
+    }
+
+    #[test]
+    fn time_left_falls_back_to_display_text() {
+        let mut job = available_job("1");
+        job.accepted_seconds_left = None;
+        job.accepted_time_left = Some("27:44".into());
+        assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
+        job.accepted_time_left = Some("04:03".into());
+        assert_eq!(time_left_span(&job).style.fg, Some(RED));
+        job.accepted_time_left = Some("expired".into());
+        assert_eq!(time_left_span(&job).style.fg, Some(RED));
+    }
+
+    #[test]
+    fn beacon_hero_collapses_when_alert_dismissed() {
+        let backend = TestBackend::new(150, 44);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = App::with_layout(View::Overview, LayoutKind::Beacon);
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(before.contains("BEST OPPORTUNITY"));
+
+        app.alert_visible = false;
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!after.contains("BEST OPPORTUNITY"));
+        assert!(after.contains("QUEUE"));
     }
 
     #[test]
