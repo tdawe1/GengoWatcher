@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use crate::{
-    App, View, render,
+    App, LayoutKind, View, render,
     theme::{SVG_BACKGROUND, SVG_FOREGROUND},
 };
 
@@ -26,17 +26,27 @@ const CELL_HEIGHT: u32 = 20;
 /// Render all workspaces at the same 150 × 44 terminal size as the Textual
 /// reference images.
 pub fn render_previews(output_dir: &Path) -> io::Result<Vec<PathBuf>> {
+    render_previews_for(output_dir, LayoutKind::Classic)
+}
+
+/// Render all workspaces for one layout; files are prefixed with the layout
+/// slug so design alternatives can be compared side by side.
+pub fn render_previews_for(output_dir: &Path, layout: LayoutKind) -> io::Result<Vec<PathBuf>> {
     fs::create_dir_all(output_dir)?;
     let mut paths = Vec::with_capacity(View::ALL.len());
     for view in View::ALL {
         let backend = TestBackend::new(COLUMNS, ROWS);
         let mut terminal = Terminal::new(backend).expect("TestBackend is infallible");
-        let mut app = App::new(view);
+        let mut app = App::with_layout(view, layout);
         terminal
             .draw(|frame| render(frame, &mut app))
             .expect("TestBackend is infallible");
         let svg = buffer_to_svg(terminal.backend().buffer());
-        let path = output_dir.join(format!("garden-ratatui-{}.svg", view.slug()));
+        let path = output_dir.join(format!(
+            "garden-ratatui-{}-{}.svg",
+            layout.slug(),
+            view.slug()
+        ));
         fs::write(&path, svg)?;
         paths.push(path);
     }

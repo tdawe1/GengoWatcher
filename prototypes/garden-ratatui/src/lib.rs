@@ -105,6 +105,38 @@ impl View {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutKind {
+    /// Sidebar navigation with per-view dashboards (original chrome).
+    #[default]
+    Classic,
+    /// Alert instrument: top tabs, hero opportunity card, queue, action rail.
+    Beacon,
+    /// Dense dashboard: top tabs, single-row tables, content-sized panels.
+    Dense,
+}
+
+impl LayoutKind {
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Beacon => "beacon",
+            Self::Dense => "dense",
+        }
+    }
+
+    #[must_use]
+    pub fn from_slug(value: &str) -> Option<Self> {
+        match value {
+            "classic" => Some(Self::Classic),
+            "beacon" => Some(Self::Beacon),
+            "dense" => Some(Self::Dense),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiAction {
     Refresh,
@@ -138,6 +170,7 @@ enum Confirmation {
 #[derive(Debug)]
 pub struct App {
     pub view: View,
+    pub layout: LayoutKind,
     pub should_quit: bool,
     pub paused: bool,
     pub alert_visible: bool,
@@ -180,8 +213,22 @@ impl App {
     }
 
     #[must_use]
+    pub fn with_layout(view: View, layout: LayoutKind) -> Self {
+        let mut app = Self::new(view);
+        app.layout = layout;
+        app
+    }
+
+    #[must_use]
     pub fn live(view: View) -> Self {
         Self::with_data(view, DashboardData::default(), ConnectionState::Connecting)
+    }
+
+    #[must_use]
+    pub fn live_with_layout(view: View, layout: LayoutKind) -> Self {
+        let mut app = Self::live(view);
+        app.layout = layout;
+        app
     }
 
     fn with_data(view: View, data: DashboardData, connection: ConnectionState) -> Self {
@@ -201,6 +248,7 @@ impl App {
         };
         Self {
             view,
+            layout: LayoutKind::Classic,
             should_quit: false,
             paused,
             alert_visible: true,
@@ -933,6 +981,16 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
         Block::default().style(Style::default().bg(GROUND).fg(INK)),
         frame.area(),
     );
+    match app.layout {
+        LayoutKind::Classic => render_classic(frame, app),
+        LayoutKind::Beacon | LayoutKind::Dense => render_tabbed(frame, app),
+    }
+    if app.confirmation.is_some() {
+        render_confirmation(frame, app);
+    }
+}
+
+fn render_classic(frame: &mut Frame<'_>, app: &mut App) {
     let shell = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(1),
@@ -953,9 +1011,88 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
     }
     render_status(frame, shell[2], app);
     render_footer(frame, shell[3]);
-    if app.confirmation.is_some() {
-        render_confirmation(frame, app);
+}
+
+/// Tabbed chrome shared by the Beacon and Dense layouts: header, one-row
+/// tab bar with live session totals, body, status, footer.
+fn render_tabbed(frame: &mut Frame<'_>, app: &mut App) {
+    let shell = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(2),
+        Constraint::Length(1),
+    ])
+    .split(frame.area());
+    render_header(frame, shell[0], app);
+    render_tabbar(frame, shell[1], app);
+    if frame.area().width < 110 || frame.area().height < 30 {
+        render_compact(frame, shell[2], app);
+    } else if app.layout == LayoutKind::Beacon {
+        render_beacon_body(frame, shell[2], app);
+    } else {
+        render_dense_body(frame, shell[2], app);
     }
+    render_status(frame, shell[3], app);
+    render_footer(frame, shell[4]);
+}
+
+fn render_tabbar(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    frame.render_widget(Block::default().style(Style::default().bg(NAV_BG)), area);
+    let mut spans = Vec::new();
+    let mut hitboxes: Vec<(Rect, View)> = Vec::new();
+    let mut cursor = area.x.saturating_add(1);
+    for (index, view) in View::ALL.into_iter().enumerate() {
+        let selected = app.view == view;
+        let text = format!(" {} {} ", index + 1, view.label());
+        let width = text.chars().count() as u16;
+        if cursor + width > area.x + area.width.saturating_sub(42) {
+            break;
+        }
+        let style = if selected {
+            selection_style()
+        } else {
+            Style::default().fg(INK)
+        };
+        let mut tab_spans = vec![Span::styled(
+            format!(" {} ", index + 1),
+            Style::default().fg(if selected { INK } else { MUTED }),
+        )];
+        if selected {
+            tab_spans[0].style = tab_spans[0].style.bg(SELECTION);
+        }
+        tab_spans.push(Span::styled(format!("{} ", view.label()), style));
+        spans.extend(tab_spans);
+        spans.push(Span::raw(" "));
+        hitboxes.push((Rect::new(cursor, area.y, width.saturating_add(1), 1), view));
+        cursor += width + 1;
+    }
+    app.nav_hitboxes.clear();
+    app.nav_hitboxes.extend(hitboxes);
+    let used = cursor.saturating_sub(area.x);
+    let session_full = format!(
+        "${:.2} · {} accepted · {} seen",
+        app.data.status.session_stats.total_value,
+        app.data.accepted_count(),
+        app.data.status.session_stats.new_entries,
+    );
+    let session_room = area.width.saturating_sub(used).saturating_sub(2).max(8) as usize;
+    let session = truncate(&session_full, session_room);
+    let right = Line::from(Span::styled(session, Style::default().fg(MUTED)));
+    let right_width = right.width() as u16 + 1;
+    let tabs_width = area.width.saturating_sub(right_width).max(used);
+    let columns =
+        Layout::horizontal([Constraint::Length(tabs_width), Constraint::Min(1)]).split(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(NAV_BG)),
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new(right)
+            .style(Style::default().bg(NAV_BG))
+            .alignment(Alignment::Right),
+        columns[1],
+    );
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -1164,6 +1301,38 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     }
 }
 
+/// View content without the classic masthead, for tabbed layouts where the
+/// tab bar already names the active view.
+fn render_view_body(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    match app.view {
+        View::Overview => render_overview(frame, area, app),
+        View::Jobs => render_jobs(frame, area, app),
+        View::Work => render_work(frame, area, app),
+        View::History => render_history(frame, area, app),
+        View::Analytics => render_analytics(frame, area, app),
+        View::System => render_system(frame, area, app),
+        View::Translate => render_translate(frame, area, app),
+    }
+}
+
+fn render_beacon_body(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    match app.view {
+        View::Overview => render_ops(frame, area, app),
+        _ => render_view_body(frame, area, app),
+    }
+}
+
+fn render_dense_body(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    render_view_body(frame, area, app)
+}
+
+impl App {
+    /// Tabbed layouts use single-row tables to double visible density.
+    const fn compact_rows(&self) -> bool {
+        !matches!(self.layout, LayoutKind::Classic)
+    }
+}
+
 fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let alert_height = if app.alert_visible { 5 } else { 3 };
     let rows = Layout::vertical([
@@ -1232,6 +1401,247 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
     render_work_summary(frame, inset_left(side[0]), app);
     render_system_summary(frame, inset_left(side[1]), app);
     render_metric_strip(frame, main[1], app);
+}
+
+/// Beacon ops screen: one hero opportunity, the live queue, and an action
+/// rail. Everything the accept/ignore loop needs, no view switching.
+fn render_ops(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    let rows = Layout::vertical([
+        Constraint::Length(6),
+        Constraint::Min(8),
+        Constraint::Length(2),
+    ])
+    .split(area);
+    render_hero(frame, rows[0], app);
+    let main = Layout::horizontal([Constraint::Min(60), Constraint::Length(40)]).split(rows[1]);
+    render_queue(frame, inset_right(main[0]), app);
+    render_rail(frame, inset_left(main[1]), app);
+    render_ops_strip(frame, rows[2], app);
+}
+
+fn render_hero(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let available = app.visible_available_jobs();
+    let Some(job) = available.first().copied() else {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(
+                    "○ Watching · {} jobs seen · next check {}",
+                    app.data.jobs.len(),
+                    format_duration(seconds_until(
+                        app.data.status.next_check_time,
+                        app.data.fetched_at
+                    )),
+                ),
+                Style::default().fg(MUTED),
+            ))
+            .block(panel_block()),
+            area,
+        );
+        return;
+    };
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ORANGE))
+            .style(Style::default().bg(ORANGE_BG)),
+        area,
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    "▲ BEST OPPORTUNITY  ",
+                    Style::default().fg(ORANGE).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{}  ·  {}", job.display_value(), job.display_title()),
+                    Style::default().fg(INK).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!(
+                        "Order {}  ·  {}  ·  {} left   ",
+                        job.id,
+                        job.source,
+                        job.display_time_left()
+                    ),
+                    Style::default().fg(MUTED),
+                ),
+                button_solid("a", "ACCEPT"),
+                Span::raw(" "),
+                button_danger("i", "IGNORE"),
+            ]),
+        ])
+        .block(Block::default().style(Style::default().bg(ORANGE_BG)))
+        .alignment(Alignment::Left),
+        area.inner(Margin::new(2, 1)),
+    );
+}
+
+fn render_queue(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    let jobs = app.visible_available_jobs();
+    let header = Row::new(["ORDER", "JOB", "VALUE", "TIME", "SRC"]).style(table_header_style());
+    let rows = jobs
+        .iter()
+        .map(|job| {
+            Row::new([
+                Cell::from(job.id.clone()),
+                Cell::from(truncate(job.display_title(), 34)),
+                Cell::from(job.display_value()),
+                Cell::from(job.display_time_left()),
+                Cell::from(job.source.clone()),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(8),
+            Constraint::Min(20),
+            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Length(10),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(selection_style())
+    .highlight_symbol("▶ ")
+    .block(counted_panel("QUEUE", jobs.len()))
+    .column_spacing(1);
+    let mut state = TableState::default().with_selected(Some(app.selected_job));
+    frame.render_stateful_widget(table, area, &mut state);
+}
+
+fn render_rail(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let parts = Layout::vertical([
+        Constraint::Min(10),
+        Constraint::Length(6),
+        Constraint::Min(5),
+    ])
+    .split(area);
+    render_act_card(frame, parts[0], app);
+    render_stages_card(frame, parts[1], app);
+    render_health_card(frame, parts[2], app);
+}
+
+fn render_act_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let jobs = app.visible_available_jobs();
+    let body = jobs.get(app.selected_job).copied().map_or_else(
+        || Text::from(Span::styled("No job selected", Style::default().fg(MUTED))),
+        |job| {
+            Text::from(vec![
+                Line::from(vec![
+                    Span::styled(
+                        format!("{}  ", job.display_value()),
+                        Style::default().fg(LEAF).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        truncate(job.display_title(), 26),
+                        Style::default().fg(INK).add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    format!(
+                        "Order {} · {} · {} left",
+                        job.id,
+                        job.source,
+                        job.display_time_left()
+                    ),
+                    Style::default().fg(MUTED),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    button_solid("a", "ACCEPT"),
+                    Span::raw(" "),
+                    button_danger("i", "IGNORE"),
+                ]),
+            ])
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(body)
+            .block(titled_panel("ACT"))
+            .style(Style::default().fg(INK).bg(PAPER))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn render_stages_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let active = app.data.active_jobs();
+    let count = |stage| {
+        active
+            .iter()
+            .filter(|job| job.work_stage() == stage)
+            .count()
+    };
+    let peak = active.len().max(1);
+    let row = |label: &str, stage, accent: ratatui::style::Color| {
+        let total = count(stage);
+        Line::from(vec![
+            Span::styled(format!("{label:<10}"), Style::default().fg(MUTED)),
+            Span::styled(
+                format!("{total:>2} "),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(bar(total, peak, 8), Style::default().fg(accent)),
+        ])
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            row("READY", WorkStage::Ready, LEAF),
+            row("ACTIVE", WorkStage::InProgress, ORANGE),
+            row("REVIEW", WorkStage::Review, LAVENDER),
+        ])
+        .block(counted_panel("WORK", active.len()))
+        .style(Style::default().fg(INK).bg(PAPER)),
+        area,
+    );
+}
+
+fn render_health_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let mut lines = health_summary_lines(app);
+    lines.truncate(3);
+    lines.push(Line::from(Span::styled(
+        format!(
+            "${:.2} session · {} accepted",
+            app.data.status.session_stats.total_value,
+            app.data.accepted_count()
+        ),
+        Style::default().fg(MUTED),
+    )));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(titled_panel("HEALTH"))
+            .style(Style::default().bg(PAPER)),
+        area,
+    );
+}
+
+fn render_ops_strip(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let total = app.data.jobs.len();
+    let accepted = app.data.accepted_count();
+    let accept_rate = if total == 0 {
+        0.0
+    } else {
+        accepted as f64 / total as f64 * 100.0
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("VALUE ", Style::default().fg(MUTED)),
+            Span::styled(
+                format!("${:.2}  ", app.data.status.session_stats.total_value),
+                value_style(),
+            ),
+            Span::styled("ACCEPT ", Style::default().fg(MUTED)),
+            Span::styled(format!("{accept_rate:.1}%  "), value_style()),
+            Span::styled(source_sparkline(&app.data), Style::default().fg(BLUE)),
+        ]))
+        .style(Style::default().bg(GROUND)),
+        area,
+    );
 }
 
 fn render_available_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -1365,10 +1775,11 @@ fn render_system_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_jobs(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
+    let row_height = if app.compact_rows() { 1 } else { 2 };
     let columns = Layout::horizontal([Constraint::Min(62), Constraint::Length(36)]).split(area);
     let header = Row::new(["ORDER", "JOB", "VALUE", "SOURCE", "STATUS", "TIME"])
         .style(table_header_style())
-        .height(2);
+        .height(row_height);
     let jobs = app.visible_available_jobs();
     let selected = jobs.get(app.selected_job).copied().cloned();
     let rows = jobs
@@ -1382,7 +1793,7 @@ fn render_jobs(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                 Cell::from(job.display_status().to_owned()),
                 Cell::from(job.display_time_left()),
             ])
-            .height(2)
+            .height(row_height)
         })
         .collect::<Vec<_>>();
     let table = Table::new(
@@ -1566,6 +1977,7 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     );
     let header =
         Row::new(["ORDER", "JOB", "VALUE", "SOURCE", "STATUS", "SEEN"]).style(table_header_style());
+    let row_height = if app.compact_rows() { 1 } else { 2 };
     let data = app.data.jobs.iter().map(|job| {
         Row::new([
             job.id.clone(),
@@ -1575,7 +1987,7 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
             job.display_status().to_owned(),
             format_age(app.data.fetched_at - job.timestamp),
         ])
-        .height(2)
+        .height(row_height)
     });
     let table = Table::new(
         data,
@@ -1797,6 +2209,7 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     );
     let columns = Layout::horizontal([Constraint::Min(62), Constraint::Length(36)]).split(rows[3]);
     let header = Row::new(["RUN ID", "KIND", "CHARS", "STATUS"]).style(table_header_style());
+    let row_height = if app.compact_rows() { 1 } else { 2 };
     let table_rows = app
         .translate_runs
         .iter()
@@ -1807,7 +2220,7 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                 Cell::from(run.char_count.to_string()),
                 Cell::from(run.display_status().to_owned()),
             ])
-            .height(2)
+            .height(row_height)
         })
         .collect::<Vec<_>>();
     let table = Table::new(
@@ -2619,6 +3032,72 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_layout_renders_every_workspace() {
+        for layout in [LayoutKind::Classic, LayoutKind::Beacon, LayoutKind::Dense] {
+            for view in View::ALL {
+                let backend = TestBackend::new(150, 44);
+                let mut terminal = Terminal::new(backend).expect("test terminal");
+                let mut app = App::with_layout(view, layout);
+                terminal
+                    .draw(|frame| render(frame, &mut app))
+                    .expect("render succeeds");
+                let content = terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>();
+                assert!(content.contains(view.label()));
+            }
+        }
+    }
+
+    #[test]
+    fn beacon_ops_screen_shows_hero_queue_and_rail() {
+        let backend = TestBackend::new(150, 44);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = App::with_layout(View::Overview, LayoutKind::Beacon);
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("BEST OPPORTUNITY"));
+        assert!(content.contains("QUEUE"));
+        assert!(content.contains("ACT"));
+        assert!(content.contains("HEALTH"));
+        assert!(!content.contains("WORKSPACES"));
+    }
+
+    #[test]
+    fn tabbed_layouts_replace_sidebar_with_tab_bar() {
+        for layout in [LayoutKind::Beacon, LayoutKind::Dense] {
+            let backend = TestBackend::new(150, 44);
+            let mut terminal = Terminal::new(backend).expect("test terminal");
+            let mut app = App::with_layout(View::Jobs, layout);
+            terminal
+                .draw(|frame| render(frame, &mut app))
+                .expect("render succeeds");
+            assert_eq!(app.nav_hitboxes.len(), View::ALL.len());
+            assert!(app.nav_hitboxes.iter().any(|(_, view)| *view == View::Jobs));
+        }
+    }
+
+    #[test]
+    fn layout_slugs_round_trip() {
+        for layout in [LayoutKind::Classic, LayoutKind::Beacon, LayoutKind::Dense] {
+            assert_eq!(LayoutKind::from_slug(layout.slug()), Some(layout));
+        }
+        assert_eq!(LayoutKind::from_slug("nope"), None);
     }
 
     #[test]

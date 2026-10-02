@@ -10,18 +10,34 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use gengowatcher_tui::{
-    App, ConnectionState, View,
+    App, ConnectionState, LayoutKind, View,
     api::ApiClient,
     live::{LiveWorker, WorkerEvent},
-    preview::render_previews,
+    preview::{render_previews, render_previews_for},
     render,
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 fn main() -> io::Result<()> {
     let mode = parse_mode()?;
-    if let Mode::Render(output_dir) = mode {
-        for path in render_previews(&output_dir)? {
+    if let Mode::Render(output_dir, render_layout) = mode {
+        let paths = match render_layout.as_deref() {
+            Some("all") => [LayoutKind::Classic, LayoutKind::Beacon, LayoutKind::Dense]
+                .into_iter()
+                .flat_map(|layout| render_previews_for(&output_dir, layout).unwrap_or_default())
+                .collect(),
+            Some(slug) => {
+                let layout = LayoutKind::from_slug(slug).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("unknown layout {slug:?}; use classic, beacon, dense, or all"),
+                    )
+                })?;
+                render_previews_for(&output_dir, layout)?
+            }
+            None => render_previews(&output_dir)?,
+        };
+        for path in paths {
             println!("{}", path.display());
         }
         return Ok(());
@@ -30,7 +46,7 @@ fn main() -> io::Result<()> {
         unreachable!()
     };
     let (app, worker) = if options.demo {
-        (App::new(options.view), None)
+        (App::with_layout(options.view, options.layout), None)
     } else {
         let token = std::env::var("GENGOWATCHER_API_TOKEN").map_err(|_| {
             io::Error::new(
@@ -41,7 +57,7 @@ fn main() -> io::Result<()> {
         let client = ApiClient::new(&options.api_url, &token)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         (
-            App::live(options.view),
+            App::live_with_layout(options.view, options.layout),
             Some(LiveWorker::start(client, options.poll_interval)),
         )
     };
@@ -54,11 +70,12 @@ fn main() -> io::Result<()> {
 
 enum Mode {
     Interactive(InteractiveOptions),
-    Render(PathBuf),
+    Render(PathBuf, Option<String>),
 }
 
 struct InteractiveOptions {
     view: View,
+    layout: LayoutKind,
     demo: bool,
     api_url: String,
     poll_interval: Duration,
@@ -67,6 +84,8 @@ struct InteractiveOptions {
 fn parse_mode() -> io::Result<Mode> {
     let mut args = std::env::args().skip(1);
     let mut view = View::Overview;
+    let mut layout = LayoutKind::Classic;
+    let mut layout_raw: Option<String> = None;
     let mut demo = false;
     let mut api_url =
         std::env::var("GENGOWATCHER_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".into());
@@ -81,6 +100,15 @@ fn parse_mode() -> io::Result<Mode> {
                 view = View::from_slug(&value).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("unknown view {value:?}; use overview, jobs, work, history, analytics, system, or translate")))?;
             }
             "--demo" => demo = true,
+            "--layout" => {
+                let value = args.next().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "--layout requires a value")
+                })?;
+                layout_raw = Some(value.clone());
+                // "all" is only meaningful for --render; interactive use
+                // falls back to classic and the render path re-parses it.
+                layout = LayoutKind::from_slug(&value).unwrap_or(LayoutKind::Classic);
+            }
             "--api-url" => {
                 api_url = args.next().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "--api-url requires a value")
@@ -112,7 +140,7 @@ fn parse_mode() -> io::Result<Mode> {
             }
             "-h" | "--help" => {
                 println!(
-                    "GengoWatcher Ratatui TUI\n\nUsage:\n  cargo run -- [--view VIEW] [--api-url URL] [--poll-ms 2000]\n  cargo run -- --demo [--view VIEW]\n  cargo run -- --render OUTPUT_DIR\n\nLive mode reads the bearer token from GENGOWATCHER_API_TOKEN.\nViews: overview, jobs, work, history, analytics, system, translate"
+                    "GengoWatcher Ratatui TUI\n\nUsage:\n  cargo run -- [--view VIEW] [--layout LAYOUT] [--api-url URL] [--poll-ms 2000]\n  cargo run -- --demo [--view VIEW] [--layout LAYOUT]\n  cargo run -- --render OUTPUT_DIR [--layout LAYOUT | --layout all]\n\nLive mode reads the bearer token from GENGOWATCHER_API_TOKEN.\nViews: overview, jobs, work, history, analytics, system, translate\nLayouts: classic, beacon, dense"
                 );
                 std::process::exit(0);
             }
@@ -125,10 +153,19 @@ fn parse_mode() -> io::Result<Mode> {
         }
     }
     if let Some(output_dir) = render_dir {
-        return Ok(Mode::Render(output_dir));
+        return Ok(Mode::Render(output_dir, layout_raw));
+    }
+    if let Some(raw) = layout_raw {
+        layout = LayoutKind::from_slug(&raw).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown layout {raw:?}; use classic, beacon, or dense"),
+            )
+        })?;
     }
     Ok(Mode::Interactive(InteractiveOptions {
         view,
+        layout,
         demo,
         api_url,
         poll_interval,
