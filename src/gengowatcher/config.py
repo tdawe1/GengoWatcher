@@ -6,8 +6,9 @@ import sys
 import threading
 import tomllib
 from configparser import ConfigParser
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 try:
     import fcntl
@@ -296,13 +297,71 @@ class AppConfig:
         self._lock = threading.Lock()
         self.config: Dict[str, Dict[str, Any]] = {}
 
-        if not Path(self.CONFIG_FILE).is_file():
-            if Path(self.LEGACY_CONFIG_FILE).is_file():
-                self._migrate_legacy_config()
-            else:
-                self._create_default_config()
+        # Hold the cross-process sidecar lock across the existence check
+        # and initial creation so two processes cannot collide on the
+        # fixed config.toml.tmp path.
+        with self._lock:
+            with self._config_file_lock():
+                if not Path(self.CONFIG_FILE).is_file():
+                    if Path(self.LEGACY_CONFIG_FILE).is_file():
+                        self._migrate_legacy_config()
+                    else:
+                        self._create_default_config()
 
         self.load_config()
+
+    @staticmethod
+    def _fsync_parent_directory(dir_path: Path) -> None:
+        """Fsync a directory entry after an atomic replace (POSIX only)."""
+        if sys.platform == "win32":
+            return
+        o_directory = getattr(os, "O_DIRECTORY", None)
+        if o_directory is None:
+            return
+        try:
+            dir_fd = os.open(dir_path, o_directory)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(dir_fd)
+
+    @classmethod
+    @contextmanager
+    def _config_file_lock(cls) -> Iterator[None]:
+        """Cross-process exclusive lock guarding config.toml creation/replace."""
+        config_path = Path(cls.CONFIG_FILE)
+        lock_path = config_path.with_suffix(f"{config_path.suffix}.lock")
+        lock_file = None
+        try:
+            lock_file = open(lock_path, "a+", encoding="utf-8")
+            if fcntl is not None:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                except OSError:
+                    pass
+            elif msvcrt is not None and sys.platform == "win32":
+                try:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                except OSError:
+                    pass
+            yield
+        finally:
+            if lock_file is not None:
+                if fcntl is not None:
+                    try:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                elif msvcrt is not None and sys.platform == "win32":
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    except OSError:
+                        pass
+                lock_file.close()
 
     @classmethod
     def _coerce_legacy_value(cls, value: str, default: Any) -> Any:
@@ -361,6 +420,7 @@ class AppConfig:
             f.flush()
             os.fsync(f.fileno())
         tmp_path.replace(config_path)
+        self._fsync_parent_directory(config_path.parent)
         try:
             os.chmod(self.CONFIG_FILE, 0o600)
         except OSError:
@@ -426,6 +486,7 @@ class AppConfig:
             f.flush()
             os.fsync(f.fileno())
         tmp_path.replace(config_path)
+        self._fsync_parent_directory(config_path.parent)
         try:
             os.chmod(self.CONFIG_FILE, 0o600)
         except OSError:
@@ -501,51 +562,26 @@ class AppConfig:
 
     def save_config(self):
         with self._lock:
-            lock_file = None
             config_path = Path(self.CONFIG_FILE)
-            lock_path = config_path.with_suffix(f"{config_path.suffix}.lock")
-            try:
-                # Use a sidecar lock file so Windows can atomically replace CONFIG_FILE.
-                lock_file = open(lock_path, "a+", encoding="utf-8")
-                if fcntl is not None:
-                    try:
-                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                    except OSError:
-                        pass
-                elif msvcrt is not None and sys.platform == "win32":
-                    try:
-                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                    except OSError:
-                        pass
-
-                tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
-                self._write_config_unlocked(tmp_path)
-                if config_path.exists():
-                    try:
-                        shutil.copymode(config_path, tmp_path)
-                    except OSError:
-                        pass
-                tmp_path.replace(config_path)
+            # Use a sidecar lock file so Windows can atomically replace CONFIG_FILE.
+            with self._config_file_lock():
                 try:
-                    os.chmod(self.CONFIG_FILE, 0o600)
-                except OSError:
-                    pass
-            except IOError as e:
-                print(f"Error saving config: {e}")
-                raise
-            finally:
-                if lock_file is not None:
-                    if fcntl is not None:
+                    tmp_path = config_path.with_suffix(f"{config_path.suffix}.tmp")
+                    self._write_config_unlocked(tmp_path)
+                    if config_path.exists():
                         try:
-                            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                            shutil.copymode(config_path, tmp_path)
                         except OSError:
                             pass
-                    elif msvcrt is not None and sys.platform == "win32":
-                        try:
-                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-                        except OSError:
-                            pass
-                    lock_file.close()
+                    tmp_path.replace(config_path)
+                    self._fsync_parent_directory(config_path.parent)
+                    try:
+                        os.chmod(self.CONFIG_FILE, 0o600)
+                    except OSError:
+                        pass
+                except IOError as e:
+                    print(f"Error saving config: {e}")
+                    raise
 
     def _write_config_unlocked(self, path: Path | None = None) -> None:
         """Write the current in-memory config to TOML while the caller holds the lock."""

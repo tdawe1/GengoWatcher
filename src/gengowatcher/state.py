@@ -30,6 +30,7 @@ class AppState:
     ):
         self.logger = logger
         self._lock = threading.RLock()  # Reentrant lock for better safety
+        self._persist_lock = threading.Lock()  # Serializes save_state end-to-end
         self.state_file_path = pathlib.Path(state_file_path or self.STATE_FILE)
 
         self.last_seen_rss_link = None  # New variable for RSS tracking
@@ -179,48 +180,53 @@ class AppState:
     def save_state(self):
         """Save state atomically - snapshot under lock, write outside it."""
         try:
-            with self._lock:
-                with self._jobs_lock:
-                    state_data = {
-                        "last_seen_rss_link": self.last_seen_rss_link,
-                        "last_seen_link": self.last_seen_link,
-                        "total_new_entries_found": self.total_new_entries_found,
-                        "sparkline_data": self._sparkline_data.copy(),
-                        "seen_job_ids": list(self.seen_job_ids),
-                        "jobs": [
-                            self._redact_job_for_persistence(job) for job in self._jobs
-                        ],
-                    }
+            # Serialize concurrent writers end-to-end so an older snapshot
+            # cannot replace a newer state file out of order.
+            with self._persist_lock:
+                with self._lock:
+                    with self._jobs_lock:
+                        state_data = {
+                            "last_seen_rss_link": self.last_seen_rss_link,
+                            "last_seen_link": self.last_seen_link,
+                            "total_new_entries_found": self.total_new_entries_found,
+                            "sparkline_data": self._sparkline_data.copy(),
+                            "seen_job_ids": list(self.seen_job_ids),
+                            "jobs": [
+                                self._redact_job_for_persistence(job)
+                                for job in self._jobs
+                            ],
+                        }
 
-            # Write outside the locks so slow fs I/O never blocks readers.
-            dir_path = self.state_file_path.parent
-            dir_path.mkdir(parents=True, exist_ok=True)
-            fd, temp_path = tempfile.mkstemp(
-                suffix=".tmp", prefix="state_", dir=dir_path
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(state_data, f, indent=4)
-                    f.flush()
-                    os.fsync(f.fileno())
-                # Atomic rename (on POSIX systems)
-                os.replace(temp_path, self.state_file_path)
+                # Write outside the data locks so slow fs I/O never blocks
+                # readers; concurrent writers are still ordered by _persist_lock.
+                dir_path = self.state_file_path.parent
+                dir_path.mkdir(parents=True, exist_ok=True)
+                fd, temp_path = tempfile.mkstemp(
+                    suffix=".tmp", prefix="state_", dir=dir_path
+                )
                 try:
-                    dir_fd = os.open(dir_path, os.O_DIRECTORY)
-                except OSError:
-                    dir_fd = None
-                else:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(state_data, f, indent=4)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    # Atomic rename (on POSIX systems)
+                    os.replace(temp_path, self.state_file_path)
                     try:
-                        os.fsync(dir_fd)
-                    finally:
-                        os.close(dir_fd)
-            except Exception:
-                # Clean up temp file on error
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
-                raise
+                        dir_fd = os.open(dir_path, os.O_DIRECTORY)
+                    except OSError:
+                        dir_fd = None
+                    else:
+                        try:
+                            os.fsync(dir_fd)
+                        finally:
+                            os.close(dir_fd)
+                except Exception:
+                    # Clean up temp file on error
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+                    raise
         except OSError as e:
             self.logger.exception(f"Error saving state to {self.STATE_FILE}: {e}")
 

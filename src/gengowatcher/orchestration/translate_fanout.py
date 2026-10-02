@@ -612,8 +612,17 @@ class TranslateFanoutService:
                 f.flush()
                 try:
                     os.fsync(f.fileno())
-                except OSError:
-                    pass
+                except OSError as fsync_exc:
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    self.logger.warning(
+                        "Failed to persist translate run %s: fsync failed: %s",
+                        record.run_id,
+                        fsync_exc,
+                    )
+                    return
             tmp_path.replace(target)
         except (OSError, ValueError) as exc:
             self.logger.warning(
