@@ -934,7 +934,7 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
         frame.area(),
     );
     let shell = Layout::vertical([
-        Constraint::Length(4),
+        Constraint::Length(3),
         Constraint::Min(1),
         Constraint::Length(2),
         Constraint::Length(1),
@@ -962,19 +962,6 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let columns = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(area.inner(Margin::new(2, 0)));
     frame.render_widget(Block::default().style(Style::default().bg(CANOPY)), area);
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(
-                "GENGOWATCHER",
-                Style::default().fg(INK).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "translation operations",
-                Style::default().fg(MUTED),
-            )),
-        ]),
-        columns[0],
-    );
     let (state, state_color) = match &app.connection {
         ConnectionState::Demo => ("● demo data", LAVENDER),
         ConnectionState::Connecting => ("● connecting to API", ORANGE),
@@ -986,6 +973,26 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let next_check = seconds_until(app.data.status.next_check_time, app.data.fetched_at);
     frame.render_widget(
         Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    "GENGOWATCHER",
+                    Style::default().fg(INK).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  translation operations", Style::default().fg(MUTED)),
+            ]),
+            Line::from(Span::styled(
+                format!(
+                    "{} jobs loaded · next check {}",
+                    app.data.jobs.len(),
+                    format_duration(next_check)
+                ),
+                Style::default().fg(MUTED),
+            )),
+        ]),
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
             Line::from(Span::styled(
                 state,
                 Style::default()
@@ -994,9 +1001,9 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )),
             Line::from(Span::styled(
                 format!(
-                    "{} jobs loaded · next check {}",
-                    app.data.jobs.len(),
-                    format_duration(next_check)
+                    "{} · {}",
+                    app.view.label(),
+                    connection_label(&app.connection)
                 ),
                 Style::default().fg(MUTED),
             )),
@@ -1035,18 +1042,25 @@ fn render_nav(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     app.nav_hitboxes.clear();
     for (index, view) in View::ALL.into_iter().enumerate() {
         let selected = app.view == view;
-        let style = if selected {
-            Style::default()
-                .fg(GROUND)
-                .bg(LAVENDER)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(INK).bg(NAV_BG)
-        };
+        let row_bg = if selected { SELECTION } else { NAV_BG };
+        let marker = if selected { "▶" } else { " " };
         frame.render_widget(
-            Paragraph::new(format!(" {}  {}", index + 1, view.label()))
-                .style(style)
-                .alignment(Alignment::Left),
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!("{marker} {}  ", index + 1),
+                    Style::default().fg(if selected { INK } else { MUTED }),
+                ),
+                Span::styled(
+                    view.label().to_owned(),
+                    if selected {
+                        selection_style()
+                    } else {
+                        Style::default().fg(INK)
+                    },
+                ),
+            ]))
+            .style(Style::default().bg(row_bg))
+            .alignment(Alignment::Left),
             rows[index + 1],
         );
         app.nav_hitboxes.push((rows[index + 1], view));
@@ -1062,22 +1076,21 @@ fn render_nav(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                     app.data.status.session_stats.new_entries.to_string(),
                     value_style(),
                 ),
-                Span::raw(" detected"),
+                Span::styled(" detected", Style::default().fg(MUTED)),
             ]),
             Line::from(vec![
                 Span::styled(app.data.accepted_count().to_string(), value_style()),
-                Span::raw(" accepted"),
+                Span::styled(" accepted", Style::default().fg(MUTED)),
             ]),
             Line::from(vec![
                 Span::styled(
                     format!("${:.2}", app.data.status.session_stats.total_value),
-                    value_style(),
+                    Style::default().fg(LEAF).add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" value"),
+                Span::styled(" value", Style::default().fg(MUTED)),
             ]),
         ])
-        .block(panel_block())
-        .style(Style::default().fg(MUTED).bg(PAPER)),
+        .style(Style::default().fg(MUTED).bg(NAV_BG)),
         rows[9],
     );
 }
@@ -1099,24 +1112,31 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                "CONFIRM ACTION",
-                Style::default().fg(ORANGE).add_modifier(Modifier::BOLD),
+                question,
+                Style::default().fg(INK).add_modifier(Modifier::BOLD),
             )),
-            Line::from(""),
-            Line::from(question),
-            Line::from(detail),
+            Line::from(Span::styled(detail, Style::default().fg(MUTED))),
             Line::from(""),
             Line::from(vec![
-                Span::styled(" y / enter  confirm ", Style::default().fg(GROUND).bg(LEAF)),
-                Span::raw("   "),
-                Span::styled(" n / esc  cancel ", Style::default().fg(INK).bg(CANOPY)),
+                button_solid("y", "CONFIRM"),
+                Span::raw("  "),
+                button_ghost("n", "CANCEL"),
             ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "y / enter confirm · n / esc cancel",
+                Style::default().fg(MUTED),
+            )),
         ])
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(BorderType::Double)
-                .border_style(Style::default().fg(ORANGE)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ORANGE))
+                .title(Span::styled(
+                    " CONFIRM ACTION ",
+                    Style::default().fg(ORANGE).add_modifier(Modifier::BOLD),
+                )),
         )
         .style(Style::default().fg(INK).bg(PAPER))
         .alignment(Alignment::Center)
@@ -1145,7 +1165,7 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
 }
 
 fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let alert_height = if app.alert_visible { 6 } else { 3 };
+    let alert_height = if app.alert_visible { 5 } else { 3 };
     let rows = Layout::vertical([
         Constraint::Length(alert_height),
         Constraint::Length(1),
@@ -1155,8 +1175,6 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let available = app.visible_available_jobs();
     let alert_job = available.first().copied();
     if let (true, Some(job)) = (app.alert_visible, alert_job) {
-        let alert = Layout::horizontal([Constraint::Min(40), Constraint::Length(31)])
-            .split(rows[0].inner(Margin::new(2, 1)));
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
@@ -1168,40 +1186,36 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(
-                    "NEW JOB AVAILABLE",
-                    Style::default().fg(PINK).add_modifier(Modifier::BOLD),
+                    "▲ NEW JOB AVAILABLE",
+                    Style::default().fg(ORANGE).add_modifier(Modifier::BOLD),
                 )),
                 Line::from(Span::styled(
                     format!("{}  ·  {}", job.display_value(), job.display_title()),
                     Style::default().fg(INK).add_modifier(Modifier::BOLD),
                 )),
-                Line::from(Span::styled(
-                    format!(
-                        "Order {}  ·  {}  ·  {} remaining",
-                        job.id,
-                        job.source,
-                        job.display_time_left()
+                Line::from(vec![
+                    Span::styled(
+                        format!(
+                            "Order {}  ·  {}  ·  {} remaining   ",
+                            job.id,
+                            job.source,
+                            job.display_time_left()
+                        ),
+                        Style::default().fg(MUTED),
                     ),
-                    Style::default().fg(MUTED),
-                )),
-            ]),
-            alert[0],
-        );
-        frame.render_widget(
-            Paragraph::new("[o] VIEW   [d] DISMISS")
-                .style(
-                    Style::default()
-                        .fg(WHITE)
-                        .bg(ORANGE)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .alignment(Alignment::Center),
-            centered_line(alert[1]),
+                    button_solid("o", "VIEW"),
+                    Span::raw(" "),
+                    button_ghost("d", "DISMISS"),
+                ]),
+            ])
+            .block(Block::default().style(Style::default().bg(ORANGE_BG)))
+            .alignment(Alignment::Left),
+            rows[0].inner(Margin::new(2, 0)),
         );
     } else {
         frame.render_widget(
             Paragraph::new(format!(
-                "No current alert · {} jobs remain available",
+                "○ No current alert · {} jobs remain available",
                 available.len()
             ))
             .style(Style::default().fg(MUTED).bg(PAPER))
@@ -1209,31 +1223,39 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
             rows[0],
         );
     }
-    let grid_rows =
-        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(rows[2]);
-    let top = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(grid_rows[0]);
-    let bottom = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(grid_rows[1]);
-    render_available_summary(frame, inset_right(top[0]), app);
-    render_work_summary(frame, inset_left(top[1]), app);
-    render_metric_summary(frame, inset_right(bottom[0]), app);
-    render_system_summary(frame, inset_left(bottom[1]), app);
+    let main = Layout::vertical([Constraint::Min(10), Constraint::Length(4)]).split(rows[2]);
+    let columns =
+        Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)]).split(main[0]);
+    let side = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(columns[1]);
+    render_available_summary(frame, inset_right(columns[0]), app);
+    render_work_summary(frame, inset_left(side[0]), app);
+    render_system_summary(frame, inset_left(side[1]), app);
+    render_metric_strip(frame, main[1], app);
 }
 
 fn render_available_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let jobs = app.visible_available_jobs();
+    let rows = usize::from(area.height.saturating_sub(2));
     let items = jobs
         .iter()
-        .take(area.height.saturating_sub(2).into())
+        .take(rows)
         .map(|job| {
-            ListItem::new(format!(
-                "{:<9} {:<28} {:>7}  {}",
-                job.display_value(),
-                truncate(job.display_title(), 28),
-                job.display_time_left(),
-                job.source
-            ))
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{:<8}", job.display_value()),
+                    Style::default().fg(LEAF).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:<30}", truncate(job.display_title(), 30)),
+                    Style::default().fg(INK),
+                ),
+                Span::styled(
+                    format!("{:>7}  ", job.display_time_left()),
+                    Style::default().fg(MUTED),
+                ),
+                Span::styled(job.source.clone(), Style::default().fg(MUTED)),
+            ]))
         })
         .collect::<Vec<_>>();
     frame.render_widget(
@@ -1252,16 +1274,23 @@ fn render_work_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .filter(|job| job.work_stage() == stage)
             .count()
     };
+    let peak = active.len().max(1);
+    let row = |label: &str, stage| {
+        let total = count(stage);
+        Line::from(vec![
+            Span::styled(format!("{label:<14}"), Style::default().fg(MUTED)),
+            Span::styled(
+                format!("{total:>2} "),
+                Style::default().fg(INK).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(bar(total, peak, 10), Style::default().fg(LEAF)),
+        ])
+    };
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(format!("READY TO START     {}", count(WorkStage::Ready))),
-            Line::from(""),
-            Line::from(format!(
-                "IN PROGRESS        {}",
-                count(WorkStage::InProgress)
-            )),
-            Line::from(""),
-            Line::from(format!("REVIEW REQUIRED    {}", count(WorkStage::Review))),
+            row("READY TO START", WorkStage::Ready),
+            row("IN PROGRESS", WorkStage::InProgress),
+            row("REVIEW REQUIRED", WorkStage::Review),
         ])
         .block(counted_panel("ACTIVE WORK", active.len()))
         .style(Style::default().fg(INK).bg(PAPER)),
@@ -1269,7 +1298,10 @@ fn render_work_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
-fn render_metric_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
+/// Full-width session analytics strip: headline metrics on one line,
+///
+/// source volume on the next.
+fn render_metric_strip(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let total = app.data.jobs.len();
     let accepted = app.data.accepted_count();
     let accept_rate = if total == 0 {
@@ -1279,31 +1311,34 @@ fn render_metric_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
     };
     let uptime_hours = (app.data.status.session_stats.uptime / 3600.0).max(1.0 / 60.0);
     let pace = f64::from(app.data.status.session_stats.new_entries as u32) / uptime_hours;
+    let metric = |label: &str, value: String| {
+        vec![
+            Span::styled(format!("{label} "), Style::default().fg(MUTED)),
+            Span::styled(value, value_style()),
+            Span::raw("    "),
+        ]
+    };
+    let mut headline = Vec::new();
+    headline.extend(metric(
+        "VALUE",
+        format!("${:.2}", app.data.status.session_stats.total_value),
+    ));
+    headline.extend(metric("ACCEPT", format!("{accept_rate:.1}%")));
+    headline.extend(metric("PACE", format!("{pace:.1}/h")));
+    headline.extend(metric(
+        "AVG",
+        format!("${:.2}", app.data.stats.average_reward),
+    ));
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(vec![
-                Span::raw("VALUE   "),
-                Span::styled(
-                    format!("${:.2}", app.data.status.session_stats.total_value),
-                    value_style(),
-                ),
-                Span::raw("      ACCEPT RATE   "),
-                Span::styled(format!("{accept_rate:.1}%"), value_style()),
-            ]),
-            Line::from(vec![
-                Span::raw("PACE    "),
-                Span::styled(format!("{pace:.1}/h"), value_style()),
-                Span::raw("        AVG VALUE     "),
-                Span::styled(
-                    format!("${:.2}", app.data.stats.average_reward),
-                    value_style(),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(source_sparkline(&app.data)),
+            Line::from(headline),
+            Line::from(Span::styled(
+                source_sparkline(&app.data),
+                Style::default().fg(BLUE),
+            )),
         ])
         .block(titled_panel("SESSION ANALYTICS"))
-        .style(Style::default().fg(BLUE).bg(PAPER)),
+        .style(Style::default().fg(INK).bg(PAPER)),
         area,
     );
 }
@@ -1332,12 +1367,7 @@ fn render_system_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_jobs(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     let columns = Layout::horizontal([Constraint::Min(62), Constraint::Length(36)]).split(area);
     let header = Row::new(["ORDER", "JOB", "VALUE", "SOURCE", "STATUS", "TIME"])
-        .style(
-            Style::default()
-                .fg(WHITE)
-                .bg(BLUE)
-                .add_modifier(Modifier::BOLD),
-        )
+        .style(table_header_style())
         .height(2);
     let jobs = app.visible_available_jobs();
     let selected = jobs.get(app.selected_job).copied().cloned();
@@ -1367,12 +1397,7 @@ fn render_jobs(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .row_highlight_style(
-        Style::default()
-            .bg(SELECTION)
-            .fg(INK)
-            .add_modifier(Modifier::BOLD),
-    )
+    .row_highlight_style(selection_style())
     .highlight_symbol("▶ ")
     .block(panel_block())
     .column_spacing(1);
@@ -1402,18 +1427,9 @@ fn render_jobs(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
             lines.extend([
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled(
-                        "[a] ACCEPT",
-                        Style::default()
-                            .fg(GROUND)
-                            .bg(LEAF)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("   "),
-                    Span::styled(
-                        "[i] IGNORE",
-                        Style::default().fg(RED).add_modifier(Modifier::BOLD),
-                    ),
+                    button_solid("a", "ACCEPT"),
+                    Span::raw("  "),
+                    button_danger("i", "IGNORE"),
                 ]),
             ]);
             Text::from(lines)
@@ -1468,32 +1484,55 @@ fn render_work_column(
     let mut lines = Vec::new();
     if jobs.is_empty() {
         lines.push(Line::from(Span::styled(
-            "No jobs in this stage",
+            "○ No jobs in this stage",
             Style::default().fg(MUTED),
         )));
     }
-    for job in jobs.iter().take(4) {
+    for (position, job) in jobs.iter().take(6).enumerate() {
+        if position > 0 {
+            lines.push(Line::from(Span::styled(
+                "─".repeat(24),
+                Style::default().fg(LINE),
+            )));
+        }
         lines.extend([
+            Line::from(vec![
+                Span::styled(
+                    format!("Order {}  ", job.id),
+                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    job.display_value(),
+                    Style::default().fg(LEAF).add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(Span::styled(
-                format!("Order {}", job.id),
-                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                truncate(job.display_title(), 30),
+                Style::default().fg(INK),
             )),
-            Line::from(format!(
-                "{} · {}",
-                truncate(job.display_title(), 24),
-                job.display_value()
+            Line::from(Span::styled(
+                format!("{} · {}", job.display_status(), job.display_time_left()),
+                Style::default().fg(MUTED),
             )),
-            Line::from(format!(
-                "{} · {}",
-                job.display_status(),
-                job.display_time_left()
-            )),
-            Line::from(""),
         ]);
     }
     frame.render_widget(
         Paragraph::new(lines)
-            .block(counted_panel(title, jobs.len()).border_style(Style::default().fg(accent)))
+            .block(
+                panel_block()
+                    .title(Line::from(vec![
+                        Span::styled(
+                            format!(" {title} · "),
+                            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            jobs.len().to_string(),
+                            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(" ", Style::default().fg(MUTED)),
+                    ]))
+                    .border_style(Style::default().fg(LINE)),
+            )
             .style(Style::default().fg(INK).bg(PAPER))
             .wrap(Wrap { trim: true }),
         area,
@@ -1525,12 +1564,8 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         .alignment(Alignment::Right),
         toolbar[1],
     );
-    let header = Row::new(["ORDER", "JOB", "VALUE", "SOURCE", "STATUS", "SEEN"]).style(
-        Style::default()
-            .fg(WHITE)
-            .bg(BLUE)
-            .add_modifier(Modifier::BOLD),
-    );
+    let header =
+        Row::new(["ORDER", "JOB", "VALUE", "SOURCE", "STATUS", "SEEN"]).style(table_header_style());
     let data = app.data.jobs.iter().map(|job| {
         Row::new([
             job.id.clone(),
@@ -1554,12 +1589,7 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .row_highlight_style(
-        Style::default()
-            .bg(SELECTION)
-            .fg(INK)
-            .add_modifier(Modifier::BOLD),
-    )
+    .row_highlight_style(selection_style())
     .highlight_symbol("▶ ")
     .block(panel_block())
     .column_spacing(2);
@@ -1645,7 +1675,7 @@ fn render_chart(frame: &mut Frame<'_>, area: Rect, title: &'static str, lines: V
     frame.render_widget(
         Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
             .block(titled_panel(title))
-            .style(Style::default().fg(BLUE).bg(PAPER)),
+            .style(Style::default().fg(INK).bg(PAPER)),
         area,
     );
 }
@@ -1766,12 +1796,7 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         toolbar[1],
     );
     let columns = Layout::horizontal([Constraint::Min(62), Constraint::Length(36)]).split(rows[3]);
-    let header = Row::new(["RUN ID", "KIND", "CHARS", "STATUS"]).style(
-        Style::default()
-            .fg(WHITE)
-            .bg(BLUE)
-            .add_modifier(Modifier::BOLD),
-    );
+    let header = Row::new(["RUN ID", "KIND", "CHARS", "STATUS"]).style(table_header_style());
     let table_rows = app
         .translate_runs
         .iter()
@@ -1795,12 +1820,7 @@ fn render_translate(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .row_highlight_style(
-        Style::default()
-            .bg(SELECTION)
-            .fg(INK)
-            .add_modifier(Modifier::BOLD),
-    )
+    .row_highlight_style(selection_style())
     .highlight_symbol("▶ ")
     .block(counted_panel("TRANSLATE RUNS", app.translate_runs.len()))
     .column_spacing(2);
@@ -1969,16 +1989,19 @@ fn render_translate_modal(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled(" enter/y submit ", Style::default().fg(GROUND).bg(LEAF)),
+        button_solid("enter", "SUBMIT"),
         Span::raw(" "),
-        Span::styled(" esc/n cancel ", Style::default().fg(INK).bg(CANOPY)),
+        button_ghost("esc", "CANCEL"),
     ]));
-    lines.push(Line::from("1-9 toggle · a all · r review"));
+    lines.push(Line::from(Span::styled(
+        "1-9 toggle · a all · r review",
+        Style::default().fg(MUTED),
+    )));
     frame.render_widget(
         Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(BorderType::Double)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(ORANGE))
                 .style(Style::default().bg(PAPER)),
         ),
@@ -2009,15 +2032,14 @@ fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         .into_iter()
         .enumerate()
         .map(|(i, view)| {
-            let style = if view == app.view {
-                Style::default()
-                    .fg(GROUND)
-                    .bg(LAVENDER)
-                    .add_modifier(Modifier::BOLD)
+            let selected = view == app.view;
+            let style = if selected {
+                selection_style()
             } else {
                 Style::default().fg(INK).bg(NAV_BG)
             };
-            Span::styled(format!(" {} {} ", i + 1, view.label()), style)
+            let marker = if selected { "▶" } else { " " };
+            Span::styled(format!("{marker}{} {} ", i + 1, view.label()), style)
         })
         .collect::<Vec<_>>();
     frame.render_widget(
@@ -2049,13 +2071,78 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
-    frame.render_widget(
-        Paragraph::new(
-            "  1–7 workspace   ←/→ switch   ↑/↓ select   a accept   i ignore   t translate   r refresh   q quit",
+    let key = |hint: &str| {
+        Span::styled(
+            format!(" {hint} "),
+            Style::default().fg(INK).add_modifier(Modifier::BOLD),
         )
+    };
+    let dim = |hint: &str| Span::styled(hint.to_owned(), Style::default().fg(MUTED));
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            key("1–7"),
+            dim("workspace  "),
+            key("←/→"),
+            dim("switch  "),
+            key("↑/↓"),
+            dim("select  "),
+            key("a"),
+            dim("accept  "),
+            key("i"),
+            dim("ignore  "),
+            key("t"),
+            dim("translate  "),
+            key("r"),
+            dim("refresh  "),
+            key("q"),
+            dim("quit"),
+        ]))
         .style(Style::default().fg(MUTED).bg(GROUND)),
         area,
     );
+}
+
+fn selection_style() -> Style {
+    Style::default()
+        .fg(INK)
+        .bg(SELECTION)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Column headers for every table: quiet caps, no filled background, so
+/// the selection wash is the only strong horizontal band.
+fn table_header_style() -> Style {
+    Style::default().fg(MUTED).add_modifier(Modifier::BOLD)
+}
+
+/// Solid call-to-action chip: `[key] LABEL`.
+fn button_solid(key: &str, label: &str) -> Span<'static> {
+    Span::styled(
+        format!(" [{key}] {label} "),
+        Style::default()
+            .fg(GROUND)
+            .bg(LEAF)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+/// Destructive chip: `[key] LABEL`.
+fn button_danger(key: &str, label: &str) -> Span<'static> {
+    Span::styled(
+        format!(" [{key}] {label} "),
+        Style::default()
+            .fg(GROUND)
+            .bg(RED)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+/// Low-emphasis chip for dismissive actions: `[key] LABEL`.
+fn button_ghost(key: &str, label: &str) -> Span<'static> {
+    Span::styled(
+        format!(" [{key}] {label} "),
+        Style::default().fg(MUTED).bg(CANOPY),
+    )
 }
 
 fn panel_block<'a>() -> Block<'a> {
@@ -2074,10 +2161,17 @@ fn titled_panel(title: &'static str) -> Block<'static> {
 }
 
 fn counted_panel(title: &'static str, count: usize) -> Block<'static> {
-    panel_block().title(Span::styled(
-        format!(" {title} · {count} "),
-        Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-    ))
+    panel_block().title(Line::from(vec![
+        Span::styled(
+            format!(" {title} · "),
+            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            count.to_string(),
+            Style::default().fg(LEAF).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().fg(MUTED)),
+    ]))
 }
 
 fn value_style() -> Style {
@@ -2413,14 +2507,6 @@ const fn inset_both(area: Rect) -> Rect {
         area.y,
         area.width.saturating_sub(2),
         area.height,
-    )
-}
-const fn centered_line(area: Rect) -> Rect {
-    Rect::new(
-        area.x,
-        area.y.saturating_add(area.height / 2),
-        area.width,
-        1,
     )
 }
 
