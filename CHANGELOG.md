@@ -3,6 +3,49 @@
 All notable changes to GengoWatcher are documented in this file.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.1] - 2026-10-02
+
+### Security
+- WebSocket monitor auth unified to the browser-aligned snake_case shape
+  (`user_id` / `user_session`); the gate fails closed and the legacy
+  camelCase fields plus `userKey` are no longer sent (PR #125).
+- `GET /api/config` redacts secret values; `PUT /api/config` rejects
+  writes to auth/network/path sections and sensitive options (PR #125).
+- CLI `--get` / `--list` / `--set` redaction now covers session, cookie,
+  and auth option names (PR #125).
+- Bump `cryptography` 49.0.0 → 50.0.0, fixing CVE-2026-69247 (PR #127).
+
+### Fixed
+- WebSocket auth frame corrected to the live page client's exact frame
+  (`{"user_id": <int>, "user_session": <token>}`) in both the in-process
+  monitor and the standalone gateway via a shared builder; string user
+  IDs coerce to int. Missing/zero `user_id` or empty/placeholder
+  `user_session` stays Disabled with an actionable warning (PR #128).
+- Persistence hardening: atomic writes (tmp + fsync + replace + parent-dir
+  fsync); corrupt `state.json` quarantined instead of overwritten;
+  `run.json` replacement aborted on fsync failure; `save_state`
+  serialized end-to-end so concurrent snapshots cannot win out of order;
+  cross-process sidecar lock covers initial config creation (PR #125).
+- Native browser listener no longer spams tracebacks while the Firefox
+  debug server is down: transport-down errors back off from 5s doubling
+  to 30s, warn at most once per minute, and startup reports
+  `Waiting for browser` while still retrying quietly (PR #128).
+- `/ws/status` accepts `Authorization: Bearer` with constant-time
+  comparison; `?api_key=` kept as fallback (PR #126).
+- File uploads stream in 1MB chunks to a staged temp file under a 2-slot
+  semaphore, keeping per-request memory flat; oversize uploads get 413
+  mid-stream with staging cleaned up (PR #126).
+- Website/email monitor shutdown latency cut from up to 300s to ≤1s;
+  IMAP IDLE reads bounded with a socket timeout (PR #126).
+
+### Changed
+- Default pytest run excludes `e2e` (`make smoke-e2e` unaffected);
+  `asyncio_mode = auto` (PR #126).
+- `Makefile`: `test` sets `PYTHONPATH=src`; `coverage` targets
+  `src/gengowatcher` with a term-missing report; new `format-check`
+  target (PR #126).
+- Docs bumped to 3.0.0 to match the packaged version (PR #126).
+
 ## [3.0.0] - 2026-07-18
 
 ### Added

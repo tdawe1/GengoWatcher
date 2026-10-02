@@ -1,6 +1,6 @@
 # GengoWatcher
 
-> **Latest release: v3.0.0** — see [CHANGELOG.md](CHANGELOG.md) for what changed.
+> **Latest release: v3.0.1** — see [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 A terminal-based monitor for Gengo translation jobs with real-time notifications,
 browser-collected workbench observation, and an optional local web API for
@@ -24,7 +24,7 @@ handoff and integration.
 ```bash
 git clone https://github.com/tdawe1/GengoWatcher.git
 cd GengoWatcher
-git checkout v3.0.0  # or stay on main for the latest unreleased changes
+git checkout v3.0.1  # or stay on main for the latest unreleased changes
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e .
