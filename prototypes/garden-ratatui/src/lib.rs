@@ -2046,7 +2046,7 @@ fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
         Paragraph::new(Line::from(tabs)).wrap(Wrap { trim: true }),
         rows[0],
     );
-    frame.render_widget(Paragraph::new(format!("{}\n\nTerminal is too small for the full dashboard. Resize to at least 110 × 30.\nKeyboard navigation remains available: 1–6, ←/→, q.", app.view.label().to_uppercase())).block(panel_block()).style(Style::default().fg(INK).bg(PAPER)).wrap(Wrap { trim: true }), rows[1]);
+    frame.render_widget(Paragraph::new(format!("{}\n\nTerminal is too small for the full dashboard. Resize to at least 110 × 30.\nKeyboard navigation remains available: 1–7, ←/→, q.", app.view.label().to_uppercase())).block(panel_block()).style(Style::default().fg(INK).bg(PAPER)).wrap(Wrap { trim: true }), rows[1]);
 }
 
 fn render_status(frame: &mut Frame<'_>, area: Rect, app: &App) {
