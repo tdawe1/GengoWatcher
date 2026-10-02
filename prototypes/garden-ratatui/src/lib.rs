@@ -135,6 +135,24 @@ impl LayoutKind {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Classic => Self::Beacon,
+            Self::Beacon => Self::Dense,
+            Self::Dense => Self::Classic,
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic",
+            Self::Beacon => "Beacon",
+            Self::Dense => "Dense",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -612,6 +630,10 @@ impl App {
             KeyCode::Char('c') => {
                 self.status_message = "Manual check requested…".into();
                 return Some(UiAction::Refresh);
+            }
+            KeyCode::Char('v') => {
+                self.layout = self.layout.next();
+                self.status_message = format!("Layout: {}", self.layout.label());
             }
             KeyCode::Char('p') => {
                 self.status_message = if self.paused {
@@ -1364,14 +1386,11 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 )),
                 Line::from(vec![
                     Span::styled(
-                        format!(
-                            "Order {}  ·  {}  ·  {} remaining   ",
-                            job.id,
-                            job.source,
-                            job.display_time_left()
-                        ),
+                        format!("Order {}  ·  {}  ·  ", job.id, job.source,),
                         Style::default().fg(MUTED),
                     ),
+                    time_left_span(job),
+                    Span::styled(" remaining   ", Style::default().fg(MUTED)),
                     button_solid("o", "VIEW"),
                     Span::raw(" "),
                     button_ghost("d", "DISMISS"),
@@ -1461,14 +1480,11 @@ fn render_hero(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ]),
             Line::from(vec![
                 Span::styled(
-                    format!(
-                        "Order {}  ·  {}  ·  {} left   ",
-                        job.id,
-                        job.source,
-                        job.display_time_left()
-                    ),
+                    format!("Order {}  ·  {}  ·  ", job.id, job.source,),
                     Style::default().fg(MUTED),
                 ),
+                time_left_span(job),
+                Span::styled(" left   ", Style::default().fg(MUTED)),
                 button_solid("a", "ACCEPT"),
                 Span::raw(" "),
                 button_danger("i", "IGNORE"),
@@ -1490,7 +1506,7 @@ fn render_queue(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                 Cell::from(job.id.clone()),
                 Cell::from(truncate(job.display_title(), 34)),
                 Cell::from(job.display_value()),
-                Cell::from(job.display_time_left()),
+                Cell::from(time_left_span(job)),
                 Cell::from(job.source.clone()),
             ])
         })
@@ -1542,15 +1558,14 @@ fn render_act_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
                         Style::default().fg(INK).add_modifier(Modifier::BOLD),
                     ),
                 ]),
-                Line::from(Span::styled(
-                    format!(
-                        "Order {} · {} · {} left",
-                        job.id,
-                        job.source,
-                        job.display_time_left()
+                Line::from(vec![
+                    Span::styled(
+                        format!("Order {} · {} · ", job.id, job.source,),
+                        Style::default().fg(MUTED),
                     ),
-                    Style::default().fg(MUTED),
-                )),
+                    time_left_span(job),
+                    Span::styled(" left", Style::default().fg(MUTED)),
+                ]),
                 Line::from(""),
                 Line::from(vec![
                     button_solid("a", "ACCEPT"),
@@ -1660,10 +1675,7 @@ fn render_available_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     format!("{:<30}", truncate(job.display_title(), 30)),
                     Style::default().fg(INK),
                 ),
-                Span::styled(
-                    format!("{:>7}  ", job.display_time_left()),
-                    Style::default().fg(MUTED),
-                ),
+                padded_time_left_span(job),
                 Span::styled(job.source.clone(), Style::default().fg(MUTED)),
             ]))
         })
@@ -1791,7 +1803,7 @@ fn render_jobs(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                 Cell::from(job.display_value()),
                 Cell::from(job.source.clone()),
                 Cell::from(job.display_status().to_owned()),
-                Cell::from(job.display_time_left()),
+                Cell::from(time_left_span(job)),
             ])
             .height(row_height)
         })
@@ -1921,10 +1933,13 @@ fn render_work_column(
                 truncate(job.display_title(), 30),
                 Style::default().fg(INK),
             )),
-            Line::from(Span::styled(
-                format!("{} · {}", job.display_status(), job.display_time_left()),
-                Style::default().fg(MUTED),
-            )),
+            Line::from(vec![
+                Span::styled(
+                    format!("{} · ", job.display_status()),
+                    Style::default().fg(MUTED),
+                ),
+                time_left_span(job),
+            ]),
         ]);
     }
     frame.render_widget(
@@ -2505,6 +2520,8 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect) {
             dim("ignore  "),
             key("t"),
             dim("translate  "),
+            key("v"),
+            dim("layout  "),
             key("r"),
             dim("refresh  "),
             key("q"),
@@ -2589,6 +2606,28 @@ fn counted_panel(title: &'static str, count: usize) -> Block<'static> {
 
 fn value_style() -> Style {
     Style::default().fg(INK).add_modifier(Modifier::BOLD)
+}
+
+/// Time-left with urgency encoding: expired/imminent (<5m) is red, tight
+/// (<15m) is orange, everything else stays quiet. String-sourced times
+/// without a numeric reading render quiet.
+fn time_left_span(job: &Job) -> Span<'static> {
+    let text = job.display_time_left();
+    let style = match job.accepted_seconds_left {
+        Some(seconds) if seconds <= 0 || job.accepted_expired == Some(true) => {
+            Style::default().fg(RED).add_modifier(Modifier::BOLD)
+        }
+        Some(seconds) if seconds < 300 => Style::default().fg(RED).add_modifier(Modifier::BOLD),
+        Some(seconds) if seconds < 900 => Style::default().fg(ORANGE),
+        _ => Style::default().fg(MUTED),
+    };
+    Span::styled(text, style)
+}
+
+/// Width-preserving variant for columnar lists (`{:>7}` + two spaces).
+fn padded_time_left_span(job: &Job) -> Span<'static> {
+    let span = time_left_span(job);
+    Span::styled(format!("{:>7}  ", span.content), span.style)
 }
 
 fn status_owned(
@@ -3098,6 +3137,34 @@ mod tests {
             assert_eq!(LayoutKind::from_slug(layout.slug()), Some(layout));
         }
         assert_eq!(LayoutKind::from_slug("nope"), None);
+    }
+
+    #[test]
+    fn layout_key_cycles_classic_beacon_dense() {
+        let mut app = App::new(View::Overview);
+        assert_eq!(app.layout, LayoutKind::Classic);
+        let _ = app.handle_key(key(KeyCode::Char('v')));
+        assert_eq!(app.layout, LayoutKind::Beacon);
+        assert!(app.status_message.contains("Beacon"));
+        let _ = app.handle_key(key(KeyCode::Char('v')));
+        assert_eq!(app.layout, LayoutKind::Dense);
+        let _ = app.handle_key(key(KeyCode::Char('v')));
+        assert_eq!(app.layout, LayoutKind::Classic);
+    }
+
+    #[test]
+    fn time_left_encodes_urgency() {
+        let mut job = available_job("1");
+        job.accepted_seconds_left = None;
+        assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
+        job.accepted_seconds_left = Some(2400);
+        assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
+        job.accepted_seconds_left = Some(600);
+        assert_eq!(time_left_span(&job).style.fg, Some(ORANGE));
+        job.accepted_seconds_left = Some(60);
+        assert_eq!(time_left_span(&job).style.fg, Some(RED));
+        job.accepted_expired = Some(true);
+        assert_eq!(time_left_span(&job).style.fg, Some(RED));
     }
 
     #[test]
