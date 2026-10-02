@@ -96,6 +96,7 @@ class AppConfig:
         },
         "UI": {
             "theme_name": "nord",
+            "ratatui_layout": "classic",
         },
         "DebugCategories": {
             "websocket": False,

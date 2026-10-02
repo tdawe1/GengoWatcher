@@ -528,6 +528,33 @@ def test_ratatui_layout_prefers_cli_over_environment(monkeypatch):
     assert _ratatui_layout(Namespace(tui_layout=None), logger) is None
 
 
+def test_ratatui_layout_falls_back_to_config(monkeypatch):
+    logger = MagicMock()
+    monkeypatch.delenv("GENGOWATCHER_RATATUI_LAYOUT", raising=False)
+    config = MagicMock()
+    config.get.return_value = "dense"
+    assert _ratatui_layout(Namespace(tui_layout=None), logger, config) == "dense"
+    config.get.return_value = "classic"
+    assert _ratatui_layout(Namespace(tui_layout=None), logger, config) is None
+
+
+def test_ratatui_layout_warns_and_ignores_unknown_config_value(monkeypatch):
+    logger = MagicMock()
+    monkeypatch.delenv("GENGOWATCHER_RATATUI_LAYOUT", raising=False)
+    config = MagicMock()
+    config.get.return_value = "nope"
+    assert _ratatui_layout(Namespace(tui_layout=None), logger, config) is None
+    logger.warning.assert_called_once()
+
+
+def test_ratatui_layout_classic_omits_flag_for_old_binaries(monkeypatch):
+    logger = MagicMock()
+    monkeypatch.delenv("GENGOWATCHER_RATATUI_LAYOUT", raising=False)
+    assert _ratatui_layout(Namespace(tui_layout="classic"), logger) is None
+    monkeypatch.setenv("GENGOWATCHER_RATATUI_LAYOUT", "classic")
+    assert _ratatui_layout(Namespace(tui_layout=None), logger) is None
+
+
 def test_ratatui_layout_rejects_unknown_cli_value():
     with pytest.raises(RuntimeError, match="Unknown Ratatui layout"):
         _ratatui_layout(Namespace(tui_layout="nope"), MagicMock())

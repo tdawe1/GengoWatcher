@@ -329,12 +329,16 @@ def _run_tui(
 RATATUI_LAYOUTS = ("classic", "beacon", "dense")
 
 
-def _ratatui_layout(args: argparse.Namespace, logger: logging.Logger) -> str | None:
+def _ratatui_layout(
+    args: argparse.Namespace, logger: logging.Logger, config=None
+) -> str | None:
     """Resolve the requested Ratatui layout, if any.
 
-    Explicit ``--tui-layout`` wins; otherwise ``GENGOWATCHER_RATATUI_LAYOUT``
-    is honored. ``None`` keeps the binary default (classic). An invalid CLI
-    value fails fast; an invalid env value warns and is ignored.
+    Precedence: explicit ``--tui-layout``, then ``GENGOWATCHER_RATATUI_LAYOUT``,
+    then the ``[UI] ratatui_layout`` config value. Returns ``None`` when the
+    classic layout applies so older binaries without the ``--layout`` flag
+    keep working. An invalid CLI value fails fast; invalid env/config values
+    warn and are ignored.
     """
     cli_layout = str(getattr(args, "tui_layout", "") or "").strip().lower()
     if cli_layout:
@@ -343,16 +347,36 @@ def _ratatui_layout(args: argparse.Namespace, logger: logging.Logger) -> str | N
                 f"Unknown Ratatui layout {cli_layout!r}; "
                 f"use one of: {', '.join(RATATUI_LAYOUTS)}"
             )
-        return cli_layout
+        return cli_layout if cli_layout != "classic" else None
     env_layout = os.getenv("GENGOWATCHER_RATATUI_LAYOUT", "").strip().lower()
-    if env_layout and env_layout not in RATATUI_LAYOUTS:
-        logger.warning(
-            "Ignoring unknown GENGOWATCHER_RATATUI_LAYOUT=%r; use one of: %s",
-            env_layout,
-            ", ".join(RATATUI_LAYOUTS),
-        )
+    if env_layout:
+        if env_layout not in RATATUI_LAYOUTS:
+            logger.warning(
+                "Ignoring unknown GENGOWATCHER_RATATUI_LAYOUT=%r; use one of: %s",
+                env_layout,
+                ", ".join(RATATUI_LAYOUTS),
+            )
+        elif env_layout != "classic":
+            return env_layout
         return None
-    return env_layout or None
+    if config is not None:
+        try:
+            config_layout = (
+                str(config.get("UI", "ratatui_layout", fallback="") or "")
+                .strip()
+                .lower()
+            )
+        except Exception:
+            config_layout = ""
+        if config_layout and config_layout not in RATATUI_LAYOUTS:
+            logger.warning(
+                "Ignoring unknown [UI] ratatui_layout=%r; use one of: %s",
+                config_layout,
+                ", ".join(RATATUI_LAYOUTS),
+            )
+        elif config_layout and config_layout != "classic":
+            return config_layout
+    return None
 
 
 def _run_ratatui_process(
@@ -381,7 +405,7 @@ def _run_ratatui_process(
 
     logger.info("Starting Ratatui TUI connected to %s", api_url)
     command_args = [*command, "--api-url", api_url]
-    if layout := _ratatui_layout(args, logger):
+    if layout := _ratatui_layout(args, logger, config):
         logger.info("Using Ratatui layout: %s", layout)
         command_args += ["--layout", layout]
     result = subprocess.run(
