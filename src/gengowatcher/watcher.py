@@ -27,6 +27,7 @@ from .browser_session import (
     refresh_browser_page_activity_sync,
 )
 from .browser_debug_launcher import (  # noqa: F401  -- re-exported for tests / watcher_firefox.py
+    can_connect_to_firefox_debug_server,
     get_firefox_debug_launch_spec,
     get_firefox_debug_retry_window,
     maybe_launch_managed_firefox_debug,
@@ -792,7 +793,9 @@ class GengoWatcher:
                 else:
                     use_gateway = False
 
-        if not use_gateway and self.config.get("WebSocket", "enable_websocket"):
+        if not use_gateway and self.config.getboolean(
+            "WebSocket", "enable_websocket", fallback=True
+        ):
             ws_thread = threading.Thread(
                 target=self._run_websocket_monitor, daemon=True
             )
@@ -827,13 +830,19 @@ class GengoWatcher:
                 capture_interval_ms=interval_ms,
             )
             self._state_projector = StateProjector(self.state, notifier=self)
-
             native_thread = threading.Thread(
                 target=self._run_native_browser_listener, daemon=True
             )
             native_thread.start()
             self._monitor_threads["native_browser"] = native_thread
-            self.native_browser_status = "Started"
+            if can_connect_to_firefox_debug_server(str(debug_url)):
+                self.native_browser_status = "Started"
+            else:
+                self.logger.warning(
+                    "Native browser listener enabled but no Firefox debug server at %s (connection refused). Start Firefox remote debugging on that port, or set [WebSocket] browser_debug_auto_launch=true to auto-launch, or set [NativeBrowserListener] enabled=false. Retrying quietly with backoff.",
+                    debug_url,
+                )
+                self.native_browser_status = "Waiting for browser"
             self.logger.info(
                 "Native browser listener started (replaces WebsiteMonitor)"
             )

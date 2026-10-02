@@ -20,6 +20,7 @@ from .events import EventEnvelope, EventType
 from .event_bus import publish_native_event
 from .workbench_payload import normalize_workbench_payload
 from .browser_session import (
+    BrowserSessionError,
     _open_firefox_rdp_client,
     _firefox_rdp_list_tabs,
     _firefox_rdp_evaluate_json,
@@ -27,6 +28,17 @@ from .browser_session import (
 )
 
 logger = logging.getLogger(__name__)
+DOWN_LOG_THROTTLE_SEC = 60.0
+DEGRADED_BASE_SEC = 5.0
+DEGRADED_MAX_SEC = 30.0
+
+
+def _is_expected_down_error(exc: BaseException) -> bool:
+    """True for transport-down failures (debug server not listening)."""
+    if isinstance(exc, (OSError, asyncio.TimeoutError, TimeoutError)):
+        return True
+    return isinstance(exc, BrowserSessionError)
+
 
 WORKBENCH_PATH_PREFIX = "/t/workbench/"
 
@@ -191,6 +203,8 @@ class NativeBrowserListener:
         self._last_visible_payload: dict[str, Any] | None = None
         self._last_status_seconds: int | None = None
         self._last_status_collection_id: str | None = None
+        self._consecutive_down: int = 0
+        self._last_down_log_ts: float = 0.0
         self._runner: asyncio.Runner | None = None
 
     def _reset_workbench_state(self) -> None:
@@ -215,6 +229,13 @@ class NativeBrowserListener:
             self._runner.close()
             self._runner = None
 
+    def next_poll_delay(self) -> float:
+        """Poll cadence; backs off while the debug server is down."""
+        if self._consecutive_down <= 0:
+            return self.capture_interval
+        degraded = DEGRADED_BASE_SEC * (2 ** (self._consecutive_down - 1))
+        return max(self.capture_interval, min(DEGRADED_MAX_SEC, degraded))
+
     def _poll(self) -> None:
         """Single poll iteration."""
         self.last_poll_ts = time.time()
@@ -224,7 +245,30 @@ class NativeBrowserListener:
             self._runner.run(asyncio.wait_for(self._poll_async(), timeout=30.0))
             self.last_success_ts = time.time()
             self.last_error = ""
+            self._consecutive_down = 0
         except Exception as e:
+            if _is_expected_down_error(e):
+                self._consecutive_down = min(self._consecutive_down + 1, 6)
+                err_text = str(e)
+                if err_text:
+                    err_line = err_text.splitlines()[0][:120]
+                else:
+                    err_line = type(e).__name__
+                self.last_error = (
+                    f"debug server unavailable at {self.debug_url}: {err_line}"
+                )
+                self._reset_workbench_state()
+                msg = (
+                    "Native browser debug server unavailable at %s (%s); "
+                    "retrying quietly with backoff"
+                )
+                now = time.monotonic()
+                if now - self._last_down_log_ts >= DOWN_LOG_THROTTLE_SEC:
+                    self._last_down_log_ts = now
+                    logger.warning(msg, self.debug_url, err_line)
+                else:
+                    logger.debug(msg, self.debug_url, err_line)
+                return
             self.last_error = str(e)
             logger.exception("Poll iteration failed")
             self._reset_workbench_state()
@@ -360,7 +404,7 @@ class NativeBrowserListener:
                     self._poll()
                 except Exception as e:
                     logger.error(f"Native browser listener error: {e}", exc_info=True)
-                base = self.capture_interval
+                base = self.next_poll_delay()
                 jitter = random.uniform(-0.15, 0.15)
                 time.sleep(max(0.2, base + jitter))
         finally:

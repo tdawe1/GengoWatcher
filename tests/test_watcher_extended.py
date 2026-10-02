@@ -553,6 +553,8 @@ class TestEdgeCases:
             ("Watcher", "min_reward"): None
         }.get((s, k), kw.get("fallback"))
 
+        watcher_with_mocks.show_notification = MagicMock()
+
         watcher_with_mocks._process_new_job(
             124, "Unfiltered Job", 5.0, "http://example.com", "RSS"
         )

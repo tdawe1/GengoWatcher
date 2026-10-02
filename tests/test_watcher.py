@@ -352,15 +352,18 @@ def test_translation_app_submission_logs_when_queue_full(watcher_instance):
             "auth_token": "token-123",
         }
     )
-    w.logger.warning = MagicMock()
 
-    with patch(
-        "gengowatcher.orchestration.watcher_job_processor._submit_translation_app_task",
-        side_effect=queue.Full,
+    submit_task_path = (
+        "gengowatcher.orchestration.watcher_job_processor"
+        "._submit_translation_app_task"
+    )
+    with (
+        patch.object(w.logger, "warning") as mock_warning,
+        patch(submit_task_path, side_effect=queue.Full),
     ):
         w._submit_job_to_translation_app_async({"id": "123"})
 
-    w.logger.warning.assert_called_once_with(
+    mock_warning.assert_called_once_with(
         "Translation-app submission queue is full; dropping job %s", "123"
     )
 
@@ -382,14 +385,16 @@ def test_translation_app_submission_task_logs_failures(watcher_instance):
     ):
         w._submit_job_to_translation_app_async({"id": "123"})
 
-    w.logger.exception = MagicMock()
-    with patch(
-        "gengowatcher.orchestration.watcher_job_processor.TranslationAppClient",
-        side_effect=RuntimeError("client failed"),
+    with (
+        patch.object(w.logger, "exception") as mock_exception,
+        patch(
+            "gengowatcher.orchestration.watcher_job_processor.TranslationAppClient",
+            side_effect=RuntimeError("client failed"),
+        ),
     ):
         queued_tasks[0]()
 
-    w.logger.exception.assert_called_once_with(
+    mock_exception.assert_called_once_with(
         "Failed to submit job %s to translation-app", "123"
     )
 

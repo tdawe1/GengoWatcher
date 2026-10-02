@@ -159,6 +159,10 @@ class TestWatcherInitialization:
                 "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
                 return_value=True,
             ) as launch_debug_browser,
+            patch(
+                "gengowatcher.watcher.can_connect_to_firefox_debug_server",
+                return_value=True,
+            ),
             patch("gengowatcher.watcher.urlopen") as open_gateway,
             patch("threading.Thread"),
         ):
@@ -172,6 +176,48 @@ class TestWatcherInitialization:
         )
         assert watcher_instance.websocket_status == "Gateway Connected"
         assert watcher_instance.native_browser_status == "Started"
+
+    def test_run_marks_native_listener_waiting_when_debug_server_down(
+        self, watcher_instance, caplog
+    ):
+        """No debug server: warn once with opt-out keys, still start the thread."""
+        watcher_instance.config.config["WebSocket"].update(
+            {
+                "use_gateway": True,
+                "gateway_url": "http://127.0.0.1:8000",
+                "browser_debug_auto_launch": False,
+            }
+        )
+        watcher_instance.config.config["Browser"] = {
+            "backend": "native",
+            "debug_url": "ws://127.0.0.1:6000",
+        }
+        watcher_instance.config.config["NativeBrowserListener"] = {
+            "enabled": True,
+            "capture_interval_ms": 750,
+        }
+        watcher_instance.shutdown_event.wait = MagicMock(return_value=True)
+
+        with (
+            patch(
+                "gengowatcher.watcher.maybe_launch_managed_firefox_debug",
+                return_value=False,
+            ),
+            patch(
+                "gengowatcher.watcher.can_connect_to_firefox_debug_server",
+                return_value=False,
+            ),
+            patch("gengowatcher.watcher.urlopen") as open_gateway,
+            patch("threading.Thread") as thread_cls,
+            caplog.at_level(logging.WARNING, logger="test"),
+        ):
+            open_gateway.return_value.__enter__.return_value.status = 200
+            watcher_instance.run()
+
+        assert watcher_instance.native_browser_status == "Waiting for browser"
+        assert "native_browser" in watcher_instance._monitor_threads
+        thread_cls.return_value.start.assert_called()
+        assert "[NativeBrowserListener] enabled=false" in caplog.text
 
     def test_run_rejects_non_http_gateway_scheme(self, watcher_instance):
         watcher_instance.config.config["WebSocket"].update(
@@ -1268,20 +1314,21 @@ class TestWebSocketIntegration:
 
     def test_websocket_timeout_is_logged_as_warning(self, watcher_instance):
         """Handshake timeout should not fall through as an unexpected error."""
-        watcher_instance.logger.warning = MagicMock()
-        watcher_instance.logger.error = MagicMock()
-
-        with patch(
-            "gengowatcher.orchestration.watcher_ws_logic.connect",
-            side_effect=TimeoutError("open timed out"),
-        ) as mock_connect:
+        with (
+            patch.object(watcher_instance.logger, "warning") as mock_warning,
+            patch.object(watcher_instance.logger, "error") as mock_error,
+            patch(
+                "gengowatcher.orchestration.watcher_ws_logic.connect",
+                side_effect=TimeoutError("open timed out"),
+            ) as mock_connect,
+        ):
             asyncio.run(watcher_instance._websocket_logic())
 
         assert mock_connect.call_args.kwargs["open_timeout"] == 20
-        watcher_instance.logger.warning.assert_any_call(
+        mock_warning.assert_any_call(
             "WebSocket: Connection timed out during handshake/open: open timed out"
         )
-        watcher_instance.logger.error.assert_not_called()
+        mock_error.assert_not_called()
         assert watcher_instance.websocket_status == "Offline"
 
     def test_capture_raw_ws_message(self, watcher_instance):

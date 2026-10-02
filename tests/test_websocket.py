@@ -126,7 +126,7 @@ async def test_websocket_receives_and_processes_job(mock_connect, watcher_instan
     auth_call = mock_ws_client.send.await_args[0][0]
     assert '"user_id": 12345' in auth_call
     assert '"user_session": "fake_session_token"' in auth_call
-    assert '"user_key"' not in auth_call
+    assert "userKey" not in auth_call
     w._process_new_job.assert_called_once_with(
         9876,
         "English > Japanese",
@@ -161,3 +161,101 @@ async def test_websocket_retries_with_ua_only_after_handshake_timeout(
     assert second_kwargs["additional_headers"] == {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
     }
+
+
+@pytest.mark.parametrize("user_key", ["", "REPLACE_WITH_YOUR_USER_KEY"])
+def test_websocket_monitor_ignores_user_key(watcher_instance, user_key):
+    """user_key is not part of the wire protocol: any value still dials."""
+    from gengowatcher.orchestration.watcher_ws_monitor import run_websocket_monitor
+
+    w = watcher_instance
+    config_dict = {
+        "WebSocket": {
+            "browser_debug_url": "",
+            "user_id": 12345,
+            "user_session": "fake_session_token",
+            "user_key": user_key,
+            "enable_websocket": True,
+        },
+        "Network": {"max_backoff": 300},
+    }
+    w.config.get.side_effect = lambda section, key, **kwargs: config_dict.get(
+        section, {}
+    ).get(key, kwargs.get("fallback"))
+    w.shutdown_event = MagicMock()
+    w.shutdown_event.is_set.side_effect = [False, True]
+    w.shutdown_event.wait.return_value = True
+    w._websocket_logic = MagicMock()
+
+    with patch("gengowatcher.orchestration.watcher_ws_monitor.asyncio.run") as run_coro:
+        run_websocket_monitor(w)
+
+    run_coro.assert_called_once()
+
+
+@pytest.mark.parametrize("user_id", [None, "", 0, "0", "0.0"])
+def test_websocket_monitor_disables_on_missing_user_id(
+    watcher_instance, caplog, user_id
+):
+    """Falsy/zero user_id stays Disabled without dialing."""
+    from gengowatcher.orchestration.watcher_ws_monitor import run_websocket_monitor
+
+    w = watcher_instance
+    config_dict = {
+        "WebSocket": {
+            "browser_debug_url": "",
+            "user_id": user_id,
+            "user_session": "fake_session_token",
+            "user_key": "",
+            "enable_websocket": True,
+        },
+        "Network": {"max_backoff": 300},
+    }
+    w.config.get.side_effect = lambda section, key, **kwargs: config_dict.get(
+        section, {}
+    ).get(key, kwargs.get("fallback"))
+    w.shutdown_event = MagicMock()
+    w.shutdown_event.is_set.side_effect = [False, True]
+    w.shutdown_event.wait.return_value = True
+    w._websocket_logic = MagicMock()
+
+    with patch("gengowatcher.orchestration.watcher_ws_monitor.asyncio.run") as run_coro:
+        run_websocket_monitor(w)
+
+    run_coro.assert_not_called()
+    assert w.websocket_status == "Disabled"
+    assert "user_id" in caplog.text
+
+
+@pytest.mark.parametrize("user_session", ["", "REPLACE_WITH_YOUR_SESSION_TOKEN"])
+def test_websocket_monitor_disables_on_missing_session_token(
+    watcher_instance, caplog, user_session
+):
+    """Empty/placeholder user_session stays Disabled without dialing."""
+    from gengowatcher.orchestration.watcher_ws_monitor import run_websocket_monitor
+
+    w = watcher_instance
+    config_dict = {
+        "WebSocket": {
+            "browser_debug_url": "",
+            "user_id": 12345,
+            "user_session": user_session,
+            "user_key": "",
+            "enable_websocket": True,
+        },
+        "Network": {"max_backoff": 300},
+    }
+    w.config.get.side_effect = lambda section, key, **kwargs: config_dict.get(
+        section, {}
+    ).get(key, kwargs.get("fallback"))
+    w.shutdown_event = MagicMock()
+    w.shutdown_event.is_set.side_effect = [False, True]
+    w.shutdown_event.wait.return_value = True
+    w._websocket_logic = MagicMock()
+
+    with patch("gengowatcher.orchestration.watcher_ws_monitor.asyncio.run") as run_coro:
+        run_websocket_monitor(w)
+
+    run_coro.assert_not_called()
+    assert w.websocket_status == "Disabled"
+    assert "user_session" in caplog.text

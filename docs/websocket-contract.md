@@ -9,8 +9,9 @@ GengoWatcher reads these values from a live `gengo.com` browser tab via CDP:
 
 - Session cookie:
   `myG_myGSession_`, with fallbacks `my_gengo_session` and `myG_rdsessID`
-- Local storage:
-  `userKey`
+- Local storage: no `gengo.com` localStorage entry is used by the realtime
+  client (confirmed: the live profile holds none, and the page never reads
+  `userKey`). `[WebSocket].user_key` is legacy config only, never sent.
 - Navigator state:
   `navigator.userAgent`
 - Navigator language state:
@@ -33,14 +34,26 @@ The current handshake profile is:
 
 ## Auth Payload
 
-The current websocket auth payload is:
+The realtime page's own client sends this exact frame on open (verified
+2026-09-17 against the live page source at
+`/t/jobs/status/available/realtime`):
 
 ```json
 {
-  "user_id": "<configured user id>",
-  "user_session": "<browser-aligned session token>"
+  "user_id": 789487,
+  "user_session": "<myG_myGSession_ cookie value>"
 }
 ```
+
+Notes:
+
+- Keys are snake_case and `user_id` is a JSON number. The camelCase shape
+  (`userId` / `sessionToken` / `userKey`) is 1000-closed by the server ~1s
+  after auth with no message; verified by live dials. (An earlier revision
+  of this document claimed the reverse; the page source settles it.)
+- There is no `userKey` in the frame. The page never reads one, and the
+  live Firefox profile holds no `gengo.com` localStorage at all, so
+  `[WebSocket].user_key` is not consulted when dialing.
 
 ## Evidence
 

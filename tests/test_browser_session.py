@@ -1313,7 +1313,7 @@ def test_build_browser_aligned_websocket_headers_uses_full_browser_cookie_header
     assert "myG_rdsessID=fresh-token" not in headers["Cookie"]
 
 
-def test_build_websocket_auth_payload_uses_session_only():
+def test_build_websocket_auth_payload_uses_page_client_shape():
     payload = build_websocket_auth_payload(
         user_id=12345,
         session_token="fresh-token",
@@ -1325,9 +1325,9 @@ def test_build_websocket_auth_payload_uses_session_only():
     }
 
 
-def test_build_websocket_auth_payload_omits_user_key():
+def test_build_websocket_auth_payload_coerces_string_user_id_to_int():
     payload = build_websocket_auth_payload(
-        user_id=12345,
+        user_id="12345",
         session_token="fresh-token",
     )
 

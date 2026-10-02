@@ -165,8 +165,12 @@ def run_native_browser_listener(watcher):
                     "Native browser listener error: %s", exc, exc_info=True
                 )
             listener = getattr(watcher, "_native_listener", None)
-            capture_interval = getattr(listener, "capture_interval", 0.75)
-            watcher.shutdown_event.wait(capture_interval)
+            next_poll_delay = getattr(listener, "next_poll_delay", None)
+            if callable(next_poll_delay):
+                delay = next_poll_delay()
+            else:
+                delay = getattr(listener, "capture_interval", 0.75)
+            watcher.shutdown_event.wait(max(0.2, delay))
     finally:
         listener = getattr(watcher, "_native_listener", None)
         close = getattr(listener, "close", None)
