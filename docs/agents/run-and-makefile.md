@@ -9,6 +9,19 @@
 - Start browser worker directly: PYTHONPATH=src python3 -m gengowatcher.browser_worker.main --profile-path profiles/browser-worker --socket-path /tmp/gengowatcher-browser-worker.sock
 - Install user-facing launchers: make install-user (symlinks bin/gengowatcher, bin/gengo-watcher, bin/gengowatcher-browser-worker into ~/.local/bin).
 
+## Ratatui TUI binary
+- The Python runtime prefers a `gengowatcher-tui` binary, resolved in order:
+  `$GENGOWATCHER_RATATUI_BIN`, then `gengowatcher-tui` on PATH
+  (e.g. `~/.local/bin` from `make install-ratatui`), then
+  `prototypes/garden-ratatui/target/{release,debug}/gengowatcher-tui`,
+  else `cargo run` as a fallback.
+- After changing anything under `prototypes/garden-ratatui/src`, run
+  `make install-ratatui` (release build + reinstall to `~/.local/bin`).
+  A stale installed binary shadows fresh `target/` builds and the UI will
+  look unchanged.
+- Regenerate deterministic SVG previews with
+  `cargo run --manifest-path prototypes/garden-ratatui/Cargo.toml -- --render prototypes/garden-ratatui-previews`.
+
 ## Makefile Targets
 - build: python -m compileall -q src/gengowatcher tests scripts.
 - test: python -m pytest (uses pytest.ini testpaths = tests).
