@@ -5,7 +5,7 @@ FIREFOX_DEBUG_PROFILE ?= profiles/firefox-debug
 FIREFOX_DEBUG_SEED_PROFILE ?=
 FIREFOX_DEBUG_AUTO_LAUNCH ?= true
 
-.PHONY: build build-ratatui test test-ratatui smoke-e2e coverage lint format format-check run run-textual run-ratatui run-web run-web-only firefox-debug firefox-debug-bootstrap install-user install-ratatui
+.PHONY: build build-ratatui test test-ratatui smoke-e2e coverage lint format format-check run run-textual run-ratatui demo-ratatui demo-ratatui-beacon demo-ratatui-dense run-web run-web-only firefox-debug firefox-debug-bootstrap install-user install-ratatui
 
 build-ratatui:
 	cargo build --release --manifest-path prototypes/garden-ratatui/Cargo.toml
@@ -45,6 +45,15 @@ run-textual:
 
 run-ratatui:
 	PYTHONPATH=src $(PYTHON) -m gengowatcher.main --tui ratatui
+
+demo-ratatui:
+	cargo run --manifest-path prototypes/garden-ratatui/Cargo.toml -- --demo --layout classic
+
+demo-ratatui-beacon:
+	cargo run --manifest-path prototypes/garden-ratatui/Cargo.toml -- --demo --layout beacon
+
+demo-ratatui-dense:
+	cargo run --manifest-path prototypes/garden-ratatui/Cargo.toml -- --demo --layout dense
 
 install-ratatui:
 	cargo install --locked --path prototypes/garden-ratatui --root "$(HOME)/.local"
