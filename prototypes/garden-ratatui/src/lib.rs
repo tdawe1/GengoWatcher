@@ -1217,11 +1217,11 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
                         ),
                         time_left_span(job),
                     ];
-                    // Unknown ("—") and terminal ("expired") readings stand
-                    // alone; only live countdowns get "remaining".
+                    // Unknown and terminal readings stand alone; only
+                    // running countdowns get "remaining".
                     meta.push(Span::styled(
-                        match job.display_time_left().as_str() {
-                            "—" | "expired" => "   ",
+                        match (job.accepted_seconds_left, job.display_time_left().as_str()) {
+                            (Some(..=0), _) | (_, "—" | "expired" | "00:00") => "   ",
                             _ => " remaining   ",
                         },
                         Style::default().fg(MUTED),
@@ -1692,6 +1692,8 @@ fn render_analytics(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "JOBS BY HOUR",
         jobs_by_hour_data(&app.data.jobs),
         "No timestamp data",
+        2,
+        0,
     );
     render_bar_chart(
         frame,
@@ -1699,12 +1701,14 @@ fn render_analytics(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "SOURCE PERFORMANCE",
         source_share_data(&app.data),
         "No source data",
+        5,
+        1,
     );
     render_sparkline_panel(
         frame,
         inset_right(bottom[0]),
         "VALUE TREND · 7 DAYS",
-        value_trend_data(&app.data.jobs),
+        value_trend_data(&app.data.jobs, app.data.fetched_at),
         "No value history",
     );
     render_chart(
@@ -1723,6 +1727,8 @@ fn render_bar_chart(
     title: &'static str,
     series: Vec<(String, u64)>,
     empty_note: &'static str,
+    bar_width: u16,
+    bar_gap: u16,
 ) {
     if series.is_empty() {
         render_chart(frame, area, title, vec![empty_note.into()]);
@@ -1739,8 +1745,8 @@ fn render_bar_chart(
             .bar_style(Style::default().fg(BLUE))
             .value_style(Style::default().fg(INK))
             .label_style(Style::default().fg(MUTED))
-            .bar_width(5)
-            .bar_gap(1)
+            .bar_width(bar_width)
+            .bar_gap(bar_gap)
             .data(&refs),
         area,
     );
@@ -2421,18 +2427,19 @@ fn source_share_data(data: &DashboardData) -> Vec<(String, u64)> {
     sources
 }
 
-/// Seven most recent day-buckets of total reward, oldest first, in cents.
-fn value_trend_data(jobs: &[Job]) -> Vec<u64> {
-    let mut totals = BTreeMap::<u64, f64>::new();
+/// Seven consecutive UTC days ending today, oldest first, in cents.
+fn value_trend_data(jobs: &[Job], now: f64) -> Vec<u64> {
+    let mut totals = BTreeMap::<i64, f64>::new();
     for job in jobs {
         if job.timestamp.is_finite() && job.timestamp >= 0.0 {
-            *totals.entry(job.timestamp as u64 / 86_400).or_default() += job.reward;
+            *totals
+                .entry((job.timestamp as u64 / 86_400) as i64)
+                .or_default() += job.reward;
         }
     }
-    let mut days = totals.into_iter().rev().take(7).collect::<Vec<_>>();
-    days.reverse();
-    days.into_iter()
-        .map(|(_, value)| (value.max(0.0) * 100.0).round() as u64)
+    let today = (now as u64 / 86_400) as i64;
+    (today - 6..=today)
+        .map(|day| (totals.get(&day).copied().unwrap_or(0.0).max(0.0) * 100.0).round() as u64)
         .collect()
 }
 
@@ -2705,12 +2712,104 @@ mod tests {
         let hours = jobs_by_hour_data(&app.data.jobs);
         assert!(!hours.is_empty());
         assert!(hours.iter().all(|(_, count)| *count > 0));
-        assert!(!value_trend_data(&app.data.jobs).is_empty());
+        assert!(!value_trend_data(&app.data.jobs, app.data.fetched_at).is_empty());
         let shares = source_share_data(&app.data);
         assert!(!shares.is_empty());
         for window in shares.windows(2) {
             assert!(window[0].1 >= window[1].1);
         }
+    }
+
+    #[test]
+    fn overview_labels_only_running_countdowns_as_remaining() {
+        for (seconds, text, expected) in [
+            (None, None, "—   "),
+            (Some(60), None, "01:00 remaining   "),
+            (Some(0), None, "00:00   "),
+            (Some(-1), None, "00:00   "),
+            (None, Some("00:00"), "00:00   "),
+            (Some(0), Some("02:00"), "02:00   "),
+            (None, Some("expired"), "expired   "),
+            (None, Some("27:44"), "27:44 remaining   "),
+        ] {
+            let mut job = available_job("1");
+            job.accepted_seconds_left = seconds;
+            job.accepted_time_left = text.map(str::to_owned);
+            let mut app = App::new(View::Overview);
+            app.data.jobs = vec![job];
+            let mut terminal = Terminal::new(TestBackend::new(150, 44)).expect("test terminal");
+            terminal
+                .draw(|frame| render(frame, &mut app))
+                .expect("render succeeds");
+            let content = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                content.contains(expected),
+                "countdown {seconds:?}, {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn analytics_renders_all_hours_and_keeps_wider_source_labels() {
+        let mut app = App::new(View::Analytics);
+        app.data.jobs = (0..24)
+            .map(|hour| Job {
+                timestamp: f64::from(hour * 3_600),
+                ..available_job(&hour.to_string())
+            })
+            .collect();
+        app.data.stats.jobs_by_source = BTreeMap::from([("Feeds".into(), 24)]);
+        let mut terminal = Terminal::new(TestBackend::new(150, 44)).expect("test terminal");
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("000102030405060708091011121314151617181920212223"));
+        assert!(content.contains("Feeds"));
+    }
+
+    #[test]
+    fn value_trend_covers_seven_calendar_days_including_empty_days() {
+        let today = 20_000;
+        let now = f64::from(today * 86_400 + 1);
+        let jobs = [
+            (today - 7, 100.0),
+            (today - 6, 1.234),
+            (today - 4, 2.0),
+            (today - 4, 0.346),
+            (today - 2, -1.0),
+            (today, 4.56),
+            (today + 1, 100.0),
+        ]
+        .into_iter()
+        .map(|(day, reward)| Job {
+            timestamp: f64::from(day * 86_400),
+            reward,
+            ..Job::default()
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(
+            value_trend_data(&jobs, now),
+            vec![123, 0, 235, 0, 0, 0, 456]
+        );
+        assert_eq!(
+            value_trend_data(&jobs, now + 86_400.0),
+            vec![0, 235, 0, 0, 0, 456, 10_000]
+        );
+        assert_eq!(value_trend_data(&[], now), vec![0; 7]);
+        assert_eq!(value_trend_data(&[], 0.0), vec![0; 7]);
     }
 
     #[test]
