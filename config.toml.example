@@ -142,6 +142,9 @@ outbound_initial_delay_sec = 0.5
 outbound_max_delay_sec = 10.0
 outbound_verify_tls = true
 outbound_include_customer_content = false
+# Glob patterns (fnmatch) limiting which events are sent to outbound targets.
+# Empty list sends every event, e.g. ["job.accepted", "pipeline.*"].
+outbound_event_types = []
 
 [AutoAccept]
 enabled = false
@@ -219,3 +222,57 @@ check_interval_max = 300
 headless = true
 session_cookie = ""
 browser_executable = ""
+
+[JobPipeline]
+# Automated translate -> review -> stage pipeline for accepted jobs.
+# Driven via POST /api/pipeline/commands (e.g. from n8n).
+enabled = false
+# Start the pipeline directly on job.accepted instead of waiting for n8n.
+auto_start_on_accept = false
+# Per-job working dirs: <jobs_dir>/Active/<cid>_<slug>/, archived to
+# <jobs_dir>/<Submitted|Submitted-Auto|Unsubmitted>/<YYYY-MM>/.
+jobs_dir = "data/gengo-jobs"
+# Nextcloud links used in review notifications.
+nextcloud_web_url = "https://files.daweuchi.com"
+nextcloud_rel_dir = "Gengo"
+# Translator/reviewer agents. Customer text is untrusted, so agents never get
+# tools. Each spec is "opencode:<model>" (deny-all tool policy, prompt on
+# stdin) or "omp:<provider/model>" (run under the dedicated `omp_profile`,
+# which must have no MCP config). A bare model means opencode. Each role tries
+# its model, then the fallback model on failure.
+translator_model = "omp:google-antigravity/gemini-4-argon"
+translator_fallback_model = "opencode:openai/gpt-6-luna"
+reviewer_model = "opencode:openai/gpt-5.6-terra"
+reviewer_fallback_model = "opencode:openai/gpt-6-luna"
+# Dedicated omp profile (~/.omp/profiles/<name>/agent): own auth, no MCP.
+# The default omp profile is refused because it loads the user's MCP servers.
+omp_profile = "gengo-translate"
+agent_timeout_sec = 240.0
+# Save draft/final segments to the Gengo workbench via /save (never /submit).
+stage_to_workbench = true
+# Allow command "submit" with reason "deadline" to submit without approval.
+autosubmit_enabled = true
+alert_minutes_before = 30
+autosubmit_minutes_before = 15
+# Empty falls back to [BrowserWorker] sandbox_origin, then https://gengo.com.
+workbench_base_url = ""
+workbench_timeout_sec = 30.0
+# Poll the Gengo dashboard's "Incomplete jobs" every N seconds and emit
+# job.accepted (acceptance_source = "dashboard_reconcile") for in-progress
+# collections GengoWatcher did not see accepted: file jobs, jobs accepted on
+# another device, or while the watcher was down. Only runs when enabled = true;
+# 0 disables.
+reconcile_interval_sec = 300
+# Poll tracked jobs (ready_for_review, submitted, archived-as-Submitted) every
+# N seconds for new customer comments on the details page. New comments run a
+# patch + full-review revision that lands back at ready_for_review and holds
+# for explicit approval; revisions never auto-submit. 0 disables polling.
+comment_check_interval_sec = 300
+auto_revise_on_comments = true
+# Glossary JSON (UTF-8): a list of {"source", "target", "note"} objects, or a
+# {"source term": "target term"} object. Injected into agent prompts and
+# post-checked against the translation. A missing file means no glossary.
+glossary_path = "data/gengo-glossary.json"
+# After a quota/rate-limit error, skip that agent until its reported reset time
+# or for this many seconds.
+agent_cooldown_sec = 900

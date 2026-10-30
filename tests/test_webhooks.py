@@ -544,3 +544,29 @@ def test_outbound_dispatcher_emits_console_log_messages(tmp_path, caplog):
     assert "Webhook queued job.discovered event=evt-outbound-log" in caplog.text
     assert "Webhook delivery attempt event=evt-outbound-log" in caplog.text
     assert "Delivered webhook event evt-outbound-log" in caplog.text
+
+
+def test_outbound_event_types_filter_delivers_only_matching_events(tmp_path):
+    audit = WebhookAuditLogger(
+        path=tmp_path / "outbound-filter.jsonl",
+        logger=logging.getLogger("test.webhooks.outbound.filter"),
+        enabled=False,
+    )
+    config = _config(
+        tmp_path,
+        outbound_enabled=True,
+        outbound_urls=["https://bus.example.test/workflows/gengo-events"],
+        outbound_event_types=["job.accepted", "pipeline.*"],
+    )
+    dispatcher = WebhookDispatcher.from_config(
+        config, logging.getLogger("test.webhooks.dispatcher.filter"), audit
+    )
+    dispatcher._deliver = MagicMock()
+
+    for event_type in ("job.discovered", "job.accepted", "pipeline.ready_for_review"):
+        dispatcher.emit(event_type, {"id": "123"}, background=False)
+
+    delivered = [
+        call.args[2]["event_type"] for call in dispatcher._deliver.call_args_list
+    ]
+    assert delivered == ["job.accepted", "pipeline.ready_for_review"]

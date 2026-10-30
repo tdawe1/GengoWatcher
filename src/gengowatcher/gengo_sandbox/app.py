@@ -127,6 +127,35 @@ class SandboxFile:
         }
 
 
+def _comment_list_from_seed(value: Any) -> list[dict[str, str]]:
+    """Validate ``comments`` seed entries: ``[{author, posted_at, text}]``."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("comments must be a list")
+    comments: list[dict[str, str]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(f"comments[{index}] must be an object")
+        unknown = set(item) - {"id", "author", "posted_at", "text"}
+        if unknown:
+            raise ValueError(
+                f"comments[{index}]: unknown field(s): {', '.join(sorted(unknown))}"
+            )
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"comments[{index}].text must be a non-empty string")
+        comments.append(
+            {
+                "id": str(item.get("id") or ""),
+                "author": str(item.get("author") or ""),
+                "posted_at": str(item.get("posted_at") or ""),
+                "text": text,
+            }
+        )
+    return comments
+
+
 def _file_list_from_seed(value: Any, *, field_name: str) -> list[SandboxFile]:
     if value is None:
         return []
@@ -192,13 +221,29 @@ class SandboxCollection:
     mt_translation: str = ""
     source_files: list[SandboxFile] = field(default_factory=list)
     target_files: list[SandboxFile] = field(default_factory=list)
+    # Not part of the persisted document schema: runtime-only seed extras.
+    comments: list[dict[str, str]] = field(default_factory=list)
+    file_job: bool = False
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> SandboxCollection:
+        extras: dict[str, Any] = {}
+        if isinstance(value, dict):
+            extras = {
+                key: value[key] for key in ("comments", "file_job") if key in value
+            }
+            value = {
+                key: item
+                for key, item in value.items()
+                if key not in {"comments", "file_job"}
+            }
         try:
             value = validate_collection(value)
         except SandboxDocumentError as exc:
             raise ValueError(str(exc)) from exc
+        file_job = extras.get("file_job", False)
+        if not isinstance(file_job, bool):
+            raise ValueError("file_job must be a boolean")
         allotted_seconds = max(1, int(value.get("allotted_seconds", 3600)))
         started_at = (
             float(value["started_at"]) if value.get("started_at") is not None else None
@@ -240,7 +285,36 @@ class SandboxCollection:
             target_files=_file_list_from_seed(
                 value.get("target_files"), field_name="target_files"
             ),
+            comments=_comment_list_from_seed(extras.get("comments")),
+            file_job=file_job,
         )
+
+    def customer_comments(self) -> list[dict[str, str]]:
+        """Real (non-activity) comments shown on the job details page."""
+        comments: list[dict[str, str]] = []
+        if self.comment:
+            comments.append(
+                {
+                    "id": str(self.comment_id or ""),
+                    "author": f"Customer #{self.customer_id}",
+                    "posted_at": self.comment_time,
+                    "text": self.comment,
+                }
+            )
+        comments.extend(self.comments)
+        return [
+            {**item, "id": item["id"] or f"{self.collection_id}{index:03d}"}
+            for index, item in enumerate(comments, start=1)
+        ]
+
+    @staticmethod
+    def file_job_response() -> dict[str, Any]:
+        return {
+            "code": 3009,
+            "description": "This collection contains file jobs.",
+            "opstat": "error",
+            "title": "File job",
+        }
 
     def seconds_left(self) -> int:
         if self.status != "incomplete" or self.started_at is None:
@@ -686,6 +760,129 @@ def _download_links(item: SandboxCollection) -> str:
     return '<p class="downloads">' + " · ".join(links) + "</p>"
 
 
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+def _preview(text: str, limit: int = 15) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else f"{flat[:limit]}..."
+
+
+def _esc(value: Any) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def _incomplete_row(item: SandboxCollection) -> str:
+    details = f"/t/jobs/details/{item.collection_id}"
+    return "\n".join(
+        (
+            f"<tr class=\"td-list-row\" data-id='{item.collection_id}'"
+            f" data-detail-url='{details}'>",
+            '<td class="td-list-column td-list-column-tier">'
+            '<span class="label td-list-label-tier td-list-label-tier-pro">'
+            "pro</span></td>",
+            '<td class="td-list-column td-list-column-langs">'
+            f'<a class="td-list-column-langs-link" href="{details}">'
+            "ja &gt; en</a></td>",
+            '<td class="td-list-column td-list-column-content">'
+            f'<a class="td-list-column-content-link" href="{details}">'
+            f"{_esc(_preview(item.source))}</a></td>",
+            '<td class="td-list-column"><div class="td-list-section-icon"></div>'
+            "</td>",
+            '<td class="td-list-column td-list-column-unitcount">'
+            f"{item.unit_count}</td>",
+            '<td class="td-list-column td-list-column-reward">'
+            f'${item.reward:.2f}<div class="td-list-section-bonus"></div></td>',
+            "</tr>",
+        )
+    )
+
+
+def _incomplete_section(state: SandboxState) -> str:
+    """Dashboard "Incomplete jobs" table, mirroring the production markup."""
+    with state._lock:
+        items = [
+            item for item in state.collections.values() if item.status == "incomplete"
+        ]
+    if not items:
+        return ""
+    rows = "".join(_incomplete_row(item) for item in items)
+    return (
+        '<h2 class="td-list-head-label">Incomplete jobs</h2>'
+        '<div class="table-responsive"><table class="table table-hover td-list">'
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+
+def _comment_html(text: str) -> str:
+    escaped = html.escape(text, quote=True)
+    linked = _URL_IN_TEXT_RE.sub(
+        lambda match: (
+            f'<a href="{match.group(0)}" target="_blank" '
+            f'rel="noopener noreferrer">{match.group(0)}</a>'
+        ),
+        escaped,
+    )
+    return "<br />\n".join(linked.split("\n"))
+
+
+def _comment_item(comment: dict[str, str]) -> str:
+    return "\n".join(
+        (
+            f'<li class="  comment_continer" id="comment-{_esc(comment["id"])}">',
+            f'<p class="comment_meta">on {_esc(comment["posted_at"])} by '
+            f'<span class="comment-name">{_esc(comment["author"])}</span></p>',
+            f"<p>{_comment_html(comment['text'])}</p></li>",
+        )
+    )
+
+
+def _activity_item(label: str, actor: str) -> str:
+    return (
+        '<li id="comment-1"><div class=" resolved">'
+        f"<p><strong>{label}</strong> by {actor}</p></div></li>"
+    )
+
+
+def _incomplete_details(item: SandboxCollection) -> str:
+    """Details page of an accepted collection, mirroring production markup."""
+    title = (
+        item.source_files[0].filename
+        if item.source_files
+        else _preview(item.source, 20)
+    )
+    if item.source_files:
+        original = _download_links(item)
+    else:
+        original = (
+            f"<p>{_esc(item.source)}</p>"
+            f'<p><a href="/t/workbench/{item.collection_id}">Open in workbench</a></p>'
+        )
+    return "\n".join(
+        (
+            '<div id="translate" class="work-detail">',
+            f"<div><h1>Collection #{item.collection_id} - Incomplete</h1></div>",
+            '<ol id="order-queue"><li class="order incomplete">',
+            f'<div class="basic-info"><h3>{_esc(title)}&nbsp;</h3>',
+            '<p class="line2">Japanese<i class="to-arrow"></i>English '
+            f"{item.unit_count} chars</p></div>",
+            '<div class="meta-info"><div class="meta-info-container">'
+            f'<span class="price line1">${item.reward:.2f} </span></div></div>',
+            "</li></ol>",
+            f'<div class="comment-area" id="comments-for-{item.job_id}">',
+            '<ol class="comments-list open">',
+            _activity_item("Job made available", f"Customer #{item.customer_id}"),
+            _activity_item("Job accepted", f"Translator #{item.translator_id}"),
+            *(_comment_item(comment) for comment in item.customer_comments()),
+            '<li class="last"><form action="#" class="blue-box comment-form">'
+            '<textarea name="body"></textarea></form></li>',
+            "</ol></div>",
+            '<div id="original-text" class="blue-box"><h2>Original Text</h2>'
+            f"{original}</div></div>",
+        )
+    )
+
+
 def _payload_for_request(item: SandboxCollection, request: Request) -> dict[str, Any]:
     source_url = str(request.url_for("download_source_file", job_id=item.job_id))
     target_url = str(request.url_for("download_target_file", job_id=item.job_id))
@@ -732,7 +929,9 @@ def create_app(state: SandboxState | None = None) -> FastAPI:
     async def dashboard() -> str:
         return _layout(
             "Dashboard",
-            '<h1>Translator dashboard</h1><p><a href="/t/jobs/status/available">Available jobs</a></p>',
+            "<h1>Translator dashboard</h1>"
+            '<p><a href="/t/jobs/status/available">Available jobs</a></p>'
+            f"{_incomplete_section(sandbox)}",
         )
 
     @app.get("/t/jobs/details/{collection_id}", response_class=HTMLResponse)
@@ -744,10 +943,19 @@ def create_app(state: SandboxState | None = None) -> FastAPI:
 {_download_links(item)}
 <form method="post" action="/t/jobs/details/{collection_id}/accept"><button id="accept" type="submit">Accept</button></form></section>"""
             return _layout(f"Job {collection_id}", body)
+        if item.status == "incomplete":
+            return _layout(
+                f"Collection #{collection_id} - Incomplete", _incomplete_details(item)
+            )
         if item.status in {"reviewable", "complete"}:
+            comments = "".join(
+                _comment_item(comment) for comment in item.customer_comments()
+            )
             body = (
                 '<h1>Japanese → English</h1><section class="panel">'
                 f"{_download_links(item)}</section>"
+                f'<div class="comment-area" id="comments-for-{item.job_id}">'
+                f'<ol class="comments-list open">{comments}</ol></div>'
             )
             return _layout(f"Job {collection_id}", body)
         else:
@@ -803,7 +1011,11 @@ document.querySelector('#decline').onclick=async()=>{{await action('decline');lo
         collection_id: int, request: Request, page: int = 1
     ) -> dict[str, Any]:
         del page
-        return _payload_for_request(sandbox.get(collection_id), request)
+        item = sandbox.get(collection_id)
+        if item.file_job:
+            # Production answers file collections with HTTP 200 + code 3009.
+            return item.file_job_response()
+        return _payload_for_request(item, request)
 
     @app.get("/download/source/{job_id}/")
     async def download_source_file(job_id: int) -> Response:
