@@ -101,8 +101,28 @@ The browser worker is a separate asyncio process using a persistent Chromium pro
 
 `gengo_sandbox/` is a loopback-only reconstructed Gengo service for deterministic RSS, WebSocket, browser acceptance, and workbench testing. Its production-facing escape hatch requires both sides to opt into the exact sandbox origin; do not weaken that boundary.
 
+### Workbench HTTP API and submission
+
+Translations can be read and written browserlessly over `https://gengo.com/t/workbench/*`, authenticated by the `myG_myGSession_` cookie alone — no CSRF header, no bearer token. The number in a `/t/workbench/<n>` URL is a **collection_id**, not a job id. Endpoints, payload shapes, and the credential traps are documented in [docs/agents/gengo-workbench-api.md](docs/agents/gengo-workbench-api.md); that doc is the authority, so read it before hand-rolling a client. The WebSocket at `wss://live-dashboard.gengo.com/` is for job discovery only and is not the path for reading or submitting translations.
+
+**Never call `POST /t/workbench/collection/{cid}/submit` without the user reviewing the translation first.** It is irreversible, bills the customer, and ends the collection's editing window. Fetch and translate freely, show the user the source/target pairs, and wait for an explicit go-ahead on that specific job. "Translate this job" is not permission to submit. Use `/save` on its own to stage work for review. Also assert `{n}` tag parity between source and target before saving: a single mismatched tag becomes a blocking server-side error that fails the submit with an opaque `code: 1`.
+
 ### Persistence and privacy
 
 `config.toml` is canonical; `config.ini` is legacy migration input. Config and state use locks and atomic replacement. Preserve file permission handling and placeholder-secret detection.
 
 `state.json` intentionally strips raw workbench payloads, source text, accepted source text, and segments during persistence while keeping them in memory for active workflows. Outbound webhooks similarly omit customer content unless explicitly configured. Other durable stores include `stats.json`, cancellation state, CSV history, webhook JSONL audit, browser-worker artifacts, and uploaded-file metadata; preserve path-containment and atomic-write checks around them.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `tdawe1/GengoWatcher` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain.md`.
