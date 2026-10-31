@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .events import EventEnvelope
 from .event_bus import publish_event
@@ -190,9 +190,15 @@ def _notify_countdown_alert(
 class StateProjector:
     """Projects events into persistent state + emits canonical job.* events."""
 
-    def __init__(self, state: "AppState", notifier: object | None = None):
+    def __init__(
+        self,
+        state: "AppState",
+        notifier: object | None = None,
+        on_accepted: Callable[[dict[str, Any]], None] | None = None,
+    ):
         self.state = state
         self.notifier = notifier
+        self.on_accepted = on_accepted
 
     def project(self, event: EventEnvelope) -> None:
         """Project event into state + emit canonical events to bus. Must be fast."""
@@ -215,7 +221,7 @@ class StateProjector:
         workbench_details(event, self.state)
 
     def _project_workbench_start(self, event: EventEnvelope) -> None:
-        workbench_start(event, self.state)
+        workbench_start(event, self.state, on_accepted=self.on_accepted)
 
     def _project_workbench_status(self, event: EventEnvelope) -> None:
         workbench_status(event, self.state, notifier=self.notifier)
@@ -314,7 +320,12 @@ def workbench_details(event: EventEnvelope, state: "AppState") -> None:
     )
 
 
-def workbench_start(event: EventEnvelope, state: "AppState") -> None:
+def workbench_start(
+    event: EventEnvelope,
+    state: "AppState",
+    *,
+    on_accepted: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
     """Handle workbench start response — this is the ONLY acceptance trigger.
 
     Emits job.accepted to the bus.
@@ -350,6 +361,25 @@ def workbench_start(event: EventEnvelope, state: "AppState") -> None:
             collection_id=collection_id,
         )
     )
+
+    if callable(on_accepted):
+        accepted_job = {
+            "id": str(collection_id),
+            "collection_id": str(collection_id),
+            **(refreshed if isinstance(refreshed, dict) else {}),
+            "accepted": True,
+            "accepted_at": accepted_at,
+            "acceptance_state": "accepted",
+            "lifecycle_state": "accepted",
+        }
+        try:
+            on_accepted(accepted_job)
+        except Exception:
+            logger.warning(
+                "on_accepted callback failed for collection %s",
+                collection_id,
+                exc_info=True,
+            )
 
 
 def workbench_status(

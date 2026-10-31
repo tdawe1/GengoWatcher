@@ -1,0 +1,101 @@
+{
+  "id": "gengoWfMatrx0002",
+  "name": "Gengo — 01 Matrix Alert",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "432f80f9-d71f-5e40-a437-cf261191d25b",
+      "name": "When Called by Gengo Workflows",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Markdown alert message -> Matrix m.room.message content.\nconst DEFAULT_ROOM = '!lfpd8yvk6tHZY0_IbrhrQPHP3sFMH2Q6I_GSuXgGGiM';\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nreturn $input.all().map((item, i) => {\n  const j = item.json;\n  const message = String(j.message || 'Gengo notification');\n  let html = esc(message)\n    .replace(/\\[([^\\]]+)\\]\\(([^)\\s]+)\\)/g, (m, t, u) => '<a href=\"' + u + '\">' + t + '</a>')\n    .replace(/\\*\\*([^*]+)\\*\\*/g, '<b>$1</b>')\n    .replace(/`([^`]+)`/g, '<code>$1</code>')\n    .replace(/\\n/g, '<br>');\n  return { json: {\n    roomId: String(j.matrixRoomId || DEFAULT_ROOM),\n    txnId: 'gengo-' + $execution.id + '-' + i + (j.referenceId ? '-' + String(j.referenceId).replace(/[^A-Za-z0-9._-]/g, '') : ''),\n    content: {\n      msgtype: j.silent ? 'm.notice' : 'm.text',\n      body: message,\n      format: 'org.matrix.custom.html',\n      formatted_body: html,\n    },\n  } };\n});"
+      },
+      "id": "7b1f0c2e-3a4d-5e6f-8a9b-0c1d2e3f4a51",
+      "name": "Build Matrix Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://matrix.daweuchi.com/_matrix/client/v3/rooms/' + encodeURIComponent($json.roomId) + '/send/m.room.message/' + encodeURIComponent($json.txnId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.content) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "9c2d1e3f-4a5b-5c6d-9e0f-1a2b3c4d5e62",
+      "name": "Send to Matrix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "matrixNotifyBot0",
+          "name": "Matrix notify bot (@journal)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "When Called by Gengo Workflows": {
+      "main": [
+        [
+          {
+            "node": "Build Matrix Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Matrix Message": {
+      "main": [
+        [
+          {
+            "node": "Send to Matrix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Tokyo",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "versionId": "abc40232-f0db-5baf-89db-7b3670850206",
+  "tags": []
+}

@@ -1071,3 +1071,178 @@ class TestEdgeCases:
             result = api.get_recent_jobs(limit=10, page=1)
 
             assert result["pagination"]["pages"] == 3
+
+
+class TestPipelineEndpoints:
+    """Tests for /api/pipeline/* routes."""
+
+    @pytest.fixture
+    def pipeline_api(
+        self, mock_config, mock_state, mock_logger, mock_watcher, monkeypatch
+    ):
+        with patch("gengowatcher.web.JobPipelineService"):
+            api = WebAPI(
+                mock_config,
+                mock_state,
+                mock_logger,
+                watcher=mock_watcher,
+                start_watcher_thread=False,
+            )
+        api.job_pipeline = MagicMock()
+        monkeypatch.setattr("gengowatcher.web.api_instance", api)
+        return api
+
+    @staticmethod
+    def _headers():
+        from gengowatcher.web import authenticator
+
+        return {"Authorization": f"Bearer {authenticator.get_api_key()}"}
+
+    def test_pipeline_command_requires_bearer_auth(self, pipeline_api):
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/pipeline/commands",
+            json={"command": "start", "collection_id": "123"},
+        )
+
+        assert response.status_code == 401
+        pipeline_api.job_pipeline.handle_command.assert_not_called()
+
+    def test_pipeline_command_dispatches_to_job_pipeline(self, pipeline_api):
+        pipeline_api.job_pipeline.handle_command.return_value = {
+            "status": "started",
+            "collection_id": "123",
+        }
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/pipeline/commands",
+            json={"command": " Start ", "collection_id": 123},
+            headers=self._headers(),
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "started", "collection_id": "123"}
+        dispatched = pipeline_api.job_pipeline.handle_command.call_args.args[0]
+        assert dispatched["command"] == "start"
+        assert dispatched["collection_id"] == "123"
+        assert dispatched["background"] is True
+
+    def test_pipeline_command_maps_permission_error_to_403(self, pipeline_api):
+        pipeline_api.job_pipeline.handle_command.side_effect = PermissionError(
+            "invalid approval token"
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/pipeline/commands",
+            json={"command": "submit", "collection_id": "123", "approval_token": "x"},
+            headers=self._headers(),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "invalid approval token"
+
+
+def test_workbench_start_invokes_on_accepted_with_accepted_job(tmp_path):
+    import logging
+
+    from gengowatcher.events import EventEnvelope
+    from gengowatcher.state import AppState
+    from gengowatcher.state_projector import StateProjector
+
+    app_state = AppState(
+        logger=logging.getLogger("test_web_api.projector"),
+        state_file_path=tmp_path / "state.json",
+    )
+    on_accepted = MagicMock()
+    projector = StateProjector(app_state, on_accepted=on_accepted)
+    event = EventEnvelope(
+        type="browser.workbench.start_response",
+        source="native_browser_listener",
+        payload={"order_id": "123"},
+        collection_id="123",
+    )
+
+    with patch("gengowatcher.state_projector.publish_event"):
+        projector.project(event)
+        projector.project(event)
+
+    on_accepted.assert_called_once()
+    accepted_job = on_accepted.call_args.args[0]
+    assert accepted_job["id"] == "123"
+    assert accepted_job["collection_id"] == "123"
+    assert accepted_job["accepted"] is True
+    assert accepted_job["lifecycle_state"] == "accepted"
+    assert accepted_job["accepted_at"] == app_state.get_job("123")["accepted_at"]
+
+
+def _reconciler_config(values):
+    config = MagicMock()
+    config.get.side_effect = lambda s, k, **kw: values.get(
+        (s, k), kw.get("fallback", "")
+    )
+    return config
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {("JobPipeline", "reconcile_interval_sec"): 300},
+        {
+            ("JobPipeline", "enabled"): True,
+            ("JobPipeline", "reconcile_interval_sec"): 0,
+        },
+    ],
+    ids=["pipeline-disabled", "interval-zero"],
+)
+def test_acceptance_reconciler_not_created_when_disabled(
+    values, mock_state, mock_logger, mock_watcher
+):
+    with patch("gengowatcher.web.AcceptanceReconciler") as reconciler_class:
+        api = WebAPI(
+            _reconciler_config(values),
+            mock_state,
+            mock_logger,
+            watcher=mock_watcher,
+            start_watcher_thread=False,
+        )
+
+    reconciler_class.assert_not_called()
+    assert api.acceptance_reconciler is None
+    api.shutdown()
+
+
+def test_acceptance_reconciler_created_started_and_stopped_when_enabled(
+    mock_state, mock_logger, mock_watcher
+):
+    config = _reconciler_config(
+        {
+            ("JobPipeline", "enabled"): True,
+            ("JobPipeline", "reconcile_interval_sec"): "300",
+        }
+    )
+    with patch("gengowatcher.web.AcceptanceReconciler") as reconciler_class:
+        api = WebAPI(
+            config,
+            mock_state,
+            mock_logger,
+            watcher=mock_watcher,
+            start_watcher_thread=False,
+        )
+
+    reconciler_class.assert_called_once()
+    kwargs = reconciler_class.call_args.kwargs
+    assert kwargs["interval_sec"] == 300.0
+    assert kwargs["state"] is mock_state
+    assert kwargs["on_accepted"] is mock_watcher._on_job_accepted
+    api.job_pipeline = MagicMock()
+    assert kwargs["client_provider"]() is api.job_pipeline.workbench_client
+
+    reconciler = reconciler_class.return_value
+    assert api.acceptance_reconciler is reconciler
+    reconciler.start.assert_called_once_with()
+
+    api.shutdown()
+    reconciler.stop.assert_called_once_with()

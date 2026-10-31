@@ -1,0 +1,733 @@
+{
+  "id": "gengoWfAppr00004",
+  "name": "Gengo — 03 Review Approval Form",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "none",
+        "formTitle": "Gengo Translation Review Decision",
+        "formDescription": "Approve to submit the staged translation to Gengo immediately, or place on Hold to disable the 15-minute auto-submit timer.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "collection_id",
+              "fieldType": "hiddenField",
+              "fieldValue": ""
+            },
+            {
+              "fieldName": "token",
+              "fieldType": "hiddenField",
+              "fieldValue": ""
+            },
+            {
+              "fieldLabel": "Decision",
+              "fieldName": "decision",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "defaultValue": "Approve & Submit Now",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Approve & Submit Now"
+                  },
+                  {
+                    "option": "Hold (Disable 15m Auto-Submit)"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Notes (optional)",
+              "fieldName": "notes",
+              "fieldType": "textarea",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "gengo-approval",
+          "ignoreBots": true,
+          "buttonLabel": "Confirm Decision",
+          "appendAttribution": false,
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "Decision received. Watch the Gengo alerts Matrix room for confirmation."
+            }
+          }
+        }
+      },
+      "id": "9772ca30-7388-5a7f-a413-92214bb4b2ec",
+      "name": "Gengo Translation Review Decision",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "c82375f7-14f2-57ac-bbe9-91d4bf16184e"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $json.collection_id }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "c7f5b8da-6c11-550f-a2ac-4f53da87091a",
+      "name": "Lookup Job",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        200
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-token",
+              "leftValue": "={{ Boolean($json.approvalToken) && /^\\d+$/.test(String($('Gengo Translation Review Decision').first().json.collection_id || '')) && $json.approvalToken === $('Gengo Translation Review Decision').first().json.token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c6915ebf-255b-58ea-8d8f-4b05fd47f29a",
+      "name": "Valid Token?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "d0-0",
+                    "leftValue": "={{ $('Gengo Translation Review Decision').first().json.decision }}",
+                    "rightValue": "Approve & Submit Now",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "approve"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "d1-0",
+                    "leftValue": "={{ $('Gengo Translation Review Decision').first().json.decision }}",
+                    "rightValue": "Hold (Disable 15m Auto-Submit)",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "hold"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9fc2c5e6-f04f-54ee-ada4-76fcb13b996c",
+      "name": "Route Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Gengo Translation Review Decision').first().json.collection_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "approved",
+            "hold": false,
+            "lastEvent": "user.approved"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "hold",
+              "displayName": "hold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "2b715879-7908-52d0-aa08-0324339c1a11",
+      "name": "Mark Approved",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://omp.daweuchi.com/events/gengo/commands",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Event-Source",
+              "value": "n8n-gengo"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: 'submit', collection_id: $('Gengo Translation Review Decision').first().json.collection_id, reason: 'approved', approval_token: $('Gengo Translation Review Decision').first().json.token }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "bd73225c-9e29-520a-9f5f-05c4f4ac9d73",
+      "name": "Publish Approved Submit Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "daweuchiEventBusBr",
+          "name": "Daweuchi Event Bus Bearer Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4999ed26-7764-5156-9fc4-c26ec77c51fb",
+              "name": "message",
+              "value": "={{ \"👍 **User Approved** Gengo #\" + $('Gengo Translation Review Decision').first().json.collection_id + \" — submitting now.\" + ($('Gengo Translation Review Decision').first().json.notes ? \"\\nNotes: \" + String($('Gengo Translation Review Decision').first().json.notes).slice(0, 500) : \"\") }}",
+              "type": "string"
+            },
+            {
+              "id": "10ed9518-b0e3-5edf-a357-e9d0cba28eff",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Gengo Translation Review Decision').first().json.collection_id + '-approved' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "8c1ec0d0-6b30-5ebe-abf5-0a690aaa5247",
+      "name": "Alert: User Approved",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "18caa6a0-6850-5f98-b3ec-057a87a393cc",
+      "name": "Send Alert: User Approved",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Gengo Translation Review Decision').first().json.collection_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "hold": true,
+            "lastEvent": "user.held"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "hold",
+              "displayName": "hold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d9da603f-4faf-5918-916e-a3f0d90eda2f",
+      "name": "Mark Held",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://omp.daweuchi.com/events/gengo/commands",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Event-Source",
+              "value": "n8n-gengo"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: 'hold', collection_id: $('Gengo Translation Review Decision').first().json.collection_id, reason: 'user_hold', approval_token: $('Gengo Translation Review Decision').first().json.token }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "174d24cd-f001-52cb-beee-33a0a93ac7d4",
+      "name": "Publish Hold Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "daweuchiEventBusBr",
+          "name": "Daweuchi Event Bus Bearer Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cf45eb9f-fcdf-5018-913f-f91ebfa415cf",
+              "name": "message",
+              "value": "={{ \"⏸️ **Auto-Submit Disabled (On Hold)** for Gengo #\" + $('Gengo Translation Review Decision').first().json.collection_id + \"\\nSubmit manually from the workbench or the approval link before the deadline.\" + ($('Gengo Translation Review Decision').first().json.notes ? \"\\nNotes: \" + String($('Gengo Translation Review Decision').first().json.notes).slice(0, 500) : \"\") }}",
+              "type": "string"
+            },
+            {
+              "id": "c1be61fa-1a31-53ae-b873-10e8a7bdbcc7",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Gengo Translation Review Decision').first().json.collection_id + '-held' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "560dd39f-124d-5aaf-a359-9053d9bd8cb2",
+      "name": "Alert: On Hold",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "efa487d8-7741-5dc2-96e2-ee8bc9f73736",
+      "name": "Send Alert: On Hold",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "884716c8-d633-58fe-96a6-58e8d01afa7b",
+              "name": "message",
+              "value": "={{ \"⚠️ **Rejected Gengo approval attempt** for #\" + String($('Gengo Translation Review Decision').first().json.collection_id || \"?\").slice(0, 20) + \" — invalid or expired token. No command was sent.\" }}",
+              "type": "string"
+            },
+            {
+              "id": "d1d4da38-83d6-5d20-b4e9-bfca95a2c1d6",
+              "name": "referenceId",
+              "value": "gengo-approval-rejected",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "d5393b37-39b3-52d6-ad26-b846beea4421",
+      "name": "Alert: Invalid Approval Link",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "ddab8b5d-2c82-599a-bb16-ba83846ef2c0",
+      "name": "Send Alert: Invalid Approval Link",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Alert: User Approved": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: User Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: On Hold": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: On Hold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Invalid Approval Link": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Invalid Approval Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gengo Translation Review Decision": {
+      "main": [
+        [
+          {
+            "node": "Lookup Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Job": {
+      "main": [
+        [
+          {
+            "node": "Valid Token?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Token?": {
+      "main": [
+        [
+          {
+            "node": "Route Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert: Invalid Approval Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Decision": {
+      "main": [
+        [
+          {
+            "node": "Mark Approved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Held",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Approved": {
+      "main": [
+        [
+          {
+            "node": "Publish Approved Submit Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Approved Submit Command": {
+      "main": [
+        [
+          {
+            "node": "Alert: User Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Held": {
+      "main": [
+        [
+          {
+            "node": "Publish Hold Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Hold Command": {
+      "main": [
+        [
+          {
+            "node": "Alert: On Hold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Tokyo"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "versionId": "879ab77c-dca0-5e70-b8d4-b3acfa77d8b2",
+  "tags": []
+}

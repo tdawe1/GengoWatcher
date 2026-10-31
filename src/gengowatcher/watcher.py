@@ -715,6 +715,22 @@ class GengoWatcher:
         """Record that a job has been accepted for future cancellation decisions."""
         return _on_job_accepted_impl(self, job_data)
 
+    def _on_native_job_accepted(self, accepted_job: dict) -> None:
+        """Propagate a native-browser acceptance (state already projected)."""
+        job_id = str(accepted_job.get("id") or accepted_job.get("collection_id") or "")
+        try:
+            reward = float(accepted_job.get("reward") or 0.0)
+        except (TypeError, ValueError):
+            reward = 0.0
+        try:
+            self.cancellation_manager.set_current_job(job_id, reward)
+        except Exception:
+            self.logger.exception(
+                "Failed to track natively accepted job %s for cancellation", job_id
+            )
+        self._emit_webhook_event("job.accepted", accepted_job)
+        self._emit_api_event("job.accepted", accepted_job)
+
     def _submit_job_to_translation_app_async(self, job_data: dict) -> None:
         """Submit a discovered job to translation-app without blocking monitors."""
         return _submit_job_to_translation_app_async_impl(self, job_data)
@@ -829,7 +845,11 @@ class GengoWatcher:
                 debug_url=debug_url,
                 capture_interval_ms=interval_ms,
             )
-            self._state_projector = StateProjector(self.state, notifier=self)
+            self._state_projector = StateProjector(
+                self.state,
+                notifier=self,
+                on_accepted=self._on_native_job_accepted,
+            )
             native_thread = threading.Thread(
                 target=self._run_native_browser_listener, daemon=True
             )

@@ -18,6 +18,7 @@ handoff and integration.
 - **Native Ratatui TUI** with live jobs, workflow, history, analytics, health, and event views
 - **Textual fallback** available with `--tui textual`
 - **Local web API** with bearer auth for file transfer, status, and webhook ingest
+- **Job pipeline + n8n automation** — accepted jobs are translated, reviewed, staged, and held for one-tap approval; new customer comments auto-run a patch + full-review revision that holds for approval again. See [the n8n workflow doc](docs/n8n-translation-workflow.md)
 
 ## Installation
 

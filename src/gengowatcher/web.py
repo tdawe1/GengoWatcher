@@ -41,6 +41,9 @@ import uvicorn
 
 from .config import AppConfig
 from .browser_worker.protocol import normalize_sandbox_origin, url_origin
+from .orchestration.acceptance_reconciler import AcceptanceReconciler
+from .orchestration.comment_reconciler import CommentReconciler
+from .orchestration.job_pipeline import JobPipelineService
 from .orchestration.translate_fanout import (
     SUPPORTED_MODELS,
     TranslateBusyError,
@@ -75,6 +78,7 @@ from .web_models import (
     ConfigSection,
     JobEntry,
     PaginationParams,  # noqa: F401 - compatibility re-export
+    PipelineCommandRequest,
     SECURITY,
     TranslateRunDetail,
     TranslateRunSummary,
@@ -106,6 +110,7 @@ CONFIG_WRITE_BLOCKED_SECTIONS = frozenset(
         "emailmonitor",
         "websitemonitor",
         "websocket",
+        "jobpipeline",
         "metrics",
     }
 )
@@ -218,7 +223,16 @@ class WebAPI:
         )
         self._api_event_callback = self._handle_watcher_api_event
         self.watcher.on_api_event_callback = self._api_event_callback
+        self.job_pipeline = JobPipelineService(
+            config, logger, event_callback=self._emit_pipeline_event
+        )
         self.watcher_thread: Optional[threading.Thread] = None
+        self.acceptance_reconciler: AcceptanceReconciler | None = (
+            self._build_acceptance_reconciler()
+        )
+        self.comment_reconciler: CommentReconciler | None = (
+            self._build_comment_reconciler()
+        )
 
         if self._manage_watcher_lifecycle:
             self.watcher_thread = threading.Thread(
@@ -228,6 +242,45 @@ class WebAPI:
             self.logger.info("WebAPI initialized and watcher thread started")
         else:
             self.logger.info("WebAPI initialized using shared watcher instance")
+        if self.acceptance_reconciler is not None:
+            self.acceptance_reconciler.start()
+        if self.comment_reconciler is not None:
+            self.comment_reconciler.start()
+
+    def _build_acceptance_reconciler(self) -> AcceptanceReconciler | None:
+        """Create the dashboard acceptance reconciler when the pipeline wants it."""
+        if not config_bool(self.config, "JobPipeline", "enabled", False):
+            return None
+        interval = config_float(self.config, "JobPipeline", "reconcile_interval_sec", 0)
+        if interval <= 0:
+            return None
+        on_accepted = getattr(self.watcher, "_on_job_accepted", None)
+        if not callable(on_accepted):
+            return None
+        return AcceptanceReconciler(
+            self.logger,
+            client_provider=lambda: self.job_pipeline.workbench_client,
+            state=self.state,
+            on_accepted=on_accepted,
+            interval_sec=interval,
+        )
+
+    def _build_comment_reconciler(self) -> CommentReconciler | None:
+        """Create the customer-comment poller when auto-revision is wanted."""
+        if not config_bool(self.config, "JobPipeline", "enabled", False):
+            return None
+        if not config_bool(
+            self.config, "JobPipeline", "auto_revise_on_comments", True
+        ):
+            return None
+        interval = config_float(
+            self.config, "JobPipeline", "comment_check_interval_sec", 0
+        )
+        if interval <= 0:
+            return None
+        return CommentReconciler(
+            self.logger, pipeline=self.job_pipeline, interval_sec=interval
+        )
 
     def get_status(self) -> WatcherStatus:
         """Get current watcher status."""
@@ -933,6 +986,9 @@ class WebAPI:
             )
             success, reason = self._accept_attempt_succeeded(result)
             if success:
+                on_accepted = getattr(self.watcher, "_on_job_accepted", None)
+                if callable(on_accepted):
+                    await asyncio.to_thread(on_accepted, target_job)
                 return {
                     "success": True,
                     "message": f"Job {job_id} accepted successfully",
@@ -1007,6 +1063,16 @@ class WebAPI:
         with self._connections_lock:
             return list(self._event_history)[-max(1, limit) :]
 
+    def _emit_pipeline_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        """Fan pipeline.* events out to API listeners and outbound webhooks."""
+        self.publish_api_event(event_type, payload)
+        emit_webhook = getattr(self.watcher, "_emit_webhook_event", None)
+        if callable(emit_webhook):
+            try:
+                emit_webhook(event_type, dict(payload))
+            except Exception:
+                self.logger.exception("Failed to emit pipeline webhook %s", event_type)
+
     def _handle_watcher_api_event(self, event_type: str, payload: dict) -> None:
         previous = self._previous_api_event_callback
         if callable(previous):
@@ -1018,6 +1084,24 @@ class WebAPI:
         event = self.publish_api_event(event_type, payload)
         if event_type == "job.accepted":
             self._handle_accepted_job_for_workflow(event["data"])
+            self._maybe_auto_start_pipeline(payload)
+
+    def _maybe_auto_start_pipeline(self, payload: Mapping[str, Any]) -> None:
+        if not config_bool(self.config, "JobPipeline", "enabled", False):
+            return
+        if not config_bool(self.config, "JobPipeline", "auto_start_on_accept", False):
+            return
+        collection_id = str(payload.get("collection_id") or payload.get("id") or "")
+        if not collection_id:
+            return
+        try:
+            self.job_pipeline.start_job(
+                collection_id, job_hint=dict(payload), background=True
+            )
+        except Exception:
+            self.logger.exception(
+                "Failed to auto-start job pipeline for collection %s", collection_id
+            )
 
     def _workflow_file_mode(self) -> str:
         mode = (
@@ -1580,6 +1664,9 @@ class WebAPI:
     def shutdown(self):
         """Shutdown the web API and watcher."""
         self.logger.info("Shutting down WebAPI")
+        reconciler = getattr(self, "acceptance_reconciler", None)
+        if reconciler is not None:
+            reconciler.stop()
         if (
             getattr(self.watcher, "on_api_event_callback", None)
             is self._api_event_callback
@@ -1834,6 +1921,89 @@ async def cancel_current_job(authenticated: bool = Depends(verify_auth)):
     except Exception as e:
         api_instance.logger.exception(f"Error cancelling current job: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def _lookup_error_detail(exc: LookupError, default: str) -> str:
+    return str(exc.args[0]) if exc.args else default
+
+
+@app.post("/api/pipeline/commands")
+async def run_pipeline_command(
+    payload: PipelineCommandRequest,
+    authenticated: bool = Depends(verify_auth),
+):
+    """Dispatch a job pipeline command (used by n8n and the CLI)."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        if payload.command == "accept_and_start":
+            on_accepted = getattr(api_instance.watcher, "_on_job_accepted", None)
+            if not callable(on_accepted):
+                raise HTTPException(
+                    status_code=503, detail="Job acceptance hook unavailable"
+                )
+            await asyncio.to_thread(
+                on_accepted,
+                {
+                    **payload.job_hint,
+                    "id": payload.collection_id,
+                    "collection_id": payload.collection_id,
+                },
+            )
+            return {"status": "accepted", "collection_id": payload.collection_id}
+        return await asyncio.to_thread(
+            api_instance.job_pipeline.handle_command, payload.model_dump()
+        )
+    except HTTPException:
+        raise
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=_lookup_error_detail(exc, "Pipeline job not found"),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as e:
+        api_instance.logger.exception(f"Error running pipeline command: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
+@app.get("/api/pipeline/jobs")
+async def list_pipeline_jobs(authenticated: bool = Depends(verify_auth)):
+    """List jobs tracked by the job pipeline."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        return {"jobs": api_instance.job_pipeline.list_jobs()}
+    except Exception as e:
+        api_instance.logger.exception(f"Error listing pipeline jobs: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
+@app.get("/api/pipeline/jobs/{collection_id}")
+async def get_pipeline_job(
+    collection_id: str, authenticated: bool = Depends(verify_auth)
+):
+    """Return one pipeline job by collection id."""
+    if not api_instance:
+        raise HTTPException(status_code=503, detail="API not initialized")
+    try:
+        job = api_instance.job_pipeline.get_job(collection_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=_lookup_error_detail(exc, "Pipeline job not found"),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as e:
+        api_instance.logger.exception(f"Error getting pipeline job: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+    if job is None:
+        raise HTTPException(status_code=404, detail="Pipeline job not found")
+    return job
 
 
 async def _read_limited_request_body(request: Request, *, max_bytes: int) -> bytes:

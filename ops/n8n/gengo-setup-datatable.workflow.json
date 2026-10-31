@@ -1,0 +1,172 @@
+{
+  "id": "gengoWfSetup0001",
+  "name": "Gengo — 00 Setup Data Table",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b923c891-d61d-5e28-8b3c-dcfeb7e359d2",
+      "name": "Run Once to Create Table",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "gengo_jobs",
+        "columns": {
+          "column": [
+            {
+              "name": "collectionId",
+              "type": "string"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "name": "langPair",
+              "type": "string"
+            },
+            {
+              "name": "reward",
+              "type": "number"
+            },
+            {
+              "name": "unitCount",
+              "type": "number"
+            },
+            {
+              "name": "status",
+              "type": "string"
+            },
+            {
+              "name": "hold",
+              "type": "boolean"
+            },
+            {
+              "name": "deadlineEpoch",
+              "type": "number"
+            },
+            {
+              "name": "deadlineIso",
+              "type": "string"
+            },
+            {
+              "name": "alertAtIso",
+              "type": "string"
+            },
+            {
+              "name": "submitAtIso",
+              "type": "string"
+            },
+            {
+              "name": "approvalToken",
+              "type": "string"
+            },
+            {
+              "name": "workbenchUrl",
+              "type": "string"
+            },
+            {
+              "name": "nextcloudUrl",
+              "type": "string"
+            },
+            {
+              "name": "reviewSummary",
+              "type": "string"
+            },
+            {
+              "name": "submitReason",
+              "type": "string"
+            },
+            {
+              "name": "archivedDir",
+              "type": "string"
+            },
+            {
+              "name": "lastEvent",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      },
+      "id": "674749ac-cd3f-577c-8511-21053bf906ea",
+      "name": "Create gengo_jobs Data Table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gengo-setup-datatable",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "responseData": "firstEntryJson",
+        "options": {}
+      },
+      "id": "4ebafde2-b004-5f22-bd80-b243e24e9b77",
+      "name": "Setup Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "daweuchiWebhookHdr",
+          "name": "Daweuchi Webhook Header Token"
+        }
+      },
+      "webhookId": "78020587-820b-524f-abe5-3d43ad5ed771"
+    }
+  ],
+  "connections": {
+    "Run Once to Create Table": {
+      "main": [
+        [
+          {
+            "node": "Create gengo_jobs Data Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setup Webhook": {
+      "main": [
+        [
+          {
+            "node": "Create gengo_jobs Data Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Tokyo"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "versionId": "63c5b99b-f3a4-5084-a481-b761ce3152bc",
+  "tags": []
+}

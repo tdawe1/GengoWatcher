@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import concurrent.futures
+import fnmatch
 import hashlib
 import hmac
 import json
@@ -140,6 +141,7 @@ class OutboundWebhookTarget:
     secret: str = ""
     auth_token: str = ""
     verify_tls: bool = True
+    event_types: tuple[str, ...] = ()
 
 
 def _config_get(config: Any, section: str, key: str, fallback: Any = None) -> Any:
@@ -206,6 +208,16 @@ def _parse_url_list(value: Any) -> list[str]:
             return []
         return [item.strip() for item in value.split(",") if item.strip()]
     return []
+
+
+def _parse_str_list(value: Any) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple, set)):
+        items = [str(item).strip() for item in value]
+    elif isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    else:
+        return ()
+    return tuple(item for item in items if item)
 
 
 def _mask_text(value: str, keep: int = 6) -> str:
@@ -667,6 +679,9 @@ class WebhookDispatcher:
             _config_get(config, "Webhooks", "outbound_auth_token", "") or ""
         )
         verify_tls = _config_bool(config, "Webhooks", "outbound_verify_tls", True)
+        outbound_event_types = _parse_str_list(
+            _config_get(config, "Webhooks", "outbound_event_types", [])
+        )
         targets = []
         if enabled:
             for index, url in enumerate(urls, start=1):
@@ -677,6 +692,7 @@ class WebhookDispatcher:
                         secret=secret,
                         auth_token=auth_token,
                         verify_tls=verify_tls,
+                        event_types=outbound_event_types,
                     )
                 )
         return cls(
@@ -738,6 +754,16 @@ class WebhookDispatcher:
         ).encode("utf-8")
         futures: list[concurrent.futures.Future | None] = []
         for target in self.targets:
+            if target.event_types and not any(
+                fnmatch.fnmatchcase(event_type, pattern)
+                for pattern in target.event_types
+            ):
+                self.logger.debug(
+                    "Webhook event %s filtered for target=%s",
+                    event_type,
+                    target.name,
+                )
+                continue
             self.audit_logger.record(
                 direction="outgoing",
                 stage="queued",

@@ -1,0 +1,2572 @@
+{
+  "id": "gengoWfPipe00003",
+  "name": "Gengo — 02 Job Pipeline & Deadline Monitor",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gengo-events",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ec07dab4-03d4-5be1-bc5a-19465999d7b3",
+      "name": "Gengo Events Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        600
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "daweuchiWebhookHdr",
+          "name": "Daweuchi Webhook Header Token"
+        }
+      },
+      "webhookId": "1fdac9b9-bbcb-502f-859f-85e3bab441ed"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\": true}",
+        "options": {}
+      },
+      "id": "0b6debd1-162c-5c86-964b-54ae926c66dd",
+      "name": "Acknowledge Router",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        220,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Accepts three shapes:\n//  1. Daweuchi router forward: {id, topic, source, payload: <GengoWatcher envelope>}\n//  2. Raw GengoWatcher outbound envelope: {event_id, event_type, created_at, payload}\n//  3. Either of the above wrapped in the n8n Webhook item ({headers, params, query, body}).\n// Pure JS only: n8n 2.x blocks environment access and expression evaluation in Code nodes.\nconst raw = ($json.body && typeof $json.body === 'object') ? $json.body : $json;\nconst envelope = (raw.payload && typeof raw.payload === 'object' && raw.payload.event_type)\n  ? raw.payload\n  : raw;\nconst p = (envelope.payload && typeof envelope.payload === 'object') ? envelope.payload : {};\n\nconst eventType = String(envelope.event_type || '');\nconst collectionId = String(p.collection_id || p.id || p.job_id || '');\nconst title = String(p.title || ('Gengo #' + collectionId));\nconst langPair = String(\n  p.lang_pair ||\n  ((p.lc_src && p.lc_tgt) ? (String(p.lc_src).toUpperCase() + '->' + String(p.lc_tgt).toUpperCase()) : 'JA->EN')\n);\nconst reward = Number(p.reward || 0);\nconst unitCount = Number(p.unit_count || p.word_count || 0);\nconst secondsLeft = Number(p.seconds_left || p.accepted_seconds_left || 0);\nconst allottedSeconds = Number(p.allotted_seconds || 3600);\nconst expireTime = Number(p.expire_time || 0);\nconst deadlineEpoch = Number(\n  p.deadline_epoch ||\n  (expireTime > 1e10 ? expireTime / 1000 : expireTime) ||\n  (secondsLeft > 0 ? Math.floor(Date.now() / 1000) + secondsLeft : 0)\n);\nconst alertMin = Number(p.alert_minutes_before || 30);\nconst submitMin = Number(p.autosubmit_minutes_before || 15);\nconst iso = (epoch) => (epoch > 0 ? new Date(epoch * 1000).toISOString() : '');\n\n// The approval token is minted by the \"Generate Approval Token\" Crypto node on\n// job.accepted (CSPRNG) or by GengoWatcher (secrets.token_urlsafe). Never invent one\n// here for later events: a token GengoWatcher does not know would break approvals.\nconst approvalToken = String(p.approval_token || '');\nconst workbenchUrl = String(p.workbench_url || p.url || ('https://gengo.com/t/workbench/' + collectionId));\nconst nextcloudUrl = String(p.nextcloud_url || 'https://files.daweuchi.com/apps/files/?dir=/Gengo/Active');\nconst formBaseUrl = 'https://n8n.daweuchi.com/form/gengo-approval';\n// encodeURIComponent leaves \"(\" and \")\" alone; escape them so Markdown [text](url)\n// links in alert messages do not end early at the \")\" of \"Hold (Disable ...)\".\nconst enc = (s) => encodeURIComponent(String(s)).replace(/\\(/g, '%28').replace(/\\)/g, '%29');\nconst formUrl = (token, decision) =>\n  formBaseUrl + '?collection_id=' + enc(collectionId) +\n  '&token=' + enc(token) + '&decision=' + enc(decision);\nconst validationErrors = Array.isArray(p.validation_errors) ? p.validation_errors : [];\n// Counts only: comment text, terms and glossary hits never leave the PC.\nconst commentsCount = Number(p.comments_count || 0);\nconst uncertainTermsCount = Number(p.uncertain_terms_count || 0);\nconst glossaryWarningsCount = Number(p.glossary_warnings_count || 0);\nconst acceptanceSource = String(p.acceptance_source || '');\nconst newCommentsCount = Number(p.new_comments_count || 0);\nconst revisionCount = Number(p.revision_count || 0);\n\nreturn {\n  json: {\n    eventType,\n    eventId: String(envelope.event_id || raw.id || ''),\n    collectionId,\n    title,\n    langPair,\n    reward,\n    unitCount,\n    secondsLeft,\n    allottedSeconds,\n    deadlineEpoch,\n    alertMin,\n    submitMin,\n    deadlineIso: iso(deadlineEpoch),\n    alertAtIso: iso(deadlineEpoch - alertMin * 60),\n    submitAtIso: iso(deadlineEpoch - submitMin * 60),\n    approvalToken,\n    workbenchUrl,\n    nextcloudUrl,\n    formBaseUrl,\n    approveUrl: formUrl(approvalToken, 'Approve & Submit Now'),\n    holdUrl: formUrl(approvalToken, 'Hold (Disable 15m Auto-Submit)'),\n    reviewSummary: String(p.review_summary || ''),\n    correctionsCount: Number(p.corrections_count || 0),\n    segmentCount: Number(p.segment_count || 0),\n    hasErrors: Number(p.has_errors || 0),\n    validationErrorCount: validationErrors.length,\n    requiresManualUpload: Boolean(p.requires_manual_upload),\n    reviewFilePath: String(p.review_file_path || ''),\n    submitReason: String(p.submit_reason || p.reason || ''),\n    autoSubmitted: Boolean(p.auto_submitted),\n    outcome: String(p.outcome || ''),\n    archivedDir: String(p.archived_dir || ''),\n    reason: String(p.reason || ''),\n    state: String(p.state || ''),\n    error: String(p.error || ''),\n    errorType: String(p.error_type || ''),\n    commentsCount,\n    uncertainTermsCount,\n    glossaryWarningsCount,\n    acceptanceSource,\n    newCommentsCount,\n    revisionCount,\n  },\n};\n"
+      },
+      "id": "657ec47a-6d98-5fde-892e-f7cce7d84a11",
+      "name": "Normalize Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-cid",
+              "leftValue": "={{ /^\\d+$/.test($json.collectionId) && $json.eventType !== '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e261a951-d614-56db-9b15-531b7cfe111f",
+      "name": "Valid Collection ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r0-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "job.accepted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "job.accepted"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.started",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "pipeline.started"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r2-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.ready_for_review",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "pipeline.ready_for_review"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r3-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.submitted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "pipeline.submitted"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r4-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.archived",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "pipeline.archived"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r5-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "r5-1",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.submit_failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "r5-2",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.submit_refused",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "r5-3",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.submit_deferred",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "r5-4",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.revision_failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "pipeline alerts"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r6-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.held",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "pipeline.held"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r7-0",
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "pipeline.comments_detected",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "pipeline.comments_detected"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "other"
+        }
+      },
+      "id": "2ee9857a-4e06-5b08-b2c2-470491db1c13",
+      "name": "Route by Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        880,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "action": "generate",
+        "dataPropertyName": "generatedApprovalToken",
+        "encodingType": "hex",
+        "stringLength": 32
+      },
+      "id": "84b40eca-736b-5c6b-b27a-d66d16592634",
+      "name": "Generate Approval Token",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $json.collectionId }}",
+            "status": "accepted",
+            "hold": false,
+            "approvalToken": "={{ ($json.approvalToken || $json.generatedApprovalToken) }}",
+            "title": "={{ $json.title }}",
+            "langPair": "={{ $json.langPair }}",
+            "reward": "={{ $json.reward }}",
+            "unitCount": "={{ $json.unitCount }}",
+            "workbenchUrl": "={{ $json.workbenchUrl }}",
+            "lastEvent": "job.accepted"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "hold",
+              "displayName": "hold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "approvalToken",
+              "displayName": "approvalToken",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "langPair",
+              "displayName": "langPair",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "reward",
+              "displayName": "reward",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "unitCount",
+              "displayName": "unitCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "workbenchUrl",
+              "displayName": "workbenchUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "bdc5fef9-237e-583b-846e-d83e7472fb68",
+      "name": "Upsert Accepted Job",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "00da568a-56c6-524a-9900-92dabebface0",
+              "name": "message",
+              "value": "={{ \"🟢 **Gengo Job Accepted** — #\" + $('Normalize Event').first().json.collectionId + \" (\" + $('Normalize Event').first().json.langPair + \", $\" + $('Normalize Event').first().json.reward + \", \" + $('Normalize Event').first().json.unitCount + \" units)\" + ($('Normalize Event').first().json.acceptanceSource === 'dashboard_reconcile' ? \" (detected on the Gengo dashboard)\" : \"\") + \"\\nStarting extraction + translation agent...\\nWorkbench: \" + $('Normalize Event').first().json.workbenchUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "aa2c4830-2104-592b-893e-df72361ae8b6",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Normalize Event').first().json.collectionId + '-accepted' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "f3552627-c8de-51b0-ac42-50d02b856185",
+      "name": "Alert: Job Accepted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1580,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "958c22f9-251d-537f-88cb-4281aea33df7",
+      "name": "Send Alert: Job Accepted",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1800,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://omp.daweuchi.com/events/gengo/commands",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Event-Source",
+              "value": "n8n-gengo"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: 'start', collection_id: $('Normalize Event').first().json.collectionId, approval_token: ($('Generate Approval Token').first().json.approvalToken || $('Generate Approval Token').first().json.generatedApprovalToken), job_hint: { title: $('Normalize Event').first().json.title, reward: $('Normalize Event').first().json.reward, lang_pair: $('Normalize Event').first().json.langPair, word_count: $('Normalize Event').first().json.unitCount, url: $('Normalize Event').first().json.workbenchUrl } }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "e6c78511-5d4c-5d56-a3de-8483bf9e7ce3",
+      "name": "Publish Start Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "daweuchiEventBusBr",
+          "name": "Daweuchi Event Bus Bearer Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "06329d63-1858-5078-8796-5423d5dd5e7e",
+      "name": "Get Existing Job",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "status": "translating",
+            "title": "={{ $('Get Existing Job').first().json.title || $('Normalize Event').first().json.title }}",
+            "langPair": "={{ $('Get Existing Job').first().json.langPair || $('Normalize Event').first().json.langPair }}",
+            "reward": "={{ $('Get Existing Job').first().json.reward || $('Normalize Event').first().json.reward }}",
+            "unitCount": "={{ $('Get Existing Job').first().json.unitCount || $('Normalize Event').first().json.unitCount }}",
+            "hold": "={{ $('Get Existing Job').first().json.hold === true }}",
+            "deadlineEpoch": "={{ $('Normalize Event').first().json.deadlineEpoch }}",
+            "deadlineIso": "={{ $('Normalize Event').first().json.deadlineIso }}",
+            "alertAtIso": "={{ $('Normalize Event').first().json.alertAtIso }}",
+            "submitAtIso": "={{ $('Normalize Event').first().json.submitAtIso }}",
+            "approvalToken": "={{ $('Normalize Event').first().json.approvalToken || $('Get Existing Job').first().json.approvalToken || '' }}",
+            "workbenchUrl": "={{ $('Normalize Event').first().json.workbenchUrl }}",
+            "nextcloudUrl": "={{ $('Normalize Event').first().json.nextcloudUrl }}",
+            "lastEvent": "pipeline.started"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "langPair",
+              "displayName": "langPair",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "reward",
+              "displayName": "reward",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "unitCount",
+              "displayName": "unitCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "hold",
+              "displayName": "hold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "deadlineEpoch",
+              "displayName": "deadlineEpoch",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "deadlineIso",
+              "displayName": "deadlineIso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "alertAtIso",
+              "displayName": "alertAtIso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "submitAtIso",
+              "displayName": "submitAtIso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "approvalToken",
+              "displayName": "approvalToken",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "workbenchUrl",
+              "displayName": "workbenchUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "nextcloudUrl",
+              "displayName": "nextcloudUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "a29fc144-93c0-57e0-a139-17a2b593ea67",
+      "name": "Upsert Started Job",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "arm-monitor",
+              "leftValue": "={{ $('Normalize Event').first().json.deadlineEpoch > 0 && (!$('Get Existing Job').first().json.alertAtIso || Math.abs(Number($('Get Existing Job').first().json.deadlineEpoch || 0) - $('Normalize Event').first().json.deadlineEpoch) > 120) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e3db69f3-3f7a-53a0-ba53-398fe12b14e0",
+      "name": "Arm Deadline Monitor?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $('Normalize Event').first().json.alertAtIso }}"
+      },
+      "id": "ae4f4e23-21b2-5787-b51c-e2d5f8f72906",
+      "name": "Wait Until 30m Remaining",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1800,
+        300
+      ],
+      "webhookId": "8d11fcf7-b34a-5d6f-aafa-4abdc633a78b"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "244bcde5-b2ba-5dc8-afb3-0eb691c6d138",
+      "name": "Get Job at T-30m",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2020,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "t30",
+              "leftValue": "={{ $json.status !== 'submitted' && $json.status !== 'archived' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f282e927-065a-5075-a9e9-570679a095c5",
+      "name": "Still Unsubmitted at T-30m?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://omp.daweuchi.com/events/gengo/commands",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Event-Source",
+              "value": "n8n-gengo"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: 'checkpoint', collection_id: $('Normalize Event').first().json.collectionId }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "df245cae-44fd-5de6-b982-07cc471e4813",
+      "name": "Publish Checkpoint Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2460,
+        300
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "daweuchiEventBusBr",
+          "name": "Daweuchi Event Bus Bearer Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "eda4062d-9858-57ba-aa35-d0f1878b97b9",
+              "name": "message",
+              "value": "={{ \"⏰ **30 Minutes Remaining** — Gengo #\" + $('Get Job at T-30m').first().json.collectionId + \" (\" + ($('Get Job at T-30m').first().json.title || \"untitled\") + \")\\nStatus: `\" + $('Get Job at T-30m').first().json.status + \"` | Hold: `\" + ($('Get Job at T-30m').first().json.hold === true) + \"`\\n⚠️ Will auto-submit at **15 minutes remaining** unless put on hold.\\n• [Approve & Submit Now](\" + $('Normalize Event').first().json.formBaseUrl + '?collection_id=' + encodeURIComponent($('Get Job at T-30m').first().json.collectionId) + '&token=' + encodeURIComponent($('Get Job at T-30m').first().json.approvalToken || '') + '&decision=Approve%20%26%20Submit%20Now' + \")\\n• [Hold / Disable Auto-Submit](\" + $('Normalize Event').first().json.formBaseUrl + '?collection_id=' + encodeURIComponent($('Get Job at T-30m').first().json.collectionId) + '&token=' + encodeURIComponent($('Get Job at T-30m').first().json.approvalToken || '') + '&decision=Hold%20%28Disable%2015m%20Auto-Submit%29' + \")\\n• [Open Workbench](\" + $('Get Job at T-30m').first().json.workbenchUrl + \")\" }}",
+              "type": "string"
+            },
+            {
+              "id": "636378a9-66a2-593b-a1f4-271a37287c25",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Normalize Event').first().json.collectionId + '-t30' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "23c71454-9c1a-5faa-938c-1a40b27bcdc2",
+      "name": "Alert: 30m Remaining",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "c5335667-6f27-515f-94fd-4cd480dd779a",
+      "name": "Send Alert: 30m Remaining",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2900,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $('Normalize Event').first().json.submitAtIso }}"
+      },
+      "id": "a8334eb4-1f33-5288-9134-97d223204bd7",
+      "name": "Wait Until 15m Remaining",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3120,
+        300
+      ],
+      "webhookId": "4eadce56-33ca-528f-b951-82634e0980ca"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "05f50ac3-121c-5377-ba66-7d61d6c097ce",
+      "name": "Get Job at T-15m",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "t15",
+              "leftValue": "={{ $json.status !== 'submitted' && $json.status !== 'archived' && !$json.hold }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3fab7325-343a-58ea-ad55-83962922a67f",
+      "name": "Should Auto-Submit at T-15m?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "20d72922-7bdc-5b1d-b618-032faeaa43d7",
+              "name": "message",
+              "value": "={{ \"🚨 **15 Minutes Remaining — Auto-Submitting** Gengo #\" + $('Get Job at T-15m').first().json.collectionId + \" (no user approval received before T-15m cutoff).\" }}",
+              "type": "string"
+            },
+            {
+              "id": "adea8c96-9f14-5e23-9699-18302b5170e0",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Normalize Event').first().json.collectionId + '-t15' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "df74d0b0-5fa8-50e9-8a82-e825a449c48d",
+      "name": "Alert: Auto-Submitting",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3780,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "9ff04aa6-677b-5988-b071-c37bca12815a",
+      "name": "Send Alert: Auto-Submitting",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4000,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://omp.daweuchi.com/events/gengo/commands",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Event-Source",
+              "value": "n8n-gengo"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: 'submit', collection_id: $('Get Job at T-15m').first().json.collectionId, reason: 'deadline' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "dcf5c4f0-19ab-5f49-8350-0faf9203be7f",
+      "name": "Publish Deadline Submit Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4220,
+        200
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "daweuchiEventBusBr",
+          "name": "Daweuchi Event Bus Bearer Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "held15",
+              "leftValue": "={{ $json.hold === true && $json.status !== 'submitted' && $json.status !== 'archived' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8839a299-6993-5da3-906b-2343acdacd11",
+      "name": "Held at T-15m?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "eda7d721-5031-5ce2-bb7f-deb1a0fb7377",
+              "name": "message",
+              "value": "={{ \"⏸️ **15 Minutes Remaining — On Hold** Gengo #\" + $('Get Job at T-15m').first().json.collectionId + \" (\" + ($('Get Job at T-15m').first().json.title || \"untitled\") + \")\\nAuto-submit is disabled. Submit manually before the deadline (\" + $('Get Job at T-15m').first().json.deadlineIso + \").\\n• [Approve & Submit Now](\" + $('Normalize Event').first().json.formBaseUrl + '?collection_id=' + encodeURIComponent($('Get Job at T-15m').first().json.collectionId) + '&token=' + encodeURIComponent($('Get Job at T-15m').first().json.approvalToken || '') + '&decision=Approve%20%26%20Submit%20Now' + \")\\n• [Open Workbench](\" + $('Get Job at T-15m').first().json.workbenchUrl + \")\" }}",
+              "type": "string"
+            },
+            {
+              "id": "b78bdcbd-ed37-599e-aef2-1f8a2e12b5c1",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Normalize Event').first().json.collectionId + '-hold15' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "236962bb-5c96-530b-bccc-838cc0e08e04",
+      "name": "Alert: On Hold at T-15m",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "bd19d8ec-1ed8-5753-b151-217a67dded1c",
+      "name": "Send Alert: On Hold at T-15m",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4220,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "status": "={{ ($('Normalize Event').first().json.hasErrors > 0 || $('Normalize Event').first().json.validationErrorCount > 0) ? 'needs_attention' : 'ready_for_review' }}",
+            "reviewSummary": "={{ $('Normalize Event').first().json.reviewSummary }}",
+            "nextcloudUrl": "={{ $('Normalize Event').first().json.nextcloudUrl }}",
+            "lastEvent": "pipeline.ready_for_review"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "reviewSummary",
+              "displayName": "reviewSummary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "nextcloudUrl",
+              "displayName": "nextcloudUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e1fa97f5-3e9b-5d22-a1ab-b71928413109",
+      "name": "Upsert Ready for Review",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "73c3a2fc-df7d-5cc5-85b7-737d76e162e5",
+              "name": "message",
+              "value": "={{ \"✅ **Translation & Review Completed** — Gengo #\" + $('Normalize Event').first().json.collectionId + \" (\" + $('Normalize Event').first().json.langPair + \", $\" + $('Normalize Event').first().json.reward + \")\\nSegments: \" + $('Normalize Event').first().json.segmentCount + \" | Reviewer corrections: \" + $('Normalize Event').first().json.correctionsCount + \"\\nReviewer summary: \" + ($('Normalize Event').first().json.reviewSummary || 'No issues') + ($('Normalize Event').first().json.hasErrors > 0 || $('Normalize Event').first().json.validationErrorCount > 0 ? \"\\n⚠️ Validation issues: Gengo has_errors=\" + $('Normalize Event').first().json.hasErrors + \", tag/bracket failures=\" + $('Normalize Event').first().json.validationErrorCount + \" — fix in the workbench before submitting.\" : \"\") + ($('Normalize Event').first().json.requiresManualUpload ? \"\\n📎 File job: Approve uploads the translated file to Gengo (final, cannot be replaced); otherwise it is uploaded at T-15.\" : \"\") + ($('Normalize Event').first().json.commentsCount > 0 ? \"\\n💬 \" + $('Normalize Event').first().json.commentsCount + \" customer comment(s) — read them in REVIEW.md before approving\" : \"\") + ($('Normalize Event').first().json.uncertainTermsCount > 0 ? \"\\n🔎 \" + $('Normalize Event').first().json.uncertainTermsCount + \" term(s) to verify (proper nouns / readings)\" : \"\") + ($('Normalize Event').first().json.glossaryWarningsCount > 0 ? \"\\n📖 \" + $('Normalize Event').first().json.glossaryWarningsCount + \" glossary warning(s)\" : \"\") + \"\\n• [✅ Approve & Submit Now](\" + ($('Normalize Event').first().json.approvalToken ? $('Normalize Event').first().json.approveUrl : $('Normalize Event').first().json.formBaseUrl + '?collection_id=' + encodeURIComponent($('Upsert Ready for Review').first().json.collectionId) + '&token=' + encodeURIComponent($('Upsert Ready for Review').first().json.approvalToken || '') + '&decision=Approve%20%26%20Submit%20Now') + \")\\n• [⏸️ Hold (Manual Submit)](\" + ($('Normalize Event').first().json.approvalToken ? $('Normalize Event').first().json.holdUrl : $('Normalize Event').first().json.formBaseUrl + '?collection_id=' + encodeURIComponent($('Upsert Ready for Review').first().json.collectionId) + '&token=' + encodeURIComponent($('Upsert Ready for Review').first().json.approvalToken || '') + '&decision=Hold%20%28Disable%2015m%20Auto-Submit%29') + \")\\n• [📂 Review Files in Nextcloud](\" + $('Normalize Event').first().json.nextcloudUrl + \")\\n• [🛠️ Open Gengo Workbench](\" + $('Normalize Event').first().json.workbenchUrl + \")\" }}",
+              "type": "string"
+            },
+            {
+              "id": "963554e2-914f-5e0b-95d8-39cc30108609",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Normalize Event').first().json.collectionId + '-review' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "9d07e91e-6a94-5444-8e8c-6e99f8337364",
+      "name": "Alert: Ready for Review",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1360,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "9c4ee7ff-3df6-579c-b2ec-01b6948d9189",
+      "name": "Send Alert: Ready for Review",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1580,
+        700
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "status": "submitted",
+            "submitReason": "={{ $('Normalize Event').first().json.submitReason }}",
+            "lastEvent": "pipeline.submitted"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "submitReason",
+              "displayName": "submitReason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "f5f3cbe3-62fe-51d1-b989-907e78ad6df4",
+      "name": "Upsert Submitted",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "796784aa-3078-5bf1-985b-7baf7249a429",
+              "name": "message",
+              "value": "={{ \"🎉 **Job Submitted** — Gengo #\" + $('Normalize Event').first().json.collectionId + \" (reason: `\" + $('Normalize Event').first().json.submitReason + \"`)\\nSorting job files into archive directory...\" }}",
+              "type": "string"
+            },
+            {
+              "id": "92108802-10cb-57ad-a1c3-d2aed4c4ec42",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Normalize Event').first().json.collectionId + '-submitted' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "aaf6eb56-f18a-56a3-bf27-f55fb9ed16c8",
+      "name": "Alert: Job Submitted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1360,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "5798aa4d-4afb-5143-92d2-b2d65e8158a2",
+      "name": "Send Alert: Job Submitted",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1580,
+        900
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "status": "archived",
+            "archivedDir": "={{ $('Normalize Event').first().json.archivedDir }}",
+            "lastEvent": "pipeline.archived"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "archivedDir",
+              "displayName": "archivedDir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "959a2b73-8640-5f61-9876-6d7424c8640c",
+      "name": "Upsert Archived",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f410e9d0-87fc-5aea-97ab-4158e9321060",
+              "name": "message",
+              "value": "={{ \"📦 **Files Sorted** — Gengo #\" + $('Normalize Event').first().json.collectionId + \" → `\" + $('Normalize Event').first().json.outcome + \"`\\nPath: `\" + $('Normalize Event').first().json.archivedDir + \"`\" }}",
+              "type": "string"
+            },
+            {
+              "id": "074763f9-4490-50a0-87d8-507fad2ec9e0",
+              "name": "referenceId",
+              "value": "={{ 'gengo-' + $('Normalize Event').first().json.collectionId + '-archived' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "eb0e7219-65f0-5177-8431-12c0ce32faff",
+      "name": "Alert: Files Sorted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1360,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "0f9cd4b1-b42f-515d-8775-b521acfa9c02",
+      "name": "Send Alert: Files Sorted",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1580,
+        1100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "lastEvent": "={{ $('Normalize Event').first().json.eventType }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "4a3a7a48-eca0-53f9-96d9-49ee7418b664",
+      "name": "Record Pipeline Alert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7c5efdc3-4467-512d-b2d1-4ebadf1cc972",
+              "name": "message",
+              "value": "={{ \"⚠️ **Gengo Pipeline Alert** — #\" + $('Normalize Event').first().json.collectionId + \" (\" + $('Normalize Event').first().json.title + \")\\nEvent: `\" + $('Normalize Event').first().json.eventType + \"`\" + ($('Normalize Event').first().json.reason ? \"\\nReason: `\" + $('Normalize Event').first().json.reason + \"`\" : \"\") + ($('Normalize Event').first().json.error ? \"\\nError: \" + ($('Normalize Event').first().json.errorType ? $('Normalize Event').first().json.errorType + \": \" : \"\") + $('Normalize Event').first().json.error.slice(0, 500) : \"\") + ($('Normalize Event').first().json.secondsLeft > 0 ? \"\\nTime left: \" + Math.round($('Normalize Event').first().json.secondsLeft / 60) + \" min\" : \"\") + \"\\n• [Open Workbench](\" + $('Normalize Event').first().json.workbenchUrl + \")\" }}",
+              "type": "string"
+            },
+            {
+              "id": "0884f056-ce4a-54b5-ab7c-d3d1f151fc7e",
+              "name": "referenceId",
+              "value": "={{ ('gengo-' + $('Normalize Event').first().json.collectionId + '-' + $('Normalize Event').first().json.eventType).slice(0, 64) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "8cd83093-5280-5ebe-83e1-836275341050",
+      "name": "Alert: Pipeline Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1360,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "446a7a22-9ed9-50aa-8286-26aee651df8e",
+      "name": "Send Alert: Pipeline Alert",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1580,
+        1300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "hold": true,
+            "lastEvent": "pipeline.held"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "hold",
+              "displayName": "hold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "bf34b586-6d09-593f-8b92-e48713c8f552",
+      "name": "Upsert Held",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1500
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "lastEvent": "={{ $('Normalize Event').first().json.eventType }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "4aa5bb6d-803a-50d3-96a5-40782a96c341",
+      "name": "Record Other Event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1700
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "gengo_jobs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "collectionId",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Event').first().json.collectionId }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "collectionId": "={{ $('Normalize Event').first().json.collectionId }}",
+            "lastEvent": "={{ $('Normalize Event').first().json.eventType }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "collectionId",
+              "displayName": "collectionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lastEvent",
+              "displayName": "lastEvent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e2258d3d-16a4-5fbd-9045-98b1939189a2",
+      "name": "Record Comments Detected",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1900
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7c5efdc3-4467-512d-b2d1-4ebadf1cc972",
+              "name": "message",
+              "value": "={{ \"💬 **New customer comments** — #\" + $('Normalize Event').first().json.collectionId + \" (\" + $('Normalize Event').first().json.title + \")\\n\" + $('Normalize Event').first().json.newCommentsCount + \" new comment(s).\" + \" Revision running: patch + full review, then held for your approval.\" + \"\\n• [Open Workbench](\" + $('Normalize Event').first().json.workbenchUrl + \")\" }}",
+              "type": "string"
+            },
+            {
+              "id": "0884f056-ce4a-54b5-ab7c-d3d1f151fc7e",
+              "name": "referenceId",
+              "value": "={{ ('gengo-' + $('Normalize Event').first().json.collectionId + '-' + $('Normalize Event').first().json.eventType).slice(0, 64) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "04918ece-82cb-5851-9015-26e83dcb3595",
+      "name": "Alert: Comments Detected",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1360,
+        1900
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gengoWfMatrx0002",
+          "cachedResultName": "Gengo — 01 Matrix Alert"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "c2cfb0d0-f903-5579-8ef6-5eb6c8ddca93",
+      "name": "Send Alert: Comments Detected",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1580,
+        1900
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Gengo Events Webhook": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge Router": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Event": {
+      "main": [
+        [
+          {
+            "node": "Valid Collection ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Collection ID?": {
+      "main": [
+        [
+          {
+            "node": "Route by Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Job Accepted": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Job Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Event Type": {
+      "main": [
+        [
+          {
+            "node": "Generate Approval Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Existing Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upsert Ready for Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upsert Submitted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upsert Archived",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Pipeline Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upsert Held",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Comments Detected",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Other Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Approval Token": {
+      "main": [
+        [
+          {
+            "node": "Upsert Accepted Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Accepted Job": {
+      "main": [
+        [
+          {
+            "node": "Alert: Job Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert: Job Accepted": {
+      "main": [
+        [
+          {
+            "node": "Publish Start Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: 30m Remaining": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: 30m Remaining",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Auto-Submitting": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Auto-Submitting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: On Hold at T-15m": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: On Hold at T-15m",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing Job": {
+      "main": [
+        [
+          {
+            "node": "Upsert Started Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Started Job": {
+      "main": [
+        [
+          {
+            "node": "Arm Deadline Monitor?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Arm Deadline Monitor?": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 30m Remaining",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until 30m Remaining": {
+      "main": [
+        [
+          {
+            "node": "Get Job at T-30m",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job at T-30m": {
+      "main": [
+        [
+          {
+            "node": "Still Unsubmitted at T-30m?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Unsubmitted at T-30m?": {
+      "main": [
+        [
+          {
+            "node": "Publish Checkpoint Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Checkpoint Command": {
+      "main": [
+        [
+          {
+            "node": "Alert: 30m Remaining",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert: 30m Remaining": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 15m Remaining",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until 15m Remaining": {
+      "main": [
+        [
+          {
+            "node": "Get Job at T-15m",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job at T-15m": {
+      "main": [
+        [
+          {
+            "node": "Should Auto-Submit at T-15m?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Auto-Submit at T-15m?": {
+      "main": [
+        [
+          {
+            "node": "Alert: Auto-Submitting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Held at T-15m?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert: Auto-Submitting": {
+      "main": [
+        [
+          {
+            "node": "Publish Deadline Submit Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Held at T-15m?": {
+      "main": [
+        [
+          {
+            "node": "Alert: On Hold at T-15m",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Ready for Review": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Ready for Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Ready for Review": {
+      "main": [
+        [
+          {
+            "node": "Alert: Ready for Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Job Submitted": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Job Submitted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Submitted": {
+      "main": [
+        [
+          {
+            "node": "Alert: Job Submitted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Files Sorted": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Files Sorted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Archived": {
+      "main": [
+        [
+          {
+            "node": "Alert: Files Sorted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Pipeline Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Pipeline Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Pipeline Alert": {
+      "main": [
+        [
+          {
+            "node": "Alert: Pipeline Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Comments Detected": {
+      "main": [
+        [
+          {
+            "node": "Alert: Comments Detected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Comments Detected": {
+      "main": [
+        [
+          {
+            "node": "Send Alert: Comments Detected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Tokyo"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "versionId": "3c8b83bd-d1db-5272-9a0f-25f583a7cac6",
+  "tags": []
+}

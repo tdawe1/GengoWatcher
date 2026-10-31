@@ -147,6 +147,37 @@ class CommandRequest(BaseModel):
         return value
 
 
+class PipelineCommandRequest(BaseModel):
+    """Job pipeline command: start, submit, hold, checkpoint, archive, status,
+    revise (check for new customer comments and revise), or accept_and_start
+    (mark the collection accepted first)."""
+
+    command: str
+    collection_id: str
+    approval_token: str = ""
+    reason: str = ""
+    outcome: str = ""
+    force: bool = False
+    background: bool = True
+    job_hint: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def validate_command(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Command must be a non-empty string")
+        return value.strip().lower()
+
+    @field_validator("collection_id", mode="before")
+    @classmethod
+    def validate_collection_id(cls, value):
+        if isinstance(value, int) and not isinstance(value, bool):
+            value = str(value)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("collection_id must be a non-empty string")
+        return value.strip()
+
+
 class PaginationParams(BaseModel):
     MAX_LIMIT: ClassVar[int] = 100
     page: int = Field(default=1, ge=1)
