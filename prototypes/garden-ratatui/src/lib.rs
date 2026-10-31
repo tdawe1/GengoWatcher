@@ -17,8 +17,8 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, TableState,
-        Wrap,
+        BarChart, Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row,
+        Sparkline, Table, TableState, Wrap,
     },
 };
 
@@ -971,23 +971,39 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ConnectionState::Live => ("● all monitors operational", LEAF),
     };
     let next_check = seconds_until(app.data.status.next_check_time, app.data.fetched_at);
+    let open = app.visible_available_jobs().len();
+    let metric = |value: String| vec![Span::styled(value, value_style()), Span::raw(" ")];
+    let mut pulse = vec![
+        Span::styled("◈ ", Style::default().fg(LEAF).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "GENGO",
+            Style::default().fg(LEAF).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "WATCHER ",
+            Style::default().fg(INK).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    pulse.extend(metric(open.to_string()));
+    pulse.push(Span::styled("open · ", Style::default().fg(MUTED)));
+    pulse.extend(metric(format!(
+        "${:.2}",
+        app.data.status.session_stats.total_value
+    )));
+    pulse.push(Span::styled("session", Style::default().fg(MUTED)));
     frame.render_widget(
         Paragraph::new(vec![
+            Line::from(pulse),
             Line::from(vec![
                 Span::styled(
-                    "GENGOWATCHER",
-                    Style::default().fg(INK).add_modifier(Modifier::BOLD),
+                    format!("{} accepted · ", app.data.accepted_count()),
+                    Style::default().fg(MUTED),
                 ),
-                Span::styled("  translation operations", Style::default().fg(MUTED)),
+                Span::styled(
+                    format!("next check {}", format_duration(next_check)),
+                    Style::default().fg(MUTED),
+                ),
             ]),
-            Line::from(Span::styled(
-                format!(
-                    "{} jobs loaded · next check {}",
-                    app.data.jobs.len(),
-                    format_duration(next_check)
-                ),
-                Style::default().fg(MUTED),
-            )),
         ]),
         columns[0],
     );
@@ -1024,13 +1040,13 @@ fn render_nav(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     let inner = area.inner(Margin::new(1, 1));
     let rows = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(6),
     ])
@@ -1193,24 +1209,32 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     format!("{}  ·  {}", job.display_value(), job.display_title()),
                     Style::default().fg(INK).add_modifier(Modifier::BOLD),
                 )),
-                Line::from(vec![
-                    Span::styled(
-                        format!(
-                            "Order {}  ·  {}  ·  {} remaining   ",
-                            job.id,
-                            job.source,
-                            job.display_time_left()
+                Line::from({
+                    let mut meta = vec![
+                        Span::styled(
+                            format!("Order {}  ·  {}  ·  ", job.id, job.source,),
+                            Style::default().fg(MUTED),
                         ),
+                        time_left_span(job),
+                    ];
+                    // Unknown and terminal readings stand alone; only
+                    // running countdowns get "remaining".
+                    meta.push(Span::styled(
+                        match (job.accepted_seconds_left, job.display_time_left().as_str()) {
+                            (Some(..=0), _) | (_, "—" | "expired" | "00:00") => "   ",
+                            _ => " remaining   ",
+                        },
                         Style::default().fg(MUTED),
-                    ),
-                    button_solid("o", "VIEW"),
-                    Span::raw(" "),
-                    button_ghost("d", "DISMISS"),
-                ]),
+                    ));
+                    meta.push(button_solid("o", "VIEW"));
+                    meta.push(Span::raw(" "));
+                    meta.push(button_ghost("d", "DISMISS"));
+                    meta
+                }),
             ])
             .block(Block::default().style(Style::default().bg(ORANGE_BG)))
             .alignment(Alignment::Left),
-            rows[0].inner(Margin::new(2, 0)),
+            rows[0].inner(Margin::new(2, 1)),
         );
     } else {
         frame.render_widget(
@@ -1250,10 +1274,7 @@ fn render_available_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     format!("{:<30}", truncate(job.display_title(), 30)),
                     Style::default().fg(INK),
                 ),
-                Span::styled(
-                    format!("{:>7}  ", job.display_time_left()),
-                    Style::default().fg(MUTED),
-                ),
+                padded_time_left_span(job),
                 Span::styled(job.source.clone(), Style::default().fg(MUTED)),
             ]))
         })
@@ -1330,17 +1351,34 @@ fn render_metric_strip(frame: &mut Frame<'_>, area: Rect, app: &App) {
         format!("${:.2}", app.data.stats.average_reward),
     ));
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(headline),
-            Line::from(Span::styled(
-                source_sparkline(&app.data),
-                Style::default().fg(BLUE),
-            )),
-        ])
-        .block(titled_panel("SESSION ANALYTICS"))
-        .style(Style::default().fg(INK).bg(PAPER)),
-        area,
+        Paragraph::new(Line::from(headline))
+            .block(titled_panel("SESSION ANALYTICS"))
+            .style(Style::default().fg(INK).bg(PAPER)),
+        area.inner(Margin::new(0, 0)),
     );
+    let spark_area = Rect::new(
+        area.x + 2,
+        area.y + 2,
+        area.width.saturating_sub(4),
+        area.height.saturating_sub(3),
+    );
+    let series: Vec<u64> = app
+        .data
+        .stats
+        .jobs_by_source
+        .values()
+        .map(|count| *count as u64)
+        .collect();
+    if !series.is_empty() {
+        let max = series.iter().copied().max().unwrap_or(1).max(1);
+        frame.render_widget(
+            Sparkline::default()
+                .style(Style::default().bg(PAPER).fg(BLUE))
+                .data(&series)
+                .max(max),
+            spark_area,
+        );
+    }
 }
 
 fn render_system_summary(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -1380,7 +1418,7 @@ fn render_jobs(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                 Cell::from(job.display_value()),
                 Cell::from(job.source.clone()),
                 Cell::from(job.display_status().to_owned()),
-                Cell::from(job.display_time_left()),
+                Cell::from(time_left_span(job)),
             ])
             .height(2)
         })
@@ -1510,10 +1548,13 @@ fn render_work_column(
                 truncate(job.display_title(), 30),
                 Style::default().fg(INK),
             )),
-            Line::from(Span::styled(
-                format!("{} · {}", job.display_status(), job.display_time_left()),
-                Style::default().fg(MUTED),
-            )),
+            Line::from(vec![
+                Span::styled(
+                    format!("{} · ", job.display_status()),
+                    Style::default().fg(MUTED),
+                ),
+                time_left_span(job),
+            ]),
         ]);
     }
     frame.render_widget(
@@ -1645,29 +1686,92 @@ fn render_analytics(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .split(chart_rows[0]);
     let bottom = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chart_rows[1]);
-    render_chart(
+    render_bar_chart(
         frame,
         inset_right(top[0]),
         "JOBS BY HOUR",
-        jobs_by_hour_lines(&app.data.jobs),
+        jobs_by_hour_data(&app.data.jobs),
+        "No timestamp data",
+        2,
+        0,
     );
-    render_chart(
+    render_bar_chart(
         frame,
         inset_left(top[1]),
         "SOURCE PERFORMANCE",
-        source_performance_lines(&app.data),
+        source_share_data(&app.data),
+        "No source data",
+        5,
+        1,
     );
-    render_chart(
+    render_sparkline_panel(
         frame,
         inset_right(bottom[0]),
         "VALUE TREND · 7 DAYS",
-        value_trend_lines(&app.data.jobs),
+        value_trend_data(&app.data.jobs, app.data.fetched_at),
+        "No value history",
     );
     render_chart(
         frame,
         inset_left(bottom[1]),
         "TOP JOB TYPES",
         top_job_type_lines(&app.data.jobs),
+    );
+}
+
+/// Vertical bar chart with value labels; falls back to a quiet note when
+/// there is nothing to plot.
+fn render_bar_chart(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &'static str,
+    series: Vec<(String, u64)>,
+    empty_note: &'static str,
+    bar_width: u16,
+    bar_gap: u16,
+) {
+    if series.is_empty() {
+        render_chart(frame, area, title, vec![empty_note.into()]);
+        return;
+    }
+    let refs: Vec<(&str, u64)> = series
+        .iter()
+        .map(|(label, value)| (label.as_str(), *value))
+        .collect();
+    frame.render_widget(
+        BarChart::default()
+            .block(titled_panel(title))
+            .style(Style::default().bg(PAPER))
+            .bar_style(Style::default().fg(BLUE))
+            .value_style(Style::default().fg(INK))
+            .label_style(Style::default().fg(MUTED))
+            .bar_width(bar_width)
+            .bar_gap(bar_gap)
+            .data(&refs),
+        area,
+    );
+}
+
+/// Sparkline panel for a time-ordered series in whole units (e.g. cents).
+fn render_sparkline_panel(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &'static str,
+    series: Vec<u64>,
+    empty_note: &'static str,
+) {
+    if series.is_empty() {
+        render_chart(frame, area, title, vec![empty_note.into()]);
+        return;
+    }
+    let max = series.iter().copied().max().unwrap_or(1).max(1);
+    frame.render_widget(
+        Sparkline::default()
+            .block(titled_panel(title))
+            .style(Style::default().bg(PAPER).fg(LEAF))
+            .data(&series)
+            .max(max),
+        area,
     );
 }
 
@@ -2178,6 +2282,35 @@ fn value_style() -> Style {
     Style::default().fg(INK).add_modifier(Modifier::BOLD)
 }
 
+/// Time-left with urgency encoding: expired/imminent (<5m) is red, tight
+/// (<15m) is orange, everything else stays quiet. Falls back to parsing the
+/// `MM:SS` display text when no numeric reading is attached.
+fn time_left_span(job: &Job) -> Span<'static> {
+    let text = job.display_time_left();
+    let expired = job.accepted_expired == Some(true) || text == "expired";
+    let seconds = job.accepted_seconds_left.or_else(|| {
+        let (minutes, rest) = text.split_once(':')?;
+        Some(minutes.parse::<i64>().ok()? * 60 + rest.parse::<i64>().ok()?)
+    });
+    let style = if expired {
+        Style::default().fg(RED).add_modifier(Modifier::BOLD)
+    } else {
+        match seconds {
+            Some(s) if s <= 0 => Style::default().fg(RED).add_modifier(Modifier::BOLD),
+            Some(s) if s < 300 => Style::default().fg(RED).add_modifier(Modifier::BOLD),
+            Some(s) if s < 900 => Style::default().fg(ORANGE),
+            _ => Style::default().fg(MUTED),
+        }
+    };
+    Span::styled(text, style)
+}
+
+/// Width-preserving variant for columnar lists (`{:>7}` + two spaces).
+fn padded_time_left_span(job: &Job) -> Span<'static> {
+    let span = time_left_span(job);
+    Span::styled(format!("{:>7}  ", span.content), span.style)
+}
+
 fn status_owned(
     label: impl Into<String>,
     value: impl Into<String>,
@@ -2267,95 +2400,46 @@ fn event_line(event: &model::ApiEvent) -> Line<'static> {
     ))
 }
 
-fn source_sparkline(data: &DashboardData) -> String {
-    if data.stats.jobs_by_source.is_empty() {
-        return "No source data available".into();
-    }
-    data.stats
-        .jobs_by_source
-        .iter()
-        .take(5)
-        .map(|(source, count)| format!("{} {}", truncate(source, 8), mini_bar(*count, 8)))
-        .collect::<Vec<_>>()
-        .join("   ")
-}
-
-fn jobs_by_hour_lines(jobs: &[Job]) -> Vec<String> {
-    let mut counts = [0_usize; 24];
+fn jobs_by_hour_data(jobs: &[Job]) -> Vec<(String, u64)> {
+    let mut counts = [0_u64; 24];
     for job in jobs {
         if job.timestamp.is_finite() && job.timestamp >= 0.0 {
             counts[(job.timestamp as u64 / 3_600 % 24) as usize] += 1;
         }
     }
-    let max = counts.iter().copied().max().unwrap_or(1).max(1);
-    let lines = counts
-        .iter()
+    counts
+        .into_iter()
         .enumerate()
-        .filter(|(_, count)| **count > 0)
-        .take(8)
-        .map(|(hour, count)| format!("{hour:02}  {:<16} {count}", bar(*count, max, 16)))
-        .collect::<Vec<_>>();
-    if lines.is_empty() {
-        vec!["No timestamp data".into()]
-    } else {
-        lines
-    }
+        .filter(|(_, count)| *count > 0)
+        .map(|(hour, count)| (format!("{hour:02}"), count))
+        .collect()
 }
 
-fn source_performance_lines(data: &DashboardData) -> Vec<String> {
-    let max = data
+fn source_share_data(data: &DashboardData) -> Vec<(String, u64)> {
+    let mut sources = data
         .stats
         .jobs_by_source
-        .values()
-        .copied()
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    let total = data.stats.total_jobs.max(1);
-    let mut sources = data.stats.jobs_by_source.iter().collect::<Vec<_>>();
-    sources.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
-    let lines = sources
-        .into_iter()
-        .take(8)
-        .map(|(source, count)| {
-            format!(
-                "{:<12} {:<14} {:>5.1}%",
-                truncate(source, 12),
-                bar(*count, max, 14),
-                *count as f64 / total as f64 * 100.0
-            )
-        })
+        .iter()
+        .map(|(source, count)| (truncate(source, 10), *count as u64))
         .collect::<Vec<_>>();
-    if lines.is_empty() {
-        vec!["No source data".into()]
-    } else {
-        lines
-    }
+    sources.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    sources.truncate(10);
+    sources
 }
 
-fn value_trend_lines(jobs: &[Job]) -> Vec<String> {
-    let mut totals = BTreeMap::<u64, f64>::new();
+/// Seven consecutive UTC days ending today, oldest first, in cents.
+fn value_trend_data(jobs: &[Job], now: f64) -> Vec<u64> {
+    let mut totals = BTreeMap::<i64, f64>::new();
     for job in jobs {
         if job.timestamp.is_finite() && job.timestamp >= 0.0 {
-            *totals.entry(job.timestamp as u64 / 86_400).or_default() += job.reward;
+            *totals
+                .entry((job.timestamp as u64 / 86_400) as i64)
+                .or_default() += job.reward;
         }
     }
-    let recent = totals.into_iter().rev().take(7).collect::<Vec<_>>();
-    let max = recent
-        .iter()
-        .map(|(_, value)| *value)
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
-    if recent.is_empty() {
-        return vec!["No value history".into()];
-    }
-    recent
-        .into_iter()
-        .rev()
-        .map(|(day, value)| {
-            let width = ((value / max) * 18.0).round() as usize;
-            format!("D{:<5} {:<18} ${value:.2}", day % 10_000, "█".repeat(width))
-        })
+    let today = (now as u64 / 86_400) as i64;
+    (today - 6..=today)
+        .map(|day| (totals.get(&day).copied().unwrap_or(0.0).max(0.0) * 100.0).round() as u64)
         .collect()
 }
 
@@ -2389,10 +2473,6 @@ fn top_job_type_lines(jobs: &[Job]) -> Vec<String> {
 fn bar(value: usize, max: usize, width: usize) -> String {
     let filled = value.saturating_mul(width) / max.max(1);
     "█".repeat(filled)
-}
-
-fn mini_bar(value: usize, width: usize) -> String {
-    "▪".repeat(value.min(width).max(1))
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
@@ -2598,6 +2678,160 @@ mod tests {
             .collect::<String>();
         assert!(content.contains("Accept order 481516?"));
         assert!(content.contains("This sends an acceptance request"));
+    }
+
+    #[test]
+    fn time_left_encodes_urgency() {
+        let mut job = available_job("1");
+        job.accepted_seconds_left = None;
+        job.accepted_time_left = None;
+        assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
+        job.accepted_seconds_left = Some(2400);
+        assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
+        job.accepted_seconds_left = Some(600);
+        assert_eq!(time_left_span(&job).style.fg, Some(ORANGE));
+        job.accepted_seconds_left = Some(60);
+        assert_eq!(time_left_span(&job).style.fg, Some(RED));
+        job.accepted_expired = Some(true);
+        assert_eq!(time_left_span(&job).style.fg, Some(RED));
+    }
+
+    #[test]
+    fn time_left_falls_back_to_display_text() {
+        let mut job = available_job("1");
+        job.accepted_seconds_left = None;
+        job.accepted_time_left = Some("27:44".into());
+        assert_eq!(time_left_span(&job).style.fg, Some(MUTED));
+        job.accepted_time_left = Some("04:03".into());
+        assert_eq!(time_left_span(&job).style.fg, Some(RED));
+    }
+
+    #[test]
+    fn chart_data_adapters_shape_series() {
+        let app = App::new(View::Analytics);
+        let hours = jobs_by_hour_data(&app.data.jobs);
+        assert!(!hours.is_empty());
+        assert!(hours.iter().all(|(_, count)| *count > 0));
+        assert!(!value_trend_data(&app.data.jobs, app.data.fetched_at).is_empty());
+        let shares = source_share_data(&app.data);
+        assert!(!shares.is_empty());
+        for window in shares.windows(2) {
+            assert!(window[0].1 >= window[1].1);
+        }
+    }
+
+    #[test]
+    fn overview_labels_only_running_countdowns_as_remaining() {
+        for (seconds, text, expected) in [
+            (None, None, "—   "),
+            (Some(60), None, "01:00 remaining   "),
+            (Some(0), None, "00:00   "),
+            (Some(-1), None, "00:00   "),
+            (None, Some("00:00"), "00:00   "),
+            (Some(0), Some("02:00"), "02:00   "),
+            (None, Some("expired"), "expired   "),
+            (None, Some("27:44"), "27:44 remaining   "),
+        ] {
+            let mut job = available_job("1");
+            job.accepted_seconds_left = seconds;
+            job.accepted_time_left = text.map(str::to_owned);
+            let mut app = App::new(View::Overview);
+            app.data.jobs = vec![job];
+            let mut terminal = Terminal::new(TestBackend::new(150, 44)).expect("test terminal");
+            terminal
+                .draw(|frame| render(frame, &mut app))
+                .expect("render succeeds");
+            let content = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                content.contains(expected),
+                "countdown {seconds:?}, {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn analytics_renders_all_hours_and_keeps_wider_source_labels() {
+        let mut app = App::new(View::Analytics);
+        app.data.jobs = (0..24)
+            .map(|hour| Job {
+                timestamp: f64::from(hour * 3_600),
+                ..available_job(&hour.to_string())
+            })
+            .collect();
+        app.data.stats.jobs_by_source = BTreeMap::from([("Feeds".into(), 24)]);
+        let mut terminal = Terminal::new(TestBackend::new(150, 44)).expect("test terminal");
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("000102030405060708091011121314151617181920212223"));
+        assert!(content.contains("Feeds"));
+    }
+
+    #[test]
+    fn value_trend_covers_seven_calendar_days_including_empty_days() {
+        let today = 20_000;
+        let now = f64::from(today * 86_400 + 1);
+        let jobs = [
+            (today - 7, 100.0),
+            (today - 6, 1.234),
+            (today - 4, 2.0),
+            (today - 4, 0.346),
+            (today - 2, -1.0),
+            (today, 4.56),
+            (today + 1, 100.0),
+        ]
+        .into_iter()
+        .map(|(day, reward)| Job {
+            timestamp: f64::from(day * 86_400),
+            reward,
+            ..Job::default()
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(
+            value_trend_data(&jobs, now),
+            vec![123, 0, 235, 0, 0, 0, 456]
+        );
+        assert_eq!(
+            value_trend_data(&jobs, now + 86_400.0),
+            vec![0, 235, 0, 0, 0, 456, 10_000]
+        );
+        assert_eq!(value_trend_data(&[], now), vec![0; 7]);
+        assert_eq!(value_trend_data(&[], 0.0), vec![0; 7]);
+    }
+
+    #[test]
+    fn header_shows_wordmark_and_live_pulse() {
+        let backend = TestBackend::new(150, 44);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = App::new(View::Overview);
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render succeeds");
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("GENGO"));
+        assert!(content.contains("WATCHER"));
+        assert!(!content.contains("translation operations"));
+        assert!(content.contains("open ·"));
+        assert!(content.contains("session"));
     }
 
     #[test]
